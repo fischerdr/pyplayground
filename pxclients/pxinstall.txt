@@ -1,0 +1,7 @@
+#px install
+
+kubectl apply -f 'https://install.portworx.com/3.1?comp=pxoperator&kbver=1.25.0&ns=portworx'
+
+kubectl apply -f 'https://install.portworx.com/3.1?operator=true&mc=false&kbver=1.25.0&ns=portworx&oem=esse&user=70d88d39-2386-485c-ac99-d4f982b13f0b&b=true&iop=6&c=px-cluster-fec84071-23ec-4689-9ad4-8cc6cd461265&stork=true&csi=true&mon=true&tel=true&st=k8s&promop=true'
+
+

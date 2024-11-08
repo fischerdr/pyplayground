@@ -1,0 +1,56 @@
+{
+   "metadata": {
+    "name": "{{ schpolName }}",
+    "org_id": "{{ pxbkDomain }}",
+    "owner": "{{ ownerUid }}",
+    "ownership": {
+      "owner": "{{ ownerUid }}",
+      "groups": [
+        {
+        "id": "px-admin-group",
+        "access": "Admin"
+        }
+      ],
+      "public": {}
+    }
+  },
+    "schedule_policy": {
+        {% if schedType == 'interval'%}
+        "interval": {
+        "minutes": "{{ minutes}}",
+        "retain": "{{ retain }}",
+        "incremental_count": {
+            "count": "{{ betweenFull }}"
+        }
+        },
+        {% elif schedType == 'daily'%}
+        "daily": {
+        "time": "{{ timeampm }}",
+        "retain": "{{ retain }}",
+        "incremental_count": {
+            "count": "{{ betweenFull }}"
+        }
+        },
+        {% elif schedType == 'weekly'%}
+        "weekly": {
+        "day": "{{ weekday }}",
+        "time": "{{ timeampm }}",
+        "retain": "{{ retain }}",
+        "incremental_count": {
+            "count": "{{ betweenFull }}"
+        }
+        },
+        {% elif schedType == 'monthly'%}
+        "monthly": {
+        "date": "{{ day }}",
+        "time": "{{ timeampm }}",
+        "retain": "{{ retain }}",
+        "incremental_count": {
+            "count": "{{ betweenFull }}"
+        }
+        },
+        {% endif%}
+        "for_object_lock": {{ objLock | default(False) }},
+        "auto_delete": {{ autoDelete | default(False) }}
+    }
+}

@@ -1,4 +1,5 @@
 # requirements.txt
+pytest
 appdirs
 cachetools
 certifi
@@ -74,3 +75,14 @@ bcrypt
 durationpy
 paramiko
 PyNaCl
+## The following requirements were added by pip freeze:
+aiohappyeyeballs
+aiohttp
+aiosignal
+frozenlist
+kubernetes_asyncio
+multidict
+propcache
+protobuf
+pyOpenSSL
+yarl

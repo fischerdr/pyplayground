@@ -1,11 +1,10 @@
-import subprocess
-import json
-import datetime
-import csv
-import os
-import difflib
 import argparse
-
+import csv
+import datetime
+import difflib
+import json
+import os
+import subprocess
 from datetime import datetime
 
 #PX_NAMESPACE="kube-system"

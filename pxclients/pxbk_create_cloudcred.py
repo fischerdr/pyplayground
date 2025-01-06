@@ -1,10 +1,12 @@
-import csv
-import sys
-import requests
 import argparse
+import csv
 import getpass
-import logging
 import json
+import logging
+import sys
+
+import requests
+
 
 def _prompt_for_password(args):
     """

@@ -1,5 +1,7 @@
-import requests
 import time
+
+import requests
+
 
 class RestAPIClient:
     def __init__(self, base_url, auth_url, client_id, client_secret):

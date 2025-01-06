@@ -1,6 +1,6 @@
-import subprocess
 import argparse
 import json
+import subprocess
 import time
 
 SSH_KEY = 'id_rsa'

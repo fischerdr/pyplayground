@@ -1,10 +1,11 @@
 import csv
-import sys
-import requests
-from  argparse import ArgumentParser
 import getpass
-import logging
 import json
+import logging
+import sys
+from argparse import ArgumentParser
+
+import requests
 from jinja2 import Environment, FileSystemLoader
 
 logging.basicConfig()

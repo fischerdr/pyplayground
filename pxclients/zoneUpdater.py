@@ -1,7 +1,8 @@
 import argparse
-import time
-from kubernetes import client, config
 import json
+import time
+
+from kubernetes import client, config
 
 
 class PortworxNodeManager:

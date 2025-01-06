@@ -1,6 +1,7 @@
 import json
-import sys
 import subprocess
+import sys
+
 
 def extract_vmdk_info(json_string):
     data = json.loads(json_string)

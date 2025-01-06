@@ -1,6 +1,7 @@
 import json
-import sys
 import subprocess
+import sys
+
 """
 Instructions to use it:
 gov is required

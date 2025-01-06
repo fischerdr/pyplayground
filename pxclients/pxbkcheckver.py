@@ -1,8 +1,10 @@
-import requests
 import argparse
 import getpass
-import logging
 import json
+import logging
+
+import requests
+
 
 def _prompt_for_password(args):
     """

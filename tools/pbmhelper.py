@@ -11,7 +11,7 @@ This module implements simple helper functions for working with the
 VMware Storage Policy (pbm) API
 """
 
-from pyVmomi import pbm, VmomiSupport
+from pyVmomi import VmomiSupport, pbm
 
 
 def create_pbm_session(stub):
@@ -22,8 +22,10 @@ def create_pbm_session(stub):
 
     create_pbm_session(service_instance._stub)
     """
-    import pyVmomi
     import ssl
+
+    import pyVmomi
+
     # Make compatible with both Python2/3
     try:
         from http import cookies

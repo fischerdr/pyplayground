@@ -1,6 +1,8 @@
-import requests
-import time
 import threading
+import time
+
+import requests
+
 
 class KeycloakClient:
     def __init__(self, keycloak_url, realm, client_id, client_secret, username, password, duration=3600):

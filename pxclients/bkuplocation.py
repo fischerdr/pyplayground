@@ -5,10 +5,9 @@
 # and then, to convert JSON from a string, do
 #
 #     result = bkuploc_from_dict(json.loads(json_string))
+from typing import Any, Callable, List, Type, TypeVar, cast
+
 from pxclients.metadataheader import Metadata
-
-from typing import Any, List, TypeVar, Type, cast, Callable
-
 
 T = TypeVar("T")
 

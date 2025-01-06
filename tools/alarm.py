@@ -8,9 +8,7 @@ http://www.apache.org/licenses/LICENSE-2.0.html
 """
 
 import logging
-from xml.etree.ElementTree import Element
-from xml.etree.ElementTree import SubElement
-from xml.etree.ElementTree import tostring
+from xml.etree.ElementTree import Element, SubElement, tostring
 
 import requests
 

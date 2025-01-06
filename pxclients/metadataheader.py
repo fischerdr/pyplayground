@@ -6,8 +6,7 @@
 #
 #     result = mdhead_from_dict(json.loads(json_string))
 
-from typing import Any, List, TypeVar, Type, cast, Callable
-
+from typing import Any, Callable, List, Type, TypeVar, cast
 
 T = TypeVar("T")
 

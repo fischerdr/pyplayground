@@ -9,8 +9,7 @@ http://www.apache.org/licenses/LICENSE-2.0.html
 
 Helper module for task operations.
 """
-from pyVmomi import vim
-from pyVmomi import vmodl
+from pyVmomi import vim, vmodl
 
 
 def wait_for_tasks(si, tasks):

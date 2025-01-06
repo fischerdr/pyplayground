@@ -1,7 +1,8 @@
+import argparse
 import csv
 import json
-import argparse
 import os
+
 """
 Run the other script and come up with a mapping of old_path,new_path in a file (mapping.csv)
 $K8S_CMD get cm <cluster-name> -ojson -n kube-system >./clouddrive.cm.json

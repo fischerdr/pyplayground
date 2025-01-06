@@ -1,5 +1,7 @@
 import argparse
+
 import yaml
+
 parser = argparse.ArgumentParser()
 parser.add_argument('files', metavar='YAMLFILES', type=argparse.FileType('r'), nargs='*')
 args = parser.parse_args()

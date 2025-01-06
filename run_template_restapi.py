@@ -1,9 +1,10 @@
-import os
-import requests
 import json
-import click
 import logging
+import os
 from time import sleep
+
+import click
+import requests
 
 # Configure logging
 logging.basicConfig(

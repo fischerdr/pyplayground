@@ -1,9 +1,10 @@
-import boto3
-import sys
 import json
 import logging
-from threading import Thread
+import sys
 from queue import Queue
+from threading import Thread
+
+import boto3
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

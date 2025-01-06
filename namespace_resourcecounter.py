@@ -1,9 +1,10 @@
-import click
 import csv
 import logging
-from kubernetes import client, config
 from collections import defaultdict
+
+import click
 from filelock import FileLock
+from kubernetes import client, config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

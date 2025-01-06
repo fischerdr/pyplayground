@@ -1,7 +1,9 @@
-import click
-from kubernetes import client, config, stream
 import os
 import sys
+
+import click
+from kubernetes import client, config, stream
+
 
 @click.command()
 @click.argument('pod_name')

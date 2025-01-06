@@ -1,6 +1,7 @@
-from pyVim.connect import SmartConnect, Disconnect
+from pyVim.connect import Disconnect, SmartConnect
 from pyVmomi import vim
-from tools import cli, service_instance, tasks, pchelper
+
+from tools import cli, pchelper, service_instance, tasks
 
 
 def check_vm_power_state(vm):

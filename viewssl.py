@@ -1,11 +1,13 @@
+import argparse
+import base64
+import os
 import ssl
+
 import certifi
 import requests
 from kubernetes.config.kube_config import KubeConfigMerger
-import os
-import base64
-import argparse
 from OpenSSL import crypto
+
 
 def print_pem_info(pem_content):
     """

@@ -30,14 +30,13 @@ import pty
 import select
 import signal
 import struct
+import subprocess
 import sys
 import termios
 import time
 import tty
-import subprocess
 
 import six
-
 from kubernetes import config
 from kubernetes.client import Configuration
 from kubernetes.client.api import core_v1_api

@@ -1,12 +1,13 @@
-import click
 import logging
-import ssl
 import queue
-from kubernetes import client, config
-from pyVim.connect import SmartConnect, Disconnect
-from pyVmomi import vim
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import ssl
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import click
+from kubernetes import client, config
+from pyVim.connect import Disconnect, SmartConnect
+from pyVmomi import vim
 
 # Set up logging
 logger = logging.getLogger(__name__)

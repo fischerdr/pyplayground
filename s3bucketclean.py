@@ -1,7 +1,9 @@
-from boto3 import client, Session
-from botocore.exceptions import ClientError
-from datetime import datetime, timezone
 import argparse
+from datetime import datetime, timezone
+
+from boto3 import Session, client
+from botocore.exceptions import ClientError
+
 """_summary_
   python s3_cleanup.py --aws_access_key_id="access-key" --aws_secret_access_key="secret-key-here" --endpoint="https://s3.us-west-1.wasabisys.com" --bucket="ondemand-downloads" --prefix="" --delete_after_retention_days=5
 

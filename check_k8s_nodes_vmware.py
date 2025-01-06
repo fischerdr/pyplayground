@@ -1,8 +1,9 @@
-import click
 import logging
 import ssl
+
+import click
 from kubernetes import client, config
-from pyVim.connect import SmartConnect, SmartConnectNoSSL, Disconnect
+from pyVim.connect import Disconnect, SmartConnect, SmartConnectNoSSL
 from pyVmomi import vim
 
 # Set up logging

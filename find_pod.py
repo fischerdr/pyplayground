@@ -1,6 +1,7 @@
 import click
 from kubernetes import client, config
 
+
 def get_pod_info(pod_name):
     # Load Kubernetes configuration
     config.load_kube_config()

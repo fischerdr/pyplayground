@@ -1,5 +1,5 @@
 #!/usr/bin/python       
-from dns import resolver,reversename
+from dns import resolver, reversename
 
 sNetworkAddress = '10.34.114'
 aiHostAddresses = range(1,255)

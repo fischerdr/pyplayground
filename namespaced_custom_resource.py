@@ -20,11 +20,12 @@ This example demonstrates the following:
     - Delete the custom resource definition (CRD)
 """
 
-from kubernetes import config, dynamic
-from kubernetes import client as k8s_client
-from kubernetes.dynamic.exceptions import ResourceNotFoundError
-from kubernetes.client import api_client
 import time
+
+from kubernetes import client as k8s_client
+from kubernetes import config, dynamic
+from kubernetes.client import api_client
+from kubernetes.dynamic.exceptions import ResourceNotFoundError
 
 
 def list_ingressroute_for_all_namespaces(group, version, plural):

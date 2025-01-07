@@ -4,7 +4,8 @@ This module implements simple helper functions for managing service instance obj
 __author__ = "VMware, Inc."
 
 import atexit
-from pyVim.connect import SmartConnect, Disconnect
+
+from pyVim.connect import Disconnect, SmartConnect
 
 
 def connect(args):

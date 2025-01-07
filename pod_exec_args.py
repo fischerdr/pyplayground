@@ -1,7 +1,9 @@
 import sys
+import json
 
 import click
 from kubernetes import client, config
+from kubernetes.stream import stream
 
 
 @click.command()
@@ -20,25 +22,48 @@ def pod_exec_tty(namespace, podname, command):
 
     # Create a pseudo-terminal (pty) to interact with the pod
     exec_command = ['/bin/sh', '-c', command]
-    exec_api = client.CoreV1Api()
-    exec_response = exec_api.connect_get_namespaced_pod_exec(
-        namespace=namespace,
-        name=podname,
-        command=exec_command,
-        container=pod.spec.containers[0].name,
-        stdin=True,
-        stdout=True,
-        stderr=True,
-        tty=True
-    )
+    try:
+        exec_response = stream(
+            api.connect_get_namespaced_pod_exec,
+            name=podname,
+            namespace=namespace,
+            command=exec_command,
+            container=pod.spec.containers[0].name,
+            stdin=False,
+            stdout=True,
+            stderr=True,
+            tty=False,
+            _preload_content=False  # This is key to getting raw output
 
-    # Handle the exec response
-    while exec_response.is_open():
-        exec_response.update(timeout=1)
-        if exec_response.peek_stdout():
-            print(exec_response.read_stdout())
-        if exec_response.peek_stderr():
-            print(exec_response.read_stderr(), file=sys.stderr)
+            
+        )
+        
+        output = ""  # Initialize an empty string to collect all stdout
+
+        # If exec_response is a string, add it directly to output
+        if isinstance(exec_response, str):
+            output += exec_response
+        else:
+            # Handle streaming response
+            while exec_response.is_open():
+                exec_response.update(timeout=1)
+                if exec_response.peek_stdout():
+                    output += exec_response.read_stdout()
+                if exec_response.peek_stderr():
+                    print("STDERR:", file=sys.stderr)
+                    print(exec_response.read_stderr(), file=sys.stderr)
+
+        # After collecting all output, try to parse it as JSON
+        try:
+            json_obj = json.loads(output)
+            print("JSON output:")
+            print(json.dumps(json_obj, indent=2))
+        except json.JSONDecodeError:
+            # If it's not valid JSON, print as is
+            print("Non-JSON output:")
+            print(output)
+    except Exception as e:
+        print(f"An error occurred: {e}", file=sys.stderr)
 
 if __name__ == '__main__':
     pod_exec_tty()

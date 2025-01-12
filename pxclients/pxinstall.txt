@@ -1,7 +1,5 @@
 #px install
+kubectl apply -f 'https://install.portworx.com/3.2?comp=pxoperator&kbver=1.28.6&ns=portworx'
+kubectl apply -f 'https://install.portworx.com/3.2?operator=true&mc=false&kbver=1.28.6&ns=portworx&oem=esse&user=70d88d39-2386-485c-ac99-d4f982b13f0b&b=true&dmthin=true&md=%2Fdev%2Fvdb&iop=6&f=true&c=px-cluster-1f46043e-7324-40bd-bbd7-de81aa409853&stork=true&csi=true&mon=true&tel=false&st=k8s&promop=true'
 
-kubectl apply -f 'https://install.portworx.com/3.1?comp=pxoperator&kbver=1.25.0&ns=portworx'
-
-kubectl apply -f 'https://install.portworx.com/3.1?operator=true&mc=false&kbver=1.25.0&ns=portworx&oem=esse&user=70d88d39-2386-485c-ac99-d4f982b13f0b&b=true&iop=6&c=px-cluster-fec84071-23ec-4689-9ad4-8cc6cd461265&stork=true&csi=true&mon=true&tel=true&st=k8s&promop=true'
-
-
+helm install px-central portworx/px-central --namespace px-backup --create-namespace --version 2.8.1 --set persistentStorage.enabled=true,persistentStorage.storageClassName="px-csi-db",pxbackup.enabled=true

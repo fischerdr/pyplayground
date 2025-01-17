@@ -14,6 +14,8 @@ import hvac
 import typer
 from dotenv import load_dotenv
 from pick import pick
+from utils.vault_utils import create_vault_client
+from hvac.exceptions import VaultError, InvalidRequest
 
 # Configure logging
 logging.basicConfig(
@@ -31,43 +33,29 @@ def get_vault_client(
     namespace: Optional[str] = None
 ) -> hvac.Client:
     """
-    Create and return an authenticated Vault client.
-
+    CLI wrapper for create_vault_client with Typer-specific error handling.
+    
     Args:
-        vault_addr: Optional Vault server address. If not provided, uses VAULT_ADDR env var.
-        vault_token: Optional Vault token. If not provided, uses VAULT_TOKEN env var.
-        namespace: Optional Vault namespace. If not provided, uses VAULT_NAMESPACE env var.
-
+        vault_addr: Optional Vault server address
+        vault_token: Optional Vault token
+        namespace: Optional Vault namespace
+        
     Returns:
         hvac.Client: Authenticated Vault client
-
+        
     Raises:
-        typer.Exit: If required environment variables are missing or authentication fails
+        typer.Exit: If authentication fails or required parameters are missing
     """
-    load_dotenv()
-    
-    vault_addr = vault_addr or os.getenv("VAULT_ADDR")
-    vault_token = vault_token or os.getenv("VAULT_TOKEN")
-    namespace = namespace or os.getenv("VAULT_NAMESPACE")
-
-    if not vault_addr or not vault_token:
-        logger.error("Required environment variables VAULT_ADDR and VAULT_TOKEN must be set")
-        raise typer.Exit(1)
-
     try:
-        client_kwargs = {
-            "url": vault_addr,
-            "token": vault_token
-        }
-        if namespace:
-            client_kwargs["namespace"] = namespace
-            logger.debug(f"Using Vault namespace: {namespace}")
-
-        client = hvac.Client(**client_kwargs)
-        if not client.is_authenticated():
-            logger.error("Failed to authenticate with Vault")
-            raise typer.Exit(1)
-        return client
+        return create_vault_client(
+            url=vault_addr,
+            token=vault_token,
+            namespace=namespace,
+            load_env=True
+        )
+    except (VaultError, InvalidRequest, ValueError) as e:
+        logger.error(str(e))
+        raise typer.Exit(1)
     except Exception as e:
         logger.error(f"Error connecting to Vault: {str(e)}")
         raise typer.Exit(1)
@@ -202,48 +190,77 @@ def list_keys(
     ),
     mask_values: bool = typer.Option(
         True,
-        "--mask/--unmask",
+        "--mask/--no-mask",
         help="Mask sensitive values in output"
+    ),
+    interactive: bool = typer.Option(
+        True,
+        "--interactive/--no-interactive",
+        help="Enable/disable interactive mode"
     )
 ) -> None:
-    """List keys in the specified Vault KV store path."""
-    client = get_vault_client(vault_addr, vault_token, namespace)
-    logger.info(f"Accessing secrets at {mount_point}/{path}")
-    
-    result = list_kv_secrets(client, mount_point, path)
-    
-    if result["is_data"]:
-        if show_data:
-            typer.echo(f"\nData at {path}:")
-            typer.echo(format_data(result["data"], 2, mask_values))
-            if not mask_values:
-                logger.warning("Displaying unmasked sensitive values!")
-        else:
-            typer.echo(f"\nSecret data found at {path}")
-    elif result["keys"]:
-        typer.echo("\nAvailable keys:")
-        for key in result["keys"]:
-            full_path = f"{path}/{key}" if path else key
-            typer.echo(f"  - {full_path}")
-            
-        # Interactive mode with pick library
-        title = "Select a key to explore (use arrow keys, press Enter to select, Ctrl+C to exit):"
-        options = result["keys"] + ["Exit"]
-        selected, _ = pick(options, title)
+    """List keys and optionally show data in a Vault KV store path."""
+    try:
+        # Get vault client with proper error handling
+        client = get_vault_client(vault_addr, vault_token, namespace)
+        logger.info(f"Accessing secrets at {mount_point}/{path}")
         
-        if selected != "Exit":
-            new_path = f"{path}/{selected}" if path else selected
-            list_keys(
-                mount_point=mount_point,
-                path=new_path,
-                vault_addr=vault_addr,
-                vault_token=vault_token,
-                namespace=namespace,
-                show_data=show_data,
-                mask_values=mask_values
-            )
-    else:
-        typer.echo("No keys found")
+        # Get secrets with error handling
+        try:
+            result = list_kv_secrets(client, mount_point, path)
+        except (VaultError, InvalidRequest) as e:
+            logger.error(f"Failed to list secrets: {str(e)}")
+            raise typer.Exit(1)
+        
+        if not result["keys"] and not result["is_data"]:
+            typer.echo(f"\n📂 No secrets found at path: {path or '/'}")
+            return
+
+        # Display results
+        if result["keys"]:
+            typer.echo(f"\n📂 Contents of {path or '/'} in {mount_point}:")
+            for key in result["keys"]:
+                if key in result["data_keys"]:
+                    typer.echo(f"  📄 {key}")  # File emoji for data
+                else:
+                    typer.echo(f"  📁 {key}")  # Folder emoji for directories
+
+        if result["is_data"]:
+            if show_data:
+                typer.echo("\n📋 Secret Data:")
+                formatted_data = format_data(result["data"], 2, mask_values)
+                typer.echo(formatted_data)
+                if not mask_values:
+                    typer.secho("\n⚠️  Warning: Displaying unmasked sensitive values!", fg="yellow")
+            else:
+                typer.echo("\n📋 Secret data is available (use --show-data to view)")
+
+        # Interactive mode
+        if interactive and result["keys"]:
+            title = "🔍 Select a key to explore (use arrow keys, press Enter to select, Ctrl+C to exit):"
+            options = result["keys"] + ["Exit"]
+            try:
+                selected, _ = pick(options, title)
+                
+                if selected != "Exit":
+                    new_path = f"{path}/{selected}" if path else selected
+                    list_keys(
+                        mount_point=mount_point,
+                        path=new_path,
+                        vault_addr=vault_addr,
+                        vault_token=vault_token,
+                        namespace=namespace,
+                        show_data=show_data,
+                        mask_values=mask_values,
+                        interactive=interactive
+                    )
+            except KeyboardInterrupt:
+                typer.echo("\n👋 Exiting interactive mode")
+                raise typer.Exit()
+
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        raise typer.Exit(1)
 
 if __name__ == "__main__":
     app()

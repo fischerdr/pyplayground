@@ -5,6 +5,7 @@ import logging
 from typing import Optional, Dict, Any, List
 import hvac
 from hvac.exceptions import VaultError, InvalidRequest
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +13,8 @@ def create_vault_client(
     url: Optional[str] = None,
     token: Optional[str] = None,
     namespace: Optional[str] = None,
-    verify: Optional[str] = None
+    verify: Optional[str] = None,
+    load_env: bool = True
 ) -> hvac.Client:
     """
     Create and authenticate a Vault client.
@@ -22,38 +24,38 @@ def create_vault_client(
         token: Vault token (defaults to VAULT_TOKEN env var)
         namespace: Vault namespace (defaults to VAULT_NAMESPACE env var)
         verify: Path to SSL certificate (PEM) file for verification
+        load_env: Whether to load environment from .env file
         
     Returns:
         hvac.Client: Authenticated Vault client
         
     Raises:
         VaultError: If connection or authentication fails
+        ValueError: If required parameters are missing
     """
-    try:
-        vault_url = url or os.environ.get("VAULT_ADDR")
-        vault_token = token or os.environ.get("VAULT_TOKEN")
-        vault_namespace = namespace or os.environ.get("VAULT_NAMESPACE")
+    if load_env:
+        load_dotenv()
         
-        if not vault_url:
-            raise ValueError("Vault URL not provided and VAULT_ADDR env var not set")
-        if not vault_token:
-            raise ValueError("Vault token not provided and VAULT_TOKEN env var not set")
-            
-        client = hvac.Client(
-            url=vault_url,
-            token=vault_token,
-            namespace=vault_namespace,
-            verify=verify
-        )
+    vault_url = url or os.environ.get("VAULT_ADDR")
+    vault_token = token or os.environ.get("VAULT_TOKEN")
+    vault_namespace = namespace or os.environ.get("VAULT_NAMESPACE")
+    
+    if not vault_url:
+        raise ValueError("Vault URL not provided and VAULT_ADDR env var not set")
+    if not vault_token:
+        raise ValueError("Vault token not provided and VAULT_TOKEN env var not set")
         
-        if not client.is_authenticated():
-            raise VaultError("Failed to authenticate with Vault")
-            
-        return client
+    client = hvac.Client(
+        url=vault_url,
+        token=vault_token,
+        namespace=vault_namespace,
+        verify=verify
+    )
+    
+    if not client.is_authenticated():
+        raise VaultError("Failed to authenticate with Vault")
         
-    except (VaultError, InvalidRequest) as e:
-        logger.error(f"Failed to create Vault client: {e}")
-        raise
+    return client
 
 def list_secrets(
     client: hvac.Client,

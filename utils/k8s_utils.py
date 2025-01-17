@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any, List
 from kubernetes import client, config
 from kubernetes.client import ApiClient
 from kubernetes.client.rest import ApiException
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -353,3 +354,121 @@ def get_nodes_from_machinesets(
     except Exception as e:
         logger.error(f"Error retrieving nodes from MachineSets: {e}")
         return {}
+
+def get_configmap_data(
+    namespace: str,
+    configmap_name: str,
+    key: Optional[str] = None,
+    v1_client: Optional[client.CoreV1Api] = None
+) -> Dict[str, Any]:
+    """
+    Get data from a Kubernetes ConfigMap.
+
+    Args:
+        namespace: Kubernetes namespace
+        configmap_name: Name of the ConfigMap
+        key: Optional specific key to retrieve from ConfigMap data
+        v1_client: Optional CoreV1Api client. If not provided, creates a new one.
+
+    Returns:
+        Dictionary containing the ConfigMap data or specific key value if key provided
+    """
+    try:
+        if not v1_client:
+            v1_client = get_k8s_client("CoreV1Api")
+
+        # Get the ConfigMap
+        configmap = v1_client.read_namespaced_config_map(configmap_name, namespace)
+        
+        if key:
+            if key not in configmap.data:
+                raise KeyError(f"Key '{key}' not found in ConfigMap")
+            return configmap.data[key]
+        
+        return configmap.data
+    except ApiException as e:
+        logger.error(f"Kubernetes API error: {str(e)}")
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get ConfigMap data: {str(e)}")
+        raise
+
+def update_configmap_data(
+    namespace: str,
+    configmap_name: str,
+    data: Dict[str, str],
+    v1_client: Optional[client.CoreV1Api] = None
+) -> None:
+    """
+    Update data in a Kubernetes ConfigMap.
+
+    Args:
+        namespace: Kubernetes namespace
+        configmap_name: Name of the ConfigMap
+        data: Dictionary of data to update in the ConfigMap
+        v1_client: Optional CoreV1Api client. If not provided, creates a new one.
+    """
+    try:
+        if not v1_client:
+            v1_client = get_k8s_client("CoreV1Api")
+
+        # Get the current ConfigMap
+        configmap = v1_client.read_namespaced_config_map(configmap_name, namespace)
+        
+        # Update the data
+        configmap.data.update(data)
+        
+        # Update the ConfigMap in Kubernetes
+        v1_client.replace_namespaced_config_map(configmap_name, namespace, configmap)
+        logger.info(f"Successfully updated ConfigMap {configmap_name} in namespace {namespace}")
+    except ApiException as e:
+        logger.error(f"Kubernetes API error: {str(e)}")
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update ConfigMap data: {str(e)}")
+        raise
+
+def get_cloud_drive_config(
+    namespace: str,
+    configmap_name: str,
+    v1_client: Optional[client.CoreV1Api] = None
+) -> Dict[str, Any]:
+    """
+    Get cloud-drive configuration from Kubernetes ConfigMap.
+
+    Args:
+        namespace: Kubernetes namespace
+        configmap_name: Name of the ConfigMap
+        v1_client: Optional CoreV1Api client. If not provided, creates a new one.
+
+    Returns:
+        Dictionary containing the cloud-drive configuration
+    """
+    try:
+        data = get_configmap_data(namespace, configmap_name, "cloud-drive", v1_client)
+        return json.loads(data)
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse cloud-drive JSON: {str(e)}")
+        raise
+
+def update_cloud_drive_config(
+    namespace: str,
+    configmap_name: str,
+    new_config: Dict[str, Any],
+    v1_client: Optional[client.CoreV1Api] = None
+) -> None:
+    """
+    Update cloud-drive configuration in Kubernetes ConfigMap.
+
+    Args:
+        namespace: Kubernetes namespace
+        configmap_name: Name of the ConfigMap
+        new_config: New configuration to apply
+        v1_client: Optional CoreV1Api client. If not provided, creates a new one.
+    """
+    try:
+        data = {"cloud-drive": json.dumps(new_config)}
+        update_configmap_data(namespace, configmap_name, data, v1_client)
+    except Exception as e:
+        logger.error(f"Failed to update cloud-drive config: {str(e)}")
+        raise

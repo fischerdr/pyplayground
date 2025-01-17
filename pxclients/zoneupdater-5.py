@@ -1,214 +1,116 @@
 import argparse
 import json
+import logging
+import sys
 import time
+from typing import Dict, List, Optional, Set, Any
 
 from kubernetes import client, config
-from kubernetes.client import ApiException
+from kubernetes.client import ApiException, V1Node, V1Pod, V1ConfigMap
 
+from utils.logging_utils import setup_logging, get_logger
+from utils.k8s_utils import (
+    wait_for_pod_readiness,
+    get_machine_for_node,
+    get_machineset_for_machine,
+    get_nodes_from_machineset_specific,
+    get_nodes_from_machinesets
+)
+
+# Setup logging using utility function
+setup_logging(level=logging.INFO)
+logger = get_logger(__name__)
+
+# Portworx-specific constants
+PORTWORX_ZONE_LABEL = "topology.portworx.io/zone"
 
 class PortworxNodeManager:
-    def __init__(self, fallback_zone=None, dry_run=True, debug_cm=False, v1_client=None, crd_client=None):
+    """Manages Portworx node operations in a Kubernetes cluster.
+    
+    This class handles operations related to labeling Portworx nodes with zones,
+    updating ConfigMaps, and managing node restarts in a Kubernetes cluster.
+    
+    Args:
+        fallback_zone: Default zone to use when no zone is found
+        dry_run: If True, no actual changes will be made
+        debug_cm: If True, enables debug mode for ConfigMap operations
+        v1_client: Kubernetes CoreV1Api client
+        crd_client: Kubernetes CustomObjectsApi client
+    """
+    
+    def __init__(
+        self,
+        fallback_zone: Optional[str] = None,
+        dry_run: bool = True,
+        debug_cm: bool = False,
+        v1_client: Optional[client.CoreV1Api] = None,
+        crd_client: Optional[client.CustomObjectsApi] = None
+    ) -> None:
         self.v1 = v1_client
         self.crd = crd_client
         self.fallback_zone = fallback_zone
         self.dry_run = dry_run
         self.debug_cm = debug_cm
 
-    def get_nodes_from_machineset(self):
+    def get_nodes_from_machineset_specific(self, machineset_name: str) -> Dict[str, str]:
+        """Query Kubernetes for nodes associated with a specific MachineSet and their Portworx zone.
+        
+        Args:
+            machineset_name: Name of the MachineSet to query.
+            
+        Returns:
+            Dict[str, str]: A dictionary mapping node names to their Portworx zones.
         """
-        Query Kubernetes for nodes associated with MachineSets and their zones.
-        Return a dictionary mapping node names to their respective zones.
-        """
-        print("Attempting to retrieve nodes and zones from MachineSets...")
-        try:
-            machinesets = self.crd.list_cluster_custom_object(
-                group="machine.openshift.io",
-                version="v1beta1",
-                plural="machinesets"
-            )
+        node_info = get_nodes_from_machineset_specific(
+            machineset_name=machineset_name,
+            label_key=PORTWORX_ZONE_LABEL,
+            crd_client=self.crd
+        )
+        
+        # Convert the node_info dict to just node->zone mapping
+        return {
+            node_name: info.get(PORTWORX_ZONE_LABEL, 'unknown')
+            for node_name, info in node_info.items()
+        }
 
-            node_zone_map = {}
-
-            for ms in machinesets['items']:
-                ms_name = ms['metadata']['name']
-                print(f"Processing MachineSet: {ms_name}")
-                # Extract zone information from the MachineSet labels
-                zone = ms.get('metadata', {}).get('labels', {}).get('topology.portworx.io/zone', None)
-
-                if zone:
-                    print(f"MachineSet {ms_name} is in zone {zone}")
-                else:
-                    print(f"No zone found for MachineSet {ms_name}. Skipping zone labeling.")
-
-                # Find associated machines for the MachineSet
-                machines = self.crd.list_cluster_custom_object(
-                    group="machine.openshift.io",
-                    version="v1beta1",
-                    plural="machines"
-                )
-
-                for machine in machines['items']:
-                    # Check if the machine is part of the current MachineSet
-                    if ms_name in machine['metadata']['name'] and 'status' in machine:
-                        node_name = machine['status'].get('nodeRef', {}).get('name', None)
-                        if node_name:
-                            # Map the node to its zone (if zone is available)
-                            node_zone_map[node_name] = zone if zone else 'unknown'
-                            print(f"Associated node {node_name} with zone {zone}")
-
-            if node_zone_map:
-                print(f"Found {len(node_zone_map)} node(s) associated with MachineSets and zones.")
-                return node_zone_map
-            else:
-                print("No nodes found in MachineSets. Falling back to other options.")
-                return {}
-
-        except Exception as e:
-            print(f"Error retrieving nodes from MachineSets: {e}")
-            return {}
-
-    def get_nodes_from_machineset_specific(self, machineset_name):
-        """
-        Query Kubernetes for nodes associated with a specific MachineSet and its zone.
-        Return a dictionary mapping node names to their respective zones.
-        """
-        print(f"Attempting to retrieve nodes and zones from MachineSet: {machineset_name}...")
-        try:
-            # Get all MachineSets (MachineSets are namespaced resources)
-            machinesets = self.crd.list_namespaced_custom_object(
-                group="machine.openshift.io",
-                version="v1beta1",
-                namespace="openshift-machine-api",  # MachineSets typically reside in this namespace
-                plural="machinesets"
-            )
-
-            # Find the specific MachineSet object by name
-            machineset = next((ms for ms in machinesets['items'] if ms['metadata']['name'] == machineset_name), None)
-
-            if not machineset:
-                print(f"MachineSet {machineset_name} not found.")
-                return {}
-
-            node_zone_map = {}
-
-            # Extract zone information from the MachineSet labels
-            zone = machineset.get('metadata', {}).get('labels', {}).get('topology.portworx.io/zone', None)
-
-            if zone:
-                print(f"MachineSet {machineset_name} is in zone {zone}")
-            else:
-                print(f"No zone found for MachineSet {machineset_name}. Skipping zone labeling.")
-
-            # Find associated machines for the MachineSet
-            machines = self.crd.list_namespaced_custom_object(
-                group="machine.openshift.io",
-                version="v1beta1",
-                namespace="openshift-machine-api",  # Machines also reside in the same namespace
-                plural="machines"
-            )
-
-            for machine in machines['items']:
-                # Check if the machine is part of the specified MachineSet
-                if machineset_name in machine['metadata']['name'] and 'status' in machine:
-                    node_name = machine['status'].get('nodeRef', {}).get('name', None)
-                    if node_name:
-                        # Map the node to its zone (if zone is available)
-                        node_zone_map[node_name] = zone if zone else 'unknown'
-                        print(f"Associated node {node_name} with zone {zone}")
-
-            if node_zone_map:
-                print(f"Found {len(node_zone_map)} node(s) associated with MachineSet {machineset_name}.")
-                return node_zone_map
-            else:
-                print(f"No nodes found in MachineSet {machineset_name}.")
-                return {}
-
-        except ApiException as e:
-            print(f"Error retrieving nodes from MachineSet {machineset_name}: {e}")
-            return {}
-
-    def get_machine_for_node(self, node_name):
-        """
-        Query Kubernetes for the Machine object associated with the Node.
-        """
-        print(f"Fetching Machine object for node {node_name}...")
-        try:
-            machines = self.crd.list_cluster_custom_object(
-                group="machine.openshift.io",
-                version="v1beta1",
-                plural="machines"
-            )
-
-            for machine in machines['items']:
-                if machine['status']['nodeRef']['name'] == node_name:
-                    print(f"Found Machine {machine['metadata']['name']} for Node {node_name}")
-                    return machine
-            print(f"No Machine found for Node {node_name}. This might be UPI.")
-            return None
-        except Exception as e:
-            print(f"Error fetching Machine for Node {node_name}: {e}")
-            return None
-
-    def get_machineset_for_machine(self, machine):
-        """
-        Query Kubernetes for the MachineSet associated with the Machine.
-        """
-        print(f"Fetching MachineSet for Machine {machine['metadata']['name']}...")
-        try:
-            machinesets = self.crd.list_cluster_custom_object(
-                group="machine.openshift.io",
-                version="v1beta1",
-                plural="machinesets"
-            )
-
-            for ms in machinesets['items']:
-                if ms['metadata']['name'] in machine['metadata']['name']:
-                    print(f"Found MachineSet {ms['metadata']['name']} for Machine {machine['metadata']['name']}")
-                    return ms
-            print(f"No MachineSet found for Machine {machine['metadata']['name']}.")
-            return None
-        except Exception as e:
-            print(f"Error fetching MachineSet: {e}")
-            return None
-
-    def get_zone_for_node(self, node_name):
+    def get_zone_for_node(self, node_name: str) -> str:
         """
         Fetch the zone for a node by checking its Machine and MachineSet.
         Preference is given to the MachineSet's zone. If no zone is found:
         - Fallback to provided `--zone` argument if given.
         - Ask the user for manual input as the last resort.
         """
-        machine = self.get_machine_for_node(node_name)
+        machine = get_machine_for_node(node_name, self.crd)
         if machine:
-            machineset = self.get_machineset_for_machine(machine)
+            machineset = get_machineset_for_machine(machine, self.crd)
             if machineset:
                 # Check if 'metadata' and 'labels' exist in the nested structure
                 labels = machineset.get('metadata', {}).get('labels', None)
                 if labels:
                     zone = labels.get("topology.portworx.io/zone", None)
                     if zone:
-                        print(f"Zone {zone} found in MachineSet {machineset['metadata']['name']}")
+                        logger.info(f"Zone {zone} found in MachineSet {machineset['metadata']['name']}")
                         return zone
                 else:
-                    print(f"No labels found in MachineSet {machineset['metadata']['name']}")
+                    logger.warning(f"No labels found in MachineSet {machineset['metadata']['name']}")
 
         # Fallback to provided `--zone` argument if no zone found in MachineSet
         if self.fallback_zone:
-            print(f"No zone found in MachineSet, using provided fallback zone: {self.fallback_zone}")
+            logger.info(f"No zone found in MachineSet, using provided fallback zone: {self.fallback_zone}")
             return self.fallback_zone
 
         # Ask for manual input as the last resort
         zone = input(f"No zone found for node {node_name}. Please provide the zone manually: ")
         return zone
 
-    def label_node(self, node_name, labels):
+    def label_node(self, node_name: str, labels: Dict[str, str]) -> None:
         # Apply the label only if it's not a dry run
         if not self.dry_run:
             body = {"metadata": {"labels": labels}}
             self.v1.patch_node(node_name, body)
             print(f"Node {node_name} labeled successfully with {labels}.")
 
-    def label_machine(self, machine_name, labels):
+    def label_machine(self, machine_name: str, labels: Dict[str, str]) -> None:
         print(f"Dry-run: {self.dry_run} - Adding labels {labels} to machine {machine_name}...")
         if not self.dry_run:
             body = {"metadata": {"labels": labels}}
@@ -222,7 +124,7 @@ class PortworxNodeManager:
             )
             print(f"Machine {machine_name} labeled successfully with {labels}.")
 
-    def update_cm(self, node_name, zone):
+    def update_cm(self, node_name: str, zone: str) -> None:
         print(f"Fetching ConfigMap for node {node_name}...")
         config_maps = self.v1.list_namespaced_config_map(namespace="kube-system")
         for cm in config_maps.items:
@@ -258,7 +160,7 @@ class PortworxNodeManager:
                 else:
                     print(f"No changes made to ConfigMap {cm.metadata.name} for {node_name}.")
 
-    def get_px_nodes(self):
+    def get_px_nodes(self) -> List[V1Node]:
         print("Fetching all nodes where Portworx pods are running...")
         pods = self.v1.list_namespaced_pod(namespace='portworx', label_selector='name=portworx')
         px_nodes = set()
@@ -275,7 +177,7 @@ class PortworxNodeManager:
 
         return node_list
 
-    def get_portworx_pod_for_node(self, node_name):
+    def get_portworx_pod_for_node(self, node_name: str) -> Optional[V1Pod]:
         """
         Get the Portworx pod running on a specific node by filtering with label 'name=portworx'
         and checking the node name.
@@ -287,36 +189,10 @@ class PortworxNodeManager:
                     return pod
             return None
         except ApiException as e:
-            print(f"Error fetching pod for node {node_name}: {e}")
+            logger.error(f"Error fetching pod for node {node_name}: {e}")
             return None
 
-    def wait_for_pod_readiness(self, pod_name, namespace, timeout=420):
-        """
-        Wait for a pod to be ready (1/1) with a timeout (default 7 minutes).
-        If the pod does not become ready within the timeout, raise an exception.
-        """
-        interval = 15
-        elapsed_time = 0
-
-        while elapsed_time < timeout:
-            try:
-                pod = self.v1.read_namespaced_pod(name=pod_name, namespace=namespace)
-                pod_status = pod.status.container_statuses[0].ready
-                if pod_status:
-                    print(f"Pod {pod_name} is ready (1/1).")
-                    return True
-            except ApiException as e:
-                print(f"Error reading pod {pod_name} status: {e}")
-                return False
-
-            elapsed_time += interval
-            print(f"Waiting for pod {pod_name} to be ready... ({elapsed_time}/{timeout} seconds elapsed)")
-            time.sleep(interval)
-
-        print(f"Timeout reached: Pod {pod_name} is not ready after {timeout} seconds.")
-        return False
-
-    def label_px_nodes(self, node_names):
+    def label_px_nodes(self, node_names: List[str]) -> None:
         nodes = self.get_px_nodes()
         node_dict = {node.metadata.name: node for node in nodes}
         label_changed = False
@@ -346,7 +222,7 @@ class PortworxNodeManager:
                 continue
 
             if label_changed:
-                machine = self.get_machine_for_node(node_name)
+                machine = get_machine_for_node(node_name, self.crd)
                 if machine:
                     self.label_machine(machine['metadata']['name'], {"topology.portworx.io/zone": zone})
 
@@ -384,12 +260,12 @@ class PortworxNodeManager:
                 # Wait for PX Pod readiness on any case
                 if not self.dry_run:
                     print(f"Waiting for Portworx pod {pod.metadata.name} on node {node_name} to be ready...")
-                    pod_ready = self.wait_for_pod_readiness(pod_name=pod.metadata.name, namespace='portworx')
+                    pod_ready = wait_for_pod_readiness(pod_name=pod.metadata.name, namespace='portworx', v1_client=self.v1)
                     if not pod_ready:
                         print(f"Error: Pod {pod.metadata.name} did not become ready within the timeout.")
                         raise Exception(f"Portworx pod on node {node_name} failed to become ready. Exiting.")
 
-def load_nodes_from_file(file_path):
+def load_nodes_from_file(file_path: str) -> List[str]:
     try:
         with open(file_path, 'r') as f:
             nodes = [line.strip() for line in f.readlines() if line.strip()]
@@ -428,7 +304,10 @@ if __name__ == "__main__":
 
     if args.fully_unattended:
         # Iterate over all machineSets
-        node_zone_map = manager.get_nodes_from_machineset()
+        node_zone_map = get_nodes_from_machinesets(
+            label_key=PORTWORX_ZONE_LABEL,
+            crd_client=crd_client
+        )
     elif args.machine_set:
         # Use the provided MachineSet
         print(f"Using MachineSet: {args.machine_set}")

@@ -6,28 +6,22 @@ This script retrieves and displays information about a Vault token.
 It provides detailed token metadata and capabilities.
 """
 
-import logging
 import sys
-import os
 from datetime import datetime
 from typing import Dict, Optional, Any
 
 import click
-import hvac
 from rich.console import Console
 from rich.table import Table
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("vault_token_info.log"),
-    ],
-)
+from utils.vault_utils import create_vault_client
+from utils.logging_utils import setup_logging, get_logger
 
-logger = logging.getLogger(__name__)
+# Configure logging
+setup_logging(level="INFO")
+
+# Get module logger
+logger = get_logger(__name__)
 console = Console()
 
 
@@ -61,15 +55,7 @@ class VaultTokenInfo:
             FileNotFoundError: If verify_pem file doesn't exist
         """
         try:
-            if self.verify_pem:
-                if not os.path.exists(self.verify_pem):
-                    raise FileNotFoundError(f"SSL PEM file not found: {self.verify_pem}")
-                client = hvac.Client(url=self.vault_addr, token=self.token, verify=self.verify_pem)
-            else:
-                client = hvac.Client(url=self.vault_addr, token=self.token)
-            # Verify token is valid
-            client.auth.token.lookup_self()
-            return client
+            return create_vault_client(self.vault_addr, self.token, self.verify_pem)
         except Exception as e:
             logger.error(f"Failed to create Vault client: {str(e)}")
             raise

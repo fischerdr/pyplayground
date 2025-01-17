@@ -1,5 +1,27 @@
+
+spec:       
+  deleteStrategy:
+    type: UninstallAndWipe
+    
+
 #px install
 kubectl apply -f 'https://install.portworx.com/3.2?comp=pxoperator&kbver=1.28.6&ns=portworx'
-kubectl apply -f 'https://install.portworx.com/3.2?operator=true&mc=false&kbver=1.28.6&ns=portworx&oem=esse&user=70d88d39-2386-485c-ac99-d4f982b13f0b&b=true&dmthin=true&md=%2Fdev%2Fvdb&iop=6&f=true&c=px-cluster-1f46043e-7324-40bd-bbd7-de81aa409853&stork=true&csi=true&mon=true&tel=false&st=k8s&promop=true'
+kubectl apply -f 'https://install.portworx.com/3.2?operator=true&mc=false&kbver=1.28.6&ns=portworx&oem=esse&user=70d88d39-2386-485c-ac99-d4f982b13f0b&b=true&iop=6&f=true&j=auto&c=px-cluster-8d001833-50f6-470e-8139-e770bffd24d9&stork=true&csi=true&mon=true&tel=false&st=k8s&promop=true'
+
+kubectl patch storageclass px-csi-db -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+
+
 
 helm install px-central portworx/px-central --namespace px-backup --create-namespace --version 2.8.1 --set persistentStorage.enabled=true,persistentStorage.storageClassName="px-csi-db",pxbackup.enabled=true
+
+
+
+
+helm install prometheus prometheus-community/prometheus --create-namespace -n monitoring
+export POD_NAME=$(kubectl get pods --namespace monitoring -l "app.kubernetes.io/name=prometheus,app.kubernetes.io/instance=prometheus" -o jsonpath="{.items[0].metadata.name}")
+  kubectl --namespace monitoring port-forward $POD_NAME 9090
+export POD_NAME=$(kubectl get pods --namespace monitoring -l "app.kubernetes.io/name=alertmanager,app.kubernetes.io/instance=prometheus" -o jsonpath="{.items[0].metadata.name}")
+  kubectl --namespace monitoring port-forward $POD_NAME 9093
+ export POD_NAME=$(kubectl get pods --namespace monitoring -l "app=prometheus-pushgateway,component=pushgateway" -o jsonpath="{.items[0].metadata.name}")
+  kubectl --namespace monitoring port-forward $POD_NAME 9091
+

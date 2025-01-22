@@ -1,12 +1,19 @@
+"""
+Portworx node zone management utility for Kubernetes/OpenShift clusters.
+
+This module provides functionality to manage Portworx node zones in a Kubernetes/OpenShift
+cluster, including labeling nodes with zones, updating ConfigMaps, and managing node restarts.
+It supports both storage and storageless Portworx nodes.
+"""
+
 import argparse
 import json
 import logging
-import sys
 import time
-from typing import Any, Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 from kubernetes import client, config
-from kubernetes.client import ApiException, V1ConfigMap, V1Node, V1Pod
+from kubernetes.client import ApiException, V1Node, V1Pod
 
 from utils.k8s_utils import (
     get_machine_for_node,
@@ -47,6 +54,16 @@ class PortworxNodeManager:
         v1_client: Optional[client.CoreV1Api] = None,
         crd_client: Optional[client.CustomObjectsApi] = None,
     ) -> None:
+        """
+        Initialize the PortworxNodeManager.
+
+        Args:
+            fallback_zone: Default zone to use when no zone is found.
+            dry_run: If True, no actual changes will be made.
+            debug_cm: If True, enables debug mode for ConfigMap operations.
+            v1_client: Kubernetes CoreV1Api client.
+            crd_client: Kubernetes CustomObjectsApi client.
+        """
         self.v1 = v1_client
         self.crd = crd_client
         self.fallback_zone = fallback_zone
@@ -75,6 +92,7 @@ class PortworxNodeManager:
     def get_zone_for_node(self, node_name: str) -> str:
         """
         Fetch the zone for a node by checking its Machine and MachineSet.
+
         Preference is given to the MachineSet's zone. If no zone is found:
         - Fallback to provided `--zone` argument if given.
         - Ask the user for manual input as the last resort.
@@ -109,6 +127,16 @@ class PortworxNodeManager:
         return zone
 
     def label_node(self, node_name: str, labels: Dict[str, str]) -> None:
+        """
+        Apply labels to a Kubernetes node.
+
+        Args:
+            node_name: Name of the node to label.
+            labels: Dictionary of labels to apply to the node.
+
+        Returns:
+            None
+        """
         # Apply the label only if it's not a dry run
         if not self.dry_run:
             body = {"metadata": {"labels": labels}}
@@ -116,6 +144,16 @@ class PortworxNodeManager:
             print(f"Node {node_name} labeled successfully with {labels}.")
 
     def label_machine(self, machine_name: str, labels: Dict[str, str]) -> None:
+        """
+        Apply labels to an OpenShift Machine resource.
+
+        Args:
+            machine_name: Name of the machine to label.
+            labels: Dictionary of labels to apply to the machine.
+
+        Returns:
+            None
+        """
         print(f"Dry-run: {self.dry_run} - Adding labels {labels} to machine {machine_name}...")
         if not self.dry_run:
             body = {"metadata": {"labels": labels}}
@@ -130,6 +168,20 @@ class PortworxNodeManager:
             print(f"Machine {machine_name} labeled successfully with {labels}.")
 
     def update_cm(self, node_name: str, zone: str) -> None:
+        """
+        Update the Portworx ConfigMap with zone information for a specific node.
+
+        Args:
+            node_name: Name of the node to update in the ConfigMap.
+            zone: Zone value to set for the node.
+
+        Returns:
+            None
+
+        Note:
+            This method will create a backup of the ConfigMap before making changes
+            if not in dry-run mode.
+        """
         print(f"Fetching ConfigMap for node {node_name}...")
         config_maps = self.v1.list_namespaced_config_map(namespace="kube-system")
         for cm in config_maps.items:
@@ -174,6 +226,12 @@ class PortworxNodeManager:
                     print(f"No changes made to ConfigMap {cm.metadata.name} for {node_name}.")
 
     def get_px_nodes(self) -> List[V1Node]:
+        """
+        Get a list of all nodes that are running Portworx pods.
+
+        Returns:
+            List[V1Node]: List of Kubernetes Node objects that have Portworx pods running.
+        """
         print("Fetching all nodes where Portworx pods are running...")
         pods = self.v1.list_namespaced_pod(namespace="portworx", label_selector="name=portworx")
         px_nodes = set()
@@ -192,8 +250,13 @@ class PortworxNodeManager:
 
     def get_portworx_pod_for_node(self, node_name: str) -> Optional[V1Pod]:
         """
-        Get the Portworx pod running on a specific node by filtering with label 'name=portworx'
-        and checking the node name.
+        Get the Portworx pod running on a specific node by filtering with label 'name=portworx'.
+
+        Args:
+            node_name: Name of the node to find the Portworx pod for.
+
+        Returns:
+            Optional[V1Pod]: The Portworx pod running on the node, or None if not found.
         """
         try:
             pods = self.v1.list_namespaced_pod(namespace="portworx", label_selector="name=portworx")
@@ -206,6 +269,15 @@ class PortworxNodeManager:
             return None
 
     def label_px_nodes(self, node_names: List[str]) -> None:
+        """
+        Label Portworx nodes with their corresponding zone information.
+
+        Args:
+            node_names: List of node names to be labeled with zone information.
+
+        Returns:
+            None
+        """
         nodes = self.get_px_nodes()
         node_dict = {node.metadata.name: node for node in nodes}
         label_changed = False
@@ -296,6 +368,16 @@ class PortworxNodeManager:
 
 
 def load_nodes_from_file(file_path: str) -> List[str]:
+    """
+    Load a list of node names from a file.
+
+    Args:
+        file_path: Path to the file containing node names (one per line).
+
+    Returns:
+        List[str]: List of node names read from the file.
+        Returns empty list if file is not found.
+    """
     try:
         with open(file_path, "r") as f:
             nodes = [line.strip() for line in f.readlines() if line.strip()]

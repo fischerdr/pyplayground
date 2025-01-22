@@ -12,19 +12,22 @@ Date: 2025-01-16
 import csv
 import json
 import logging
-from typing import Dict, List, Tuple, Any, Optional
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class VMDKInfo:
     """Data class to store VMDK information."""
+
     filename: str
     datastore: str
     capacity_gb: float
     path: str
+
 
 def read_json_config(config_file: str) -> Dict[str, Any]:
     """
@@ -43,6 +46,7 @@ def read_json_config(config_file: str) -> Dict[str, Any]:
         logger.error(f"Failed to read JSON config file: {str(e)}")
         raise
 
+
 def write_json_config(config: Dict[str, Any], output_file: str) -> None:
     """
     Write configuration to JSON file.
@@ -58,6 +62,7 @@ def write_json_config(config: Dict[str, Any], output_file: str) -> None:
     except Exception as e:
         logger.error(f"Failed to write JSON config: {str(e)}")
         raise
+
 
 def read_mapping_file(mapping_file: str) -> List[Tuple[str, str]]:
     """
@@ -76,6 +81,7 @@ def read_mapping_file(mapping_file: str) -> List[Tuple[str, str]]:
         logger.error(f"Failed to read mapping file: {str(e)}")
         raise
 
+
 def write_mapping_file(mappings: List[Tuple[str, str]], output_file: str) -> None:
     """
     Write path mappings to CSV file.
@@ -93,6 +99,7 @@ def write_mapping_file(mappings: List[Tuple[str, str]], output_file: str) -> Non
         logger.error(f"Failed to write mapping file: {str(e)}")
         raise
 
+
 def extract_path_from_datastore_path(datastore_path: str) -> str:
     """
     Extract the file path portion from a datastore path.
@@ -105,10 +112,9 @@ def extract_path_from_datastore_path(datastore_path: str) -> str:
     """
     return datastore_path.split("] ", 1)[1] if "] " in datastore_path else datastore_path
 
+
 def generate_mapping_from_diff(
-    config_paths: Dict[str, float],
-    actual_paths: Dict[str, VMDKInfo],
-    mapping_file: str
+    config_paths: Dict[str, float], actual_paths: Dict[str, VMDKInfo], mapping_file: str
 ) -> None:
     """
     Generate mapping file from differences between config and actual paths.
@@ -119,7 +125,7 @@ def generate_mapping_from_diff(
         mapping_file: Path to output mapping file
     """
     mappings: List[Tuple[str, str]] = []
-    
+
     # Create mapping for paths that exist in both but might need updating
     for config_path, config_size in config_paths.items():
         for actual_path, vmdk_info in actual_paths.items():
@@ -133,6 +139,7 @@ def generate_mapping_from_diff(
         logger.info(f"Generated mapping file with {len(mappings)} entries")
     else:
         logger.info("No path mappings needed")
+
 
 def ensure_directory_exists(file_path: str) -> None:
     """

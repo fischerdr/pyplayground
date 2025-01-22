@@ -10,8 +10,9 @@ import requests
 logging.basicConfig(
     filename="ansible_tower.log",
     level=logging.ERROR,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
+
 
 @click.command()
 @click.option("--tower-url", envvar="TOWER_URL", required=True, help="Ansible Tower/Controller URL")
@@ -19,7 +20,11 @@ logging.basicConfig(
 @click.option("--template-name", required=True, help="Partial name of the job template")
 @click.option("--inventory-name", required=True, help="Partial name of the inventory")
 @click.option("--extra-vars", default="{}", help="Extra variables as JSON string")
-@click.option("--interactive", is_flag=True, help="Enable interactive mode for selecting templates and inventories")
+@click.option(
+    "--interactive",
+    is_flag=True,
+    help="Enable interactive mode for selecting templates and inventories",
+)
 @click.option("--output-file", default=None, help="File to save job output")
 def run_job(tower_url, token, template_name, inventory_name, extra_vars, interactive, output_file):
     """
@@ -60,7 +65,9 @@ def run_job(tower_url, token, template_name, inventory_name, extra_vars, interac
         if not resources:
             return None
         if len(resources) == 1:
-            print(f"Automatically selecting {resource_type}: {resources[0]['name']} (ID: {resources[0]['id']})")
+            print(
+                f"Automatically selecting {resource_type}: {resources[0]['name']} (ID: {resources[0]['id']})"
+            )
             return resources[0]["id"]
         while True:
             try:
@@ -70,20 +77,22 @@ def run_job(tower_url, token, template_name, inventory_name, extra_vars, interac
                     print(f"Selected {resource_type}: {selected['name']} (ID: {selected['id']})")
                     return selected["id"]
                 else:
-                    print(f"Invalid selection. Please choose a number between 1 and {len(resources)}.")
+                    print(
+                        f"Invalid selection. Please choose a number between 1 and {len(resources)}."
+                    )
             except ValueError:
                 print("Invalid input. Please enter a number.")
 
     def launch_job_template(job_template_id, inventory_id=None, extra_vars=None):
         """Launch an Ansible Tower job template."""
         url = f"{tower_url}/api/v2/job_templates/{job_template_id}/launch/"
-        
+
         payload = {}
         if inventory_id:
             payload["inventory"] = inventory_id
         if extra_vars:
             payload["extra_vars"] = json.loads(extra_vars)
-        
+
         try:
             response = requests.post(url, headers=headers, json=payload)
             response.raise_for_status()
@@ -97,7 +106,7 @@ def run_job(tower_url, token, template_name, inventory_name, extra_vars, interac
     def monitor_job_status(job_id):
         """Monitor the status of a running job and return its output."""
         url = f"{tower_url}/api/v2/jobs/{job_id}/"
-        
+
         while True:
             try:
                 response = requests.get(url, headers=headers)
@@ -166,7 +175,7 @@ def run_job(tower_url, token, template_name, inventory_name, extra_vars, interac
     if job_template_id and inventory_id:
         job = launch_job_template(job_template_id, inventory_id=inventory_id, extra_vars=extra_vars)
         if job:
-            final_job = monitor_job_status(job['id'])
+            final_job = monitor_job_status(job["id"])
             if final_job:
                 fetch_job_events(final_job["id"])
                 if output_file:
@@ -175,6 +184,7 @@ def run_job(tower_url, token, template_name, inventory_name, extra_vars, interac
                         with open(output_file, "w") as f:
                             f.write(output)
                         print(f"Job output saved to {output_file}")
+
 
 if __name__ == "__main__":
     run_job()

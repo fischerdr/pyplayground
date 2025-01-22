@@ -10,4 +10,4 @@ config/ directory for configuration files
 always keep Python project configuration (pyproject.toml) in sync with Requirements files (requirements.txt and requirements-dev.txt) and upto date
 always use double quotes for the value of the environment variable
 check docs for more information also when changes are made to the application,review the documentation and pyproject.toml file should be updated
-line length should not exceed 180 characters
+line length should not exceed 100 characters

@@ -5,7 +5,9 @@ import requests
 
 
 class KeycloakClient:
-    def __init__(self, keycloak_url, realm, client_id, client_secret, username, password, duration=3600):
+    def __init__(
+        self, keycloak_url, realm, client_id, client_secret, username, password, duration=3600
+    ):
         self.keycloak_url = keycloak_url
         self.realm = realm
         self.client_id = client_id
@@ -25,14 +27,14 @@ class KeycloakClient:
     def _get_token(self):
         """Obtain a new access token using the password grant type."""
         token_url = f"{self.keycloak_url}/realms/{self.realm}/protocol/openid-connect/token"
-        
+
         payload = {
-            'grant_type': 'password',  # Grant type is password
-            'client_id': self.client_id,
-            'client_secret': self.client_secret,
-            'username': self.username,
-            'password': self.password,
-            'duration': self.duration  # Optionally, set the duration for the access token
+            "grant_type": "password",  # Grant type is password
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "username": self.username,
+            "password": self.password,
+            "duration": self.duration,  # Optionally, set the duration for the access token
         }
 
         try:
@@ -40,9 +42,11 @@ class KeycloakClient:
 
             if response.status_code == 200:
                 token_data = response.json()
-                self.access_token = token_data['access_token']
-                self.refresh_token = token_data.get('refresh_token', None)  # refresh_token is optional for password grant
-                self.token_expiration = time.time() + token_data['expires_in']
+                self.access_token = token_data["access_token"]
+                self.refresh_token = token_data.get(
+                    "refresh_token", None
+                )  # refresh_token is optional for password grant
+                self.token_expiration = time.time() + token_data["expires_in"]
                 print("Token obtained successfully.")
             else:
                 print(f"Failed to get token: {response.status_code} - {response.text}")
@@ -57,10 +61,10 @@ class KeycloakClient:
 
             refresh_url = f"{self.keycloak_url}/realms/{self.realm}/protocol/openid-connect/token"
             payload = {
-                'grant_type': 'refresh_token',
-                'client_id': self.client_id,
-                'client_secret': self.client_secret,
-                'refresh_token': self.refresh_token
+                "grant_type": "refresh_token",
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "refresh_token": self.refresh_token,
             }
 
             try:
@@ -68,9 +72,11 @@ class KeycloakClient:
 
                 if response.status_code == 200:
                     token_data = response.json()
-                    self.access_token = token_data['access_token']
-                    self.refresh_token = token_data.get('refresh_token', self.refresh_token)  # Keep the existing refresh token
-                    self.token_expiration = time.time() + token_data['expires_in']
+                    self.access_token = token_data["access_token"]
+                    self.refresh_token = token_data.get(
+                        "refresh_token", self.refresh_token
+                    )  # Keep the existing refresh token
+                    self.token_expiration = time.time() + token_data["expires_in"]
                     print("Token refreshed successfully.")
                 else:
                     print(f"Failed to refresh token: {response.status_code} - {response.text}")
@@ -93,10 +99,7 @@ class KeycloakClient:
         if self.access_token is None or time.time() >= self.token_expiration - 30:
             self._refresh_token()
 
-        return {
-            'Authorization': f'Bearer {self.access_token}',
-            'Content-Type': 'application/json'
-        }
+        return {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
 
     def get(self, endpoint):
         """Send a GET request to Keycloak API."""
@@ -128,6 +131,7 @@ class KeycloakClient:
             print(f"Request failed: {e}")
             return None
 
+
 # Example usage
 if __name__ == "__main__":
     keycloak_url = "https://keycloak.example.com"  # Replace with your Keycloak URL
@@ -139,7 +143,9 @@ if __name__ == "__main__":
     duration = 3600  # Token duration in seconds (e.g., 1 hour)
 
     # Initialize the Keycloak client
-    keycloak_client = KeycloakClient(keycloak_url, realm, client_id, client_secret, username, password, duration)
+    keycloak_client = KeycloakClient(
+        keycloak_url, realm, client_id, client_secret, username, password, duration
+    )
 
     # Example: Get information about the authenticated user (using the access token)
     user_info = keycloak_client.get("userinfo")
@@ -152,7 +158,7 @@ if __name__ == "__main__":
         "email": "newuser@example.com",
         "enabled": True,
         "firstName": "New",
-        "lastName": "User"
+        "lastName": "User",
     }
     user_creation_response = keycloak_client.post("users", data=new_user)
     if user_creation_response:

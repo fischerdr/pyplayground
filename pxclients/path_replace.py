@@ -14,9 +14,11 @@ diff /tmp/1.json /tmp/2.json
 kubectl apply -f clouddrive.cm_modified.json    
     
     """
+
+
 def read_csv(file_path):
     path_mappings = []
-    with open(file_path, mode='r') as file:
+    with open(file_path, mode="r") as file:
         csv_reader = csv.reader(file)
         for row in csv_reader:
             if len(row) == 2:
@@ -24,23 +26,25 @@ def read_csv(file_path):
                 path_mappings.append((old_path, new_path))
     return path_mappings
 
+
 def replace_paths_in_json(json_content, path_mappings):
     json_str = json.dumps(json_content)
-    #print(json_str)
+    # print(json_str)
     for old_path, new_path in path_mappings:
         old_path = old_path.split()[1]
         new_path = new_path.split()[1]
-        #print(f"{old_path} {new_path}")
+        # print(f"{old_path} {new_path}")
         json_str = json_str.replace(old_path, new_path)
-    #print(json_str)
+    # print(json_str)
     return json.loads(json_str)
+
 
 def main(csv_file_path, json_file_path):
     # Read the CSV file
     path_mappings = read_csv(csv_file_path)
 
     # Read the JSON file
-    with open(json_file_path, 'r') as json_file:
+    with open(json_file_path, "r") as json_file:
         json_content = json.load(json_file)
 
     # Replace old paths with new paths
@@ -51,15 +55,18 @@ def main(csv_file_path, json_file_path):
     output_file_path = f"{base}_modified{ext}"
 
     # Write the updated JSON content to the new file
-    with open(output_file_path, 'w') as output_file:
+    with open(output_file_path, "w") as output_file:
         json.dump(updated_json_content, output_file, indent=4)
 
     print(f"Updated JSON content has been saved to {output_file_path}")
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Replace paths in a JSON file based on a CSV mapping file.")
-    parser.add_argument('--mapping', required=True, help="Path to the CSV mapping file.")
-    parser.add_argument('--cd_config', required=True, help="Path to the JSON configuration file.")
+    parser = argparse.ArgumentParser(
+        description="Replace paths in a JSON file based on a CSV mapping file."
+    )
+    parser.add_argument("--mapping", required=True, help="Path to the CSV mapping file.")
+    parser.add_argument("--cd_config", required=True, help="Path to the JSON configuration file.")
 
     args = parser.parse_args()
 

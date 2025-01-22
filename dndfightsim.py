@@ -5,33 +5,33 @@ weapons = [
     {"name": "Short Sword", "damage": (1, 6)},
     {"name": "Long Sword", "damage": (1, 8)},
     {"name": "Bow", "damage": (1, 8)},
-    {"name": "Dagger", "damage": (1, 4)}
+    {"name": "Dagger", "damage": (1, 4)},
 ]
 
 armors = [
     {"name": "Leather Armor", "ac_bonus": 1},
     {"name": "Chain Mail", "ac_bonus": 3},
     {"name": "Plate Armor", "ac_bonus": 5},
-    {"name": "Cloth", "ac_bonus": 0}
+    {"name": "Cloth", "ac_bonus": 0},
 ]
 
 # Offensive and defensive spells for Mage
 offensive_spells = [
     {"name": "Fireball", "damage": (5, 10)},
-    {"name": "Lightning Bolt", "damage": (4, 8)}
+    {"name": "Lightning Bolt", "damage": (4, 8)},
 ]
 
 defensive_spells = [
-    {"name": "Shield", "ac_bonus": 2, "duration": 3},  # Lasts for 3 turns
-    {"name": "Healing Light", "heal": (3, 6)}
-]
+    {"name": "Shield", "ac_bonus": 2, "duration": 3},
+    {"name": "Healing Light", "heal": (3, 6)},
+]  # Lasts for 3 turns
 
 
 class BattleGrid:
     def __init__(self, width, height):
         self.width = width
         self.height = height
-        self.grid = [[' ' for _ in range(width)] for _ in range(height)]
+        self.grid = [[" " for _ in range(width)] for _ in range(height)]
         self.characters = {}
         self.cover = set()
         self.hazards = set()
@@ -47,7 +47,7 @@ class BattleGrid:
         x, y = self.characters[character]
         new_x, new_y = x + dx, y + dy
         if 0 <= new_x < self.width and 0 <= new_y < self.height:
-            self.grid[y][x] = ' '
+            self.grid[y][x] = " "
             self.characters[character] = (new_x, new_y)
             self.grid[new_y][new_x] = character.name[0]
             return True
@@ -56,16 +56,16 @@ class BattleGrid:
     def add_cover(self, x, y):
         if 0 <= x < self.width and 0 <= y < self.height:
             self.cover.add((x, y))
-            self.grid[y][x] = 'C'
+            self.grid[y][x] = "C"
 
     def add_hazard(self, x, y, damage):
         if 0 <= x < self.width and 0 <= y < self.height:
             self.hazards.add((x, y, damage))
-            self.grid[y][x] = 'H'
+            self.grid[y][x] = "H"
 
     def is_in_cover(self, character):
         x, y = self.characters[character]
-        return any((abs(x-cx) + abs(y-cy) == 1) for cx, cy in self.cover)
+        return any((abs(x - cx) + abs(y - cy) == 1) for cx, cy in self.cover)
 
     def apply_hazards(self, character):
         x, y = self.characters[character]
@@ -75,7 +75,8 @@ class BattleGrid:
                 print(f"{character.name} takes {damage} damage from a hazard!")
 
     def __str__(self):
-        return '\n'.join([''.join(row) for row in self.grid])
+        return "\n".join(["".join(row) for row in self.grid])
+
 
 class CombatAI:
     def __init__(self, character, personality):
@@ -83,7 +84,7 @@ class CombatAI:
         self.personality = personality
 
     def choose_action(self, opponent, battle_grid):
-        actions = ['attack', 'move', 'dodge', 'parry', 'use_item']
+        actions = ["attack", "move", "dodge", "parry", "use_item"]
         weights = self.calculate_action_weights(opponent, battle_grid)
         return random.choices(actions, weights=weights)[0]
 
@@ -91,12 +92,12 @@ class CombatAI:
         weights = [1, 1, 1, 1, 1]  # Base weights for [attack, move, dodge, parry, use_item]
 
         # Adjust weights based on personality
-        if self.personality == 'aggressive':
+        if self.personality == "aggressive":
             weights[0] *= 2  # More likely to attack
-        elif self.personality == 'cautious':
+        elif self.personality == "cautious":
             weights[2] *= 1.5  # More likely to dodge
             weights[3] *= 1.5  # More likely to parry
-        elif self.personality == 'tactical':
+        elif self.personality == "tactical":
             weights[1] *= 1.5  # More likely to move
             weights[4] *= 1.5  # More likely to use items
 
@@ -119,12 +120,12 @@ class CombatAI:
     def choose_move_direction(self, battle_grid, opponent):
         char_x, char_y = battle_grid.characters[self.character]
         opp_x, opp_y = battle_grid.characters[opponent]
-        
-        if self.personality == 'aggressive':
+
+        if self.personality == "aggressive":
             # Move towards opponent
             dx = 1 if opp_x > char_x else -1 if opp_x < char_x else 0
             dy = 1 if opp_y > char_y else -1 if opp_y < char_y else 0
-        elif self.personality == 'cautious':
+        elif self.personality == "cautious":
             # Move away from opponent
             dx = -1 if opp_x > char_x else 1 if opp_x < char_x else 0
             dy = -1 if opp_y > char_y else 1 if opp_y < char_y else 0
@@ -132,13 +133,16 @@ class CombatAI:
             # Move towards cover or randomly
             cover_positions = list(battle_grid.cover)
             if cover_positions:
-                target_x, target_y = min(cover_positions, key=lambda pos: (pos[0]-char_x)**2 + (pos[1]-char_y)**2)
+                target_x, target_y = min(
+                    cover_positions, key=lambda pos: (pos[0] - char_x) ** 2 + (pos[1] - char_y) ** 2
+                )
                 dx = 1 if target_x > char_x else -1 if target_x < char_x else 0
                 dy = 1 if target_y > char_y else -1 if target_y < char_y else 0
             else:
                 dx, dy = random.choice([(0, 1), (0, -1), (1, 0), (-1, 0)])
-        
+
         return dx, dy
+
 
 class Character:
     def __init__(self, name):
@@ -166,7 +170,7 @@ class Character:
         self.xp_to_next_level = 100
         self.status_effects = []
         self.inventory = []
-        self.personality = random.choice(['aggressive', 'cautious', 'tactical'])
+        self.personality = random.choice(["aggressive", "cautious", "tactical"])
         self.ai = CombatAI(self, self.personality)
 
     def ranged_attack(self, target, battle_grid):
@@ -179,16 +183,16 @@ class Character:
         roll = random.randint(1, 20)
         if roll == 20:
             print(f"Critical hit by {self.name}!")
-            return float('inf')  # Guarantee a hit
+            return float("inf")  # Guarantee a hit
         elif roll == 1:
             print(f"Critical miss by {self.name}!")
-            return float('-inf')  # Guarantee a miss
+            return float("-inf")  # Guarantee a miss
         return roll + (self.strength - 10) // 2
 
     def deal_damage(self):
         base_damage = random.randint(self.weapon["damage"][0], self.weapon["damage"][1])
         damage = base_damage + (self.strength - 10) // 2
-        if self.attack() == float('inf'):  # Critical hit
+        if self.attack() == float("inf"):  # Critical hit
             damage *= 2
         return damage
 
@@ -198,7 +202,9 @@ class Character:
 
     def parry(self):
         parry_bonus = (self.dexterity - 10) // 2
-        print(f"{self.name} prepares to parry. Next attack against them has a -{parry_bonus} penalty.")
+        print(
+            f"{self.name} prepares to parry. Next attack against them has a -{parry_bonus} penalty."
+        )
         return parry_bonus
 
     def use_item(self):
@@ -221,20 +227,20 @@ class Character:
 
     def process_status_effects(self):
         for effect in self.status_effects:
-            if effect['name'] == 'poisoned':
+            if effect["name"] == "poisoned":
                 damage = random.randint(1, 4)
                 self.hp -= damage
                 print(f"{self.name} takes {damage} poison damage.")
-            elif effect['name'] == 'stunned':
+            elif effect["name"] == "stunned":
                 print(f"{self.name} is stunned and loses their turn.")
                 return False
-            effect['duration'] -= 1
-        self.status_effects = [effect for effect in self.status_effects if effect['duration'] > 0]
+            effect["duration"] -= 1
+        self.status_effects = [effect for effect in self.status_effects if effect["duration"] > 0]
         return True
 
     def end_turn(self):
         self.ac = 10 + (self.dexterity - 10) // 2 + self.armor["ac_bonus"]  # Reset AC
-  
+
     def take_damage(self, damage):
         self.hp -= damage
         return self.hp <= 0
@@ -255,17 +261,23 @@ class Character:
         self.hp += random.randint(1, 8) + (self.constitution - 10) // 2
 
         print(f"{self.name} has reached level {self.level}!")
-        print(f"New stats: STR: {self.strength}, DEX: {self.dexterity}, CON: {self.constitution}, HP: {self.hp}")
+        print(
+            f"New stats: STR: {self.strength}, DEX: {self.dexterity}, CON: {self.constitution}, HP: {self.hp}"
+        )
 
     def __str__(self):
-        return (f"{self.name} (Level {self.level}) - HP: {self.hp}, AC: {self.ac}, "
-                f"Weapon: {self.weapon['name']}, Armor: {self.armor['name']}, "
-                f"STR: {self.strength}, DEX: {self.dexterity}, CON: {self.constitution}")
+        return (
+            f"{self.name} (Level {self.level}) - HP: {self.hp}, AC: {self.ac}, "
+            f"Weapon: {self.weapon['name']}, Armor: {self.armor['name']}, "
+            f"STR: {self.strength}, DEX: {self.dexterity}, CON: {self.constitution}"
+        )
+
 
 class Warrior(Character):
     def __init__(self, name):
         super().__init__(name)
         self.class_name = "Warrior"
+
 
 class Mage(Character):
     def __init__(self, name):
@@ -305,6 +317,7 @@ class Mage(Character):
                 self.ac -= self.active_defense_spell["ac_bonus"]
                 self.active_defense_spell = None
 
+
 class Ranger(Character):
     def __init__(self, name):
         super().__init__(name)
@@ -316,6 +329,7 @@ class Ranger(Character):
     def ranged_damage(self):
         base_damage = random.randint(self.weapon["damage"][0], self.weapon["damage"][1])
         return base_damage + (self.dexterity - 10) // 2
+
 
 class Rogue(Character):
     def __init__(self, name):
@@ -333,6 +347,7 @@ class Rogue(Character):
             return base_roll + self.sneak_attack()
         return base_roll
 
+
 def create_random_character(name, character_class):
     character = Character(name)
     if character_class == "Warrior":
@@ -348,11 +363,12 @@ def create_random_character(name, character_class):
     items = [
         {"name": "Health Potion", "type": "healing", "heal": (5, 10)},
         {"name": "Fire Bomb", "type": "damage", "damage": (3, 8)},
-        {"name": "Antidote", "type": "healing", "heal": (1, 4)}
+        {"name": "Antidote", "type": "healing", "heal": (1, 4)},
     ]
     character.inventory = random.sample(items, 2)
 
     return character
+
 
 def fight(character1, character2, battle_grid):
     print(f"Battle begins between {character1.name} and {character2.name}!")
@@ -372,59 +388,67 @@ def fight(character1, character2, battle_grid):
                 continue
 
             battle_grid.apply_hazards(character)
-            
+
             print(f"{character.name}'s turn:")
             action = character.ai.choose_action(opponent, battle_grid)
-            
-            if action == 'attack':
+
+            if action == "attack":
                 if isinstance(character, Ranger):
                     attack_roll = character.ranged_attack(opponent, battle_grid)
                     print(f"{character.name} makes a ranged attack!")
                 else:
                     attack_roll = character.attack()
                     print(f"{character.name} attacks!")
-                
-                if attack_roll == float('inf') or attack_roll >= opponent.ac:
+
+                if attack_roll == float("inf") or attack_roll >= opponent.ac:
                     damage = character.deal_damage()
                     print(f"{character.name} hits {opponent.name} for {damage} damage.")
                     if opponent.take_damage(damage):
                         print(f"{opponent.name} has been defeated!")
                         return character.name
                     if random.random() < 0.1:  # 10% chance to apply a status effect
-                        effect = random.choice([
-                            {'name': 'poisoned', 'duration': 3},
-                            {'name': 'stunned', 'duration': 1}
-                        ])
+                        effect = random.choice(
+                            [
+                                {"name": "poisoned", "duration": 3},
+                                {"name": "stunned", "duration": 1},
+                            ]
+                        )
                         opponent.apply_status_effect(effect)
                 else:
                     print(f"{character.name} misses {opponent.name}.")
-            
-            elif action == 'move':
+
+            elif action == "move":
                 dx, dy = character.ai.choose_move_direction(battle_grid, opponent)
                 if battle_grid.move_character(character, dx, dy):
                     print(f"{character.name} moves.")
                     print(battle_grid)
                 else:
                     print(f"{character.name} couldn't move.")
-            
-            elif action == 'dodge':
+
+            elif action == "dodge":
                 dodge_bonus = character.dodge()
                 print(f"{character.name} dodges, gaining +{dodge_bonus} to AC until next turn.")
-            
-            elif action == 'parry':
+
+            elif action == "parry":
                 parry_bonus = character.parry()
-                print(f"{character.name} prepares to parry, gaining +{parry_bonus} to AC against next attack.")
-            
-            elif action == 'use_item':
+                print(
+                    f"{character.name} prepares to parry, gaining +{parry_bonus} to AC against next attack."
+                )
+
+            elif action == "use_item":
                 item = character.use_item()
                 if item:
-                    if item['type'] == 'healing':
-                        heal_amount = random.randint(item['heal'][0], item['heal'][1])
+                    if item["type"] == "healing":
+                        heal_amount = random.randint(item["heal"][0], item["heal"][1])
                         character.hp += heal_amount
-                        print(f"{character.name} uses {item['name']} and heals for {heal_amount} HP.")
-                    elif item['type'] == 'damage':
-                        damage = random.randint(item['damage'][0], item['damage'][1])
-                        print(f"{character.name} uses {item['name']} on {opponent.name} for {damage} damage.")
+                        print(
+                            f"{character.name} uses {item['name']} and heals for {heal_amount} HP."
+                        )
+                    elif item["type"] == "damage":
+                        damage = random.randint(item["damage"][0], item["damage"][1])
+                        print(
+                            f"{character.name} uses {item['name']} on {opponent.name} for {damage} damage."
+                        )
                         if opponent.take_damage(damage):
                             print(f"{opponent.name} has been defeated!")
                             return character.name
@@ -432,9 +456,11 @@ def fight(character1, character2, battle_grid):
                     print(f"{character.name} has no items to use.")
 
             # Class-specific actions
-            if isinstance(character, Mage) and random.random() < 0.3:  # 30% chance for Mage to cast a spell
-                spell_type = random.choice(['offensive', 'defensive'])
-                if spell_type == 'offensive':
+            if (
+                isinstance(character, Mage) and random.random() < 0.3
+            ):  # 30% chance for Mage to cast a spell
+                spell_type = random.choice(["offensive", "defensive"])
+                if spell_type == "offensive":
                     spell_name, damage = character.cast_offensive_spell()
                     if spell_name:
                         print(f"{character.name} casts {spell_name}!")

@@ -8,14 +8,14 @@ It provides detailed token metadata and capabilities.
 
 import sys
 from datetime import datetime
-from typing import Dict, Optional, Any
+from typing import Any, Dict, Optional
 
 import click
 from rich.console import Console
 from rich.table import Table
 
+from utils.logging_utils import get_logger, setup_logging
 from utils.vault_utils import create_vault_client
-from utils.logging_utils import setup_logging, get_logger
 
 # Configure logging
 setup_logging(level="INFO")
@@ -112,9 +112,9 @@ class VaultTokenInfo:
                 if field == "creation_time":
                     # Convert Unix timestamp to readable format
                     try:
-                        value = datetime.fromtimestamp(
-                            float(token_info[field])
-                        ).strftime("%Y-%m-%d %H:%M:%S")
+                        value = datetime.fromtimestamp(float(token_info[field])).strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        )
                     except (ValueError, TypeError):
                         pass
                 table.add_row(field, value)

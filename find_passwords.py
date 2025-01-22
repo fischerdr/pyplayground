@@ -23,11 +23,12 @@ from rich.logging import RichHandler
 from rich.table import Table
 from rich.text import Text
 
-from utils.password_finder import process_file, FileResult
+from utils.password_finder import FileResult, process_file
 
 # Initialize typer app and rich console
 app = typer.Typer(help="Search for exposed secrets in code and config files")
 console = Console()
+
 
 def setup_logging(log_level: str = "INFO") -> None:
     """
@@ -40,13 +41,14 @@ def setup_logging(log_level: str = "INFO") -> None:
         level=log_level,
         format="%(message)s",
         datefmt="[%X]",
-        handlers=[RichHandler(rich_tracebacks=True)]
+        handlers=[RichHandler(rich_tracebacks=True)],
     )
+
 
 def scan_directory(
     directory: Path,
     ignore_tests: bool = True,
-    file_patterns: List[str] = ["*.json", "*.yaml", "*.yml", "*.py", "*.md", "*.env", "*.conf"]
+    file_patterns: List[str] = ["*.json", "*.yaml", "*.yml", "*.py", "*.md", "*.env", "*.conf"],
 ) -> List[FileResult]:
     """
     Scan directory for files containing potential secret exposures.
@@ -61,7 +63,7 @@ def scan_directory(
     """
     logger = logging.getLogger(__name__)
     results: List[FileResult] = []
-    
+
     try:
         for pattern in file_patterns:
             for file_path in directory.rglob(pattern):
@@ -69,8 +71,9 @@ def scan_directory(
                     results.append(result)
     except Exception as e:
         logger.error(f"Error scanning directory {directory}: {str(e)}")
-        
+
     return results
+
 
 def get_secret_style(secret_type: str) -> str:
     """Get the appropriate color style based on secret type."""
@@ -81,8 +84,9 @@ def get_secret_style(secret_type: str) -> str:
         "Private Key": "red",
         "Token": "yellow",
         "Environment Variable": "blue",
-        "Secret": "magenta"
+        "Secret": "magenta",
     }.get(secret_type, "white")
+
 
 def display_results(results: List[FileResult], base_dir: Path) -> None:
     """
@@ -100,9 +104,9 @@ def display_results(results: List[FileResult], base_dir: Path) -> None:
         show_header=True,
         header_style="bold magenta",
         title="[bold red]Potential Secrets Found[/bold red]",
-        caption="[yellow]Note: Review these findings carefully for false positives[/yellow]"
+        caption="[yellow]Note: Review these findings carefully for false positives[/yellow]",
     )
-    
+
     table.add_column("File", style="cyan")
     table.add_column("Type", style="green")
     table.add_column("Line #")
@@ -117,22 +121,23 @@ def display_results(results: List[FileResult], base_dir: Path) -> None:
         except ValueError:
             # Fallback to filename if path is not relative to base_dir
             rel_path = Path(result["file"]).name
-            
+
         for secret_info in result["passwords"]:
             secret_style = get_secret_style(secret_info["type"])
             secret_value = Text(secret_info["password"], style=secret_style)
-            
+
             table.add_row(
                 str(rel_path),
                 secret_info["type"],
                 str(secret_info["line"]) if secret_info["line"] else "N/A",
                 secret_value,
-                secret_info["text"] if secret_info["text"] else "N/A"
+                secret_info["text"] if secret_info["text"] else "N/A",
             )
             total_secrets += 1
 
     console.print(table)
     console.print(f"\n[bold]Total secrets found: {total_secrets}[/bold]")
+
 
 @app.command()
 def main(
@@ -142,33 +147,32 @@ def main(
         exists=True,
         file_okay=False,
         dir_okay=True,
-        resolve_path=True
+        resolve_path=True,
     ),
     log_level: str = typer.Option(
-        "INFO",
-        "--log-level", "-l",
-        help="Logging level (DEBUG, INFO, WARNING, ERROR)"
+        "INFO", "--log-level", "-l", help="Logging level (DEBUG, INFO, WARNING, ERROR)"
     ),
     ignore_tests: bool = typer.Option(
         True,
         "--ignore-tests/--include-tests",
         "-i/-I",
-        help="Whether to ignore test files and directories"
-    )
+        help="Whether to ignore test files and directories",
+    ),
 ) -> None:
     """
     Scan directory for potential secret exposures in code and config files.
     """
     setup_logging(log_level)
     logger = logging.getLogger(__name__)
-    
+
     # Resolve the absolute path of the directory
     abs_directory = directory.resolve()
     logger.info(f"Scanning directory: {abs_directory}")
     logger.info(f"Test files will be {'ignored' if ignore_tests else 'included'}")
-    
+
     results = scan_directory(abs_directory, ignore_tests)
     display_results(results, abs_directory)
+
 
 if __name__ == "__main__":
     app()

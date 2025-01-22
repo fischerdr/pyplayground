@@ -15,5 +15,4 @@ class DictX(dict):
             raise AttributeError(k)
 
     def __repr__(self):
-        return '<DictX ' + dict.__repr__(self) + '>'
-
+        return "<DictX " + dict.__repr__(self) + ">"

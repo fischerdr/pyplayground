@@ -1,19 +1,21 @@
 """Kubernetes utility functions."""
 
+import json
 import logging
 import time
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
+
 from kubernetes import client, config
 from kubernetes.client import ApiClient
 from kubernetes.client.rest import ApiException
-import json
 
 logger = logging.getLogger(__name__)
+
 
 def load_kube_config(config_file: Optional[str] = None, context: Optional[str] = None) -> None:
     """
     Load Kubernetes configuration from a kubeconfig file.
-    
+
     Args:
         config_file: Optional path to kubeconfig file
         context: Optional context to use
@@ -27,13 +29,14 @@ def load_kube_config(config_file: Optional[str] = None, context: Optional[str] =
         logger.error(f"Failed to load kubeconfig: {e}")
         raise
 
+
 def get_k8s_client(api_version: str = "CoreV1Api") -> Any:
     """
     Get a Kubernetes API client.
-    
+
     Args:
         api_version: The API version to use (e.g., "CoreV1Api", "CustomObjectsApi")
-    
+
     Returns:
         Kubernetes API client
     """
@@ -44,6 +47,7 @@ def get_k8s_client(api_version: str = "CoreV1Api") -> Any:
         logger.error(f"Invalid API version: {api_version}")
         raise
 
+
 def exec_pod_command(
     namespace: str,
     pod_name: str,
@@ -52,11 +56,11 @@ def exec_pod_command(
     stdout: bool = True,
     stderr: bool = True,
     stdin: bool = False,
-    tty: bool = False
+    tty: bool = False,
 ) -> Dict[str, str]:
     """
     Execute a command in a pod.
-    
+
     Args:
         namespace: Pod namespace
         pod_name: Pod name
@@ -66,18 +70,18 @@ def exec_pod_command(
         stderr: Capture stderr
         stdin: Enable stdin
         tty: Enable TTY
-    
+
     Returns:
         Dict containing stdout and stderr
     """
     try:
         core_v1 = client.CoreV1Api()
         resp = core_v1.read_namespaced_pod(name=pod_name, namespace=namespace)
-        
+
         if not container and len(resp.spec.containers) > 1:
             container = resp.spec.containers[0].name
             logger.warning(f"Multiple containers found, using: {container}")
-        
+
         exec_command = [str(cmd) for cmd in command]
         resp = stream(
             core_v1.connect_get_namespaced_pod_exec,
@@ -89,27 +93,25 @@ def exec_pod_command(
             stderr=stderr,
             stdin=stdin,
             tty=tty,
-            _preload_content=False
+            _preload_content=False,
         )
-        
-        output = resp.read_all().decode('utf-8')
+
+        output = resp.read_all().decode("utf-8")
         error = None
-        
+
         if resp.returncode != 0:
             error = f"Command failed with exit code {resp.returncode}"
             logger.error(error)
-        
+
         return {"stdout": output, "stderr": error}
-        
+
     except ApiException as e:
         logger.error(f"Failed to execute command in pod: {e}")
         raise
 
+
 def wait_for_pod_readiness(
-    pod_name: str,
-    namespace: str,
-    timeout: int = 420,
-    v1_client: Optional[client.CoreV1Api] = None
+    pod_name: str, namespace: str, timeout: int = 420, v1_client: Optional[client.CoreV1Api] = None
 ) -> bool:
     """Wait for a pod to be ready (1/1) with a timeout.
 
@@ -140,22 +142,24 @@ def wait_for_pod_readiness(
             return False
 
         elapsed_time += interval
-        logger.debug(f"Waiting for pod {pod_name} to be ready... ({elapsed_time}/{timeout} seconds elapsed)")
+        logger.debug(
+            f"Waiting for pod {pod_name} to be ready... ({elapsed_time}/{timeout} seconds elapsed)"
+        )
         time.sleep(interval)
 
     logger.warning(f"Timeout reached: Pod {pod_name} is not ready after {timeout} seconds.")
     return False
 
+
 def get_machine_for_node(
-    node_name: str,
-    crd_client: Optional[client.CustomObjectsApi] = None
+    node_name: str, crd_client: Optional[client.CustomObjectsApi] = None
 ) -> Optional[Dict[str, Any]]:
     """Query Kubernetes for the Machine object associated with a Node.
-    
+
     Args:
         node_name: Name of the node to find the associated Machine for
         crd_client: Optional CustomObjectsApi client. If not provided, creates a new one.
-        
+
     Returns:
         Optional[Dict[str, Any]]: The Machine object if found, None otherwise
     """
@@ -164,13 +168,11 @@ def get_machine_for_node(
 
     try:
         machines = crd_client.list_cluster_custom_object(
-            group="machine.openshift.io",
-            version="v1beta1",
-            plural="machines"
+            group="machine.openshift.io", version="v1beta1", plural="machines"
         )
 
-        for machine in machines['items']:
-            if machine['status']['nodeRef']['name'] == node_name:
+        for machine in machines["items"]:
+            if machine["status"]["nodeRef"]["name"] == node_name:
                 logger.info(f"Found Machine {machine['metadata']['name']} for Node {node_name}")
                 return machine
         logger.warning(f"No Machine found for Node {node_name}. This might be UPI.")
@@ -179,16 +181,16 @@ def get_machine_for_node(
         logger.error(f"Error fetching Machine for Node {node_name}: {e}")
         return None
 
+
 def get_machineset_for_machine(
-    machine: Dict[str, Any],
-    crd_client: Optional[client.CustomObjectsApi] = None
+    machine: Dict[str, Any], crd_client: Optional[client.CustomObjectsApi] = None
 ) -> Optional[Dict[str, Any]]:
     """Query Kubernetes for the MachineSet associated with a Machine.
-    
+
     Args:
         machine: The Machine object to find the associated MachineSet for
         crd_client: Optional CustomObjectsApi client. If not provided, creates a new one.
-        
+
     Returns:
         Optional[Dict[str, Any]]: The MachineSet object if found, None otherwise
     """
@@ -197,36 +199,37 @@ def get_machineset_for_machine(
 
     try:
         machinesets = crd_client.list_cluster_custom_object(
-            group="machine.openshift.io",
-            version="v1beta1",
-            plural="machinesets"
+            group="machine.openshift.io", version="v1beta1", plural="machinesets"
         )
 
-        machine_name = machine['metadata']['name']
-        for ms in machinesets['items']:
-            if ms['metadata']['name'] in machine_name:
+        machine_name = machine["metadata"]["name"]
+        for ms in machinesets["items"]:
+            if ms["metadata"]["name"] in machine_name:
                 logger.info(f"Found MachineSet {ms['metadata']['name']} for Machine {machine_name}")
                 return ms
         logger.warning(f"No MachineSet found for Machine {machine_name}.")
         return None
     except Exception as e:
-        logger.error(f"Error fetching MachineSet for Machine {machine['metadata'].get('name', 'unknown')}: {e}")
+        logger.error(
+            f"Error fetching MachineSet for Machine {machine['metadata'].get('name', 'unknown')}: {e}"
+        )
         return None
+
 
 def get_nodes_from_machineset_specific(
     machineset_name: str,
     label_key: Optional[str] = None,
     crd_client: Optional[client.CustomObjectsApi] = None,
-    namespace: str = "openshift-machine-api"
+    namespace: str = "openshift-machine-api",
 ) -> Dict[str, Dict[str, str]]:
     """Query Kubernetes for nodes associated with a specific MachineSet and their labels.
-    
+
     Args:
         machineset_name: Name of the MachineSet to query
         label_key: Optional label key to extract from MachineSet (e.g., "topology.kubernetes.io/zone")
         crd_client: Optional CustomObjectsApi client. If not provided, creates a new one.
         namespace: Namespace where MachineSets reside (default: openshift-machine-api)
-        
+
     Returns:
         Dict[str, Dict[str, str]]: A dictionary mapping node names to their labels and values.
         Example: {"node1": {"zone": "us-east-1a", "label2": "value2"}}
@@ -240,11 +243,13 @@ def get_nodes_from_machineset_specific(
             group="machine.openshift.io",
             version="v1beta1",
             namespace=namespace,
-            plural="machinesets"
+            plural="machinesets",
         )
 
         # Find the specific MachineSet object by name
-        machineset = next((ms for ms in machinesets['items'] if ms['metadata']['name'] == machineset_name), None)
+        machineset = next(
+            (ms for ms in machinesets["items"] if ms["metadata"]["name"] == machineset_name), None
+        )
 
         if not machineset:
             logger.error(f"MachineSet {machineset_name} not found.")
@@ -253,32 +258,33 @@ def get_nodes_from_machineset_specific(
         node_info: Dict[str, Dict[str, str]] = {}
 
         # Extract labels from the MachineSet
-        ms_labels = machineset.get('metadata', {}).get('labels', {})
+        ms_labels = machineset.get("metadata", {}).get("labels", {})
         if label_key and label_key in ms_labels:
-            logger.info(f"Found label {label_key}={ms_labels[label_key]} in MachineSet {machineset_name}")
+            logger.info(
+                f"Found label {label_key}={ms_labels[label_key]} in MachineSet {machineset_name}"
+            )
         else:
             if label_key:
                 logger.warning(f"Label {label_key} not found in MachineSet {machineset_name}")
 
         # Find associated machines for the MachineSet
         machines = crd_client.list_namespaced_custom_object(
-            group="machine.openshift.io",
-            version="v1beta1",
-            namespace=namespace,
-            plural="machines"
+            group="machine.openshift.io", version="v1beta1", namespace=namespace, plural="machines"
         )
 
-        for machine in machines['items']:
+        for machine in machines["items"]:
             # Check if the machine is part of the specified MachineSet
-            if machineset_name in machine['metadata']['name'] and 'status' in machine:
-                node_name = machine['status'].get('nodeRef', {}).get('name', None)
+            if machineset_name in machine["metadata"]["name"] and "status" in machine:
+                node_name = machine["status"].get("nodeRef", {}).get("name", None)
                 if node_name:
                     # Store all labels and their values
                     node_info[node_name] = ms_labels.copy()
                     logger.info(f"Associated node {node_name} with MachineSet {machineset_name}")
 
         if node_info:
-            logger.info(f"Found {len(node_info)} node(s) associated with MachineSet {machineset_name}.")
+            logger.info(
+                f"Found {len(node_info)} node(s) associated with MachineSet {machineset_name}."
+            )
         else:
             logger.warning(f"No nodes found in MachineSet {machineset_name}.")
 
@@ -288,18 +294,19 @@ def get_nodes_from_machineset_specific(
         logger.error(f"Error retrieving nodes from MachineSet {machineset_name}: {e}")
         return {}
 
+
 def get_nodes_from_machinesets(
     label_key: Optional[str] = None,
     crd_client: Optional[client.CustomObjectsApi] = None,
-    namespace: str = "openshift-machine-api"
+    namespace: str = "openshift-machine-api",
 ) -> Dict[str, Dict[str, str]]:
     """Query Kubernetes for all nodes associated with MachineSets and their labels.
-    
+
     Args:
         label_key: Optional label key to extract from MachineSets (e.g., "topology.kubernetes.io/zone")
         crd_client: Optional CustomObjectsApi client. If not provided, creates a new one.
         namespace: Namespace where MachineSets reside (default: openshift-machine-api)
-        
+
     Returns:
         Dict[str, Dict[str, str]]: A dictionary mapping node names to their labels and values.
         Example: {"node1": {"zone": "us-east-1a", "label2": "value2"}}
@@ -309,36 +316,34 @@ def get_nodes_from_machinesets(
 
     try:
         machinesets = crd_client.list_cluster_custom_object(
-            group="machine.openshift.io",
-            version="v1beta1",
-            plural="machinesets"
+            group="machine.openshift.io", version="v1beta1", plural="machinesets"
         )
 
         node_info: Dict[str, Dict[str, str]] = {}
 
-        for ms in machinesets['items']:
-            ms_name = ms['metadata']['name']
+        for ms in machinesets["items"]:
+            ms_name = ms["metadata"]["name"]
             logger.info(f"Processing MachineSet: {ms_name}")
-            
+
             # Extract labels from the MachineSet
-            ms_labels = ms.get('metadata', {}).get('labels', {})
+            ms_labels = ms.get("metadata", {}).get("labels", {})
             if label_key and label_key in ms_labels:
-                logger.info(f"Found label {label_key}={ms_labels[label_key]} in MachineSet {ms_name}")
+                logger.info(
+                    f"Found label {label_key}={ms_labels[label_key]} in MachineSet {ms_name}"
+                )
             else:
                 if label_key:
                     logger.warning(f"Label {label_key} not found in MachineSet {ms_name}")
 
             # Find associated machines for the MachineSet
             machines = crd_client.list_cluster_custom_object(
-                group="machine.openshift.io",
-                version="v1beta1",
-                plural="machines"
+                group="machine.openshift.io", version="v1beta1", plural="machines"
             )
 
-            for machine in machines['items']:
+            for machine in machines["items"]:
                 # Check if the machine is part of the current MachineSet
-                if ms_name in machine['metadata']['name'] and 'status' in machine:
-                    node_name = machine['status'].get('nodeRef', {}).get('name', None)
+                if ms_name in machine["metadata"]["name"] and "status" in machine:
+                    node_name = machine["status"].get("nodeRef", {}).get("name", None)
                     if node_name:
                         # Store all labels and their values
                         node_info[node_name] = ms_labels.copy()
@@ -355,11 +360,12 @@ def get_nodes_from_machinesets(
         logger.error(f"Error retrieving nodes from MachineSets: {e}")
         return {}
 
+
 def get_configmap_data(
     namespace: str,
     configmap_name: str,
     key: Optional[str] = None,
-    v1_client: Optional[client.CoreV1Api] = None
+    v1_client: Optional[client.CoreV1Api] = None,
 ) -> Dict[str, Any]:
     """
     Get data from a Kubernetes ConfigMap.
@@ -379,12 +385,12 @@ def get_configmap_data(
 
         # Get the ConfigMap
         configmap = v1_client.read_namespaced_config_map(configmap_name, namespace)
-        
+
         if key:
             if key not in configmap.data:
                 raise KeyError(f"Key '{key}' not found in ConfigMap")
             return configmap.data[key]
-        
+
         return configmap.data
     except ApiException as e:
         logger.error(f"Kubernetes API error: {str(e)}")
@@ -393,11 +399,12 @@ def get_configmap_data(
         logger.error(f"Failed to get ConfigMap data: {str(e)}")
         raise
 
+
 def update_configmap_data(
     namespace: str,
     configmap_name: str,
     data: Dict[str, str],
-    v1_client: Optional[client.CoreV1Api] = None
+    v1_client: Optional[client.CoreV1Api] = None,
 ) -> None:
     """
     Update data in a Kubernetes ConfigMap.
@@ -414,10 +421,10 @@ def update_configmap_data(
 
         # Get the current ConfigMap
         configmap = v1_client.read_namespaced_config_map(configmap_name, namespace)
-        
+
         # Update the data
         configmap.data.update(data)
-        
+
         # Update the ConfigMap in Kubernetes
         v1_client.replace_namespaced_config_map(configmap_name, namespace, configmap)
         logger.info(f"Successfully updated ConfigMap {configmap_name} in namespace {namespace}")
@@ -428,10 +435,9 @@ def update_configmap_data(
         logger.error(f"Failed to update ConfigMap data: {str(e)}")
         raise
 
+
 def get_cloud_drive_config(
-    namespace: str,
-    configmap_name: str,
-    v1_client: Optional[client.CoreV1Api] = None
+    namespace: str, configmap_name: str, v1_client: Optional[client.CoreV1Api] = None
 ) -> Dict[str, Any]:
     """
     Get cloud-drive configuration from Kubernetes ConfigMap.
@@ -451,11 +457,12 @@ def get_cloud_drive_config(
         logger.error(f"Failed to parse cloud-drive JSON: {str(e)}")
         raise
 
+
 def update_cloud_drive_config(
     namespace: str,
     configmap_name: str,
     new_config: Dict[str, Any],
-    v1_client: Optional[client.CoreV1Api] = None
+    v1_client: Optional[client.CoreV1Api] = None,
 ) -> None:
     """
     Update cloud-drive configuration in Kubernetes ConfigMap.

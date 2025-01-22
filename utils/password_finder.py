@@ -9,56 +9,64 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Dict, List, Union, Optional, Any
+from typing import Any, Dict, List, Optional, Union
 
 import yaml
-from yaml.constructor import SafeConstructor
 from typing_extensions import TypedDict
+from yaml.constructor import SafeConstructor
+
 
 # Type definitions
 class PasswordInfo(TypedDict):
     """Type definition for secret/password information."""
+
     line: Optional[int]
     password: str
     text: Optional[str]
     type: str  # Type of secret found (e.g., "API Key", "Password", etc.)
 
+
 class FileResult(TypedDict):
     """Type definition for file search results."""
+
     file: str
     passwords: List[PasswordInfo]
+
 
 # Create a custom YAML constructor to handle unknown tags
 class CustomSafeConstructor(SafeConstructor):
     """Custom YAML constructor that safely handles unknown tags."""
-    
+
     @classmethod
     def remove_implicit_resolver(cls, tag_to_remove: str) -> None:
         """
         Remove implicit resolvers for a particular tag.
-        
+
         Args:
             tag_to_remove: Tag to remove from implicit resolvers
         """
-        if not hasattr(cls, 'yaml_implicit_resolvers'):
+        if not hasattr(cls, "yaml_implicit_resolvers"):
             return
-        
+
         for ch, items in cls.yaml_implicit_resolvers.items():
             cls.yaml_implicit_resolvers[ch] = [
                 (tag, regexp) for tag, regexp in items if tag != tag_to_remove
             ]
 
+
 def create_custom_yaml_loader() -> type:
     """
     Create a custom YAML loader that safely handles unknown tags.
-    
+
     Returns:
         A custom YAML loader class
     """
+
     class CustomLoader(yaml.SafeLoader):
         """Custom YAML loader with safe tag handling."""
+
         pass
-    
+
     # Handle custom tags by returning their values as strings
     def construct_undefined(self: yaml.Loader, node: yaml.Node) -> Any:
         if isinstance(node, yaml.ScalarNode):
@@ -76,6 +84,7 @@ def create_custom_yaml_loader() -> type:
     CustomLoader.add_constructor(None, construct_undefined)
     return CustomLoader
 
+
 # Common patterns for secret detection
 SECRET_PATTERNS = {
     "API Key": [
@@ -85,7 +94,7 @@ SECRET_PATTERNS = {
     "AWS Key": [
         r'(?i)aws[_-]?access[_-]?key[_-]?id["\']?\s*[:=]\s*["\']([^"\']+)["\']',
         r'(?i)aws[_-]?secret[_-]?access[_-]?key["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-        r'(?i)arn:aws:[a-z0-9-]+:[a-z0-9-]+:\d{12}:[a-zA-Z0-9-]+[/][a-zA-Z0-9-]+',
+        r"(?i)arn:aws:[a-z0-9-]+:[a-z0-9-]+:\d{12}:[a-zA-Z0-9-]+[/][a-zA-Z0-9-]+",
     ],
     "Password": [
         # Direct assignments excluding template variables
@@ -101,8 +110,8 @@ SECRET_PATTERNS = {
         r'["\'](?:New|Old|Current|Default|Admin)?Password["\']\s*:\s*["\']([^"\'{}]+)["\'](?!\s*}})',
     ],
     "Private Key": [
-        r'-----BEGIN (?:RSA )?PRIVATE KEY-----[^-]*-----END (?:RSA )?PRIVATE KEY-----',
-        r'-----BEGIN OPENSSH PRIVATE KEY-----[^-]*-----END OPENSSH PRIVATE KEY-----',
+        r"-----BEGIN (?:RSA )?PRIVATE KEY-----[^-]*-----END (?:RSA )?PRIVATE KEY-----",
+        r"-----BEGIN OPENSSH PRIVATE KEY-----[^-]*-----END OPENSSH PRIVATE KEY-----",
     ],
     "Token": [
         r'(?i)token["\']?\s*[:=]\s*["\']([^"\'{}]+)["\'](?!\s*}})',
@@ -114,100 +123,106 @@ SECRET_PATTERNS = {
     ],
 }
 
+
 def should_ignore_line(line: str) -> bool:
     """
     Check if a line should be ignored for secret scanning.
-    
+
     Args:
         line: The line to check
-        
+
     Returns:
         True if the line should be ignored, False otherwise
     """
     ignore_patterns = [
         # Basic template variables
-        r'{{\s*[\w\._-]+\s*}}',  # Simple variable
+        r"{{\s*[\w\._-]+\s*}}",  # Simple variable
         # Template variables with filters or functions
-        r'{{\s*[\w\._-]+\s*\|[^}]+}}',  # Variables with filters
-        r'{{\s*[\w\._-]+\.[^}]+}}',  # Variables with attributes/methods
+        r"{{\s*[\w\._-]+\s*\|[^}]+}}",  # Variables with filters
+        r"{{\s*[\w\._-]+\.[^}]+}}",  # Variables with attributes/methods
         # Ansible/Jinja2 specific patterns
-        r'{{\s*[\w\._-]+\s*\|\s*default\([^}]+\)\s*}}',  # default filter
-        r'{{\s*[\w\._-]+\.stdout(?:_lines)?\s*}}',  # stdout/stdout_lines
-        r'{{\s*[\w\._-]+\.stdout(?:_lines)?\[[-\d]+\]\s*}}',  # array access
+        r"{{\s*[\w\._-]+\s*\|\s*default\([^}]+\)\s*}}",  # default filter
+        r"{{\s*[\w\._-]+\.stdout(?:_lines)?\s*}}",  # stdout/stdout_lines
+        r"{{\s*[\w\._-]+\.stdout(?:_lines)?\[[-\d]+\]\s*}}",  # array access
         # GitHub Actions variables
-        r'\$\{\{\s*(?:secrets|env|vars|inputs|github)\.[A-Z0-9_]+\s*\}\}',  # ${{ secrets.TOKEN }}
-        r'\$\{\{[\s\w\._-]+\}\}',  # Other GitHub Actions expressions
+        r"\$\{\{\s*(?:secrets|env|vars|inputs|github)\.[A-Z0-9_]+\s*\}\}",  # ${{ secrets.TOKEN }}
+        r"\$\{\{[\s\w\._-]+\}\}",  # Other GitHub Actions expressions
         # Template logic
-        r'{%\s*[\w\._\s]+\s*%}',
+        r"{%\s*[\w\._\s]+\s*%}",
         # Test patterns
         r'r["\'].*?password.*?["\']',  # Raw string containing 'password'
-        r'assert.*password',  # Assertions about passwords
-        r'mock.*password',  # Mocked password functions
-        r'test.*password',  # Test cases for passwords
-        r'\[.*?password.*?\]',  # Password in list/array context
+        r"assert.*password",  # Assertions about passwords
+        r"mock.*password",  # Mocked password functions
+        r"test.*password",  # Test cases for passwords
+        r"\[.*?password.*?\]",  # Password in list/array context
     ]
-    
+
     # Combine all patterns into one regex for efficiency
-    combined_pattern = '|'.join(f'(?:{pattern})' for pattern in ignore_patterns)
+    combined_pattern = "|".join(f"(?:{pattern})" for pattern in ignore_patterns)
     return bool(re.search(combined_pattern, line, re.IGNORECASE))
+
 
 def should_ignore_file(file_path: Path) -> bool:
     """
     Check if a file should be ignored based on its path.
-    
+
     Args:
         file_path: Path to the file
-        
+
     Returns:
         True if the file should be ignored, False otherwise
     """
     # Patterns for test-related files
     test_patterns = [
-        r'test_.*\.py$',  # Python test files
-        r'.*_test\.py$',  # Alternative test file naming
-        r'.*/tests/.*',   # Files in test directories
-        r'.*_spec\.rb$',  # Ruby spec files
-        r'.*/spec/.*',    # Ruby spec directories
-        r'.*\.spec\.ts$', # TypeScript spec files
-        r'.*\.test\.ts$', # TypeScript test files
-        r'.*\.spec\.js$', # JavaScript spec files
-        r'.*\.test\.js$', # JavaScript test files
+        r"test_.*\.py$",  # Python test files
+        r".*_test\.py$",  # Alternative test file naming
+        r".*/tests/.*",  # Files in test directories
+        r".*_spec\.rb$",  # Ruby spec files
+        r".*/spec/.*",  # Ruby spec directories
+        r".*\.spec\.ts$",  # TypeScript spec files
+        r".*\.test\.ts$",  # TypeScript test files
+        r".*\.spec\.js$",  # JavaScript spec files
+        r".*\.test\.js$",  # JavaScript test files
     ]
-    
+
     # Check if the file matches any test patterns
     file_str = str(file_path)
     return any(re.search(pattern, file_str) for pattern in test_patterns)
 
+
 def is_sensitive_key(key: str) -> Optional[str]:
     """
     Check if a dictionary key indicates sensitive information.
-    
+
     Args:
         key: The key to check
-        
+
     Returns:
         The type of sensitive information if found, None otherwise
     """
     key = str(key).lower()
-    
+
     # Password-related keys
-    if any(x in key for x in ['password', 'passwd', 'pass']):
+    if any(x in key for x in ["password", "passwd", "pass"]):
         return "Password"
     # Token-related keys
-    elif any(x in key for x in ['token', 'bearer', 'auth']):
+    elif any(x in key for x in ["token", "bearer", "auth"]):
         return "Token"
     # API key related
-    elif any(x in key for x in ['api_key', 'apikey', 'api_secret']):
+    elif any(x in key for x in ["api_key", "apikey", "api_secret"]):
         return "API Key"
     # AWS specific
-    elif any(x in key for x in ['aws_key', 'aws_secret', 'aws_token']):
+    elif any(x in key for x in ["aws_key", "aws_secret", "aws_token"]):
         return "AWS Key"
     # General secrets
-    elif any(x in key for x in ['secret', 'private', 'key']):
+    elif any(x in key for x in ["secret", "private", "key"]):
         return "Secret"
     return None
 
-def extract_from_dict(data: Union[Dict, List], key_filter: str = "password") -> List[tuple[str, str]]:
+
+def extract_from_dict(
+    data: Union[Dict, List], key_filter: str = "password"
+) -> List[tuple[str, str]]:
     """
     Recursively extract sensitive values from dictionary or list.
 
@@ -219,7 +234,7 @@ def extract_from_dict(data: Union[Dict, List], key_filter: str = "password") -> 
         List of tuples containing (secret_type, value)
     """
     results: List[tuple[str, str]] = []
-    
+
     def recurse(obj: Union[Dict, List]) -> None:
         if isinstance(obj, dict):
             for k, v in obj.items():
@@ -241,6 +256,7 @@ def extract_from_dict(data: Union[Dict, List], key_filter: str = "password") -> 
     recurse(data)
     return results
 
+
 def extract_from_text_with_line_numbers(content: str) -> List[PasswordInfo]:
     """
     Extract secrets using regex patterns from text content.
@@ -252,39 +268,42 @@ def extract_from_text_with_line_numbers(content: str) -> List[PasswordInfo]:
         List of dictionaries containing line number, secret value, and context
     """
     results: List[PasswordInfo] = []
-    
+
     for line_number, line in enumerate(content.splitlines(), start=1):
         # Skip lines that should be ignored
         if should_ignore_line(line):
             continue
-            
+
         # Skip lines that are purely template variables
-        if re.match(r'^\s*(?:\$)?{{\s*.*\s*}}\s*$', line.strip()):
+        if re.match(r"^\s*(?:\$)?{{\s*.*\s*}}\s*$", line.strip()):
             continue
-            
+
         for secret_type, patterns in SECRET_PATTERNS.items():
             for pattern in patterns:
                 matches = re.finditer(pattern, line)
                 for match in matches:
                     # Get the first group if it exists, otherwise use the full match
                     secret_value = match.group(1) if match.groups() else match.group(0)
-                    
+
                     # Skip if the secret value contains template syntax
-                    if re.search(r'(?:\$)?{{.*}}|\{%.*%\}', secret_value):
+                    if re.search(r"(?:\$)?{{.*}}|\{%.*%\}", secret_value):
                         continue
-                        
+
                     # Skip if the value looks like a test pattern
                     if re.search(r'^r["\'].*["\']$', secret_value):
                         continue
-                        
-                    results.append({
-                        "line": line_number,
-                        "password": secret_value,
-                        "text": line.strip(),
-                        "type": secret_type
-                    })
-    
+
+                    results.append(
+                        {
+                            "line": line_number,
+                            "password": secret_value,
+                            "text": line.strip(),
+                            "type": secret_type,
+                        }
+                    )
+
     return results
+
 
 def process_file(file_path: Path, ignore_tests: bool = True) -> Optional[FileResult]:
     """
@@ -298,52 +317,58 @@ def process_file(file_path: Path, ignore_tests: bool = True) -> Optional[FileRes
         Dictionary containing file information and found secrets, or None if processing fails
     """
     logger = logging.getLogger(__name__)
-    
+
     # Skip test files if ignore_tests is True
     if ignore_tests and should_ignore_file(file_path):
         logger.debug(f"Skipping test file: {file_path}")
         return None
-    
+
     try:
-        content = file_path.read_text(encoding='utf-8')
-        
+        content = file_path.read_text(encoding="utf-8")
+
         # Handle different file types
-        if file_path.suffix == '.json':
+        if file_path.suffix == ".json":
             try:
                 data = json.loads(content)
                 secrets = extract_from_dict(data)
-                passwords = [{"line": None, "password": secret[1], "text": None, "type": secret[0]} 
-                           for secret in secrets]
+                passwords = [
+                    {"line": None, "password": secret[1], "text": None, "type": secret[0]}
+                    for secret in secrets
+                ]
                 # Also check for patterns in the raw content
                 passwords.extend(extract_from_text_with_line_numbers(content))
             except json.JSONDecodeError:
                 # If JSON parsing fails, treat as text
                 passwords = extract_from_text_with_line_numbers(content)
-        
-        elif file_path.suffix in ('.yaml', '.yml'):
+
+        elif file_path.suffix in (".yaml", ".yml"):
             try:
                 # Use custom loader for YAML files
                 CustomLoader = create_custom_yaml_loader()
                 data = yaml.load(content, Loader=CustomLoader)
                 if data:  # Only process if YAML parsing succeeded
                     secrets = extract_from_dict(data)
-                    passwords = [{"line": None, "password": secret[1], "text": None, "type": secret[0]} 
-                               for secret in secrets]
+                    passwords = [
+                        {"line": None, "password": secret[1], "text": None, "type": secret[0]}
+                        for secret in secrets
+                    ]
                     # Also check for patterns in the raw content
                     passwords.extend(extract_from_text_with_line_numbers(content))
                 else:
                     passwords = extract_from_text_with_line_numbers(content)
             except yaml.YAMLError as e:
-                logger.warning(f"YAML parsing error in {file_path}, falling back to text scanning: {str(e)}")
+                logger.warning(
+                    f"YAML parsing error in {file_path}, falling back to text scanning: {str(e)}"
+                )
                 passwords = extract_from_text_with_line_numbers(content)
-        
+
         else:  # Handle as text file
             passwords = extract_from_text_with_line_numbers(content)
-        
+
         if passwords:
             return {"file": str(file_path), "passwords": passwords}
-        
+
     except Exception as e:
         logger.error(f"Error processing {file_path}: {str(e)}")
-        
+
     return None

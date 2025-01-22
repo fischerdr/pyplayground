@@ -3,19 +3,19 @@ import json
 import logging
 import sys
 import time
-from typing import Dict, List, Optional, Set, Any
+from typing import Any, Dict, List, Optional, Set
 
 from kubernetes import client, config
-from kubernetes.client import ApiException, V1Node, V1Pod, V1ConfigMap
+from kubernetes.client import ApiException, V1ConfigMap, V1Node, V1Pod
 
-from utils.logging_utils import setup_logging, get_logger
 from utils.k8s_utils import (
-    wait_for_pod_readiness,
     get_machine_for_node,
     get_machineset_for_machine,
     get_nodes_from_machineset_specific,
-    get_nodes_from_machinesets
+    get_nodes_from_machinesets,
+    wait_for_pod_readiness,
 )
+from utils.logging_utils import get_logger, setup_logging
 
 # Setup logging using utility function
 setup_logging(level=logging.INFO)
@@ -24,12 +24,13 @@ logger = get_logger(__name__)
 # Portworx-specific constants
 PORTWORX_ZONE_LABEL = "topology.portworx.io/zone"
 
+
 class PortworxNodeManager:
     """Manages Portworx node operations in a Kubernetes cluster.
-    
+
     This class handles operations related to labeling Portworx nodes with zones,
     updating ConfigMaps, and managing node restarts in a Kubernetes cluster.
-    
+
     Args:
         fallback_zone: Default zone to use when no zone is found
         dry_run: If True, no actual changes will be made
@@ -37,14 +38,14 @@ class PortworxNodeManager:
         v1_client: Kubernetes CoreV1Api client
         crd_client: Kubernetes CustomObjectsApi client
     """
-    
+
     def __init__(
         self,
         fallback_zone: Optional[str] = None,
         dry_run: bool = True,
         debug_cm: bool = False,
         v1_client: Optional[client.CoreV1Api] = None,
-        crd_client: Optional[client.CustomObjectsApi] = None
+        crd_client: Optional[client.CustomObjectsApi] = None,
     ) -> None:
         self.v1 = v1_client
         self.crd = crd_client
@@ -54,22 +55,20 @@ class PortworxNodeManager:
 
     def get_nodes_from_machineset_specific(self, machineset_name: str) -> Dict[str, str]:
         """Query Kubernetes for nodes associated with a specific MachineSet and their Portworx zone.
-        
+
         Args:
             machineset_name: Name of the MachineSet to query.
-            
+
         Returns:
             Dict[str, str]: A dictionary mapping node names to their Portworx zones.
         """
         node_info = get_nodes_from_machineset_specific(
-            machineset_name=machineset_name,
-            label_key=PORTWORX_ZONE_LABEL,
-            crd_client=self.crd
+            machineset_name=machineset_name, label_key=PORTWORX_ZONE_LABEL, crd_client=self.crd
         )
-        
+
         # Convert the node_info dict to just node->zone mapping
         return {
-            node_name: info.get(PORTWORX_ZONE_LABEL, 'unknown')
+            node_name: info.get(PORTWORX_ZONE_LABEL, "unknown")
             for node_name, info in node_info.items()
         }
 
@@ -85,18 +84,24 @@ class PortworxNodeManager:
             machineset = get_machineset_for_machine(machine, self.crd)
             if machineset:
                 # Check if 'metadata' and 'labels' exist in the nested structure
-                labels = machineset.get('metadata', {}).get('labels', None)
+                labels = machineset.get("metadata", {}).get("labels", None)
                 if labels:
                     zone = labels.get("topology.portworx.io/zone", None)
                     if zone:
-                        logger.info(f"Zone {zone} found in MachineSet {machineset['metadata']['name']}")
+                        logger.info(
+                            f"Zone {zone} found in MachineSet {machineset['metadata']['name']}"
+                        )
                         return zone
                 else:
-                    logger.warning(f"No labels found in MachineSet {machineset['metadata']['name']}")
+                    logger.warning(
+                        f"No labels found in MachineSet {machineset['metadata']['name']}"
+                    )
 
         # Fallback to provided `--zone` argument if no zone found in MachineSet
         if self.fallback_zone:
-            logger.info(f"No zone found in MachineSet, using provided fallback zone: {self.fallback_zone}")
+            logger.info(
+                f"No zone found in MachineSet, using provided fallback zone: {self.fallback_zone}"
+            )
             return self.fallback_zone
 
         # Ask for manual input as the last resort
@@ -120,7 +125,7 @@ class PortworxNodeManager:
                 namespace="openshift-machine-api",
                 plural="machines",
                 name=machine_name,
-                body=body
+                body=body,
             )
             print(f"Machine {machine_name} labeled successfully with {labels}.")
 
@@ -129,40 +134,48 @@ class PortworxNodeManager:
         config_maps = self.v1.list_namespaced_config_map(namespace="kube-system")
         for cm in config_maps.items:
             if cm.metadata.name.startswith("px-cloud-drive-"):
-                data = json.loads(cm.data['cloud-drive'])
+                data = json.loads(cm.data["cloud-drive"])
                 configmap_modified = False
 
                 for node_id, node_config in data.items():
-                    if node_config['SchedulerNodeName'] == node_name:
-                        print(f"Found SchedulerNodeName {node_name} in ConfigMap {cm.metadata.name}.")
+                    if node_config["SchedulerNodeName"] == node_name:
+                        print(
+                            f"Found SchedulerNodeName {node_name} in ConfigMap {cm.metadata.name}."
+                        )
                         print(f"Current zone for {node_name}: {node_config.get('Zone', 'not set')}")
                         print(f"Updating zone to: {zone}")
 
-                        node_config['Zone'] = zone
+                        node_config["Zone"] = zone
                         configmap_modified = True
 
                 if configmap_modified:
-                    new_configmap = json.dumps(data, separators=(',', ':'))
+                    new_configmap = json.dumps(data, separators=(",", ":"))
 
                     if self.dry_run:
                         if self.debug_cm:
-                            print(f"\nDry-run: New intended ConfigMap content for {cm.metadata.name}:\n{new_configmap}\n")
-                        print(f"Dry-run: Would save a backup of the current ConfigMap to cm_backup_{cm.metadata.name}.json")
+                            print(
+                                f"\nDry-run: New intended ConfigMap content for {cm.metadata.name}:\n{new_configmap}\n"
+                            )
+                        print(
+                            f"Dry-run: Would save a backup of the current ConfigMap to cm_backup_{cm.metadata.name}.json"
+                        )
                     else:
                         backup_filename = f"cm_backup_{cm.metadata.name}.json"
-                        with open(backup_filename, 'w') as backup_file:
-                            json.dump(data, backup_file, separators=(',', ':'))
+                        with open(backup_filename, "w") as backup_file:
+                            json.dump(data, backup_file, separators=(",", ":"))
                         print(f"Backup of ConfigMap saved as {backup_filename}.")
 
                         body = {"data": {"cloud-drive": new_configmap}}
-                        self.v1.patch_namespaced_config_map(cm.metadata.name, 'kube-system', body)
-                        print(f"ConfigMap {cm.metadata.name} updated successfully with changes for {node_name}.")
+                        self.v1.patch_namespaced_config_map(cm.metadata.name, "kube-system", body)
+                        print(
+                            f"ConfigMap {cm.metadata.name} updated successfully with changes for {node_name}."
+                        )
                 else:
                     print(f"No changes made to ConfigMap {cm.metadata.name} for {node_name}.")
 
     def get_px_nodes(self) -> List[V1Node]:
         print("Fetching all nodes where Portworx pods are running...")
-        pods = self.v1.list_namespaced_pod(namespace='portworx', label_selector='name=portworx')
+        pods = self.v1.list_namespaced_pod(namespace="portworx", label_selector="name=portworx")
         px_nodes = set()
         for pod in pods.items:
             node_name = pod.spec.node_name
@@ -183,7 +196,7 @@ class PortworxNodeManager:
         and checking the node name.
         """
         try:
-            pods = self.v1.list_namespaced_pod(namespace='portworx', label_selector='name=portworx')
+            pods = self.v1.list_namespaced_pod(namespace="portworx", label_selector="name=portworx")
             for pod in pods.items:
                 if pod.spec.node_name == node_name:
                     return pod
@@ -213,18 +226,24 @@ class PortworxNodeManager:
             current_label_value = node.metadata.labels.get("topology.portworx.io/zone")
 
             if current_label_value != zone:
-                print(f"Desired {zone} for node {node_name} is not the same as current zone found {current_label_value}, updating it...")
+                print(
+                    f"Desired {zone} for node {node_name} is not the same as current zone found {current_label_value}, updating it..."
+                )
                 label_changed = True
 
             # If no label change, skip the restart and config map update
             if not label_changed:
-                print(f"Skipping PX restart and config map update for {node_name} as no label changes were made.")
+                print(
+                    f"Skipping PX restart and config map update for {node_name} as no label changes were made."
+                )
                 continue
 
             if label_changed:
                 machine = get_machine_for_node(node_name, self.crd)
                 if machine:
-                    self.label_machine(machine['metadata']['name'], {"topology.portworx.io/zone": zone})
+                    self.label_machine(
+                        machine["metadata"]["name"], {"topology.portworx.io/zone": zone}
+                    )
 
                 # Apply the new zone to the node
                 self.label_node(node_name, {"topology.portworx.io/zone": zone})
@@ -241,7 +260,9 @@ class PortworxNodeManager:
                     self.label_node(node_name, {"px/service": "stop"})
 
                     if not self.dry_run:
-                        print(f"Waiting for 1 minute after labeling {node_name} with px/service=stop...")
+                        print(
+                            f"Waiting for 1 minute after labeling {node_name} with px/service=stop..."
+                        )
                         time.sleep(60)
 
                     self.update_cm(node_name, zone)
@@ -259,15 +280,24 @@ class PortworxNodeManager:
 
                 # Wait for PX Pod readiness on any case
                 if not self.dry_run:
-                    print(f"Waiting for Portworx pod {pod.metadata.name} on node {node_name} to be ready...")
-                    pod_ready = wait_for_pod_readiness(pod_name=pod.metadata.name, namespace='portworx', v1_client=self.v1)
+                    print(
+                        f"Waiting for Portworx pod {pod.metadata.name} on node {node_name} to be ready..."
+                    )
+                    pod_ready = wait_for_pod_readiness(
+                        pod_name=pod.metadata.name, namespace="portworx", v1_client=self.v1
+                    )
                     if not pod_ready:
-                        print(f"Error: Pod {pod.metadata.name} did not become ready within the timeout.")
-                        raise Exception(f"Portworx pod on node {node_name} failed to become ready. Exiting.")
+                        print(
+                            f"Error: Pod {pod.metadata.name} did not become ready within the timeout."
+                        )
+                        raise Exception(
+                            f"Portworx pod on node {node_name} failed to become ready. Exiting."
+                        )
+
 
 def load_nodes_from_file(file_path: str) -> List[str]:
     try:
-        with open(file_path, 'r') as f:
+        with open(file_path, "r") as f:
             nodes = [line.strip() for line in f.readlines() if line.strip()]
         print(f"Loaded {len(nodes)} nodes from file {file_path}")
         return nodes
@@ -275,14 +305,21 @@ def load_nodes_from_file(file_path: str) -> List[str]:
         print(f"Error: The file {file_path} was not found.")
         return []
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Label Portworx nodes and update ConfigMaps")
     parser.add_argument("--zone", help="Zone value to set for nodes (used as fallback)")
-    parser.add_argument("--real-run", action="store_true", help="If set, run for real (not a dry-run)")
+    parser.add_argument(
+        "--real-run", action="store_true", help="If set, run for real (not a dry-run)"
+    )
     parser.add_argument("--kubeconfig", help="Path to the kubeconfig file")
     parser.add_argument("--node-file", help="Path to a file with node names, one per line")
     parser.add_argument("--debug-cm", action="store_true", help="Enable debug Config Map")
-    parser.add_argument("--fully-unattended", action="store_true", help="Run unattended and iterate over all MachineSets")
+    parser.add_argument(
+        "--fully-unattended",
+        action="store_true",
+        help="Run unattended and iterate over all MachineSets",
+    )
     parser.add_argument("--machine-set", help="Specify a MachineSet to load nodes from")
 
     args = parser.parse_args()
@@ -298,15 +335,20 @@ if __name__ == "__main__":
     v1_client = client.CoreV1Api()
     crd_client = client.CustomObjectsApi()
 
-    manager = PortworxNodeManager(fallback_zone=args.zone, dry_run=dry_run, v1_client=v1_client, crd_client=crd_client, debug_cm=debug_cm)
+    manager = PortworxNodeManager(
+        fallback_zone=args.zone,
+        dry_run=dry_run,
+        v1_client=v1_client,
+        crd_client=crd_client,
+        debug_cm=debug_cm,
+    )
 
     node_zone_map = {}
 
     if args.fully_unattended:
         # Iterate over all machineSets
         node_zone_map = get_nodes_from_machinesets(
-            label_key=PORTWORX_ZONE_LABEL,
-            crd_client=crd_client
+            label_key=PORTWORX_ZONE_LABEL, crd_client=crd_client
         )
     elif args.machine_set:
         # Use the provided MachineSet
@@ -327,7 +369,7 @@ if __name__ == "__main__":
             node_names = load_nodes_from_file(args.node_file)
             node_zone_map = {node_name: args.zone for node_name in node_names}
         else:
-            node_names = input("Enter the comma-separated list of node names: ").split(',')
+            node_names = input("Enter the comma-separated list of node names: ").split(",")
             node_zone_map = {node_name.strip(): args.zone for node_name in node_names}
 
     if node_zone_map:

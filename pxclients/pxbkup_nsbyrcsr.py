@@ -14,18 +14,20 @@ def load_k8s_config(kubeconfig_path=None):
     else:
         config.load_kube_config(os.environ.get("KUBECONFIG"))
 
+
 # Function to get namespaces in the cluster
 def get_namespaces(exclude_regex=None):
     v1 = client.CoreV1Api()
     namespaces = v1.list_namespace()
     filtered_namespaces = []
-    
+
     for ns in namespaces.items:
         if exclude_regex and re.match(exclude_regex, ns.metadata.name):
             continue
         filtered_namespaces.append(ns.metadata.name)
-    
+
     return filtered_namespaces
+
 
 # Function to get labels for a namespace
 def get_labels_for_namespace(namespace):
@@ -36,6 +38,7 @@ def get_labels_for_namespace(namespace):
     except ApiException as e:
         print(f"Failed to get labels for namespace {namespace}: {e}")
         return {}
+
 
 # Function to get instances of a CRD in a given namespace
 def count_crd_instances(crds, namespace):
@@ -48,19 +51,23 @@ def count_crd_instances(crds, namespace):
             group=group,  # Replace with the group of your CRDs
             version=version,  # Replace with the version of your CRDs
             namespace=namespace,
-            plural=plural  # Plural name of the CRD
+            plural=plural,  # Plural name of the CRD
         )
         return len(instances.get("items", []))
     except ApiException as e:
         if e.status != 404:  # Log only non-404 errors
-            print(f"Failed to count CRD instances for {crds.spec.names.plural} in namespace {namespace}: {e}")
+            print(
+                f"Failed to count CRD instances for {crds.spec.names.plural} in namespace {namespace}: {e}"
+            )
         return 0
+
 
 # Function to get all CRDs in the cluster
 def get_crds():
     crd_client = client.ApiextensionsV1Api()
     crds = crd_client.list_custom_resource_definition().items
     return crds
+
 
 # Function to process namespaces and their labels
 def process_namespaces(namespaces, exclude_regex=None):
@@ -69,32 +76,35 @@ def process_namespaces(namespaces, exclude_regex=None):
 
     for ns in namespaces:
         labels = get_labels_for_namespace(ns)
-        
+
         # Check for relevant labels
         for label, value in labels.items():
-            if label.startswith("storage/pxbackup.kubernetes.io") or \
-               label.startswith("resources/pxbackup.kubernetes.io") or \
-               label.startswith("all/pxbackup.kubernetes.io"):
-                
+            if (
+                label.startswith("storage/pxbackup.kubernetes.io")
+                or label.startswith("resources/pxbackup.kubernetes.io")
+                or label.startswith("all/pxbackup.kubernetes.io")
+            ):
                 if value in label_values:
                     if label not in grouped_data:
-                        grouped_data[label] = {value: {'count': 0, 'namespaces': []}}
-                    
+                        grouped_data[label] = {value: {"count": 0, "namespaces": []}}
+
                     # Add namespace and increment count
-                    grouped_data[label][value]['count'] += get_namespace_count(ns)
-                    grouped_data[label][value]['namespaces'].append(ns)
+                    grouped_data[label][value]["count"] += get_namespace_count(ns)
+                    grouped_data[label][value]["namespaces"].append(ns)
 
     return grouped_data
 
+
 # Function to process namespaces and count CRD instances (total instances per namespace)
-def get_namespace_count( namespace):
+def get_namespace_count(namespace):
     namespace_count = 0
     crds = get_crds()  # Get the list of CRDs in the cluster
     total_crd_instances = 0
     for crd in crds:
         total_crd_instances += count_crd_instances(crd, namespace)
-    namespace_count = total_crd_instances     
+    namespace_count = total_crd_instances
     return namespace_count
+
 
 # Function to process namespaces and count CRD instances (total instances per namespace)
 def process_namespace_counts(namespaces):
@@ -106,8 +116,9 @@ def process_namespace_counts(namespaces):
         for crd in crds:
             total_crd_instances += count_crd_instances(crd, ns)
         namespace_counts[ns] = total_crd_instances
-        
+
     return namespace_counts
+
 
 def distribute_input_keys(input_dict):
     """
@@ -117,51 +128,56 @@ def distribute_input_keys(input_dict):
         input_dict (dict): A dictionary where each key contains a nested dictionary with a 'count' key.
 
     Returns:
-        dict: A dictionary with specified keys ('4am', '8am', '12pm', '4pm', '8pm', '12am') 
+        dict: A dictionary with specified keys ('4am', '8am', '12pm', '4pm', '8pm', '12am')
               containing evenly distributed input keys and their totals.
         int: The total count of all 'count' values from the input dictionary.
     """
     # Ensure all keys in the input dictionary have a 'count' key
     for key, value in input_dict.items():
-        if not isinstance(value, dict) or 'count' not in value:
-            raise ValueError(f"Each key in the input dictionary must contain a nested 'count' key. Problem with key: {key}")
-    
+        if not isinstance(value, dict) or "count" not in value:
+            raise ValueError(
+                f"Each key in the input dictionary must contain a nested 'count' key. Problem with key: {key}"
+            )
+
     # Calculate the total count across all input counts
-    total_count = sum(value['count'] for value in input_dict.values())
+    total_count = sum(value["count"] for value in input_dict.values())
 
     # Sort the input dictionary by the 'count' values (descending order)
-    sorted_items = sorted(input_dict.items(), key=lambda x: x[1]['count'], reverse=True)
-    
+    sorted_items = sorted(input_dict.items(), key=lambda x: x[1]["count"], reverse=True)
+
     # Initialize the six groups with custom keys
     group_labels = ["4am", "8am", "12pm", "4pm", "8pm", "12am"]
-    groups = {label: {'keys': [], 'total_count': 0} for label in group_labels}
+    groups = {label: {"keys": [], "total_count": 0} for label in group_labels}
 
     # Distribute keys into groups to balance the total count
     for key, value in sorted_items:
         # Find the group with the smallest current count
-        smallest_group = min(groups.values(), key=lambda x: x['total_count'])
+        smallest_group = min(groups.values(), key=lambda x: x["total_count"])
         # Add the key to that group
         for group_label, group_data in groups.items():
             if group_data == smallest_group:
-                group_data['keys'].append(key)
-                group_data['total_count'] += value['count']
+                group_data["keys"].append(key)
+                group_data["total_count"] += value["count"]
                 break
 
     # Prepare the output dictionary
     output_dict = {
-        label: {'keys': data['keys'], 'total_count': data['total_count']}
+        label: {"keys": data["keys"], "total_count": data["total_count"]}
         for label, data in groups.items()
     }
     return output_dict, total_count
 
+
 # Function to split namespaces evenly across the values of 'all/pxbackup.kubernetes.io'
-def split_namespaces_evenly_by_value(namespaces, label='all/pxbackup.kubernetes.io', label_values=None):
+def split_namespaces_evenly_by_value(
+    namespaces, label="all/pxbackup.kubernetes.io", label_values=None
+):
     """
     Split namespaces evenly across the values of 'all/pxbackup.kubernetes.io' label.
     """
     # Filter namespaces that have the specified label 'all/pxbackup.kubernetes.io'
     label_values = label_values or ["4am", "8am", "12pm", "4pm", "8pm", "12am"]
-    
+
     # Create an empty dictionary to hold the grouped namespaces by label values
     evenly_grouped = {value: [] for value in label_values}
 
@@ -186,8 +202,9 @@ def split_namespaces_evenly_by_value(namespaces, label='all/pxbackup.kubernetes.
     evenly_distributed = {}
     for idx, value in enumerate(label_values):
         evenly_distributed[value] = namespace_chunks[idx]
-    
+
     return evenly_distributed
+
 
 # Function to split unassigned namespaces evenly into a new group by label and values
 def split_unassigned_namespaces_evenly(namespaces, label_values=None):
@@ -196,24 +213,34 @@ def split_unassigned_namespaces_evenly(namespaces, label_values=None):
     'resources/pxbackup.kubernetes.io', and 'all/pxbackup.kubernetes.io'.
     """
     label_values = label_values or ["4am", "8am", "12pm", "4pm", "8pm", "12am"]
-    
+
     # Identify unassigned namespaces (those without one of the three labels)
     unassigned_namespaces = []
     for ns in namespaces:
         labels = get_labels_for_namespace(ns)
-        if not any(label in labels for label in ["storage/pxbackup.kubernetes.io", "resources/pxbackup.kubernetes.io", "all/pxbackup.kubernetes.io"]):
+        if not any(
+            label in labels
+            for label in [
+                "storage/pxbackup.kubernetes.io",
+                "resources/pxbackup.kubernetes.io",
+                "all/pxbackup.kubernetes.io",
+            ]
+        ):
             unassigned_namespaces.append(ns)
 
     # Now distribute these unassigned namespaces evenly across the label values
     evenly_distributed = {value: [] for value in label_values}
 
     # Split unassigned namespaces evenly into groups
-    unassigned_chunked = [unassigned_namespaces[i::len(label_values)] for i in range(len(label_values))]
+    unassigned_chunked = [
+        unassigned_namespaces[i :: len(label_values)] for i in range(len(label_values))
+    ]
 
     for idx, value in enumerate(label_values):
         evenly_distributed[value].extend(unassigned_chunked[idx])
-    
+
     return evenly_distributed
+
 
 # Function to display the grouped results (labels, values, counts, namespaces)
 def display_grouped_data(grouped_data):
@@ -222,19 +249,21 @@ def display_grouped_data(grouped_data):
         print(f"Label: {label}")
         for value, data in values.items():
             # Display count of namespaces for each value
-            namespace_count = len(data['namespaces'])
+            namespace_count = len(data["namespaces"])
             print(f"  Value: {value}")
             print(f"    Namespace Count: {namespace_count}")
             print(f"    Count: {data['count']}")
             print(f"    Namespaces: {', '.join(data['namespaces'])}")
             print()
 
+
 # Function to display CRD count group (namespaces and total CRD instances)
 def display_namespace_counts(namespace_counts):
     print("\n--- Namespace Count Group: Namespaces and Total CRD Instances ---")
     for namespace, crd_count in namespace_counts.items():
         print(f"Namespace: {namespace}, Total CRD Instances: {crd_count}")
-        
+
+
 # Function to display the evenly distributed namespaces by label value
 def display_evenly_distributed_namespaces(evenly_distributed):
     print("\n--- Evenly Distributed Namespaces by Label Value ---")
@@ -253,6 +282,7 @@ def display_unassigned_namespaces(evenly_distributed):
         print(f"  Number of Namespaces: {len(namespaces)}")
         print(f"  Namespaces: {', '.join(namespaces)}")
         print()
+
 
 # Updated main function to process and display unassigned namespaces
 @click.command()
@@ -288,6 +318,7 @@ def main(kubeconfig, exclude_namespaces):
 
     # Display the evenly distributed unassigned namespaces
     display_unassigned_namespaces(unassigned_distributed)
+
 
 if __name__ == "__main__":
     main()

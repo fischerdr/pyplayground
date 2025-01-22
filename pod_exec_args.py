@@ -1,5 +1,5 @@
-import sys
 import json
+import sys
 
 import click
 from kubernetes import client, config
@@ -7,9 +7,9 @@ from kubernetes.stream import stream
 
 
 @click.command()
-@click.option('--namespace', help='Namespace of the pod', required=True)
-@click.option('--podname', help='Name of the pod', required=True)
-@click.option('--command', help='Command to run in the pod', required=True)
+@click.option("--namespace", help="Namespace of the pod", required=True)
+@click.option("--podname", help="Name of the pod", required=True)
+@click.option("--command", help="Command to run in the pod", required=True)
 def pod_exec_tty(namespace, podname, command):
     # Load Kubernetes configuration
     config.load_kube_config()
@@ -21,7 +21,7 @@ def pod_exec_tty(namespace, podname, command):
     pod = api.read_namespaced_pod(namespace=namespace, name=podname)
 
     # Create a pseudo-terminal (pty) to interact with the pod
-    exec_command = ['/bin/sh', '-c', command]
+    exec_command = ["/bin/sh", "-c", command]
     try:
         exec_response = stream(
             api.connect_get_namespaced_pod_exec,
@@ -33,11 +33,9 @@ def pod_exec_tty(namespace, podname, command):
             stdout=True,
             stderr=True,
             tty=False,
-            _preload_content=False  # This is key to getting raw output
-
-            
+            _preload_content=False,  # This is key to getting raw output
         )
-        
+
         output = ""  # Initialize an empty string to collect all stdout
 
         # If exec_response is a string, add it directly to output
@@ -65,5 +63,6 @@ def pod_exec_tty(namespace, podname, command):
     except Exception as e:
         print(f"An error occurred: {e}", file=sys.stderr)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     pod_exec_tty()

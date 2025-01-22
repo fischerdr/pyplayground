@@ -29,7 +29,9 @@ def count_resources_by_namespace():
             "services": api_core.list_namespaced_service(namespace).items,
             "config_maps": api_core.list_namespaced_config_map(namespace).items,
             "secrets": api_core.list_namespaced_secret(namespace).items,
-            "persistent_volume_claims": api_core.list_namespaced_persistent_volume_claim(namespace).items,
+            "persistent_volume_claims": api_core.list_namespaced_persistent_volume_claim(
+                namespace
+            ).items,
             "deployments": api_apps.list_namespaced_deployment(namespace).items,
             "stateful_sets": api_apps.list_namespaced_stateful_set(namespace).items,
             "daemon_sets": api_apps.list_namespaced_daemon_set(namespace).items,
@@ -66,9 +68,7 @@ def count_resources_by_namespace():
         total_count = standard_count + crd_count
 
         # Store results
-        results[namespace] = {
-            "count": total_count
-        }
+        results[namespace] = {"count": total_count}
 
     return results
 

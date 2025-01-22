@@ -18,36 +18,39 @@ Author: Codeium AI
 Date: 2025-01-16
 """
 
-import json
+import atexit
 import csv
+import json
 import logging
 import os
-from typing import Dict, List, Tuple, Optional, Any
-from dataclasses import dataclass
-import click
-from pyVmomi import vim
-from pyVim.connect import SmartConnect, Disconnect
 import ssl
-import atexit
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+import click
+from pyVim.connect import Disconnect, SmartConnect
+from pyVmomi import vim
+
+from utils.k8s_utils import get_cloud_drive_config, load_kube_config, update_cloud_drive_config
 from utils.vmdk_utils import (
-    VMDKInfo, read_json_config, write_json_config,
-    read_mapping_file, write_mapping_file, extract_path_from_datastore_path,
-    generate_mapping_from_diff, ensure_directory_exists
-)
-from utils.k8s_utils import (
-    load_kube_config, get_cloud_drive_config, update_cloud_drive_config
+    VMDKInfo,
+    ensure_directory_exists,
+    extract_path_from_datastore_path,
+    generate_mapping_from_diff,
+    read_json_config,
+    read_mapping_file,
+    write_json_config,
+    write_mapping_file,
 )
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("logs/vmdk_manager.log"),
-        logging.StreamHandler()
-    ]
+    handlers=[logging.FileHandler("logs/vmdk_manager.log"), logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
+
 
 class VMDKManager:
     """Manager class for VMDK operations using pyvmomi."""
@@ -58,7 +61,7 @@ class VMDKManager:
         username: str,
         password: str,
         port: int = 443,
-        disable_ssl_verification: bool = True
+        disable_ssl_verification: bool = True,
     ) -> None:
         """
         Initialize VMDKManager with vSphere connection parameters.
@@ -92,7 +95,7 @@ class VMDKManager:
                 user=self.username,
                 pwd=self.password,
                 port=self.port,
-                sslContext=context
+                sslContext=context,
             )
             atexit.register(Disconnect, self.service_instance)
             logger.info("Successfully connected to vSphere")
@@ -113,13 +116,13 @@ class VMDKManager:
         content = self.service_instance.RetrieveContent()
         search_index = content.searchIndex
         vm = search_index.FindByUuid(None, vm_uuid, True)
-        
+
         if not vm:
             logger.error(f"VM with UUID {vm_uuid} not found")
             return {}
 
         vmdk_info: Dict[str, VMDKInfo] = {}
-        
+
         for device in vm.config.hardware.device:
             if isinstance(device, vim.vm.device.VirtualDisk):
                 backing = device.backing
@@ -128,13 +131,10 @@ class VMDKManager:
                     filename = backing.fileName
                     path = extract_path_from_datastore_path(filename)
                     capacity_gb = device.capacityInKB / (1024 * 1024)
-                    
+
                     key = f"[{datastore}] {path}"
                     vmdk_info[key] = VMDKInfo(
-                        filename=filename,
-                        datastore=datastore,
-                        capacity_gb=capacity_gb,
-                        path=path
+                        filename=filename, datastore=datastore, capacity_gb=capacity_gb, path=path
                     )
 
         return vmdk_info
@@ -143,7 +143,7 @@ class VMDKManager:
         self,
         cloud_drive_config: Dict[str, Any],
         vmdk_info: Dict[str, VMDKInfo],
-        mapping_file: Optional[str] = None
+        mapping_file: Optional[str] = None,
     ) -> bool:
         """
         Verify storage configuration against actual VMDK information.
@@ -182,14 +182,16 @@ class VMDKManager:
             for mismatch in mismatches:
                 logger.warning(mismatch)
             return False
-        
+
         logger.info("Storage configuration verification passed")
         return True
+
 
 @click.group()
 def cli() -> None:
     """VMDK Manager CLI tool for VMware operations."""
     pass
+
 
 @cli.command()
 @click.option("--host", required=True, help="vSphere host address")
@@ -208,16 +210,16 @@ def verify(
     k8s_namespace: Optional[str],
     k8s_configmap: Optional[str],
     config_file: Optional[str],
-    mapping_file: Optional[str]
+    mapping_file: Optional[str],
 ) -> None:
     """Verify VMDK configuration against actual VM configuration."""
     try:
         # Ensure logs directory exists
         ensure_directory_exists("logs/vmdk_manager.log")
-        
+
         manager = VMDKManager(host, username, password)
         vmdk_info = manager.get_vmdk_info(vm_uuid)
-        
+
         # Get configuration from either K8s ConfigMap or file
         if k8s_namespace and k8s_configmap:
             load_kube_config()
@@ -229,17 +231,17 @@ def verify(
             config = read_json_config(config_file)
         else:
             raise click.UsageError(
-                "Either provide --k8s-namespace and --k8s-configmap, "
-                "or --config-file"
+                "Either provide --k8s-namespace and --k8s-configmap, " "or --config-file"
             )
-        
+
         if mapping_file:
             ensure_directory_exists(mapping_file)
-        
+
         manager.verify_storage_config(config, vmdk_info, mapping_file)
     except Exception as e:
         logger.error(f"Verification failed: {str(e)}")
         raise click.ClickException(str(e))
+
 
 @cli.command()
 @click.option("--k8s-namespace", help="Kubernetes namespace containing the ConfigMap")
@@ -252,13 +254,13 @@ def replace_paths(
     k8s_configmap: Optional[str],
     config_file: Optional[str],
     mapping_file: str,
-    output_file: Optional[str]
+    output_file: Optional[str],
 ) -> None:
     """Replace VMDK paths in configuration using mapping file."""
     try:
         # Read mapping file
         path_mappings = read_mapping_file(mapping_file)
-        
+
         # Get configuration from either K8s ConfigMap or file
         if k8s_namespace and k8s_configmap:
             load_kube_config()
@@ -267,19 +269,18 @@ def replace_paths(
             config = read_json_config(config_file)
         else:
             raise click.UsageError(
-                "Either provide --k8s-namespace and --k8s-configmap, "
-                "or --config-file"
+                "Either provide --k8s-namespace and --k8s-configmap, " "or --config-file"
             )
-        
+
         # Replace paths in JSON
         json_str = json.dumps(config)
         for old_path, new_path in path_mappings:
             old_path = extract_path_from_datastore_path(old_path)
             new_path = extract_path_from_datastore_path(new_path)
             json_str = json_str.replace(old_path, new_path)
-        
+
         new_config = json.loads(json_str)
-        
+
         # Update configuration in either K8s ConfigMap or file
         if k8s_namespace and k8s_configmap:
             load_kube_config()
@@ -292,14 +293,14 @@ def replace_paths(
             write_json_config(new_config, output_file)
         else:
             raise click.UsageError(
-                "Either provide --k8s-namespace and --k8s-configmap, "
-                "or --output-file"
+                "Either provide --k8s-namespace and --k8s-configmap, " "or --output-file"
             )
-        
+
         logger.info("Successfully updated configuration")
     except Exception as e:
         logger.error(f"Path replacement failed: {str(e)}")
         raise click.ClickException(str(e))
+
 
 if __name__ == "__main__":
     cli()

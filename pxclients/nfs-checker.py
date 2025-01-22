@@ -3,9 +3,9 @@ import json
 import subprocess
 import time
 
-SSH_KEY = 'id_rsa'
-SSH_USER = 'core'
-KUBE_CLI = 'oc --kubeconfig=~/.kube/config'
+SSH_KEY = "id_rsa"
+SSH_USER = "core"
+KUBE_CLI = "oc --kubeconfig=~/.kube/config"
 DRAIN_TIMEOUT = 300  # Timeout for draining the node in seconds
 
 
@@ -27,7 +27,7 @@ def get_nodes():
     try:
         nodes_output = run_command(f"{KUBE_CLI} get nodes -o wide")
         nodes = []
-        for line in nodes_output.split('\n')[1:]:
+        for line in nodes_output.split("\n")[1:]:
             if line:
                 parts = line.split()
                 node_name = parts[0]
@@ -41,8 +41,8 @@ def get_nodes():
 
 def get_nodes_from_file(file_path):
     try:
-        with open(file_path, 'r') as file:
-            nodes = [tuple(line.strip().split(',')) for line in file.readlines()]
+        with open(file_path, "r") as file:
+            nodes = [tuple(line.strip().split(",")) for line in file.readlines()]
         return nodes
     except Exception as e:
         print(f"Error reading nodes from file: {e}")
@@ -52,9 +52,9 @@ def get_nodes_from_file(file_path):
 def get_node_ip(node_name):
     node_info = run_command(f"{KUBE_CLI} get node {node_name} -o json")
     node_data = json.loads(node_info)
-    for address in node_data['status']['addresses']:
-        if address['type'] == 'InternalIP':
-            return address['address']
+    for address in node_data["status"]["addresses"]:
+        if address["type"] == "InternalIP":
+            return address["address"]
     raise Exception(f"Could not find IP address for node {node_name}")
 
 
@@ -63,7 +63,7 @@ def get_nfs_mounts(node_ip):
         mount_output = run_command(
             f"ssh -i {SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {SSH_USER}@{node_ip} 'sudo mount | grep nfs | grep px'"
         )
-        nfs_mounts = [line.split()[2] for line in mount_output.strip().split('\n') if line]
+        nfs_mounts = [line.split()[2] for line in mount_output.strip().split("\n") if line]
         return nfs_mounts
     except Exception as e:
         print(f"Error fetching PX Sharedv4 mounts on node {node_ip}: {e}")
@@ -84,7 +84,7 @@ def check_nfs_on_node(node_ip):
                 f"ssh -i {SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {SSH_USER}@{node_ip} 'sudo timeout 30 stat {mount_point}'",
                 shell=True,
                 capture_output=True,
-                text=True
+                text=True,
             )
             if result.returncode != 0:
                 print(f"Error: stat command failed for {mount_point} on node {node_ip}.\n")
@@ -95,7 +95,9 @@ def check_nfs_on_node(node_ip):
                 print(f"Stat command succeeded for mount point {mount_point} on node {node_ip}.\n")
 
         except subprocess.CalledProcessError as e:
-            print(f"Error: Unable to stat {mount_point} on node {node_ip} (timeout after 30s or stat command failed)")
+            print(
+                f"Error: Unable to stat {mount_point} on node {node_ip} (timeout after 30s or stat command failed)"
+            )
             print(f"stdout: {e.stdout}")
             print(f"stderr: {e.stderr}")
             return False
@@ -115,8 +117,10 @@ def cordon_drain_reboot_node(node, perform_reboot):
     print(f"Draining node {node}")
     print(f"Waiting up to {DRAIN_TIMEOUT} seconds for pods to be evicted...")
     try:
-        run_command_with_timeout(f"{KUBE_CLI} adm drain {node} --ignore-daemonsets --delete-emptydir-data --force",
-                                 DRAIN_TIMEOUT)
+        run_command_with_timeout(
+            f"{KUBE_CLI} adm drain {node} --ignore-daemonsets --delete-emptydir-data --force",
+            DRAIN_TIMEOUT,
+        )
     except Exception as e:
         print(f"Error draining node {node}: {e}")
         return False
@@ -127,7 +131,8 @@ def cordon_drain_reboot_node(node, perform_reboot):
     if perform_reboot:
         try:
             run_command(
-                f"ssh -t -i {SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {SSH_USER}@{node_ip} 'sudo systemctl reboot'")
+                f"ssh -t -i {SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {SSH_USER}@{node_ip} 'sudo systemctl reboot'"
+            )
             print(f"Node {node} rebooted successfully.")
         except Exception as e:
             print(f"Error rebooting node {node}: {e}")
@@ -144,7 +149,8 @@ def cordon_drain_reboot_node(node, perform_reboot):
         try:
             print(f"Checking status for node {node}...")
             node_status = run_command(
-                f"{KUBE_CLI} get node {node} -o jsonpath='{{.status.conditions[?(@.type==\"Ready\")].status}}'")
+                f"{KUBE_CLI} get node {node} -o jsonpath='{{.status.conditions[?(@.type==\"Ready\")].status}}'"
+            )
             if node_status == "True":
                 print(f"Node {node} is ready")
                 run_command(f"{KUBE_CLI} adm uncordon {node}")
@@ -176,7 +182,9 @@ def main(perform_reboot, nodes_file):
             stale_nodes.append((node_name, node_ip))
 
     if perform_reboot:
-        print(f"\nPerforming Cordon-Drain-Reboot operation on nodes with stale PX Sharedv4 entries...\n")
+        print(
+            f"\nPerforming Cordon-Drain-Reboot operation on nodes with stale PX Sharedv4 entries...\n"
+        )
         for node_name, node_ip in stale_nodes:
             cordon_drain_reboot_node(node_name, perform_reboot)
 
@@ -195,9 +203,15 @@ def main(perform_reboot, nodes_file):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Check and manage PX Sharedv4 mounts on nodes.")
-    parser.add_argument('--perform-reboot', action='store_true',
-                        help="Actually perform reboots, otherwise dry-run is default.")
-    parser.add_argument('--nodes-file', type=str,
-                        help="Path to a file containing a list of nodes to check. Format: node-name,ip per line.")
+    parser.add_argument(
+        "--perform-reboot",
+        action="store_true",
+        help="Actually perform reboots, otherwise dry-run is default.",
+    )
+    parser.add_argument(
+        "--nodes-file",
+        type=str,
+        help="Path to a file containing a list of nodes to check. Format: node-name,ip per line.",
+    )
     args = parser.parse_args()
     main(args.perform_reboot, args.nodes_file)

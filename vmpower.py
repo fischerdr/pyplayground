@@ -7,6 +7,7 @@ from tools import cli, pchelper, service_instance, tasks
 def check_vm_power_state(vm):
     return vm.runtime.powerState
 
+
 def power_on_vm(vm):
     if check_vm_power_state(vm) != vim.VirtualMachine.PowerState.poweredOn:
         task = vm.PowerOn()
@@ -15,6 +16,7 @@ def power_on_vm(vm):
     else:
         print("The VM is already powered on.")
 
+
 def power_off_vm(vm):
     if check_vm_power_state(vm) != vim.VirtualMachine.PowerState.poweredOff:
         task = vm.PowerOff()
@@ -22,6 +24,7 @@ def power_off_vm(vm):
         task.Wait()
     else:
         print("The VM is already powered off.")
+
 
 def reboot_vm(vm):
     if check_vm_power_state(vm) == vim.VirtualMachine.PowerState.poweredOn:
@@ -35,11 +38,12 @@ def reboot_vm(vm):
     else:
         print("The VM is powered off and cannot be rebooted.")
 
-def main():
 
+def main():
     parser = cli.Parser()
     parser.add_optional_arguments(
-        cli.Argument.VM_NAME, cli.Argument.DNS_NAME, cli.Argument.UUID, cli.Argument.VM_IP)
+        cli.Argument.VM_NAME, cli.Argument.DNS_NAME, cli.Argument.UUID, cli.Argument.VM_IP
+    )
     args = parser.get_args()
     si = service_instance.connect(args)
 
@@ -64,19 +68,19 @@ def main():
     # Ask user if they want to power on, power off, or reboot
     if power_state == vim.VirtualMachine.PowerState.poweredOn:
         choice = input("Do you want to power off or reboot the VM? (off/reboot/no): ")
-        if choice.lower() == 'off':
+        if choice.lower() == "off":
             power_off_vm(VM)
-        elif choice.lower() == 'reboot':
+        elif choice.lower() == "reboot":
             reboot_vm(VM)
     elif power_state == vim.VirtualMachine.PowerState.poweredOff:
         choice = input("Do you want to power on the VM? (yes/no): ")
-        if choice.lower() == 'yes':
+        if choice.lower() == "yes":
             power_on_vm(VM)
-
 
     tasks.wait_for_tasks(si, [TASK])
     # Disconnect from vCenter
     Disconnect(si)
+
 
 if __name__ == "__main__":
     main()

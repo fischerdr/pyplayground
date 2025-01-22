@@ -25,13 +25,11 @@ from botocore.exceptions import ClientError
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('logs/s3_cleanup.log'),
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.FileHandler("logs/s3_cleanup.log"), logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
+
 
 def setup_s3_client(endpoint_url: str, access_key_id: str, secret_access_key: str) -> client:
     """
@@ -51,10 +49,10 @@ def setup_s3_client(endpoint_url: str, access_key_id: str, secret_access_key: st
     """
     try:
         s3_client = client(
-            's3',
+            "s3",
             endpoint_url=endpoint_url,
             aws_access_key_id=access_key_id,
-            aws_secret_access_key=secret_access_key
+            aws_secret_access_key=secret_access_key,
         )
         # Verify credentials by listing buckets
         s3_client.list_buckets()
@@ -66,11 +64,9 @@ def setup_s3_client(endpoint_url: str, access_key_id: str, secret_access_key: st
         logger.error(f"Failed to create S3 client: {str(e)}")
         raise typer.Exit(1)
 
+
 def list_objects_to_delete(
-    s3_client: client,
-    bucket: str,
-    prefix: str,
-    retention_days: int
+    s3_client: client, bucket: str, prefix: str, retention_days: int
 ) -> tuple[List[Dict], int, int]:
     """
     List objects that should be deleted based on retention policy.
@@ -90,35 +86,35 @@ def list_objects_to_delete(
     count_non_current = 0
 
     try:
-        paginator = s3_client.get_paginator('list_object_versions')
-        operation_parameters = {'Bucket': bucket}
+        paginator = s3_client.get_paginator("list_object_versions")
+        operation_parameters = {"Bucket": bucket}
         if prefix:
-            operation_parameters['Prefix'] = prefix
+            operation_parameters["Prefix"] = prefix
 
         logger.info(f"Scanning bucket '{bucket}' for objects older than {retention_days} days")
-        
+
         for response in paginator.paginate(**operation_parameters):
-            if 'Versions' not in response:
+            if "Versions" not in response:
                 continue
-                
-            for version in response['Versions']:
+
+            for version in response["Versions"]:
                 if version["IsLatest"]:
                     count_current += 1
                 else:
                     count_non_current += 1
-                    
-                if (today - version['LastModified']).days > retention_days:
-                    delete_list.append({
-                        'Key': version['Key'],
-                        'VersionId': version['VersionId']
-                    })
+
+                if (today - version["LastModified"]).days > retention_days:
+                    delete_list.append({"Key": version["Key"], "VersionId": version["VersionId"]})
 
         return delete_list, count_current, count_non_current
     except Exception as e:
         logger.error(f"Error listing objects: {str(e)}")
         raise typer.Exit(1)
 
-def delete_objects(s3_client: client, bucket: str, objects: List[Dict], dry_run: bool = False) -> None:
+
+def delete_objects(
+    s3_client: client, bucket: str, objects: List[Dict], dry_run: bool = False
+) -> None:
     """
     Delete objects from the bucket in batches.
 
@@ -143,23 +139,20 @@ def delete_objects(s3_client: client, bucket: str, objects: List[Dict], dry_run:
 
     try:
         for i in range(0, len(objects), batch_size):
-            batch = objects[i:i + batch_size]
+            batch = objects[i : i + batch_size]
             response = s3_client.delete_objects(
-                Bucket=bucket,
-                Delete={
-                    'Objects': batch,
-                    'Quiet': True
-                }
+                Bucket=bucket, Delete={"Objects": batch, "Quiet": True}
             )
-            
-            if 'Errors' in response and response['Errors']:
-                for error in response['Errors']:
+
+            if "Errors" in response and response["Errors"]:
+                for error in response["Errors"]:
                     logger.error(f"Failed to delete object {error['Key']}: {error['Message']}")
-            
+
             logger.info(f"Deleted batch of {len(batch)} objects")
     except Exception as e:
         logger.error(f"Error deleting objects: {str(e)}")
         raise typer.Exit(1)
+
 
 def main(
     access_key_id: str = typer.Option(..., "--access-key-id", help="AWS access key ID"),
@@ -167,8 +160,12 @@ def main(
     endpoint: str = typer.Option(..., "--endpoint", help="S3 endpoint URL"),
     bucket: str = typer.Option(..., "--bucket", help="Bucket name"),
     prefix: str = typer.Option("", "--prefix", help="Object prefix filter"),
-    delete_after_retention_days: int = typer.Option(15, "--delete-after-retention-days", help="Delete objects older than this many days"),
-    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Show what would be deleted without performing deletions")
+    delete_after_retention_days: int = typer.Option(
+        15, "--delete-after-retention-days", help="Delete objects older than this many days"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", "-n", help="Show what would be deleted without performing deletions"
+    ),
 ) -> None:
     """
     Clean up old objects in an S3-compatible bucket based on retention period.
@@ -212,5 +209,6 @@ def main(
         logger.info("Dry run completed. No files were deleted.")
         logger.info("-" * 50)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     typer.run(main)

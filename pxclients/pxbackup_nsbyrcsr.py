@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 LABEL_KEYS = [
     "storage/pxbackup.kubernetes.io",
     "resources/pxbackup.kubernetes.io",
-    "all/pxbackup.kubernetes.io"
+    "all/pxbackup.kubernetes.io",
 ]
 LABEL_VALUES = ["4am", "8am", "12pm", "4pm", "8pm", "12am"]
+
 
 # Load Kubernetes configuration
 def load_kube_config(kubeconfig_path):
@@ -31,6 +32,7 @@ def load_kube_config(kubeconfig_path):
     except Exception as e:
         logger.error(f"Error loading kubeconfig: {e}")
         raise
+
 
 # Get namespace data
 def get_namespace_data(excluded_namespaces):
@@ -44,7 +46,10 @@ def get_namespace_data(excluded_namespaces):
 
         # Initialize data structure
         namespace_data = {
-            label_key: {label_value: {"namespaces": [], "total_resource_count": 0} for label_value in LABEL_VALUES}
+            label_key: {
+                label_value: {"namespaces": [], "total_resource_count": 0}
+                for label_value in LABEL_VALUES
+            }
             for label_key in LABEL_KEYS
         }
         unassigned_data = {"namespaces": [], "total_resource_count": 0}
@@ -90,7 +95,9 @@ def get_namespace_data(excluded_namespaces):
 
             if assigned_label_key and assigned_label_value:
                 namespace_data[assigned_label_key][assigned_label_value]["namespaces"].append(name)
-                namespace_data[assigned_label_key][assigned_label_value]["total_resource_count"] += resource_count
+                namespace_data[assigned_label_key][assigned_label_value][
+                    "total_resource_count"
+                ] += resource_count
             else:
                 unassigned_data["namespaces"].append(name)
                 unassigned_data["total_resource_count"] += resource_count
@@ -109,13 +116,20 @@ def get_namespace_data(excluded_namespaces):
             balanced_namespaces = {label_value: [] for label_value in LABEL_VALUES}
             for ns in all_namespaces:
                 # Find the label value with the least total resources
-                min_label_value = min(LABEL_VALUES, key=lambda lv: sum(ns["resource_count"] for ns in balanced_namespaces[lv]))
+                min_label_value = min(
+                    LABEL_VALUES,
+                    key=lambda lv: sum(ns["resource_count"] for ns in balanced_namespaces[lv]),
+                )
                 balanced_namespaces[min_label_value].append(ns)
 
             # Update the data with balanced namespaces
             for label_value in LABEL_VALUES:
-                namespace_data[label_key][label_value]["namespaces"] = [ns["name"] for ns in balanced_namespaces[label_value]]
-                namespace_data[label_key][label_value]["total_resource_count"] = sum(ns["resource_count"] for ns in balanced_namespaces[label_value])
+                namespace_data[label_key][label_value]["namespaces"] = [
+                    ns["name"] for ns in balanced_namespaces[label_value]
+                ]
+                namespace_data[label_key][label_value]["total_resource_count"] = sum(
+                    ns["resource_count"] for ns in balanced_namespaces[label_value]
+                )
 
         return namespace_data, unassigned_data
 
@@ -125,14 +139,18 @@ def get_namespace_data(excluded_namespaces):
     finally:
         logger.info("Completed namespace data collection.")
 
+
 @click.command()
 @click.option(
-    "--kubeconfig", default=None,
-    help="Path to kubeconfig file. Uses the KUBECONFIG environment variable if not provided."
+    "--kubeconfig",
+    default=None,
+    help="Path to kubeconfig file. Uses the KUBECONFIG environment variable if not provided.",
 )
 @click.option(
-    "--exclude", multiple=True, default=[],
-    help="Namespaces to exclude from the analysis. Can be specified multiple times."
+    "--exclude",
+    multiple=True,
+    default=[],
+    help="Namespaces to exclude from the analysis. Can be specified multiple times.",
 )
 def main(kubeconfig, exclude):
     try:
@@ -153,6 +171,7 @@ def main(kubeconfig, exclude):
     except Exception as e:
         logger.error(f"Unhandled error: {e}")
         click.echo("An error occurred. Check the log file for details.", err=True)
+
 
 if __name__ == "__main__":
     main()

@@ -9,6 +9,7 @@ from kubernetes import client, config
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+
 def count_resources(namespace, include_crds):
     # API Clients
     v1 = client.CoreV1Api()
@@ -21,20 +22,26 @@ def count_resources(namespace, include_crds):
 
     try:
         # Count core resources
-        namespace_resources['Pods'] = len(v1.list_namespaced_pod(namespace).items)
-        namespace_resources['Services'] = len(v1.list_namespaced_service(namespace).items)
-        namespace_resources['ConfigMaps'] = len(v1.list_namespaced_config_map(namespace).items)
-        namespace_resources['Secrets'] = len(v1.list_namespaced_secret(namespace).items)
-        
+        namespace_resources["Pods"] = len(v1.list_namespaced_pod(namespace).items)
+        namespace_resources["Services"] = len(v1.list_namespaced_service(namespace).items)
+        namespace_resources["ConfigMaps"] = len(v1.list_namespaced_config_map(namespace).items)
+        namespace_resources["Secrets"] = len(v1.list_namespaced_secret(namespace).items)
+
         # Count apps resources
-        namespace_resources['Deployments'] = len(apps_v1.list_namespaced_deployment(namespace).items)
-        namespace_resources['ReplicaSets'] = len(apps_v1.list_namespaced_replica_set(namespace).items)
-        namespace_resources['StatefulSets'] = len(apps_v1.list_namespaced_stateful_set(namespace).items)
-        namespace_resources['DaemonSets'] = len(apps_v1.list_namespaced_daemon_set(namespace).items)
-        
+        namespace_resources["Deployments"] = len(
+            apps_v1.list_namespaced_deployment(namespace).items
+        )
+        namespace_resources["ReplicaSets"] = len(
+            apps_v1.list_namespaced_replica_set(namespace).items
+        )
+        namespace_resources["StatefulSets"] = len(
+            apps_v1.list_namespaced_stateful_set(namespace).items
+        )
+        namespace_resources["DaemonSets"] = len(apps_v1.list_namespaced_daemon_set(namespace).items)
+
         # Count batch resources
-        namespace_resources['Jobs'] = len(batch_v1.list_namespaced_job(namespace).items)
-        namespace_resources['CronJobs'] = len(batch_v1.list_namespaced_cron_job(namespace).items)
+        namespace_resources["Jobs"] = len(batch_v1.list_namespaced_job(namespace).items)
+        namespace_resources["CronJobs"] = len(batch_v1.list_namespaced_cron_job(namespace).items)
 
         # Optionally count custom resources (CRDs)
         if include_crds:
@@ -50,24 +57,26 @@ def count_resources(namespace, include_crds):
                 version = versions[0].name
                 try:
                     custom_objects = custom_api.list_namespaced_custom_object(
-                        group=group,
-                        version=version,
-                        namespace=namespace,
-                        plural=plural
+                        group=group, version=version, namespace=namespace, plural=plural
                     )
                     # Count the instances of this custom resource
-                    namespace_resources[crd.spec.names.kind] += len(custom_objects['items'])
+                    namespace_resources[crd.spec.names.kind] += len(custom_objects["items"])
                 except client.exceptions.ApiException as e:
-                    logging.error(f"Could not retrieve custom resources for {crd.spec.names.kind} in namespace {namespace}: {e}")
+                    logging.error(
+                        f"Could not retrieve custom resources for {crd.spec.names.kind} in namespace {namespace}: {e}"
+                    )
     except client.exceptions.ApiException as e:
         logging.error(f"Error counting resources in namespace {namespace}: {e}")
-    
+
     return namespace_resources
 
+
 @click.command()
-@click.option('--namespace', default=None, help="Specify a namespace (defaults to all namespaces).")
-@click.option('--include-crds', is_flag=True, help="Include custom resources (CRDs) in the count.")
-@click.option('--output-file', type=click.Path(), default="output.csv", help="Path to output CSV file.")
+@click.option("--namespace", default=None, help="Specify a namespace (defaults to all namespaces).")
+@click.option("--include-crds", is_flag=True, help="Include custom resources (CRDs) in the count.")
+@click.option(
+    "--output-file", type=click.Path(), default="output.csv", help="Path to output CSV file."
+)
 def main(namespace, include_crds, output_file):
     # Load the kubeconfig
     config.load_kube_config()  # For use outside a cluster
@@ -88,7 +97,7 @@ def main(namespace, include_crds, output_file):
         logging.info(f"Counting resources in namespace: {ns}")
         resources = count_resources(ns, include_crds)
         all_resources.append({"Namespace": ns, **resources})
-        
+
         # Log the resources for each namespace
         for resource_type, count in resources.items():
             logging.info(f"  {resource_type}: {count}")
@@ -103,6 +112,7 @@ def main(namespace, include_crds, output_file):
             for resource_data in all_resources:
                 writer.writerow(resource_data)
                 logging.info(f"Wrote resources for namespace: {resource_data['Namespace']}")
+
 
 if __name__ == "__main__":
     main()

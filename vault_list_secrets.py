@@ -6,52 +6,52 @@ This script provides functionality to list keys in a Vault KV store using hvac.
 It includes proper logging and type hints as per project guidelines.
 """
 
+import logging
 import os
 import sys
-import logging
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
+
 import hvac
 import typer
 from dotenv import load_dotenv
+from hvac.exceptions import InvalidRequest, VaultError
 from pick import pick
+
 from utils.vault_utils import create_vault_client
-from hvac.exceptions import VaultError, InvalidRequest
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
 app = typer.Typer(help="Vault KV Secrets Management Tool")
 
+
 def get_vault_client(
     vault_addr: Optional[str] = None,
     vault_token: Optional[str] = None,
-    namespace: Optional[str] = None
+    namespace: Optional[str] = None,
 ) -> hvac.Client:
     """
     CLI wrapper for create_vault_client with Typer-specific error handling.
-    
+
     Args:
         vault_addr: Optional Vault server address
         vault_token: Optional Vault token
         namespace: Optional Vault namespace
-        
+
     Returns:
         hvac.Client: Authenticated Vault client
-        
+
     Raises:
         typer.Exit: If authentication fails or required parameters are missing
     """
     try:
         return create_vault_client(
-            url=vault_addr,
-            token=vault_token,
-            namespace=namespace,
-            load_env=True
+            url=vault_addr, token=vault_token, namespace=namespace, load_env=True
         )
     except (VaultError, InvalidRequest, ValueError) as e:
         logger.error(str(e))
@@ -60,10 +60,9 @@ def get_vault_client(
         logger.error(f"Error connecting to Vault: {str(e)}")
         raise typer.Exit(1)
 
+
 def list_kv_secrets(
-    client: hvac.Client,
-    mount_point: str = "static_secrets",
-    path: str = ""
+    client: hvac.Client, mount_point: str = "static_secrets", path: str = ""
 ) -> Dict[str, Any]:
     """
     List keys in the specified KV store path.
@@ -80,20 +79,12 @@ def list_kv_secrets(
             - data: dictionary of secret data if present
             - data_keys: list of keys that contain secret data
     """
-    result = {
-        "keys": [],
-        "is_data": False,
-        "data": None,
-        "data_keys": []
-    }
-    
+    result = {"keys": [], "is_data": False, "data": None, "data_keys": []}
+
     try:
         # Try to list keys first
         try:
-            response = client.secrets.kv.v2.list_secrets(
-                path=path,
-                mount_point=mount_point
-            )
+            response = client.secrets.kv.v2.list_secrets(path=path, mount_point=mount_point)
             result["keys"] = response.get("data", {}).get("keys", [])
         except hvac.exceptions.InvalidPath:
             # Path might be a leaf node with data only
@@ -101,10 +92,7 @@ def list_kv_secrets(
 
         # Try to read data at this path
         try:
-            data = client.secrets.kv.v2.read_secret(
-                path=path,
-                mount_point=mount_point
-            )
+            data = client.secrets.kv.v2.read_secret(path=path, mount_point=mount_point)
             result["is_data"] = True
             result["data"] = data["data"]["data"]
             # If we have both keys and data, mark this path as a data key
@@ -119,10 +107,7 @@ def list_kv_secrets(
                 if not key.endswith("/"):  # Only check non-folder paths
                     try:
                         full_path = f"{path}/{key}".lstrip("/")
-                        client.secrets.kv.v2.read_secret(
-                            path=full_path,
-                            mount_point=mount_point
-                        )
+                        client.secrets.kv.v2.read_secret(path=full_path, mount_point=mount_point)
                         result["data_keys"].append(key)
                     except hvac.exceptions.InvalidPath:
                         pass
@@ -131,6 +116,7 @@ def list_kv_secrets(
     except Exception as e:
         logger.error(f"Error accessing secrets: {str(e)}")
         return result
+
 
 def format_data(data: Dict[str, Any], indent: int = 0, mask_values: bool = True) -> str:
     """
@@ -156,62 +142,45 @@ def format_data(data: Dict[str, Any], indent: int = 0, mask_values: bool = True)
             result.append(f"{spaces}{key}: {display_value}")
     return "\n".join(result)
 
+
 @app.command()
 def list_keys(
     mount_point: str = typer.Option(
-        "static_secrets",
-        "--mount-point", "-m",
-        help="KV store mount point"
+        "static_secrets", "--mount-point", "-m", help="KV store mount point"
     ),
-    path: str = typer.Option(
-        "",
-        "--path", "-p",
-        help="Path within the KV store"
-    ),
+    path: str = typer.Option("", "--path", "-p", help="Path within the KV store"),
     vault_addr: Optional[str] = typer.Option(
-        None,
-        "--vault-addr",
-        help="Vault server address (or use VAULT_ADDR env var)"
+        None, "--vault-addr", help="Vault server address (or use VAULT_ADDR env var)"
     ),
     vault_token: Optional[str] = typer.Option(
-        None,
-        "--vault-token",
-        help="Vault token (or use VAULT_TOKEN env var)"
+        None, "--vault-token", help="Vault token (or use VAULT_TOKEN env var)"
     ),
     namespace: Optional[str] = typer.Option(
-        None,
-        "--namespace", "-n",
-        help="Vault namespace (or use VAULT_NAMESPACE env var)"
+        None, "--namespace", "-n", help="Vault namespace (or use VAULT_NAMESPACE env var)"
     ),
     show_data: bool = typer.Option(
-        True,
-        "--show-data/--no-data",
-        help="Show secret data when available"
+        True, "--show-data/--no-data", help="Show secret data when available"
     ),
     mask_values: bool = typer.Option(
-        True,
-        "--mask/--no-mask",
-        help="Mask sensitive values in output"
+        True, "--mask/--no-mask", help="Mask sensitive values in output"
     ),
     interactive: bool = typer.Option(
-        True,
-        "--interactive/--no-interactive",
-        help="Enable/disable interactive mode"
-    )
+        True, "--interactive/--no-interactive", help="Enable/disable interactive mode"
+    ),
 ) -> None:
     """List keys and optionally show data in a Vault KV store path."""
     try:
         # Get vault client with proper error handling
         client = get_vault_client(vault_addr, vault_token, namespace)
         logger.info(f"Accessing secrets at {mount_point}/{path}")
-        
+
         # Get secrets with error handling
         try:
             result = list_kv_secrets(client, mount_point, path)
         except (VaultError, InvalidRequest) as e:
             logger.error(f"Failed to list secrets: {str(e)}")
             raise typer.Exit(1)
-        
+
         if not result["keys"] and not result["is_data"]:
             typer.echo(f"\n📂 No secrets found at path: {path or '/'}")
             return
@@ -237,11 +206,13 @@ def list_keys(
 
         # Interactive mode
         if interactive and result["keys"]:
-            title = "🔍 Select a key to explore (use arrow keys, press Enter to select, Ctrl+C to exit):"
+            title = (
+                "🔍 Select a key to explore (use arrow keys, press Enter to select, Ctrl+C to exit):"
+            )
             options = result["keys"] + ["Exit"]
             try:
                 selected, _ = pick(options, title)
-                
+
                 if selected != "Exit":
                     new_path = f"{path}/{selected}" if path else selected
                     list_keys(
@@ -252,7 +223,7 @@ def list_keys(
                         namespace=namespace,
                         show_data=show_data,
                         mask_values=mask_values,
-                        interactive=interactive
+                        interactive=interactive,
                     )
             except KeyboardInterrupt:
                 typer.echo("\n👋 Exiting interactive mode")
@@ -261,6 +232,7 @@ def list_keys(
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
         raise typer.Exit(1)
+
 
 if __name__ == "__main__":
     app()

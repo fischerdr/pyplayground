@@ -7,9 +7,8 @@ It includes proper logging and type hints as per project guidelines.
 """
 
 import logging
-import os
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import hvac
 import typer

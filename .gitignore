@@ -366,5 +366,3 @@ pyvenv.cfg
 .venv
 pip-selfcheck.json
 
-# windsurf rules
-.windsurfrules

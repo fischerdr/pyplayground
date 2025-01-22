@@ -1,0 +1,13 @@
+This is a Python project that is currently in development.
+Python code in this project are used for the following: vault k8s dndsimulator vmware. it is also used to mock k8s, vmware and vault apis.
+utils/ directory for utility functions. all utility functions should be imported from this directory
+utility functions should be used anytime more than one python script needs to use the same function
+docs/ directory for documentation
+tests/ directory for unit and integration tests
+.venv/ directory for virtual environment
+logs/ directory for log files
+config/ directory for configuration files
+always keep Python project configuration (pyproject.toml) in sync with Requirements files (requirements.txt and requirements-dev.txt) and upto date
+always use double quotes for the value of the environment variable
+check docs for more information also when changes are made to the application,review the documentation and pyproject.toml file should be updated
+line length should not exceed 180 characters

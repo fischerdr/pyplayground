@@ -205,9 +205,7 @@ def list_keys(
 
         # Interactive mode
         if interactive and result["keys"]:
-            title = (
-                "🔍 Select a key to explore (use arrow keys, press Enter to select, Ctrl+C to exit):"
-            )
+            title = "🔍 Select a key to explore (use arrow keys, press Enter to select, Ctrl+C to exit):"
             options = result["keys"] + ["Exit"]
             try:
                 selected, _ = pick(options, title)

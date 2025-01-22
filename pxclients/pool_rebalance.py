@@ -16,27 +16,26 @@ shortNameMap = {}
 dsFullPath = {}
 
 # Add key-value pairs to the map
-dsFullPath[
-    "HK-TKO102-CL15-PX-535-244-IKP-PURE"
-] = "/HK-TKO102/datastore/Portworx/HK-TKO102-CL15-PX-535-244-IKP-PURE"
-dsFullPath[
-    "HK-TKO102-CL15-PX-535-245-IKP-PURE"
-] = "/HK-TKO102/datastore/Portworx/HK-TKO102-CL15-PX-535-245-IKP-PURE"
-dsFullPath[
-    "HK-TKO102-CL15-PX-535-249-IKP-PURE"
-] = "/HK-TKO102/datastore/Portworx/HK-TKO102-CL15-PX-535-249-IKP-PURE"
-dsFullPath[
-    "HK-TKO102-CL15-PX-535-250-IKP-PURE"
-] = "/HK-TKO102/datastore/Portworx/HK-TKO102-CL15-PX-535-250-IKP-PURE"
-dsFullPath[
-    "HK-TKO102-CL15-PX-535-251-IKP-PURE"
-] = "/HK-TKO102/datastore/Portworx/HK-TKO102-CL15-PX-535-251-IKP-PURE"
-dsFullPath[
-    "HK-TKO102-CL15-PX-535-252-IKP-PURE"
-] = "/HK-TKO102/datastore/Portworx/HK-TKO102-CL15-PX-535-252-IKP-PURE"
+dsFullPath["HK-TKO102-CL15-PX-535-244-IKP-PURE"] = (
+    "/HK-TKO102/datastore/Portworx/HK-TKO102-CL15-PX-535-244-IKP-PURE"
+)
+dsFullPath["HK-TKO102-CL15-PX-535-245-IKP-PURE"] = (
+    "/HK-TKO102/datastore/Portworx/HK-TKO102-CL15-PX-535-245-IKP-PURE"
+)
+dsFullPath["HK-TKO102-CL15-PX-535-249-IKP-PURE"] = (
+    "/HK-TKO102/datastore/Portworx/HK-TKO102-CL15-PX-535-249-IKP-PURE"
+)
+dsFullPath["HK-TKO102-CL15-PX-535-250-IKP-PURE"] = (
+    "/HK-TKO102/datastore/Portworx/HK-TKO102-CL15-PX-535-250-IKP-PURE"
+)
+dsFullPath["HK-TKO102-CL15-PX-535-251-IKP-PURE"] = (
+    "/HK-TKO102/datastore/Portworx/HK-TKO102-CL15-PX-535-251-IKP-PURE"
+)
+dsFullPath["HK-TKO102-CL15-PX-535-252-IKP-PURE"] = (
+    "/HK-TKO102/datastore/Portworx/HK-TKO102-CL15-PX-535-252-IKP-PURE"
+)
 dsFullPath["HK-TKO102-CL15-PX-NEW-1"] = "/HK-TKO102/datastore/Portworx/HK-TKO102-CL15-PX-NEW-1"
 dsFullPath["HK-TKO103-CL15-PX-NEW-2"] = "/HK-TKO102/datastore/Portworx/HK-TKO103-CL15-PX-NEW-2"
-
 
 ####################--------START-------######################
 # Copy paste dsShortName output below
@@ -53,12 +52,12 @@ dsFullPath["js500-9-HSBC-nrevanna-06"] = "/CNBU/datastore/js500-9-HSBC-nrevanna-
 dsFullPath["js500-9-HSBC-nrevanna-07"] = "/CNBU/datastore/js500-9-HSBC-nrevanna-07"
 dsFullPath["js500-9-DS2"] = "/CNBU/datastore/js500-9-DS2"
 
-dsFullPath[
-    "Dev-Sandbox-N5-guava-ds01"
-] = "/slc5-n5-CNBU/datastore/Dev-Sandbox-N5-DS/Dev-Sandbox-N5-guava-ds01"
-dsFullPath[
-    "Dev-Sandbox-N5-plum-ds01"
-] = "/slc5-n5-CNBU/datastore/Dev-Sandbox-N5-DS/Dev-Sandbox-N5-plum-ds01"
+dsFullPath["Dev-Sandbox-N5-guava-ds01"] = (
+    "/slc5-n5-CNBU/datastore/Dev-Sandbox-N5-DS/Dev-Sandbox-N5-guava-ds01"
+)
+dsFullPath["Dev-Sandbox-N5-plum-ds01"] = (
+    "/slc5-n5-CNBU/datastore/Dev-Sandbox-N5-DS/Dev-Sandbox-N5-plum-ds01"
+)
 dsFullPath["cds-1"] = "/Lehi/datastore/cds-1"
 dsFullPath["cds-2"] = "/Lehi/datastore/cds-2"
 dsFullPath["cds-3"] = "/Lehi/datastore/cds-3"

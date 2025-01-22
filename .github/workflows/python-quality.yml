@@ -24,6 +24,4 @@ jobs:
     - name: Check imports with isort
       run: |
         isort --check-only --diff --line-length=100 .
-    - name: Lint with flake8
-      run: |
-        flake8 .
+

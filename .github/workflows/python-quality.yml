@@ -20,10 +20,10 @@ jobs:
         pip install flake8 black isort
     - name: Check code formatting with black
       run: |
-        black --check --diff .
+        black --check --diff --line-length=100 .
     - name: Check imports with isort
       run: |
-        isort --check-only --diff .
+        isort --check-only --diff --line-length=100 .
     - name: Lint with flake8
       run: |
         flake8 .

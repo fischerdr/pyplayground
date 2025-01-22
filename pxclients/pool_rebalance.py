@@ -295,7 +295,9 @@ def move_datastores(dry_run, node_id, config_map_file, input_file):
 
 def get_disks_to_detach(node_id):
     vm_uuid = get_vm_uuid(node_id)
-    vmdk_list = px_exec_some_pod(f"pxctl cd list-drives| grep \.vmdk | grep {node_id}").splitlines()
+    vmdk_list = px_exec_some_pod(
+        f"pxctl cd list-drives| grep '\\.vmdk' | grep {node_id}"
+    ).splitlines()
     # print(f"The following are the PX VMDKS attached on node {node_id}")
     allvmdks = {}
     for vmdk in vmdk_list:

@@ -14,7 +14,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +38,24 @@ def read_json_config(config_file: str) -> Dict[str, Any]:
 
     Returns:
         Dictionary containing the parsed JSON data
+
+    Raises:
+        JSONDecodeError: If the file contains invalid JSON
+        FileNotFoundError: If the config file does not exist
+        PermissionError: If the program lacks permission to read the file
     """
     try:
         with open(config_file, "r") as f:
-            return json.load(f)
+            config_data: Dict[str, Any] = json.load(f)
+            return config_data
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON config file: {str(e)}")
+        raise
+    except (FileNotFoundError, PermissionError) as e:
+        logger.error(f"Failed to read config file: {str(e)}")
+        raise
     except Exception as e:
-        logger.error(f"Failed to read JSON config file: {str(e)}")
+        logger.error(f"Unexpected error reading config file: {str(e)}")
         raise
 
 

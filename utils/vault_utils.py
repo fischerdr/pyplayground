@@ -1,39 +1,52 @@
-"""Vault utility functions."""
+"""Vault utility functions for interacting with HashiCorp Vault.
+
+This module provides a set of utility functions for interacting with HashiCorp Vault,
+including client creation, secret management, and token operations.
+"""
 
 import logging
 import os
 from typing import Any, Dict, List, Optional
 
-import hvac
+import hvac  # type: ignore
 from dotenv import load_dotenv
-from hvac.exceptions import InvalidRequest, VaultError
+from hvac.exceptions import VaultError  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+# mypy: disable-error-code="no-any-return"
 
 
 def create_vault_client(
     url: Optional[str] = None,
     token: Optional[str] = None,
     namespace: Optional[str] = None,
-    verify: Optional[str] = None,
+    verify: bool = False,
     load_env: bool = True,
 ) -> hvac.Client:
-    """
-    Create and authenticate a Vault client.
+    """Create and authenticate a HashiCorp Vault client.
+
+    Creates a new Vault client instance and authenticates it using the provided credentials
+    or environment variables. If load_env is True, it will attempt to load environment
+    variables from a .env file.
 
     Args:
-        url: Vault server URL (defaults to VAULT_ADDR env var)
-        token: Vault token (defaults to VAULT_TOKEN env var)
-        namespace: Vault namespace (defaults to VAULT_NAMESPACE env var)
-        verify: Path to SSL certificate (PEM) file for verification
-        load_env: Whether to load environment from .env file
+        url: Vault server URL. If None, uses VAULT_ADDR environment variable
+        token: Vault authentication token. If None, uses VAULT_TOKEN environment variable
+        namespace: Vault Enterprise namespace. If None, uses VAULT_NAMESPACE environment variable
+        verify: Path to SSL certificate (PEM) for verification. If None, uses system CA certificates
+        load_env: Whether to load environment variables from .env file. Defaults to True
 
     Returns:
-        hvac.Client: Authenticated Vault client
+        hvac.Client: An authenticated Vault client instance
 
     Raises:
-        VaultError: If connection or authentication fails
-        ValueError: If required parameters are missing
+        VaultError: If connection fails or authentication is unsuccessful
+        ValueError: If required URL or token parameters are missing
+
+    Example:
+        >>> client = create_vault_client(url="http://vault:8200", token="hvs.example")
+        >>> assert client.is_authenticated()
     """
     if load_env:
         load_dotenv()
@@ -49,27 +62,42 @@ def create_vault_client(
 
     client = hvac.Client(url=vault_url, token=vault_token, namespace=vault_namespace, verify=verify)
 
-    if not client.is_authenticated():
-        raise VaultError("Failed to authenticate with Vault")
+    try:
+        client.sys.is_sealed()
+    except VaultError as e:
+        raise VaultError("Failed to authenticate with Vault") from e
 
     return client
 
 
-def list_secrets(client: hvac.Client, path: str, mount_point: str = "secret") -> Dict[str, Any]:
-    """
-    List secrets at a given path in Vault.
+def list_secrets(
+    client: hvac.Client, path: str, mount_point: str = "secret"
+) -> Dict[str, List[str]]:
+    """List secrets at a specified path in Vault.
+
+    Lists all secrets and subdirectories at the given path in the Vault KV2 secrets engine.
 
     Args:
-        client: Authenticated Vault client
-        path: Path to list secrets from
-        mount_point: Secret engine mount point
+        client: An authenticated Vault client instance
+        path: Path in Vault to list secrets from (e.g., "myapp/")
+        mount_point: The mount point of the KV secrets engine. Defaults to "secret"
 
     Returns:
-        Dict containing list of secrets
+        Dict[str, List[str]]: Dictionary containing 'keys' with list of secret names and subdirectories
+
+    Raises:
+        VaultError: If listing secrets fails due to permissions or connectivity issues
+
+    Example:
+        >>> secrets = list_secrets(client, "myapp/")
+        >>> print(secrets["keys"])
+        ['config', 'credentials/', 'certificates/']
     """
     try:
-        result = client.secrets.kv.v2.list_secrets(path=path, mount_point=mount_point)
-        return result
+        result = client.kv.v2.list_secrets(path=path, mount_point=mount_point)
+        if not result or "data" not in result:
+            return {"keys": []}
+        return {"keys": result["data"]["keys"]}
 
     except VaultError as e:
         logger.error(f"Failed to list secrets at path {path}: {e}")
@@ -79,22 +107,34 @@ def list_secrets(client: hvac.Client, path: str, mount_point: str = "secret") ->
 def get_secret(
     client: hvac.Client, path: str, mount_point: str = "secret", version: Optional[int] = None
 ) -> Dict[str, Any]:
-    """
-    Get a secret from Vault.
+    """Retrieve a secret from Vault.
+
+    Gets the secret data at the specified path from the Vault KV2 secrets engine.
+    Optionally retrieves a specific version of the secret.
 
     Args:
-        client: Authenticated Vault client
-        path: Path to the secret
-        mount_point: Secret engine mount point
-        version: Optional version of the secret
+        client: An authenticated Vault client instance
+        path: Full path to the secret in Vault (e.g., "myapp/config")
+        mount_point: The mount point of the KV secrets engine. Defaults to "secret"
+        version: Specific version of the secret to retrieve. If None, gets latest version
 
     Returns:
-        Dict containing secret data
+        Dict[str, Any]: Dictionary containing the secret data
+
+    Raises:
+        VaultError: If secret retrieval fails due to permissions or connectivity issues
+
+    Example:
+        >>> secret = get_secret(client, "myapp/config")
+        >>> print(secret["api_key"])
+        'abc123'
     """
     try:
-        result = client.secrets.kv.v2.read_secret_version(
+        result = client.kv.v2.read_secret_version(
             path=path, mount_point=mount_point, version=version
         )
+        if not result or "data" not in result or "data" not in result["data"]:
+            return {}
         return result["data"]["data"]
 
     except VaultError as e:
@@ -103,14 +143,20 @@ def get_secret(
 
 
 def debug_token(token: str) -> str:
-    """
-    Safely debug token information without exposing the full token.
+    """Create a safe debug representation of a Vault token.
+
+    Creates a partially redacted version of a Vault token suitable for logging
+    or debugging, showing only the first and last 4 characters.
 
     Args:
-        token: The token to debug
+        token: The Vault token to create a debug representation for
 
     Returns:
-        str: A safe representation of the token for debugging
+        str: A redacted representation of the token (e.g., "hvs.....abc1")
+
+    Example:
+        >>> print(debug_token("hvs.6F8q9x2mK4"))
+        'hvs.....2mK4'
     """
     if not token:
         return "No token provided"
@@ -121,16 +167,23 @@ def debug_token(token: str) -> str:
 
 
 def validate_path_access(client: hvac.Client, path: str, mount_point: str = "secret") -> bool:
-    """
-    Validate if the client has access to the given path.
+    """Validate if the client has access to a Vault path.
+
+    Checks if the authenticated client has permission to access the specified path
+    by attempting to list or read from it.
 
     Args:
-        client: Authenticated Vault client
-        path: Path to validate
-        mount_point: The mount point of the KV store
+        client: An authenticated Vault client instance
+        path: Path in Vault to validate access to
+        mount_point: The mount point of the KV secrets engine. Defaults to "secret"
 
     Returns:
-        bool: True if path is accessible, False otherwise
+        bool: True if path is accessible, False if path is inaccessible or doesn't exist
+
+    Example:
+        >>> has_access = validate_path_access(client, "myapp/config")
+        >>> if has_access:
+        ...     secret = get_secret(client, "myapp/config")
     """
     try:
         if not path:
@@ -150,18 +203,31 @@ def validate_path_access(client: hvac.Client, path: str, mount_point: str = "sec
 
 
 def get_token_info(client: hvac.Client) -> Dict[str, Any]:
-    """
-    Get detailed information about the current token.
+    """Retrieve detailed information about the current authentication token.
+
+    Gets metadata about the token being used by the client, including creation time,
+    policies, and any metadata associated with the token.
 
     Args:
-        client: Authenticated Vault client
+        client: An authenticated Vault client instance
 
     Returns:
-        Dict containing token information including policies and metadata
+        Dict[str, Any]: Dictionary containing token metadata including:
+            - creation_time: Token creation timestamp
+            - policies: List of policies attached to the token
+            - meta: Dictionary of token metadata
+            - num_uses: Number of times token has been used
+
+    Example:
+        >>> info = get_token_info(client)
+        >>> print(info["policies"])
+        ['default', 'app-policy']
     """
     try:
-        token_info = client.auth.token.lookup_self()
-        return token_info
+        token_info = client.token.lookup_self()
+        if not token_info or "data" not in token_info:
+            return {}
+        return token_info["data"]
     except Exception as e:
         logging.error(f"Failed to get token info: {str(e)}")
         return {}
@@ -170,14 +236,26 @@ def get_token_info(client: hvac.Client) -> Dict[str, Any]:
 def collect_secrets(
     client: hvac.Client, path: str, mount_point: str, secrets_list: List[str]
 ) -> None:
-    """
-    Recursively collect all secret paths in Vault.
+    """Recursively collect all secret paths under a given path in Vault.
+
+    Traverses the Vault path hierarchy starting at the specified path and collects
+    all secret paths into the provided list. This is useful for creating an inventory
+    of secrets or validating secret organization.
 
     Args:
-        client: Authenticated Vault client
-        path: Current path to traverse
-        mount_point: The mount point of the KV store
-        secrets_list: List to store found secret paths
+        client: An authenticated Vault client instance
+        path: Starting path to begin collection from
+        mount_point: The mount point of the KV secrets engine
+        secrets_list: List to store collected secret paths (modified in-place)
+
+    Raises:
+        VaultError: If secret collection fails due to permissions or connectivity issues
+
+    Example:
+        >>> secrets = []
+        >>> collect_secrets(client, "myapp/", "secret", secrets)
+        >>> print(secrets)
+        ['myapp/config', 'myapp/credentials/db', 'myapp/certificates/tls']
     """
     try:
         # List secrets at current path

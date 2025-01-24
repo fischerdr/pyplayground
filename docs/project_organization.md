@@ -27,6 +27,10 @@ project_root/
 ├── docs/          # Documentation
 ├── logs/          # Log files
 ├── config/        # Configuration files
+├── tmp/           # Temporary files and directories
+│   ├── cache/     # Cache files
+│   ├── downloads/ # Downloaded files
+│   └── build/     # Build artifacts
 └── .venv/         # Virtual environment
 ```
 
@@ -102,6 +106,23 @@ Notes:
   - Use `.yaml` or `.yml` for YAML files
   - Use `.json` for JSON files
   - Original extension + `.j2` for templated files (e.g., `config.yaml.j2`)
+
+### Temporary Files
+
+The `tmp/` directory is used for:
+- Temporary files created during script execution
+- Downloaded artifacts that need processing
+- Build-time temporary files
+- Cache files for improved performance
+- Working directories for scripts
+
+Guidelines for using the tmp directory:
+- All contents should be safe to delete
+- Add cleanup routines in scripts that create temp files
+- Use unique subdirectories for different operations
+- Include appropriate patterns in .gitignore
+- Consider using mktemp for secure temporary file creation
+- Clean up temp files on script exit (including on errors)
 
 ### Utility Functions
 

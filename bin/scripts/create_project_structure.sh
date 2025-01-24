@@ -62,6 +62,9 @@ create_dir_with_gitkeep "tests"
 create_dir_with_gitkeep "docs"
 create_dir_with_gitkeep "logs"
 create_dir_with_gitkeep "config"
+create_dir_with_gitkeep "tmp/cache"
+create_dir_with_gitkeep "tmp/downloads"
+create_dir_with_gitkeep "tmp/build"
 mkdir -p .venv
 
 # Create initial Python files
@@ -295,6 +298,21 @@ docs/_build/
 # Misc
 *.retry
 pip-selfcheck.json
+
+# Temporary Files
+tmp/*
+!tmp/.gitkeep
+!tmp/*/
+tmp/cache/*
+!tmp/cache/.gitkeep
+tmp/downloads/*
+!tmp/downloads/.gitkeep
+tmp/build/*
+!tmp/build/.gitkeep
+*.tmp
+*.temp
+*~
+
 EOL'
 
 # Create README.md
@@ -319,6 +337,10 @@ project_root/
 ├── docs/          # Documentation
 ├── logs/          # Log files
 ├── config/        # Configuration files
+├── tmp/           # Temporary files
+│   ├── cache/     # Cache directory
+│   ├── downloads/ # Download directory
+│   └── build/     # Build directory
 └── .venv/         # Virtual environment
 \`\`\`
 

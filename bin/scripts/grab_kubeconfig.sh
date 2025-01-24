@@ -45,6 +45,29 @@ log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] [${level}] $*" >&2
 }
 
+# Function to cleanup kubeconfig
+# Usage: cleanup
+# Description: Removes the created kubeconfig file and unsets KUBECONFIG environment variable
+# Returns: 0 on success, 1 on failure
+cleanup() {
+    local kubeconfig_file="${KUBECONFIG:-}"
+    
+    if [[ -n "${kubeconfig_file}" ]]; then
+        if [[ -f "${kubeconfig_file}" ]]; then
+            log "INFO" "Removing kubeconfig file: ${kubeconfig_file}"
+            rm -f "${kubeconfig_file}" || {
+                log "ERROR" "Failed to remove kubeconfig file: ${kubeconfig_file}"
+                return 1
+            }
+        fi
+        log "INFO" "Unsetting KUBECONFIG environment variable"
+        unset KUBECONFIG
+    else
+        log "INFO" "No KUBECONFIG environment variable set, nothing to clean"
+    fi
+    return 0
+}
+
 # Common error handler
 # Usage: error "error message"
 # Returns: 1

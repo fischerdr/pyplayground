@@ -16,6 +16,20 @@ function create_dir_with_gitkeep() {
     touch "$1/.gitkeep"
 }
 
+# Function to safely create a file
+function safe_create_file() {
+    local file="$1"
+    local content_func="$2"
+    
+    if [ -f "$file" ]; then
+        echo "File $file already exists. Skipping creation."
+        echo "If you want to see the template content, check the script source."
+    else
+        echo "Creating $file"
+        eval "$content_func"
+    fi
+}
+
 # Check arguments
 if [ $# -ne 2 ]; then
     show_usage
@@ -59,7 +73,7 @@ touch utils/__init__.py
 echo "Creating configuration files..."
 
 # Create pyproject.toml
-cat > pyproject.toml << EOL
+safe_create_file "pyproject.toml" 'cat > pyproject.toml << EOL
 [build-system]
 requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -72,20 +86,20 @@ requires-python = ">=3.9,<3.15"
 
 [tool.black]
 line-length = 100
-target-version = ['py39']
+target-version = ["py39"]
 
 [tool.isort]
 profile = "black"
 line_length = 100
-EOL
+EOL'
 
 # Create requirements files
-cat > requirements.txt << EOL
+safe_create_file "requirements.txt" 'cat > requirements.txt << EOL
 click>=8.0.0
 typer>=0.9.0
-EOL
+EOL'
 
-cat > requirements-dev.txt << EOL
+safe_create_file "requirements-dev.txt" 'cat > requirements-dev.txt << EOL
 black
 isort
 flake8
@@ -93,10 +107,10 @@ pytest
 mypy
 click>=8.0.0
 typer>=0.9.0
-EOL
+EOL'
 
 # Create logging configuration
-cat > config/logging.conf << EOL
+safe_create_file "config/logging.conf" 'cat > config/logging.conf << EOL
 [loggers]
 keys=root
 
@@ -122,15 +136,15 @@ args=(sys.stdout,)
 class=handlers.RotatingFileHandler
 level=INFO
 formatter=defaultFormatter
-args=('logs/app.log', 'a', 1000000, 5)
+args=("logs/app.log", "a", 1000000, 5)
 
 [formatter_defaultFormatter]
 format=%(asctime)s - %(name)s - %(levelname)s - %(message)s
 datefmt=%Y-%m-%d %H:%M:%S
-EOL
+EOL'
 
 # Create a basic Python CLI template
-cat > src/"$PROJECT_NAME"/cli.py << EOL
+safe_create_file "src/$PROJECT_NAME/cli.py" 'cat > src/"$PROJECT_NAME"/cli.py << EOL
 #!/usr/bin/env python3
 """Command line interface for $PROJECT_NAME."""
 
@@ -164,10 +178,10 @@ def hello(name: Optional[str] = None) -> None:
 if __name__ == "__main__":
     logger.info("Starting CLI application")
     app()
-EOL
+EOL'
 
 # Create .gitignore
-cat > .gitignore << EOL
+safe_create_file ".gitignore" 'cat > .gitignore << EOL
 # Python
 __pycache__/
 *.py[cod]
@@ -281,10 +295,10 @@ docs/_build/
 # Misc
 *.retry
 pip-selfcheck.json
-EOL
+EOL'
 
 # Create README.md
-cat > README.md << EOL
+safe_create_file "README.md" 'cat > README.md << EOL
 # $PROJECT_NAME
 
 ## Overview
@@ -332,10 +346,10 @@ project_root/
 
 ## Documentation
 See the [docs/](docs/) directory for detailed documentation.
-EOL
+EOL'
 
 # Create initial documentation
-cat > docs/project_setup.md << EOL
+safe_create_file "docs/project_setup.md" 'cat > docs/project_setup.md << EOL
 # Project Setup Guide
 
 ## Prerequisites
@@ -351,13 +365,13 @@ cat > docs/project_setup.md << EOL
 
 ## Development Setup
 [Add development setup instructions here]
-EOL
+EOL'
 
 # Create example templates
 echo "Creating example templates..."
 
 # K8s template example
-cat > templates/k8s/deployment.yaml.j2 << EOL
+safe_create_file "templates/k8s/deployment.yaml.j2" 'cat > templates/k8s/deployment.yaml.j2 << EOL
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -377,20 +391,20 @@ spec:
     spec:
       containers:
       - name: {{ container_name | default(app_name) }}
-        image: {{ image }}:{{ tag | default('latest') }}
+        image: {{ image }}:{{ tag | default("latest") }}
         ports:
         - containerPort: {{ port | default(8080) }}
-EOL
+EOL'
 
 # JSON config template
-cat > templates/config/config.json.j2 << EOL
+safe_create_file "templates/config/config.json.j2" 'cat > templates/config/config.json.j2 << EOL
 {
   "application": "{{ app_name }}",
-  "version": "{{ version | default('1.0.0') }}",
-  "environment": "{{ env | default('development') }}",
+  "version": "{{ version | default("1.0.0") }}",
+  "environment": "{{ env | default("development") }}",
   "logging": {
-    "level": "{{ log_level | default('INFO') }}",
-    "file": "{{ log_file | default('app.log') }}"
+    "level": "{{ log_level | default("INFO") }}",
+    "file": "{{ log_file | default("app.log") }}"
   },
   "database": {
     "host": "{{ db_host }}",
@@ -399,35 +413,35 @@ cat > templates/config/config.json.j2 << EOL
     "user": "{{ db_user }}"
   }
 }
-EOL
+EOL'
 
 # Environment template
-cat > templates/config/env.j2 << EOL
+safe_create_file "templates/config/env.j2" 'cat > templates/config/env.j2 << EOL
 # Environment Configuration
 # Generated from template
 
 # Application
 APP_NAME="{{ app_name }}"
-APP_ENV="{{ env | default('development') }}"
-APP_DEBUG="{{ debug | default('false') }}"
+APP_ENV="{{ env | default("development") }}"
+APP_DEBUG="{{ debug | default("false") }}"
 
 # Database
 DB_HOST="{{ db_host }}"
-DB_PORT="{{ db_port | default('5432') }}"
+DB_PORT="{{ db_port | default("5432") }}"
 DB_NAME="{{ db_name }}"
 DB_USER="{{ db_user }}"
 
 # Kubernetes
-K8S_NAMESPACE="{{ k8s_namespace | default('default') }}"
+K8S_NAMESPACE="{{ k8s_namespace | default("default") }}"
 K8S_CONTEXT="{{ k8s_context }}"
 
 # Vault
-VAULT_ADDR="{{ vault_addr | default('http://localhost:8200') }}"
+VAULT_ADDR="{{ vault_addr | default("http://localhost:8200") }}"
 VAULT_TOKEN="{{ vault_token }}"
-EOL
+EOL'
 
 # Add example values file
-cat > templates/k8s/values.yaml << EOL
+safe_create_file "templates/k8s/values.yaml" 'cat > templates/k8s/values.yaml << EOL
 # Default values for application deployment
 app_name: myapp
 namespace: default
@@ -454,7 +468,7 @@ k8s_context: minikube
 
 # Vault
 vault_addr: http://localhost:8200
-EOL
+EOL'
 
 echo "Project structure created successfully!"
 echo "Next steps:"

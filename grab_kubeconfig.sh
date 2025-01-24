@@ -1,18 +1,26 @@
 #!/bin/bash
 #
-# Script: annonupdate.sh
-# Description: Updates Portworx annotations using vault-stored kubeconfig
-# Usage: ./annonupdate.sh <cluster_name>
+# Script: grab_kubeconfig.sh
+# Description: Functions to retrieve and store the kubeconfig for a given cluster name. Needs to be included in a main script.
+# Usage: source ./grab_kubeconfig.sh
+#
+# Examples:
+#   source ./grab_kubeconfig.sh
+#   get_inventory_data "my-cluster"
+#   get_vault_kubeconfig "my-cluster"
+#   # This will create kube_configs/my-cluster.kubeconfig and export KUBECONFIG
 #
 # Dependencies:
 #   - curl: for API requests
 #   - jq: for JSON parsing
-#   - nc: for network connectivity checks
-#   - oc: for OpenShift/Kubernetes operations
 #
 # Environment Variables:
 #   - VAULT_TOKEN: Optional, vault token for authentication
 #   - DEBUG: Optional, set to "true" for debug output
+#
+# Directory Structure:
+#   - kube_configs/: Directory where kubeconfig files are stored
+#     - <cluster_name>.kubeconfig: Kubeconfig file for each cluster
 
 # Enable strict mode
 set -euo pipefail
@@ -22,22 +30,11 @@ IFS=$'\n\t'
 [[ "${DEBUG:-}" == "true" ]] && set -x
 
 # Global constants
-readonly OC_CMD="/usr/bin/oc"
 readonly CURL_CMD="/usr/bin/curl"
 readonly JQ_CMD="/usr/bin/jq"
 readonly VAULT_TOKEN_FILE="/src/vault_secrets/ansible-token"
-readonly PORTWORX_NAMESPACE="portworx"
 readonly CURL_TIMEOUT=30
-
-# Portworx annotation constants
-readonly PORTWORX_ANNOTATIONS=(
-    "operator.libopenstorage.org/common-image-registries=gcr.io,k8s.gcr.io"
-    "operator.libopenstorage.org/cordoned-restart-delay-secs=30"
-    "portworx.io/scc-priority=3"
-    "portworx.io/portworx-proxy=false"
-    "portworx.io/preflight-check=false"
-    "portworx.io/disable-storage-class=true"
-)
+readonly KUBECONFIG_DIR="kube_configs"
 
 # Logging function
 # Usage: log <level> <message>
@@ -67,9 +64,9 @@ curl_cmd() {
 # Function to check if required commands exist
 # Usage: check_requirements
 # Returns: 0 if all required commands exist, 1 otherwise
-# Description: Verifies that curl, jq, nc, and oc commands are available in the system
+# Description: Verifies that curl, jq commands are available in the system
 check_requirements() {
-    local required_cmds=(curl jq nc oc)
+    local required_cmds=(curl jq)
     for cmd in "${required_cmds[@]}"; do
         if ! command -v "${cmd}" >/dev/null; then
             error "Required command '${cmd}' not found. Please install it."
@@ -161,16 +158,59 @@ get_inventory_data() {
     return 0
 }
 
+# Validate cluster name for safe file operations
+# Usage: validate_cluster_name <cluster_name>
+# Returns: 0 if valid, 1 if invalid
+validate_cluster_name() {
+    local cluster_name="$1"
+    # Check for empty name
+    [[ -z "${cluster_name}" ]] && error "Cluster name cannot be empty" && return 1
+    
+    # Check for valid characters (alphanumeric, dash, dot, underscore)
+    if [[ ! "${cluster_name}" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+        error "Cluster name contains invalid characters. Use only alphanumeric, dash, dot, or underscore"
+        return 1
+    fi
+    return 0
+}
+
+# Validate directory permissions
+# Usage: validate_dir_permissions <directory>
+# Returns: 0 if directory is writable, 1 if not
+validate_dir_permissions() {
+    local dir="$1"
+    # Create directory if it doesn't exist
+    if [[ ! -d "${dir}" ]]; then
+        mkdir -p "${dir}" || {
+            error "Failed to create directory ${dir}"
+            return 1
+        }
+    fi
+    
+    # Check if directory is writable
+    if [[ ! -w "${dir}" ]]; then
+        error "Directory ${dir} is not writable"
+        return 1
+    fi
+    return 0
+}
+
 # Function to get kubeconfig from vault using inventory configuration
-# Usage: get_vault_kubeconfig
+# Usage: get_vault_kubeconfig <cluster_name>
+# Arguments:
+#   cluster_name - Name of the cluster to get kubeconfig for
 # Returns: 
 #   - 0 if kubeconfig successfully retrieved and saved
 #   - 1 if any step fails
 # Description: Uses vault configuration to retrieve kubeconfig from vault's KV2 store
-#             at static_secrets mount point. Saves kubeconfig to temp file and sets
-#             KUBECONFIG environment variable
+#             at static_secrets mount point. Saves kubeconfig to file in kube_configs directory
+#             and exports KUBECONFIG environment variable
 get_vault_kubeconfig() {
-    local vault_token response kubeconfig kubeconfig_file
+    local cluster_name="$1"
+    local vault_token response kubeconfig
+    
+    # Validate cluster name
+    validate_cluster_name "${cluster_name}" || return 1
     
     vault_token=$(get_vault_token) || return 1
     [[ -z "${VAULT_ADDR}" || -z "${VAULT_NAMESPACE}" || -z "${VAULT_PATH}" ]] && \
@@ -190,77 +230,13 @@ get_vault_kubeconfig() {
     [[ -z "${kubeconfig}" || "${kubeconfig}" == "null" ]] && \
         error "No kubeconfig found in vault response" && return 1
 
-    # Save kubeconfig to temporary file
-    kubeconfig_file="$(mktemp)"
+    # Validate directory permissions before saving
+    validate_dir_permissions "${KUBECONFIG_DIR}" || return 1
+    
+    # Save kubeconfig to file and export KUBECONFIG
+    local kubeconfig_file="${KUBECONFIG_DIR}/${cluster_name}.kubeconfig"
     echo "${kubeconfig}" > "${kubeconfig_file}"
     export KUBECONFIG="${kubeconfig_file}"
-    log "INFO" "Successfully retrieved and saved kubeconfig"
+    log "INFO" "Successfully saved kubeconfig to ${kubeconfig_file} and exported KUBECONFIG"
     return 0
 }
-
-# Function to update portworx annotations
-# Usage: update_portworx_annotations
-# Returns: 
-#   - 0 if annotations successfully updated
-#   - 1 if StorageCluster not found or update fails
-# Description: Updates various portworx annotations on the StorageCluster
-#             resource in the portworx namespace
-update_portworx_annotations() {
-    local stc
-    
-    log "INFO" "Checking for StorageCluster in namespace ${PORTWORX_NAMESPACE}"
-    stc=$("${OC_CMD}" get stc -n "${PORTWORX_NAMESPACE}" --no-headers -o name 2>/dev/null)
-    [[ -z "${stc}" ]] && error "No StorageCluster found in namespace ${PORTWORX_NAMESPACE}" && return 1
-
-    log "INFO" "Updating StorageCluster annotations"
-    # Update annotations
-    "${OC_CMD}" annotate "${stc}" -n "${PORTWORX_NAMESPACE}" --overwrite "${PORTWORX_ANNOTATIONS[@]}" || \
-        { error "Failed to update annotations"; return 1; }
-    
-    log "INFO" "Successfully updated StorageCluster annotations"
-    return 0
-}
-
-# Cleanup function
-# Usage: cleanup
-# Returns: None
-# Description: Removes temporary kubeconfig file if it exists.
-#             Designed to be called by trap on script exit
-cleanup() {
-    if [[ -n "${KUBECONFIG:-}" && -f "${KUBECONFIG}" ]]; then
-        log "INFO" "Cleaning up temporary kubeconfig file"
-        rm -f "${KUBECONFIG}"
-    fi
-}
-
-# Main execution function
-# Usage: main <cluster_name>
-# Arguments:
-#   cluster_name - Name of the cluster to update portworx annotations for
-# Returns: 
-#   - 0 if all operations succeed
-#   - 1 if any operation fails
-# Description: Main script execution flow. Gets vault configuration from inventory,
-#             retrieves kubeconfig from vault, and updates portworx annotations
-main() {
-    local cluster_name="$1"
-    : "${cluster_name:?Usage: $0 <cluster_name>}"
-
-    log "INFO" "Starting portworx annotation update for cluster ${cluster_name}"
-    
-    trap cleanup EXIT
-    check_requirements || exit 1
-    get_inventory_data "${cluster_name}" || exit 1
-    get_vault_kubeconfig || exit 1
-
-    # Check portworx namespace and update annotations
-    "${OC_CMD}" get namespace "${PORTWORX_NAMESPACE}" --no-headers \
-        --output="go-template={{.metadata.name}}" &>/dev/null || \
-        { error "Portworx namespace not found"; exit 1; }
-
-    update_portworx_annotations || { error "Failed to update portworx annotations"; exit 1; }
-    log "INFO" "Successfully completed all operations"
-}
-
-# Execute main function
-main "$@"

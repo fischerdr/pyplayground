@@ -150,11 +150,11 @@ def should_ignore_line(line: str) -> bool:
         # Template logic
         r"{%\s*[\w\._\s]+\s*%}",
         # Test patterns
-        r'r["\'].*?password.*?["\']',  # Raw string containing 'password'
-        r"assert.*password",  # Assertions about passwords
-        r"mock.*password",  # Mocked password functions
-        r"test.*password",  # Test cases for passwords
-        r"\[.*?password.*?\]",  # Password in list/array context
+        # r'r["\'].*?password.*?["\']',  # Raw string containing 'password'
+        # r"assert.*password",  # Assertions about passwords
+        # r"mock.*password",  # Mocked password functions
+        # r"test.*password",  # Test cases for passwords
+        # r"\[.*?password.*?\]",  # Password in list/array context
     ]
 
     # Combine all patterns into one regex for efficiency

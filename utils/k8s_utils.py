@@ -6,6 +6,7 @@ import os
 import re
 import time
 import requests
+import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -35,6 +36,28 @@ def load_kube_config(config_file: Optional[str] = None, context: Optional[str] =
     except config.config_exception.ConfigException as e:
         logger.error(f"Failed to load kubeconfig: {e}")
         raise
+
+
+def load_kubeconfig_from_string(kubeconfig_str: str) -> None:
+    """
+    Safely load kubeconfig from a YAML string.
+
+    Args:
+        kubeconfig_str: String containing kubeconfig in YAML format
+
+    Raises:
+        yaml.YAMLError: If the YAML is invalid
+        kubernetes.config.ConfigException: If the kubeconfig structure is invalid
+    """
+    try:
+        # Safely parse the YAML string into a Python dictionary
+        kubeconfig_dict = yaml.safe_load(kubeconfig_str)
+
+        # Load the kubernetes config from the dictionary
+        config.load_kube_config_from_dict(kubeconfig_dict)
+    except yaml.YAMLError as e:
+        # Handle YAML parsing errors
+        raise ValueError(f"Invalid YAML format in kubeconfig: {e}")
 
 
 def get_k8s_client(api_version: str = "CoreV1Api") -> Any:

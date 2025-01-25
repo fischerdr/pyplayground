@@ -108,6 +108,20 @@ templates/**/*.temp
 templates/**/_rendered/
 templates/**/rendered/
 
+# Temporary Files
+tmp/*
+!tmp/.gitkeep
+!tmp/*/
+tmp/cache/*
+!tmp/cache/.gitkeep
+tmp/downloads/*
+!tmp/downloads/.gitkeep
+tmp/build/*
+!tmp/build/.gitkeep
+*.tmp
+*.temp
+*~
+
 # Misc
 *.retry
 pip-selfcheck.json

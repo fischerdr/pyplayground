@@ -2,12 +2,19 @@
 
 import json
 import logging
+import os
+import re
 import time
+import requests
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from kubernetes import client, config
+from kubernetes import client, config, stream
 from kubernetes.client import ApiClient
 from kubernetes.client.rest import ApiException
+from hvac.exceptions import VaultError
+
+from utils.vault_utils import create_vault_client, get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -479,3 +486,155 @@ def update_cloud_drive_config(
     except Exception as e:
         logger.error(f"Failed to update cloud-drive config: {str(e)}")
         raise
+
+
+def normalize_vault_path(path: str) -> tuple[str, str]:
+    """Normalize vault path by removing mount prefix and returning mount point.
+
+    Args:
+        path: Raw vault path that may include mount prefix
+
+    Returns:
+        tuple[str, str]: A tuple containing:
+            - mount_point: The vault mount point (e.g. 'static_secrets')
+            - normalized_path: The path without mount prefix and leading/trailing slashes
+    """
+    # Remove leading and trailing slashes
+    path = path.strip('/')
+
+    # Split on first slash to separate mount point and path
+    parts = path.split('/', 1)
+    if len(parts) == 2:
+        mount_point, path = parts
+    else:
+        mount_point = "secret"
+
+    return mount_point, path
+
+
+def get_kubeconfig_from_vault(
+    cluster_name: str,
+    inventory_url: str,
+    vault_url: Optional[str] = None,
+    vault_token: Optional[str] = None,
+    kubeconfig_dir: str = "tmp/k8s",
+) -> tuple[str, str]:
+    """Retrieve kubeconfig from inventory and vault sources for a given cluster.
+
+    This function fetches the kubeconfig for a specified cluster by:
+    1. Getting cluster configuration from inventory
+    2. Using that information to retrieve the kubeconfig from Vault
+    3. Storing the kubeconfig in a local file under tmp/k8s directory
+
+    Args:
+        cluster_name: Name of the cluster to get kubeconfig for
+        inventory_url: URL of the inventory service
+        vault_url: Optional Vault server URL. If None, uses VAULT_ADDR environment variable
+        vault_token: Optional Vault token. If None, uses VAULT_TOKEN environment variable
+        kubeconfig_dir: Directory to store kubeconfig files (default: "tmp/k8s")
+
+    Returns:
+        tuple[str, str]: A tuple containing:
+            - Path to the saved kubeconfig file
+            - Kubeconfig data as a string that can be used directly with load_kube_config
+
+    Raises:
+        ValueError: If cluster_name contains invalid characters
+        OSError: If kubeconfig directory is not writable
+        VaultError: If Vault operations fail
+        requests.RequestException: If inventory API request fails
+
+    Example:
+        cluster_name = "euse1c-4"
+        inventory_url = "http://inventory.example.com"
+        kubeconfig_dir = "tmp/k8s"
+        vault_url = "http://vault.example.com"
+        vault_token = "my-vault-token"
+
+        kubeconfig_path, kubeconfig_data = get_kubeconfig_from_vault(
+            cluster_name,
+            inventory_url,
+            vault_url,
+            vault_token,
+            kubeconfig_dir,
+        )
+
+        # Load kubeconfig data into KUBECONFIG
+        load_kube_config(kubeconfig_data)
+    """
+    logger.info(f"Retrieving kubeconfig for cluster: {cluster_name}")
+
+    # Get project root directory (where tmp/ should be located)
+    project_root = Path(__file__).resolve().parents[1]
+    kubeconfig_path = project_root / kubeconfig_dir
+
+    # Validate cluster name
+    if not re.match(r'^[a-zA-Z0-9_.-]+$', cluster_name):
+        msg = f"Invalid cluster name: {cluster_name}. Must contain only alphanumeric characters, dots, dashes, and underscores."
+        logger.error(msg)
+        raise ValueError(msg)
+
+    # Ensure kubeconfig directory exists and is writable
+    kubeconfig_path.mkdir(parents=True, exist_ok=True)
+    if not os.access(kubeconfig_path, os.W_OK):
+        msg = f"Directory not writable: {kubeconfig_path}"
+        logger.error(msg)
+        raise OSError(msg)
+
+    # Get inventory data
+    logger.debug(f"Fetching inventory data from: {inventory_url}")
+    try:
+        response = requests.get(f"{inventory_url}/clusters/{cluster_name}")
+        response.raise_for_status()
+        inventory_data = response.json()
+    except requests.RequestException as e:
+        logger.error(f"Failed to get inventory data: {e}")
+        raise
+
+    # Extract Vault path from inventory data
+    try:
+        vault_config = inventory_data["kubernetes_platform"]["secrets_management"]["platform_vault"][0]
+        vault_url = vault_config["address"]
+        vault_namespace = vault_config["namespace"]
+        raw_path = vault_config["default_path"]
+
+        # Normalize the vault path
+        vault_mount, vault_path = normalize_vault_path(raw_path)
+        if not all([vault_url, vault_namespace, vault_path]):
+            msg = "Missing required vault configuration in inventory"
+            logger.error(msg)
+            raise ValueError(msg)
+
+    except (KeyError, IndexError) as e:
+        msg = f"Invalid inventory data structure: {e}"
+        logger.error(msg)
+        raise ValueError(msg)
+
+    # Create Vault client and get kubeconfig
+    logger.debug("Creating Vault client")
+    vault_client = create_vault_client(
+        url=vault_url if vault_url else None,
+        token=vault_token,
+        namespace=vault_namespace
+    )
+    try:
+        secret = get_secret(vault_client, vault_path, mount_point=vault_mount)
+        kubeconfig_data = secret.get("kubeconfig")
+        if not kubeconfig_data:
+            msg = f"No kubeconfig found in Vault at path: {vault_path}"
+            logger.error(msg)
+            raise ValueError(msg)
+    except VaultError as e:
+        logger.error(f"Failed to get kubeconfig from Vault: {e}")
+        raise
+
+    # Save kubeconfig to file
+    kubeconfig_file = kubeconfig_path / f"{cluster_name}.kubeconfig"
+    try:
+        kubeconfig_file.write_text(kubeconfig_data)
+        logger.info(f"Saved kubeconfig to: {kubeconfig_file}")
+    except OSError as e:
+        logger.error(f"Failed to write kubeconfig file: {e}")
+        raise
+
+    return str(kubeconfig_file), kubeconfig_data

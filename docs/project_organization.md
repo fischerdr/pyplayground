@@ -110,6 +110,7 @@ Notes:
 ### Temporary Files
 
 The `tmp/` directory is used for:
+
 - Temporary files created during script execution
 - Downloaded artifacts that need processing
 - Build-time temporary files
@@ -117,6 +118,7 @@ The `tmp/` directory is used for:
 - Working directories for scripts
 
 Guidelines for using the tmp directory:
+
 - All contents should be safe to delete
 - Add cleanup routines in scripts that create temp files
 - Use unique subdirectories for different operations

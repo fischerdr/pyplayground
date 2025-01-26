@@ -2,14 +2,12 @@
 """
 VMDK Utility Functions.
 
-This module provides utility functions for VMDK operations 
+This module provides utility functions for VMDK operations
 These functions are shared across the vmdk_manager and related scripts.
 
 """
 
 import atexit
-from dataclasses import dataclass
-
 import pyVmomi
 from pyVim.connect import Disconnect, SmartConnect
 from pyVmomi import vim, vmodl
@@ -18,16 +16,6 @@ from utils.logging_utils import get_logger, setup_logging
 
 logger = get_logger(__name__)
 setup_logging()
-
-
-@dataclass
-class VMDKInfo:
-    """Data class to store VMDK information."""
-
-    filename: str
-    datastore: str
-    capacity_gb: float
-    path: str
 
 
 def print_vm_info(vm, depth=1, max_depth=10):

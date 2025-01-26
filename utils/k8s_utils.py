@@ -78,6 +78,26 @@ def get_k8s_client(api_version: str = "CoreV1Api") -> Any:
         raise
 
 
+def get_custom_objects_api() -> client.CustomObjectsApi:
+    """
+    Get a Kubernetes CustomObjectsApi client.
+
+    This function provides access to the CustomObjectsApi for working with Custom Resource
+    Definitions (CRDs) in Kubernetes.
+
+    Returns:
+        kubernetes.client.CustomObjectsApi: The CustomObjectsApi client instance
+
+    Raises:
+        kubernetes.client.rest.ApiException: If there are API connectivity issues
+    """
+    try:
+        return client.CustomObjectsApi()
+    except Exception as e:
+        logger.error("Failed to create CustomObjectsApi client: %s", str(e))
+        raise
+
+
 def exec_pod_command(
     namespace: str,
     pod_name: str,

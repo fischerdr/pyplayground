@@ -7,14 +7,14 @@ These functions are shared across the vmdk_manager and related scripts.
 
 """
 
-from dataclasses import dataclass
-from pyVim.connect import Disconnect, SmartConnect
-import pyVmomi
 import atexit
+from dataclasses import dataclass
+
+import pyVmomi
+from pyVim.connect import Disconnect, SmartConnect
 from pyVmomi import vim, vmodl
 
 from utils.logging_utils import get_logger, setup_logging
-
 
 logger = get_logger(__name__)
 setup_logging()
@@ -38,7 +38,7 @@ def print_vm_info(vm, depth=1, max_depth=10):
 
     # if this is a group it will have children. if it does, recurse into them
     # and then return
-    if hasattr(vm, 'childEntity'):
+    if hasattr(vm, "childEntity"):
         if depth > max_depth:
             return
         vm_list = vm.childEntity
@@ -65,16 +65,13 @@ def print_vm_info(vm, depth=1, max_depth=10):
 
 def wait_for_tasks(si, tasks):
     """Given the service instance and tasks, it returns after all the
-   tasks are complete
-   """
+    tasks are complete
+    """
     property_collector = si.content.propertyCollector
     task_list = [str(task) for task in tasks]
     # Create filter
-    obj_specs = [vmodl.query.PropertyCollector.ObjectSpec(obj=task)
-                 for task in tasks]
-    property_spec = vmodl.query.PropertyCollector.PropertySpec(type=vim.Task,
-                                                               pathSet=[],
-                                                               all=True)
+    obj_specs = [vmodl.query.PropertyCollector.ObjectSpec(obj=task) for task in tasks]
+    property_spec = vmodl.query.PropertyCollector.PropertySpec(type=vim.Task, pathSet=[], all=True)
     filter_spec = vmodl.query.PropertyCollector.FilterSpec()
     filter_spec.objectSet = obj_specs
     filter_spec.propSet = [property_spec]
@@ -88,9 +85,9 @@ def wait_for_tasks(si, tasks):
                 for obj_set in filter_set.objectSet:
                     task = obj_set.obj
                     for change in obj_set.changeSet:
-                        if change.name == 'info':
+                        if change.name == "info":
                             state = change.val.state
-                        elif change.name == 'info.state':
+                        elif change.name == "info.state":
                             state = change.val
                         else:
                             continue
@@ -122,16 +119,17 @@ def connect(args):
     # form a connection...
     try:
         if args.disable_ssl_verification:
-            service_instance = SmartConnect(host=args.host,
-                                            user=args.user,
-                                            pwd=args.password,
-                                            port=args.port,
-                                            disableSslCertValidation=True)
+            service_instance = SmartConnect(
+                host=args.host,
+                user=args.user,
+                pwd=args.password,
+                port=args.port,
+                disableSslCertValidation=True,
+            )
         else:
-            service_instance = SmartConnect(host=args.host,
-                                            user=args.user,
-                                            pwd=args.password,
-                                            port=args.port)
+            service_instance = SmartConnect(
+                host=args.host, user=args.user, pwd=args.password, port=args.port
+            )
 
         # doing this means you don't need to remember to disconnect your script/objects
         atexit.register(Disconnect, service_instance)
@@ -157,8 +155,7 @@ def extract_path_from_datastore_path(datastore_path: str) -> str:
     return datastore_path.split("] ", 1)[1] if "] " in datastore_path else datastore_path
 
 
-def collect_properties(si, view_ref, obj_type, path_set=None,
-                       include_mors=False):
+def collect_properties(si, view_ref, obj_type, path_set=None, include_mors=False):
     """
     Collect properties for managed objects from a view ref
 
@@ -189,8 +186,8 @@ def collect_properties(si, view_ref, obj_type, path_set=None,
 
     # Create a traversal specification to identify the path for collection
     traversal_spec = pyVmomi.vmodl.query.PropertyCollector.TraversalSpec()
-    traversal_spec.name = 'traverseEntities'
-    traversal_spec.path = 'view'
+    traversal_spec.name = "traverseEntities"
+    traversal_spec.path = "view"
     traversal_spec.skip = False
     traversal_spec.type = view_ref.__class__
     obj_spec.selectSet = [traversal_spec]
@@ -220,7 +217,7 @@ def collect_properties(si, view_ref, obj_type, path_set=None,
             properties[prop.name] = prop.val
 
         if include_mors:
-            properties['obj'] = obj.obj
+            properties["obj"] = obj.obj
 
         data.append(properties)
     return data
@@ -243,9 +240,7 @@ def get_container_view(si, obj_type, container=None):
         container = si.content.rootFolder
 
     view_ref = si.content.viewManager.CreateContainerView(
-        container=container,
-        type=obj_type,
-        recursive=True
+        container=container, type=obj_type, recursive=True
     )
     return view_ref
 

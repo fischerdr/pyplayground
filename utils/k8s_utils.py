@@ -5,15 +5,15 @@ import logging
 import os
 import re
 import time
-import requests
-import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import requests
+import yaml
+from hvac.exceptions import VaultError
 from kubernetes import client, config, stream
 from kubernetes.client import ApiClient
 from kubernetes.client.rest import ApiException
-from hvac.exceptions import VaultError
 
 from utils.vault_utils import create_vault_client, get_secret
 
@@ -523,10 +523,10 @@ def normalize_vault_path(path: str) -> tuple[str, str]:
             - normalized_path: The path without mount prefix and leading/trailing slashes
     """
     # Remove leading and trailing slashes
-    path = path.strip('/')
+    path = path.strip("/")
 
     # Split on first slash to separate mount point and path
-    parts = path.split('/', 1)
+    parts = path.split("/", 1)
     if len(parts) == 2:
         mount_point, path = parts
     else:
@@ -592,7 +592,7 @@ def get_kubeconfig_from_vault(
     kubeconfig_path = project_root / kubeconfig_dir
 
     # Validate cluster name
-    if not re.match(r'^[a-zA-Z0-9_.-]+$', cluster_name):
+    if not re.match(r"^[a-zA-Z0-9_.-]+$", cluster_name):
         msg = f"Invalid cluster name: {cluster_name}. Must contain only alphanumeric characters, dots, dashes, and underscores."
         logger.error(msg)
         raise ValueError(msg)
@@ -616,7 +616,9 @@ def get_kubeconfig_from_vault(
 
     # Extract Vault path from inventory data
     try:
-        vault_config = inventory_data["kubernetes_platform"]["secrets_management"]["platform_vault"][0]
+        vault_config = inventory_data["kubernetes_platform"]["secrets_management"][
+            "platform_vault"
+        ][0]
         vault_url = vault_config["address"]
         vault_namespace = vault_config["namespace"]
         raw_path = vault_config["default_path"]
@@ -636,9 +638,7 @@ def get_kubeconfig_from_vault(
     # Create Vault client and get kubeconfig
     logger.debug("Creating Vault client")
     vault_client = create_vault_client(
-        url=vault_url if vault_url else None,
-        token=vault_token,
-        namespace=vault_namespace
+        url=vault_url if vault_url else None, token=vault_token, namespace=vault_namespace
     )
     try:
         secret = get_secret(vault_client, vault_path, mount_point=vault_mount)

@@ -1,0 +1,5 @@
+cat api.swagger.json |jq -er '.paths| keys[] as $k|.[$k] |keys[] as $t|[$t,$k, .[$t].summary]|@csv'
+https://codebeautify.org/json-to-python-pojo-generator
+
+https://docs.portworx.com/portworx-backup-on-prem/configure/ui-access/configure-ui
+

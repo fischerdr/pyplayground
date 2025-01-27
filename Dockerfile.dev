@@ -1,0 +1,90 @@
+# Use Red Hat Universal Base Image 8 as base image
+FROM registry.access.redhat.com/ubi8/ubi:latest
+
+# Add HashiCorp and Kubernetes repositories
+RUN microdnf install -y dnf-plugins-core && \
+    microdnf config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo && \
+    cat <<EOF | tee /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-\$basearch
+enabled=1
+gpgcheck=1
+gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+EOF
+
+# Install development tools and required packages
+RUN microdnf update -y && \
+    microdnf install -y \
+    gcc \
+    gcc-c++ \
+    git \
+    curl \
+    wget \
+    make \
+    zlib-devel \
+    bzip2-devel \
+    openssl-devel \
+    libffi-devel \
+    vault-agent \
+    kubectl \
+    shadow-utils \
+    && microdnf clean all \
+    && rm -rf /var/cache/yum/*
+
+# Install Python 3.12 from source
+RUN curl -O https://www.python.org/ftp/python/3.12.1/Python-3.12.1.tgz && \
+    tar -xzf Python-3.12.1.tgz && \
+    cd Python-3.12.1 && \
+    ./configure --enable-optimizations && \
+    make altinstall && \
+    cd .. && \
+    rm -rf Python-3.12.1* && \
+    ln -sf /usr/local/bin/python3.12 /usr/local/bin/python3 && \
+    ln -sf /usr/local/bin/python3 /usr/local/bin/python && \
+    ln -sf /usr/local/bin/pip3.12 /usr/local/bin/pip3 && \
+    ln -sf /usr/local/bin/pip3 /usr/local/bin/pip
+
+# Install Helm
+RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# Create non-root user
+RUN useradd -m -d /src -s /bin/bash developer && \
+    chown -R developer:developer /src
+
+# Set the working directory in the container
+WORKDIR /src
+
+# Create required directories
+RUN mkdir -p /src/logs /src/config /src/utils /src/tests /src/docs /src/tmp /src/cache && \
+    chown -R developer:developer /src/logs /src/config /src/utils /src/tests /src/docs /src/tmp /src/cache
+
+# Switch to non-root user
+USER developer
+
+# Copy requirements files
+COPY --chown=developer:developer requirements*.txt ./
+
+# Install dependencies
+RUN python -m pip install --upgrade pip setuptools wheel && \
+    python -m pip install --no-cache-dir --user -r requirements.txt && \
+    if [ -f requirements-dev.txt ]; then \
+        python -m pip install --no-cache-dir --user -r requirements-dev.txt; \
+    fi
+
+# Copy the application code
+COPY --chown=developer:developer . .
+
+# Set environment variables
+ENV PYTHONPATH=/src
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/src/.local/bin:/usr/local/bin:${PATH}"
+ENV HOME=/src
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
+# Create volume mount points for logs, config, tmp, and cache
+VOLUME ["/src/logs", "/src/config", "/src/tmp", "/src/cache"]
+
+# Default command for development (can be overridden)
+CMD ["python", "-m", "pytest"]

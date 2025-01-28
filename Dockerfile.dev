@@ -3,15 +3,8 @@ FROM registry.access.redhat.com/ubi8/ubi:latest
 
 # Add HashiCorp and Kubernetes repositories
 RUN microdnf install -y dnf-plugins-core && \
-    microdnf config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo && \
-    cat <<EOF | tee /etc/yum.repos.d/kubernetes.repo
-[kubernetes]
-name=Kubernetes
-baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-\$basearch
-enabled=1
-gpgcheck=1
-gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
-EOF
+    microdnf config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
+COPY kubernetes.repo /etc/yum.repos.d/kubernetes.repo
 
 # Install development tools and required packages
 RUN microdnf update -y && \
@@ -59,11 +52,16 @@ WORKDIR /src
 RUN mkdir -p /src/logs /src/config /src/utils /src/tests /src/docs /src/tmp /src/cache && \
     chown -R developer:developer /src/logs /src/config /src/utils /src/tests /src/docs /src/tmp /src/cache
 
+# Copy requirements files
+COPY requirements*.txt ./
+RUN chown developer:developer requirements*.txt
+
+# Copy the application code
+COPY . .
+RUN chown -R developer:developer .
+
 # Switch to non-root user
 USER developer
-
-# Copy requirements files
-COPY --chown=developer:developer requirements*.txt ./
 
 # Install dependencies
 RUN python -m pip install --upgrade pip setuptools wheel && \
@@ -71,9 +69,6 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
     if [ -f requirements-dev.txt ]; then \
         python -m pip install --no-cache-dir --user -r requirements-dev.txt; \
     fi
-
-# Copy the application code
-COPY --chown=developer:developer . .
 
 # Set environment variables
 ENV PYTHONPATH=/src

@@ -2,14 +2,22 @@
 
 ## 1. Executive Summary
 
-This document outlines a strategic approach to reducing the resource footprint of Portworx Enterprise within OpenShift deployments. The focus is on enhancing performance, optimizing resource allocation, and ensuring scalability to meet evolving customer demands.
+This document outlines a strategic approach to reducing the resource footprint of Portworx Enterprise within OpenShift deployments. The focus is on enhancing performance, optimizing resource allocation, and ensuring scalability to meet evolving customer demands. The key initiatives include refactoring Helm charts for efficient node scheduling, reorganizing OpenShift deployments to target specific ESXi hosts, optimizing the decision engine for intelligent workload placement, and establishing a robust monitoring framework for capacity and performance analysis.
+
+### Objectives
+
+* 30-40% reduction in resource utilization
+* Improved data locality and performance
+* Enhanced operational resilience
+* Better capacity planning and forecasting
+* Robust monitoring and analytics
 
 ### Key Initiatives
 
 * Refactoring Helm charts for efficient node scheduling
 * Reorganizing OpenShift deployments to target specific ESXi hosts
 * Optimizing the decision engine for intelligent workload placement
-* Establishing a robust monitoring framework
+* Establishing a robust monitoring framework for capacity and performance analysis
 
 ### Expected Benefits
 
@@ -20,7 +28,7 @@ This document outlines a strategic approach to reducing the resource footprint o
 
 ### Timeline and Resources
 
-* Implementation Duration: 8 months
+* Implementation Duration: 8 to 12 months
 * Required Teams: Platform, Storage, Operations
 * Key Stakeholders: Infrastructure, Development, Operations
 
@@ -34,6 +42,8 @@ Portworx Enterprise plays a critical role in managing persistent storage for Ope
 * Data redundancy gaps due to non-optimized zone configurations
 * Inconsistent workload placement across clusters, leading to resource fragmentation
 * Limited visibility into capacity trends, making future scaling unpredictable
+* Complexity in managing cross-cluster replication and data protection
+* Complex data protection and recovery mechanisms
 
 ### Technical Environment
 
@@ -44,6 +54,7 @@ Portworx Enterprise plays a critical role in managing persistent storage for Ope
   * CPU: 32 cores
   * Memory: 192GB RAM
   * Storage: 50TB NVMe storage per node
+  * Network: 10Gbps per node
 
 ## 3. Scope and Assumptions
 
@@ -52,12 +63,14 @@ Portworx Enterprise plays a critical role in managing persistent storage for Ope
 * Applies to all OpenShift clusters deployed on ESXi infrastructure
 * Focus on clusters managed via IPI (Installer-Provisioned Infrastructure)
 * Portworx zonal configurations for environments with multiple ESXi clusters
+* Portworx deployment with affinity and anti-affinity rules
+* Portworx metrics are available for integration with the monitoring stack
 
 ### Assumptions
 
 * All ESXi hosts can be labeled and grouped based on storage capabilities
 * OpenShift IPI configurations can be modified without vendor constraints
-* Portworx metrics are available for integration with the monitoring stack
+* Prometheus and Grafana deployed in the cluster
 
 ### Prerequisites
 
@@ -68,7 +81,7 @@ Portworx Enterprise plays a critical role in managing persistent storage for Ope
 
 ## 4. Goals and Success Metrics
 
-### Objectives
+### Goals
 
 * Reduce Portworx resource consumption across non-storage nodes
 * Improve data resiliency through optimized multi-zone replication
@@ -132,7 +145,7 @@ affinity:
 
 Ensure Portworx operates only on designated ESXi hosts with local storage, while OpenShift IPI deployments land worker nodes on these hosts. Implement a zonal model for data distribution across ESXi clusters.
 
-#### Implementation
+#### Example Implementation
 
 **VM Placement (vSphere):**
 Configure VM affinity rules to target specific ESXi hosts with local disks.
@@ -186,7 +199,11 @@ spec:
 
 #### Objective
 
-Enhance the decision engine to route customer deployments based on storage requirements and real-time cluster capacity.
+Enhance the decision engine to route customer deployments based on storage requirements and real-time cluster capacity. The decision engine should be able to make informed decisions even in the presence of dynamic workload patterns. The decision engine should be able to:
+
+* Route workloads efficiently based on storage requirements
+* Optimize cluster placement based on real-time capacity
+* Prioritize workload placement based on storage usage patterns
 
 #### Predictive Analytics
 
@@ -196,6 +213,7 @@ Enhance the decision engine to route customer deployments based on storage requi
 
 * Optimal resource allocation with reduced deployment delays
 * Data-driven placement decisions improving workload performance
+* Improved capacity forecasting and planning
 
 ### 5.4 Monitoring and Analyzing Capacity and Performance
 
@@ -408,6 +426,8 @@ Apply machine learning models to predict future resource requirements based on h
 * Phase 2: Reorganize OpenShift Deployments (Month 3-4)
 * Phase 3: Enhance Decision Engine (Month 5-6)
 * Phase 4: Implement Monitoring & Forecasting (Month 7-8)
+* Phase 5: Implement Data Protection (Month 9-10)
+* Phase 6: Implement Backup and DR (Month 11-12)
 
 ## 8. Risk Assessment and Mitigation
 

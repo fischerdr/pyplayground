@@ -370,7 +370,9 @@ groups:
         annotations:
           summary: "Datastore {{ $labels.datastore }} usage exceeds 85%"
 ```
+
 ### Capacity Forecasting
+
 Apply machine learning models to predict future resource requirements based on historical metrics:
 
 * Storage Growth Prediction

@@ -69,6 +69,7 @@ logs/
 # Binary and External Tools
 bin/tools/*
 !bin/tools/.gitkeep
+!bin/tools/bin/.gitkeep
 bin/tools/k8s/*
 bin/tools/hashicorp/*
 bin/tools/vmware/*

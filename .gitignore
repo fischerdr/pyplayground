@@ -67,13 +67,12 @@ logs/
 !logs/.gitkeep
 
 # Binary and External Tools
-bin/tools/*
+bin/tools/**
 !bin/tools/.gitkeep
+!bin/tools/bin/
 !bin/tools/bin/.gitkeep
-bin/tools/k8s/*
-bin/tools/hashicorp/*
-bin/tools/vmware/*
-bin/tools/openshift/*
+!bin/tools/**/.gitkeep
+
 
 # Keep script directories but ignore binaries
 !bin/scripts/

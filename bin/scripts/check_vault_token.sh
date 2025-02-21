@@ -1,99 +1,251 @@
 #!/bin/bash
-
-# check_vault_token.sh
 #
-# This script checks a Vault token's information and permissions using the Vault HTTP API.
-# It verifies the token's validity and displays its associated metadata and capabilities.
+# Script Name: check_vault_token.sh
+# Description: Validates Vault token for Portworx service account in OpenShift and displays token policies
+# Last Modified: 2025-02-21
+#
+# Dependencies:
+#   - oc (OpenShift CLI)
+#   - jq (JSON processor)
+#   - curl (HTTP client)
+#   - base64 (Base64 encoder/decoder)
+#
+# Environment Variables:
+#   None required - all parameters are passed via command line
+#
+# Required OpenShift Resources:
+#   - Service Account with token
+#   - Secret 'px-vault' containing:
+#     - VAULT_ADDR
+#     - VAULT_AUTH_MOUNT_PATH
+#     - VAULT_NAMESPACE
 #
 # Usage:
-#   ./check_vault_token.sh -t <token> -a <vault_addr>
-#   Example: ./check_vault_token.sh -t hvs.dumy123 -a http://vault.example.com:8200
+#   ./check_vault_token.sh [-h] [namespace] [service_account] [authrole]
+#
+# Return Values:
+#   0 - Success
+#   1 - Error (missing dependencies, authentication failure, etc.)
+#
 
-# Function declarations
-function print_usage() {
-    echo "Usage: $0 -t <token> -a <vault_addr>"
-    echo "Options:"
-    echo "  -t    Vault token to check"
-    echo "  -a    Vault server address (e.g., http://vault.example.com:8200)"
-    echo "  -h    Show this help message"
+# Exit on error and undefined variables
+set -euo pipefail
+
+# Configuration Parameters
+readonly OCP_NAMESPACE="${1:-portworx}"
+readonly OCP_SA="${2:-portworx}"
+readonly OCP_AUTHROLE="${3:-default}"
+
+# Function to log messages
+log() {
+    local level="$1"
+    local message="$2"
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [$level] $message"
 }
 
-function check_dependencies() {
-    if ! command -v curl &> /dev/null; then
-        echo "Error: curl is required but not installed."
-        exit 1
-    fi
-    if ! command -v jq &> /dev/null; then
-        echo "Error: jq is required but not installed."
-        exit 1
-    fi
-}
+# Display usage information
+usage() {
+    cat << EOF
+Usage: $(basename "$0") [-h] [namespace] [service_account] [authrole]
 
-function check_token_info() {
-    local token="$1"
-    local vault_addr="$2"
-    
-    # Check token information
-    local response
-    response=$(curl -s -H "X-Vault-Token: $token" \
-        "$vault_addr/v1/auth/token/lookup-self" | jq '.')
-    
-    if echo "$response" | jq -e '.errors' >/dev/null; then
-        echo "Error checking token:"
-        echo "$response" | jq -r '.errors[]'
-        return 1
-    fi
-    
-    echo "Token Information:"
-    echo "$response" | jq '.'
-}
+Validate Vault token for a service account in OpenShift namespace and display token policies.
 
-function check_token_capabilities() {
-    local token="$1"
-    local vault_addr="$2"
-    local path="$3"
-    
-    local response
-    response=$(curl -s -H "X-Vault-Token: $token" \
-        --request POST \
-        --data "{\"path\": \"$path\"}" \
-        "$vault_addr/v1/sys/capabilities-self" | jq '.')
-    
-    if echo "$response" | jq -e '.errors' >/dev/null; then
-        echo "Error checking capabilities:"
-        echo "$response" | jq -r '.errors[]'
-        return 1
-    fi
-    
-    echo "Token Capabilities for path '$path':"
-    echo "$response" | jq '.'
-}
+Arguments:
+    -h                      Show this help message and exit
+    namespace               Namespace of the service account (default: portworx)
+    service_account         Name of the service account (default: portworx)
+    authrole               Vault authentication role (default: default)
 
-# Main script execution
-check_dependencies
+Examples:
+    # Using defaults
+    $(basename "$0")
+    
+    # Specifying all parameters
+    $(basename "$0") my-namespace my-service-account my-authrole
+    
+    # Show this help message
+    $(basename "$0") -h
 
-# Parse command line arguments
-while getopts "t:a:h" opt; do
-    case "$opt" in
-        t) TOKEN="$OPTARG" ;;
-        a) VAULT_ADDR="$OPTARG" ;;
-        h) print_usage; exit 0 ;;
-        ?) print_usage; exit 1 ;;
-    esac
-done
-
-# Validate required parameters
-if [ -z "$TOKEN" ] || [ -z "$VAULT_ADDR" ]; then
-    echo "Error: Missing required parameters"
-    print_usage
+Notes:
+    - Requires a px-vault secret in the specified namespace containing Vault configuration
+    - Service account must have a valid token
+    - Vault authentication role must be configured in Vault
+    - Will display token policies, TTL, and renewable status upon successful authentication
+EOF
     exit 1
-fi
+}
 
-# Check token info and capabilities
-check_token_info "$TOKEN" "$VAULT_ADDR"
-if [ $? -eq 0 ]; then
-    # Check capabilities for common paths
-    for path in "secret/" "auth/" "sys/auth" "sys/policies"; do
-        check_token_capabilities "$TOKEN" "$VAULT_ADDR" "$path"
+# Validate prerequisites
+validate_prerequisites() {
+    local cmds=("oc" "jq" "curl" "base64")
+    for cmd in "${cmds[@]}"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            log "ERROR" "$cmd is required but not installed." >&2
+            exit 1
+        fi
     done
-fi
+}
+
+# Fetch service account token
+fetch_sa_token() {
+    log "INFO" "Fetching service account token..." >&2
+    
+    local token
+    if ! token=$(oc get secret -n "$OCP_NAMESPACE" -ojson | \
+        jq -re ".items[] | select(.metadata.name | test(\"${OCP_SA}-token\"))|.data.token| @base64d"); then
+        log "ERROR" "Failed to get service account token" >&2
+        exit 1
+    fi
+    
+    if [[ -z "$token" ]]; then
+        log "ERROR" "Service account token is empty" >&2
+        exit 1
+    fi
+    
+    SA_TOKEN="$token"
+}
+
+# Fetch Vault configuration
+fetch_vault_config() {
+    log "INFO" "Fetching Vault configuration..." >&2
+    
+    local url mount_path namespace
+    
+    url=$(oc get secret -n "$OCP_NAMESPACE" px-vault -ojson | \
+        jq -er '.data.VAULT_ADDR | @base64d')
+    mount_path=$(oc get secret -n "$OCP_NAMESPACE" px-vault -ojson | \
+        jq -er '.data.VAULT_AUTH_MOUNT_PATH | @base64d')
+    namespace=$(oc get secret -n "$OCP_NAMESPACE" px-vault -ojson | \
+        jq -er '.data.VAULT_NAMESPACE | @base64d')
+    
+    if [[ -z "$url" || -z "$mount_path" || -z "$namespace" ]]; then
+        log "ERROR" "Failed to get Vault configuration from px-vault secret" >&2
+        exit 1
+    fi
+    
+    # Set values in the global associative array
+    VAULT_CONFIG["url"]="$url"
+    VAULT_CONFIG["mount_path"]="$mount_path"
+    VAULT_CONFIG["namespace"]="$namespace"
+}
+
+# Authenticate with Vault
+authenticate_with_vault() {
+    log "INFO" "Authenticating with Vault..." >&2
+    
+    local response
+    response=$(curl -s --request POST --data "{\"jwt\": \"$SA_TOKEN\", \"role\": \"$OCP_AUTHROLE\"}" \
+        -H "X-Vault-Namespace: ${VAULT_CONFIG[namespace]}" \
+        "${VAULT_CONFIG[url]}/v1/auth/${VAULT_CONFIG[mount_path]}/login")
+    
+    if [[ $? -ne 0 ]]; then
+        log "ERROR" "Failed to authenticate with Vault" >&2
+        exit 1
+    fi
+    
+    if echo "$response" | jq -e '.errors' >/dev/null; then
+        log "ERROR" "Authentication failed: $(echo "$response" | jq -r '.errors[]')" >&2
+        exit 1
+    fi
+    
+    log "SUCCESS" "Successfully authenticated with Vault" >&2
+    
+    # Extract the client token
+    local client_token
+    client_token=$(echo "$response" | jq -r '.auth.client_token')
+    if [[ -z "$client_token" || "$client_token" == "null" ]]; then
+        log "ERROR" "No client token found in response" >&2
+        exit 1
+    fi
+    
+    VAULT_TOKEN="$client_token"
+}
+
+# Show Vault token policies
+show_vault_policies() {
+    log "INFO" "Fetching token policies..." >&2
+    
+    local response
+    response=$(curl -s \
+        -H "X-Vault-Token: $VAULT_TOKEN" \
+        -H "X-Vault-Namespace: ${VAULT_CONFIG[namespace]}" \
+        "${VAULT_CONFIG[url]}/v1/auth/token/lookup-self")
+    
+    if [[ $? -ne 0 ]]; then
+        log "ERROR" "Failed to lookup token" >&2
+        exit 1
+    fi
+    
+    if echo "$response" | jq -e '.errors' >/dev/null; then
+        log "ERROR" "Token lookup failed: $(echo "$response" | jq -r '.errors[]')" >&2
+        exit 1
+    fi
+    
+    log "INFO" "Token Metadata:" >&2
+    echo "$response" | jq -r '
+        "Token Policies: " + (.data.policies | join(", ")) +
+        "\nToken TTL: " + (.data.ttl|tostring) + " seconds" +
+        "\nToken Renewable: " + (.data.renewable|tostring)
+    '
+    
+    # Store policies for later use
+    VAULT_POLICIES=($(echo "$response" | jq -r '.data.policies[]'))
+}
+
+# Show policy contents
+show_policy_contents() {
+    log "INFO" "Fetching policy contents..." >&2
+    
+    for policy in "${VAULT_POLICIES[@]}"; do
+        # Skip default policy as it's built into Vault
+        if [[ "$policy" == "default" ]]; then
+            continue
+        fi
+        
+        log "INFO" "Policy: $policy" >&2
+        local response
+        response=$(curl -s \
+            -H "X-Vault-Token: $VAULT_TOKEN" \
+            -H "X-Vault-Namespace: ${VAULT_CONFIG[namespace]}" \
+            "${VAULT_CONFIG[url]}/v1/sys/policy/$policy")
+        
+        if [[ $? -ne 0 ]]; then
+            log "ERROR" "Failed to fetch policy: $policy" >&2
+            continue
+        fi
+        
+        if echo "$response" | jq -e '.errors' >/dev/null; then
+            log "ERROR" "Failed to fetch policy $policy: $(echo "$response" | jq -r '.errors[]')" >&2
+            continue
+        fi
+        
+        echo -e "\nPolicy: $policy"
+        echo "================="
+        echo "$response" | jq -r '.data.rules // .data.policy' | sed 's/^/  /'
+    done
+}
+
+# Main execution flow
+main() {
+    # Check for help flag
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+        usage
+    fi
+    validate_prerequisites
+    # Global variable for service account token
+    local SA_TOKEN
+    fetch_sa_token
+    # Declare global associative array for Vault configuration
+    declare -A VAULT_CONFIG
+    fetch_vault_config
+    # Global variable for Vault token
+    local VAULT_TOKEN
+    # Global array for policy names
+    local VAULT_POLICIES
+    authenticate_with_vault
+    show_vault_policies
+    show_policy_contents
+}
+
+# Execute script
+main "$@"

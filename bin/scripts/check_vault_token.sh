@@ -189,7 +189,7 @@ show_vault_policies() {
     '
     
     # Store policies for later use
-    VAULT_POLICIES=($(echo "$response" | jq -r '.data.policies[]'))
+    mapfile -t VAULT_POLICIES < <(echo "$response" | jq -r '.data.policies[]')
 }
 
 # Show policy contents

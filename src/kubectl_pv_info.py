@@ -62,7 +62,7 @@ def get_storage_resources() -> tuple[List[Dict], List[Dict], List[Dict]]:
         pvcs = v1.list_persistent_volume_claim_for_all_namespaces().items
         pvs = v1.list_persistent_volume().items
         storage_classes = storage_v1.list_storage_class().items
-        
+
         logger.info("Successfully retrieved Kubernetes storage resources")
         return pvcs, pvs, storage_classes
     except ApiException as e:
@@ -70,9 +70,7 @@ def get_storage_resources() -> tuple[List[Dict], List[Dict], List[Dict]]:
         sys.exit(1)
 
 
-def format_storage_info(
-    pvcs: List[Dict], pvs: List[Dict], storage_classes: List[Dict]
-) -> None:
+def format_storage_info(pvcs: List[Dict], pvs: List[Dict], storage_classes: List[Dict]) -> None:
     """
     Format and display storage information for all PVCs with their StorageClass and PV details.
 

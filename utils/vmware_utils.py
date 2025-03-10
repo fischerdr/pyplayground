@@ -8,6 +8,7 @@ These functions are shared across the vmdk_manager and related scripts.
 """
 
 import atexit
+
 import pyVmomi
 from pyVim.connect import Disconnect, SmartConnect
 from pyVmomi import vim, vmodl

@@ -255,14 +255,57 @@ def map_machinesets_to_clusters(
     return mapping
 
 
-def generate_report(mapping: Dict[str, Dict[str, Any]], output_format: str = "table") -> None:
+def generate_cluster_summary(mapping: Dict[str, Dict[str, Any]]) -> Dict[str, int]:
+    """
+    Generate a summary of clusters and their ESXi host counts.
+
+    Args:
+        mapping: Mapping between MachineSets and VMware clusters
+
+    Returns:
+        Dictionary mapping cluster names to their ESXi host counts
+    """
+    cluster_summary = {}
+    for machineset_info in mapping.values():
+        cluster_name = machineset_info["cluster_name"]
+        # Only count each cluster once
+        if cluster_name not in cluster_summary:
+            cluster_summary[cluster_name] = machineset_info["host_count"]
+    
+    logger.info(f"Generated summary for {len(cluster_summary)} VMware clusters")
+    return cluster_summary
+
+
+def generate_report(
+    mapping: Dict[str, Dict[str, Any]], 
+    output_format: str = "table", 
+    brief: bool = False
+) -> None:
     """
     Generate and display a report of MachineSets and their ESXi clusters.
 
     Args:
         mapping: Mapping between MachineSets and VMware clusters
         output_format: Output format (table or json)
+        brief: Whether to generate a brief report showing only clusters and host counts
     """
+    if brief:
+        # Generate a summary of clusters and their ESXi host counts
+        cluster_summary = generate_cluster_summary(mapping)
+        
+        if output_format.lower() == "json":
+            console.print(json.dumps(cluster_summary, indent=2))
+        else:  # Default to table format
+            table = Table(title="VMware Clusters and ESXi Host Counts")
+            table.add_column("Cluster Name", style="green")
+            table.add_column("ESXi Host Count", justify="right", style="yellow")
+            
+            for cluster_name, host_count in cluster_summary.items():
+                table.add_row(cluster_name, str(host_count))
+                
+            console.print(table)
+        return
+
     if output_format.lower() == "json":
         # Create a simplified version for JSON output
         report_data = {}
@@ -330,6 +373,11 @@ def generate_report(mapping: Dict[str, Dict[str, Any]], output_format: str = "ta
     help="Output format (table or json)",
 )
 @click.option("--disable-ssl", is_flag=True, help="Disable SSL verification for vSphere connection")
+@click.option(
+    "--brief", 
+    is_flag=True, 
+    help="Generate a brief report showing only cluster names and ESXi host counts"
+)
 def main(
     kubeconfig: Optional[str],
     vsphere_host: str,
@@ -338,6 +386,7 @@ def main(
     namespace: str,
     output_format: str,
     disable_ssl: bool,
+    brief: bool,
 ) -> None:
     """
     Generate a report on ESXi hosts per VMware cluster for OpenShift MachineSets.
@@ -384,7 +433,7 @@ def main(
         # Map MachineSets to VMware clusters
         mapping = map_machinesets_to_clusters(machinesets_vsphere_info, clusters_hosts)
         # Generate and display the report
-        generate_report(mapping, output_format)
+        generate_report(mapping, output_format, brief)
     except Exception as e:
         logger.error(f"Error generating report: {e}")
         sys.exit(1)

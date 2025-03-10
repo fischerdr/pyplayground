@@ -271,15 +271,13 @@ def generate_cluster_summary(mapping: Dict[str, Dict[str, Any]]) -> Dict[str, in
         # Only count each cluster once
         if cluster_name not in cluster_summary:
             cluster_summary[cluster_name] = machineset_info["host_count"]
-    
+
     logger.info(f"Generated summary for {len(cluster_summary)} VMware clusters")
     return cluster_summary
 
 
 def generate_report(
-    mapping: Dict[str, Dict[str, Any]], 
-    output_format: str = "table", 
-    brief: bool = False
+    mapping: Dict[str, Dict[str, Any]], output_format: str = "table", brief: bool = False
 ) -> None:
     """
     Generate and display a report of MachineSets and their ESXi clusters.
@@ -292,17 +290,17 @@ def generate_report(
     if brief:
         # Generate a summary of clusters and their ESXi host counts
         cluster_summary = generate_cluster_summary(mapping)
-        
+
         if output_format.lower() == "json":
             console.print(json.dumps(cluster_summary, indent=2))
         else:  # Default to table format
             table = Table(title="VMware Clusters and ESXi Host Counts")
             table.add_column("Cluster Name", style="green")
             table.add_column("ESXi Host Count", justify="right", style="yellow")
-            
+
             for cluster_name, host_count in cluster_summary.items():
                 table.add_row(cluster_name, str(host_count))
-                
+
             console.print(table)
         return
 
@@ -374,9 +372,9 @@ def generate_report(
 )
 @click.option("--disable-ssl", is_flag=True, help="Disable SSL verification for vSphere connection")
 @click.option(
-    "--brief", 
-    is_flag=True, 
-    help="Generate a brief report showing only cluster names and ESXi host counts"
+    "--brief",
+    is_flag=True,
+    help="Generate a brief report showing only cluster names and ESXi host counts",
 )
 def main(
     kubeconfig: Optional[str],

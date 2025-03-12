@@ -16,6 +16,7 @@ import ssl
 import sys
 from typing import Any, Dict, List, Optional
 
+import socket
 import click
 from kubernetes import client, config
 from pyVim.connect import Disconnect, SmartConnect
@@ -34,7 +35,65 @@ setup_logging()
 # Initialize rich console for output
 console = Console()
 
+def get_vmware_credentials_from_configmap(
+    namespace: str, configmap_name: str
+) -> Optional[Dict[str, str]]:
+    """
+    Retrieve VMware credentials from a Kubernetes ConfigMap.
 
+    Args:
+        namespace: Kubernetes namespace containing the ConfigMap
+        configmap_name: Name of the ConfigMap with VMware credentials
+
+    Returns:
+        Dictionary containing VMware host, username, and password if successful,
+        None otherwise
+    """
+    try:
+        # Initialize Kubernetes client
+        v1 = client.CoreV1Api()
+        
+        # Retrieve the ConfigMap
+        configmap = v1.read_namespaced_config_map(configmap_name, namespace)
+        
+        # Extract VMware credentials
+        credentials = {}
+        
+        if "vsphere_host" in configmap.data:
+            credentials["host"] = configmap.data["vsphere_host"]
+        elif "VSPHERE_HOST" in configmap.data:
+            credentials["host"] = configmap.data["VSPHERE_HOST"]
+        else:
+            logger.error(f"VMware host not found in ConfigMap {configmap_name}")
+            return None
+            
+        if "vsphere_user" in configmap.data:
+            credentials["username"] = configmap.data["vsphere_user"]
+        elif "VSPHERE_USER" in configmap.data:
+            credentials["username"] = configmap.data["VSPHERE_USER"]
+        else:
+            logger.error(f"VMware username not found in ConfigMap {configmap_name}")
+            return None
+            
+        if "vsphere_password" in configmap.data:
+            credentials["password"] = configmap.data["vsphere_password"]
+        elif "VSPHERE_PASSWORD" in configmap.data:
+            credentials["password"] = configmap.data["VSPHERE_PASSWORD"]
+        else:
+            logger.error(f"VMware password not found in ConfigMap {configmap_name}")
+            return None
+        
+        logger.info(f"Successfully retrieved VMware credentials from ConfigMap {configmap_name}")
+        return credentials
+        
+    except client.exceptions.ApiException as e:
+        logger.error(f"Kubernetes API error when retrieving ConfigMap: {str(e)}")
+        return None
+    except Exception as e:
+        logger.error(f"Error retrieving VMware credentials from ConfigMap: {str(e)}")
+        return None
+    
+    
 def connect_to_vsphere(
     host: str, username: str, password: str, disable_ssl: bool = False
 ) -> Optional[Any]:
@@ -276,8 +335,31 @@ def generate_cluster_summary(mapping: Dict[str, Dict[str, Any]]) -> Dict[str, in
     return cluster_summary
 
 
+def count_portworx_pods(namespace: str = "portworx") -> int:
+    """
+    Count the number of pods with label name=portworx in the specified namespace.
+    
+    Args:
+        namespace: Namespace to search for Portworx pods (default: "portworx")
+        
+    Returns:
+        Number of Portworx pods found
+    """
+    try:
+        v1 = client.CoreV1Api()
+        pods = v1.list_namespaced_pod(namespace=namespace, label_selector="name=portworx")
+        pod_count = len(pods.items)
+        logger.info(f"Found {pod_count} Portworx pods in namespace '{namespace}'")
+        return pod_count
+    except client.exceptions.ApiException as e:
+        logger.error(f"Error fetching Portworx pods in namespace '{namespace}': {e}")
+        return 0
+
 def generate_report(
-    mapping: Dict[str, Dict[str, Any]], output_format: str = "table", brief: bool = False
+    mapping: Dict[str, Dict[str, Any]], 
+    output_format: str = "table", 
+    brief: bool = False,
+    px_namespace: str = "portworx"
 ) -> None:
     """
     Generate and display a report of MachineSets and their ESXi clusters.
@@ -286,14 +368,27 @@ def generate_report(
         mapping: Mapping between MachineSets and VMware clusters
         output_format: Output format (table or json)
         brief: Whether to generate a brief report showing only clusters and host counts
+        px_namespace: Namespace to search for Portworx pods (default: "portworx")
     """
+    # Get Portworx pod count
+    px_pod_count = count_portworx_pods(px_namespace)
+    
     if brief:
         # Generate a summary of clusters and their ESXi host counts
         cluster_summary = generate_cluster_summary(mapping)
-
+        
         if output_format.lower() == "json":
-            console.print(json.dumps(cluster_summary, indent=2))
+            # Add Portworx pod count to the JSON output
+            output_data = {
+                "portworx_pods": px_pod_count,
+                "clusters": cluster_summary
+            }
+            console.print(json.dumps(output_data, indent=2))
         else:  # Default to table format
+            # First show Portworx pod count
+            console.print(f"[bold]Portworx pods in namespace '{px_namespace}':[/bold] {px_pod_count}")
+            
+            # Then show cluster table
             table = Table(title="VMware Clusters and ESXi Host Counts")
             table.add_column("Cluster Name", style="green")
             table.add_column("ESXi Host Count", justify="right", style="yellow")
@@ -306,9 +401,12 @@ def generate_report(
 
     if output_format.lower() == "json":
         # Create a simplified version for JSON output
-        report_data = {}
+        report_data = {
+            "portworx_pods": px_pod_count,
+            "machinesets": {}
+        }
         for machineset_name, cluster_info in mapping.items():
-            report_data[machineset_name] = {
+            report_data["machinesets"][machineset_name] = {
                 "cluster_name": cluster_info["cluster_name"],
                 "host_count": cluster_info["host_count"],
                 "hosts": [host["name"] for host in cluster_info["hosts"]],
@@ -317,6 +415,10 @@ def generate_report(
             }
         console.print(json.dumps(report_data, indent=2))
     else:  # Default to table format
+        # First show Portworx pod count
+        console.print(f"[bold]Portworx pods in namespace '{px_namespace}':[/bold] {px_pod_count}")
+        
+        # Then show the main table
         table = Table(title="OpenShift MachineSets to VMware ESXi Clusters Mapping")
         table.add_column("MachineSet", style="cyan")
         table.add_column("VMware Cluster", style="green")
@@ -355,8 +457,8 @@ def generate_report(
 
 @click.command()
 @click.option("--kubeconfig", default=None, help="Path to the kubeconfig file for OpenShift")
-@click.option("--vsphere-host", required=True, help="VMware vSphere host address")
-@click.option("--vsphere-user", required=True, help="VMware vSphere username")
+@click.option("--vsphere-host", help="VMware vSphere host address")
+@click.option("--vsphere-user", help="VMware vSphere username")
 @click.option(
     "--vsphere-password",
     help="VMware vSphere password (if not provided, will use environment variable VSPHERE_PASSWORD)",
@@ -376,15 +478,39 @@ def generate_report(
     is_flag=True,
     help="Generate a brief report showing only cluster names and ESXi host counts",
 )
+@click.option(
+    "--credentials-configmap",
+    help="Name of the ConfigMap containing VMware credentials"
+)
+@click.option(
+    "--credentials-namespace",
+    default="kube-system",
+    help="Namespace containing the VMware credentials ConfigMap"
+)
+@click.option(
+    "--timeout",
+    default=30,
+    type=int,
+    help="Timeout in seconds for API calls"
+)
+@click.option(
+    "--px-namespace",
+    default="portworx",
+    help="Namespace where Portworx pods are running"
+)
 def main(
     kubeconfig: Optional[str],
-    vsphere_host: str,
-    vsphere_user: str,
+    vsphere_host: Optional[str],
+    vsphere_user: Optional[str],
     vsphere_password: Optional[str],
     namespace: str,
     output_format: str,
     disable_ssl: bool,
     brief: bool,
+    credentials_configmap: Optional[str],
+    credentials_namespace: str,
+    timeout: int,
+    px_namespace: str,
 ) -> None:
     """
     Generate a report on ESXi hosts per VMware cluster for OpenShift MachineSets.
@@ -393,52 +519,146 @@ def main(
     MachineSets to their respective ESXi host clusters and count the number of
     ESXi hosts in each cluster.
     """
-    # Get vSphere password from environment variable if not provided
-    if not vsphere_password:
-        vsphere_password = os.environ.get("VSPHERE_PASSWORD")
-        if not vsphere_password:
-            logger.error(
-                "vSphere password not provided and VSPHERE_PASSWORD environment variable not set"
-            )
-            sys.exit(1)
+    # Set timeout for API calls
+    socket.setdefaulttimeout(timeout)
+    
     # Load Kubernetes configuration
     try:
         if kubeconfig:
+            if not os.path.isfile(kubeconfig):
+                logger.error(f"Kubeconfig file not found: {kubeconfig}")
+                sys.exit(1)
             config.load_kube_config(config_file=kubeconfig)
-            logger.info(f"Using custom kubeconfig at {kubeconfig}")
+            logger.info(f"Using custom kubeconfig: {kubeconfig}")
         else:
-            config.load_kube_config()
-            logger.info("Using default kubeconfig")
+            try:
+                config.load_kube_config()
+                logger.info("Using default kubeconfig")
+            except config.config_exception.ConfigException:
+                try:
+                    config.load_incluster_config()
+                    logger.info("Using in-cluster configuration")
+                except config.config_exception.ConfigException:
+                    logger.error("Failed to load any Kubernetes configuration")
+                    sys.exit(1)
     except Exception as e:
-        logger.error(f"Failed to load Kubernetes config: {e}")
+        logger.error(f"Failed to load Kubernetes configuration: {str(e)}")
         sys.exit(1)
+
+    # Get VMware credentials from ConfigMap if specified
+    if credentials_configmap:
+        try:
+            logger.info(f"Retrieving VMware credentials from ConfigMap '{credentials_configmap}' in namespace '{credentials_namespace}'")
+            credentials = get_vmware_credentials_from_configmap(
+                credentials_namespace, credentials_configmap
+            )
+            if not credentials:
+                logger.error("ConfigMap exists but doesn't contain required VMware credentials")
+                sys.exit(1)
+                
+            vsphere_host = credentials["host"]
+            vsphere_user = credentials["username"]
+            vsphere_password = credentials["password"]
+            logger.info("Successfully retrieved VMware credentials from ConfigMap")
+        except Exception as e:
+            logger.error(f"Error retrieving credentials from ConfigMap: {str(e)}")
+            sys.exit(1)
+    else:
+        # Get vSphere password from environment variable if not provided
+        if not vsphere_password:
+            vsphere_password = os.environ.get("VSPHERE_PASSWORD")
+            if vsphere_password:
+                logger.info("Using vSphere password from VSPHERE_PASSWORD environment variable")
+
+    # Validate required VMware credentials
+    missing_credentials = []
+    if not vsphere_host:
+        missing_credentials.append("vSphere host")
+    if not vsphere_user:
+        missing_credentials.append("vSphere username")
+    if not vsphere_password:
+        missing_credentials.append("vSphere password")
+        
+    if missing_credentials:
+        logger.error(f"Missing required VMware credentials: {', '.join(missing_credentials)}")
+        logger.error("Provide them via command line options, environment variables, or ConfigMap")
+        sys.exit(1)
+
     # Connect to vSphere
-    si = connect_to_vsphere(vsphere_host, vsphere_user, vsphere_password, disable_ssl)
-    if not si:
-        logger.error("Failed to connect to vSphere")
+    logger.info(f"Connecting to vSphere host: {vsphere_host}")
+    si = None
+    try:
+        si = connect_to_vsphere(vsphere_host, vsphere_user, vsphere_password, disable_ssl)
+        if not si:
+            logger.error("Failed to establish connection to vSphere")
+            sys.exit(1)
+        logger.info("Successfully connected to vSphere")
+    except Exception as e:
+        logger.error(f"Error connecting to vSphere: {str(e)}")
         sys.exit(1)
+
     try:
         # Get MachineSets from OpenShift
-        crd_client = get_custom_objects_api()
-        machinesets = get_machinesets(crd_client, namespace)
-        if not machinesets:
-            logger.error("No MachineSets found in OpenShift")
+        logger.info(f"Retrieving MachineSets from namespace '{namespace}'")
+        try:
+            custom_api = get_custom_objects_api()
+            machinesets = get_machinesets(custom_api, namespace)
+            if not machinesets:
+                logger.error(f"No MachineSets found in namespace '{namespace}'")
+                sys.exit(1)
+            logger.info(f"Found {len(machinesets)} MachineSets")
+        except Exception as e:
+            logger.error(f"Error retrieving MachineSets: {str(e)}")
             sys.exit(1)
+
         # Extract vSphere information from MachineSets
-        machinesets_vsphere_info = extract_vsphere_info_from_machinesets(machinesets)
+        try:
+            logger.info("Extracting vSphere information from MachineSets")
+            vsphere_info = extract_vsphere_info_from_machinesets(machinesets)
+            if not vsphere_info:
+                logger.error("No vSphere information found in MachineSets")
+                sys.exit(1)
+            logger.info(f"Extracted vSphere information from {len(vsphere_info)} MachineSets")
+        except Exception as e:
+            logger.error(f"Error extracting vSphere information: {str(e)}")
+            sys.exit(1)
+
         # Get ESXi hosts per VMware cluster
-        clusters_hosts = get_esxi_hosts_per_cluster(si)
+        try:
+            logger.info("Retrieving ESXi hosts information from vSphere")
+            hosts_per_cluster = get_esxi_hosts_per_cluster(si)
+            if not hosts_per_cluster:
+                logger.error("No VMware clusters found or error retrieving ESXi hosts")
+                sys.exit(1)
+            logger.info(f"Found {len(hosts_per_cluster)} VMware clusters with {sum(len(hosts) for hosts in hosts_per_cluster.values())} ESXi hosts")
+        except Exception as e:
+            logger.error(f"Error retrieving ESXi hosts information: {str(e)}")
+            sys.exit(1)
+
         # Map MachineSets to VMware clusters
-        mapping = map_machinesets_to_clusters(machinesets_vsphere_info, clusters_hosts)
-        # Generate and display the report
-        generate_report(mapping, output_format, brief)
-    except Exception as e:
-        logger.error(f"Error generating report: {e}")
-        sys.exit(1)
+        try:
+            logger.info("Mapping OpenShift MachineSets to VMware clusters")
+            mapping = map_machinesets_to_clusters(vsphere_info, hosts_per_cluster)
+            if not mapping:
+                logger.warning("Could not map any MachineSets to VMware clusters")
+            else:
+                logger.info(f"Successfully mapped {len(mapping)} MachineSets to VMware clusters")
+        except Exception as e:
+            logger.error(f"Error mapping MachineSets to VMware clusters: {str(e)}")
+            sys.exit(1)
+
+        # Generate report
+        try:
+            logger.info("Generating report")
+            generate_report(mapping, output_format, brief,px_namespace)
+        except Exception as e:
+            logger.error(f"Error generating report: {str(e)}")
+            sys.exit(1)
+
     finally:
         # Disconnect from vSphere
+        logger.info("Disconnecting from vSphere")
         Disconnect(si)
-        logger.info("Disconnected from vSphere")
 
 
 if __name__ == "__main__":

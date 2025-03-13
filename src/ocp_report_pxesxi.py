@@ -354,7 +354,11 @@ def count_portworx_pods(namespace: str = "portworx") -> int:
         Number of Portworx pods found
     """
     try:
+        # Initialize the Kubernetes API client
+        config.load_kube_config()
         v1 = client.CoreV1Api()
+
+        # Get pods with the label name=portworx in the specified namespace
         pods = v1.list_namespaced_pod(namespace=namespace, label_selector="name=portworx")
         pod_count = len(pods.items)
         logger.info(f"Found {pod_count} Portworx pods in namespace '{namespace}'")
@@ -362,177 +366,6 @@ def count_portworx_pods(namespace: str = "portworx") -> int:
     except client.exceptions.ApiException as e:
         logger.error(f"Error fetching Portworx pods in namespace '{namespace}': {e}")
         return 0
-
-
-def generate_report(
-    mapping: Dict[str, Dict[str, Any]],
-    output_format: str = "table",
-    brief: bool = False,
-    px_namespace: str = "portworx",
-) -> None:
-    """
-    Generate and display a report of MachineSets and their ESXi clusters.
-
-    Args:
-        mapping: Mapping between MachineSets and VMware clusters
-        output_format: Output format (table or json)
-        brief: Whether to generate a brief report showing only clusters and host counts
-        px_namespace: Namespace to search for Portworx pods (default: "portworx")
-    """
-    # Get Portworx pod count
-    px_pod_count = count_portworx_pods(px_namespace)
-
-    if brief:
-        # Generate a summary of clusters and their ESXi host counts
-        cluster_summary = generate_cluster_summary(mapping)
-
-        if output_format.lower() == "json":
-            # Create brief JSON output with Portworx pod count
-            output_data = {
-                "portworx_pods_count": px_pod_count,
-                "total_esxi_hosts": sum(cluster_summary.values()),
-                "clusters": {}
-            }
-            
-            # Add each cluster with its host count
-            for cluster_name, host_count in cluster_summary.items():
-                output_data["clusters"][cluster_name] = {
-                    "hosts_count": host_count
-                }
-                
-            console.print(json.dumps(output_data, indent=2))
-        else:  # Default to table format
-            # First show Portworx pod count
-            console.print(
-                f"[bold]Portworx pods in namespace '{px_namespace}':[/bold] {px_pod_count}"
-            )
-            console.print(
-                f"[bold]Total unique ESXi hosts:[/bold] {sum(cluster_summary.values())}"
-            )
-            console.print("")
-
-            # Then show cluster table
-            table = Table(title="VMware Clusters and ESXi Host Counts")
-            table.add_column("Cluster Name", style="green")
-            table.add_column("ESXi Host Count", justify="right", style="yellow")
-
-            for cluster_name, host_count in cluster_summary.items():
-                table.add_row(cluster_name, str(host_count))
-
-            console.print(table)
-        return
-
-    if output_format.lower() == "json":
-        # Create a new JSON structure organized by datacenter and cluster
-        report_data = {
-            "portworx_pods_count": px_pod_count,
-            "total_esxi_hosts": 0
-        }
-        
-        # Track unique hosts across all datacenters and clusters
-        all_hosts = set()
-        
-        # First pass: collect all datacenter, cluster, and host information
-        datacenter_clusters = {}
-        for machineset_name, cluster_info in mapping.items():
-            datacenter = cluster_info.get("datacenter", "Unknown")
-            cluster_name = cluster_info["cluster_name"]
-            
-            # Initialize datacenter if not seen before
-            if datacenter not in datacenter_clusters:
-                datacenter_clusters[datacenter] = {}
-            
-            # Initialize cluster if not seen before
-            if cluster_name not in datacenter_clusters[datacenter]:
-                datacenter_clusters[datacenter][cluster_name] = {
-                    "hosts": set(),
-                    "hosts_count": 0
-                }
-            
-            # Add unique hosts to this cluster
-            for host in cluster_info["hosts"]:
-                host_name = host["name"]
-                datacenter_clusters[datacenter][cluster_name]["hosts"].add(host_name)
-                all_hosts.add(host_name)
-        
-        # Second pass: build the final report structure
-        for datacenter, clusters in datacenter_clusters.items():
-            report_data[datacenter] = {}
-            for cluster_name, cluster_data in clusters.items():
-                # Convert set to sorted list for JSON serialization
-                host_list = sorted(list(cluster_data["hosts"]))
-                hosts_count = len(host_list)
-                
-                report_data[datacenter][cluster_name] = {
-                    "hosts": host_list,
-                    "hosts_count": hosts_count
-                }
-        
-        # Set the total ESXi hosts count
-        report_data["total_esxi_hosts"] = len(all_hosts)
-        
-        # Output the JSON
-        console.print(json.dumps(report_data, indent=2))
-    else:  # Default to table format
-        # First show Portworx pod count
-        console.print(f"[bold]Portworx pods in namespace '{px_namespace}':[/bold] {px_pod_count}")
-
-        # Then show the main table
-        table = Table(title="OpenShift MachineSets to VMware ESXi Clusters Mapping")
-        table.add_column("MachineSet", style="cyan")
-        table.add_column("VMware Cluster", style="green")
-        table.add_column("ESXi Host Count", justify="right", style="yellow")
-        table.add_column("Datacenter", style="magenta")
-        table.add_column("Datastore", style="blue")
-        for machineset_name, cluster_info in mapping.items():
-            table.add_row(
-                machineset_name,
-                cluster_info["cluster_name"],
-                str(cluster_info["host_count"]),
-                cluster_info.get("datacenter", ""),
-                cluster_info.get("datastore", ""),
-            )
-        console.print(table)
-        # If there are hosts, print a detailed hosts table
-        if any(info["host_count"] > 0 for info in mapping.values()):
-            hosts_table = Table(title="ESXi Hosts Details")
-            hosts_table.add_column("Cluster", style="green")
-            hosts_table.add_column("Host", style="cyan")
-            hosts_table.add_column("CPU Cores", justify="right", style="yellow")
-            hosts_table.add_column("Memory (GB)", justify="right", style="yellow")
-            hosts_table.add_column("State", style="magenta")
-            
-            # Track unique hosts using a set of (cluster_name, host_name) tuples
-            seen_hosts = set()
-            
-            # Collect all unique hosts across all clusters
-            unique_hosts = []
-            for machineset_name, cluster_info in mapping.items():
-                if cluster_info["host_count"] > 0:
-                    for host in cluster_info["hosts"]:
-                        # Create a unique identifier for each host
-                        host_key = (cluster_info["cluster_name"], host["name"])
-                        if host_key not in seen_hosts:
-                            seen_hosts.add(host_key)
-                            unique_hosts.append({
-                                "cluster_name": cluster_info["cluster_name"],
-                                "host": host
-                            })
-            
-            # Sort unique hosts by cluster name and then by host name
-            unique_hosts.sort(key=lambda x: (x["cluster_name"], x["host"]["name"]))
-            
-            # Add rows for unique hosts
-            for host_info in unique_hosts:
-                host = host_info["host"]
-                hosts_table.add_row(
-                    host_info["cluster_name"],
-                    host["name"],
-                    str(host.get("cpu_cores", "N/A")),
-                    str(host.get("memory_size_gb", "N/A")),
-                    host.get("power_state", "N/A"),
-                )
-            console.print(hosts_table)
 
 
 def extract_cluster_name_from_api_url(api_url: str) -> str:
@@ -805,6 +638,74 @@ def main(
     # Generate combined report
     try:
         logger.info("Generating combined report for all clusters")
+        
+        # Handle brief output format
+        if brief:
+            # Generate a summary of clusters and their ESXi host counts
+            all_clusters_summary = {}
+            total_px_pods = 0
+            total_esxi_hosts = 0
+            
+            # Collect summary data from all clusters
+            for cluster_name, cluster_data in all_clusters_data.items():
+                mapping = cluster_data["mapping"]
+                px_pod_count = cluster_data["portworx_pods_count"]
+                total_px_pods += px_pod_count
+                
+                # Generate cluster summary (cluster name -> host count)
+                cluster_summary = generate_cluster_summary(mapping)
+                
+                # Add to all clusters summary
+                for vmware_cluster, host_count in cluster_summary.items():
+                    key = f"{cluster_name}/{vmware_cluster}"
+                    all_clusters_summary[key] = host_count
+                    total_esxi_hosts += host_count
+            
+            if output_format.lower() == "json":
+                # Create brief JSON output
+                output_data = {
+                    "portworx_pods_count": total_px_pods,
+                    "total_esxi_hosts": total_esxi_hosts,
+                    "clusters": {}
+                }
+                
+                # Group by OpenShift cluster
+                for full_cluster_name, host_count in all_clusters_summary.items():
+                    ocp_cluster, vmware_cluster = full_cluster_name.split("/", 1)
+                    
+                    if ocp_cluster not in output_data["clusters"]:
+                        output_data["clusters"][ocp_cluster] = {
+                            "vmware_clusters": {}
+                        }
+                    
+                    output_data["clusters"][ocp_cluster]["vmware_clusters"][vmware_cluster] = {
+                        "hosts_count": host_count
+                    }
+                
+                console.print(json.dumps(output_data, indent=2))
+            else:  # Default to table format
+                # Show summary information
+                console.print(f"[bold]Total Portworx pods across all clusters:[/bold] {total_px_pods}")
+                console.print(f"[bold]Total ESXi hosts across all clusters:[/bold] {total_esxi_hosts}")
+                console.print("")
+                
+                # Create a table with all clusters
+                table = Table(title="OpenShift and VMware Clusters Summary")
+                table.add_column("OpenShift Cluster", style="cyan")
+                table.add_column("VMware Cluster", style="green")
+                table.add_column("ESXi Host Count", justify="right", style="yellow")
+                
+                # Sort by OpenShift cluster and then by VMware cluster
+                for full_cluster_name in sorted(all_clusters_summary.keys()):
+                    ocp_cluster, vmware_cluster = full_cluster_name.split("/", 1)
+                    host_count = all_clusters_summary[full_cluster_name]
+                    table.add_row(ocp_cluster, vmware_cluster, str(host_count))
+                
+                console.print(table)
+            
+            return
+        
+        # Handle detailed output formats (non-brief)
         if output_format.lower() == "json":
             # Create a new JSON structure organized by cluster, datacenter, and VMware cluster
             report_data = {}

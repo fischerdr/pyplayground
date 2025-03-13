@@ -6,10 +6,9 @@ This script interacts with OpenShift Kubernetes and VMware vSphere to generate
 a report on the number of ESXi hosts per VMware cluster. It maps OpenShift
 MachineSets to their respective ESXi host clusters.
 
-Author: Cascade
 Date: 2025-03-10
 """
-
+import base64
 import json
 import os
 import socket
@@ -36,15 +35,15 @@ setup_logging()
 console = Console()
 
 
-def get_vmware_credentials_from_configmap(
-    namespace: str, configmap_name: str
+def get_vmware_credentials_from_secret(
+    namespace: str, secret_name: str
 ) -> Optional[Dict[str, str]]:
     """
-    Retrieve VMware credentials from a Kubernetes ConfigMap.
+    Retrieve VMware credentials from a Kubernetes Secrets.
 
     Args:
-        namespace: Kubernetes namespace containing the ConfigMap
-        configmap_name: Name of the ConfigMap with VMware credentials
+        namespace: Kubernetes namespace containing the Secrets
+        secret_name: Name of the Secrets with VMware credentials
 
     Returns:
         Dictionary containing VMware host, username, and password if successful,
@@ -54,44 +53,37 @@ def get_vmware_credentials_from_configmap(
         # Initialize Kubernetes client
         v1 = client.CoreV1Api()
 
-        # Retrieve the ConfigMap
-        configmap = v1.read_namespaced_config_map(configmap_name, namespace)
+        # Retrieve the Secrets
+        configmap = v1.read_namespaced_secret(secret_name, namespace)
 
         # Extract VMware credentials
         credentials = {}
 
-        if "vsphere_host" in configmap.data:
-            credentials["host"] = configmap.data["vsphere_host"]
-        elif "VSPHERE_HOST" in configmap.data:
-            credentials["host"] = configmap.data["VSPHERE_HOST"]
+        if "VSPHERE_USER" in configmap.data:
+            credentials["username"] = (
+                base64.b64decode(configmap.data["VSPHERE_USER"]).decode('utf-8').strip()
+            )
         else:
-            logger.error(f"VMware host not found in ConfigMap {configmap_name}")
+            logger.error(f"VMware username not found in Secrets {secret_name}")
             return None
 
-        if "vsphere_user" in configmap.data:
-            credentials["username"] = configmap.data["vsphere_user"]
-        elif "VSPHERE_USER" in configmap.data:
-            credentials["username"] = configmap.data["VSPHERE_USER"]
+        if "VSPHERE_PASSWORD" in configmap.data:
+            credentials["password"] = (
+                base64.b64decode(configmap.data["VSPHERE_PASSWORD"]).decode('utf-8').strip()
+            )
         else:
-            logger.error(f"VMware username not found in ConfigMap {configmap_name}")
+            logger.error(f"VMware password not found in Secrets {secret_name}")
             return None
 
-        if "vsphere_password" in configmap.data:
-            credentials["password"] = configmap.data["vsphere_password"]
-        elif "VSPHERE_PASSWORD" in configmap.data:
-            credentials["password"] = configmap.data["VSPHERE_PASSWORD"]
-        else:
-            logger.error(f"VMware password not found in ConfigMap {configmap_name}")
-            return None
-
-        logger.info(f"Successfully retrieved VMware credentials from ConfigMap {configmap_name}")
+        logger.info(f"Successfully retrieved VMware credentials from Secrets {secret_name}")
+        logger.info(f"Secrets {credentials}")
         return credentials
 
     except client.exceptions.ApiException as e:
-        logger.error(f"Kubernetes API error when retrieving ConfigMap: {str(e)}")
+        logger.error(f"Kubernetes API error when retrieving Secrets: {str(e)}")
         return None
     except Exception as e:
-        logger.error(f"Error retrieving VMware credentials from ConfigMap: {str(e)}")
+        logger.error(f"Error retrieving VMware credentials from Secrets: {str(e)}")
         return None
 
 
@@ -454,7 +446,9 @@ def generate_report(
 
 
 @click.command()
-@click.option("--kubeconfig", default=None, help="Path to the kubeconfig file for OpenShift")
+@click.option(
+    "--kubeconfig", default=None, help="Path to the kubeconfig file for OpenShift", required=True
+)
 @click.option("--vsphere-host", help="VMware vSphere host address")
 @click.option("--vsphere-user", help="VMware vSphere username")
 @click.option(
@@ -476,11 +470,15 @@ def generate_report(
     is_flag=True,
     help="Generate a brief report showing only cluster names and ESXi host counts",
 )
-@click.option("--credentials-configmap", help="Name of the ConfigMap containing VMware credentials")
+@click.option(
+    "--credentials-secret",
+    help="Name of the Secret containing VMware credentials",
+    default="px-vsphere-secret",
+)
 @click.option(
     "--credentials-namespace",
-    default="kube-system",
-    help="Namespace containing the VMware credentials ConfigMap",
+    default="portworx",
+    help="Namespace containing the VMware credentials Secret",
 )
 @click.option("--timeout", default=30, type=int, help="Timeout in seconds for API calls")
 @click.option(
@@ -495,7 +493,7 @@ def main(
     output_format: str,
     disable_ssl: bool,
     brief: bool,
-    credentials_configmap: Optional[str],
+    credentials_secret: Optional[str],
     credentials_namespace: str,
     timeout: int,
     px_namespace: str,
@@ -533,60 +531,6 @@ def main(
         logger.error(f"Failed to load Kubernetes configuration: {str(e)}")
         sys.exit(1)
 
-    # Get VMware credentials from ConfigMap if specified
-    if credentials_configmap:
-        try:
-            logger.info(
-                f"Retrieving VMware credentials from ConfigMap '{credentials_configmap}' in namespace '{credentials_namespace}'"
-            )
-            credentials = get_vmware_credentials_from_configmap(
-                credentials_namespace, credentials_configmap
-            )
-            if not credentials:
-                logger.error("ConfigMap exists but doesn't contain required VMware credentials")
-                sys.exit(1)
-
-            vsphere_host = credentials["host"]
-            vsphere_user = credentials["username"]
-            vsphere_password = credentials["password"]
-            logger.info("Successfully retrieved VMware credentials from ConfigMap")
-        except Exception as e:
-            logger.error(f"Error retrieving credentials from ConfigMap: {str(e)}")
-            sys.exit(1)
-    else:
-        # Get vSphere password from environment variable if not provided
-        if not vsphere_password:
-            vsphere_password = os.environ.get("VSPHERE_PASSWORD")
-            if vsphere_password:
-                logger.info("Using vSphere password from VSPHERE_PASSWORD environment variable")
-
-    # Validate required VMware credentials
-    missing_credentials = []
-    if not vsphere_host:
-        missing_credentials.append("vSphere host")
-    if not vsphere_user:
-        missing_credentials.append("vSphere username")
-    if not vsphere_password:
-        missing_credentials.append("vSphere password")
-
-    if missing_credentials:
-        logger.error(f"Missing required VMware credentials: {', '.join(missing_credentials)}")
-        logger.error("Provide them via command line options, environment variables, or ConfigMap")
-        sys.exit(1)
-
-    # Connect to vSphere
-    logger.info(f"Connecting to vSphere host: {vsphere_host}")
-    si = None
-    try:
-        si = connect_to_vsphere(vsphere_host, vsphere_user, vsphere_password, disable_ssl)
-        if not si:
-            logger.error("Failed to establish connection to vSphere")
-            sys.exit(1)
-        logger.info("Successfully connected to vSphere")
-    except Exception as e:
-        logger.error(f"Error connecting to vSphere: {str(e)}")
-        sys.exit(1)
-
     try:
         # Get MachineSets from OpenShift
         logger.info(f"Retrieving MachineSets from namespace '{namespace}'")
@@ -611,6 +555,61 @@ def main(
             logger.info(f"Extracted vSphere information from {len(vsphere_info)} MachineSets")
         except Exception as e:
             logger.error(f"Error extracting vSphere information: {str(e)}")
+            sys.exit(1)
+
+        # Get VMware credentials from Secret if specified
+        if credentials_secret:
+            try:
+                logger.info(
+                    f"Retrieving VMware credentials from Secret '{credentials_secret}' in namespace '{credentials_namespace}'"
+                )
+                credentials = get_vmware_credentials_from_secret(
+                    credentials_namespace, credentials_secret
+                )
+                if not credentials:
+                    logger.error("Secret exists but doesn't contain required VMware credentials")
+                    sys.exit(1)
+                first_key = list(vsphere_info.keys())[0]
+                vsphere_host = vsphere_info[first_key]['server']
+                vsphere_user = credentials["username"]
+                vsphere_password = credentials["password"]
+                logger.info("Successfully retrieved VMware credentials from Secret")
+
+            except Exception as e:
+                logger.error(f"Error retrieving credentials from Secret: {str(e)}")
+                sys.exit(1)
+        else:
+            # Get vSphere password from environment variable if not provided
+            if not vsphere_password:
+                vsphere_password = os.environ.get("VSPHERE_PASSWORD")
+                if vsphere_password:
+                    logger.info("Using vSphere password from VSPHERE_PASSWORD environment variable")
+
+        # Validate required VMware credentials
+        missing_credentials = []
+        if not vsphere_host:
+            missing_credentials.append("vSphere host")
+        if not vsphere_user:
+            missing_credentials.append("vSphere username")
+        if not vsphere_password:
+            missing_credentials.append("vSphere password")
+
+        if missing_credentials:
+            logger.error(f"Missing required VMware credentials: {', '.join(missing_credentials)}")
+            logger.error("Provide them via command line options, environment variables, or Secrets")
+            sys.exit(1)
+
+        # Connect to vSphere
+        logger.info(f"Connecting to vSphere host: {vsphere_host}")
+        si = None
+        try:
+            si = connect_to_vsphere(vsphere_host, vsphere_user, vsphere_password, disable_ssl)
+            if not si:
+                logger.error("Failed to establish connection to vSphere")
+                sys.exit(1)
+            logger.info("Successfully connected to vSphere")
+        except Exception as e:
+            logger.error(f"Error connecting to vSphere: {str(e)}")
             sys.exit(1)
 
         # Get ESXi hosts per VMware cluster
@@ -648,9 +647,10 @@ def main(
             sys.exit(1)
 
     finally:
-        # Disconnect from vSphere
-        logger.info("Disconnecting from vSphere")
-        Disconnect(si)
+        if not si:
+            # Disconnect from vSphere
+            logger.info("Disconnecting from vSphere")
+            Disconnect(si)
 
 
 if __name__ == "__main__":

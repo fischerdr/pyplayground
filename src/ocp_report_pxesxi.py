@@ -1,12 +1,27 @@
 #!/usr/bin/env python3
 """
-OpenShift VMware Cluster Report Generator.
+OpenShift and VMware ESXi Host Report Generator
 
-This script interacts with OpenShift Kubernetes and VMware vSphere to generate
-a report on the number of ESXi hosts per VMware cluster. It maps OpenShift
-MachineSets to their respective ESXi host clusters.
+This script generates a report of OpenShift MachineSets and their corresponding VMware ESXi hosts.
+It can process a single OpenShift cluster using the --kubeconfig option or multiple clusters
+using the --clusterlist option (a file with one kubeconfig path per line).
 
-Date: 2025-03-10
+The script connects to the OpenShift API to retrieve MachineSets and their corresponding vSphere
+information, then connects to vSphere to retrieve the ESXi hosts where the VMs are running.
+
+The report can be generated in either table or JSON format.
+
+Example usage:
+    # Process a single cluster
+    python ocp_report_pxesxi.py --kubeconfig /path/to/kubeconfig --output-format json
+
+    # Process multiple clusters from a list file
+    python ocp_report_pxesxi.py --clusterlist /path/to/clusterlist.txt --output-format json
+
+    # The clusterlist.txt file should contain one kubeconfig path per line, for example:
+    # /path/to/kubeconfig1
+    # /path/to/kubeconfig2
+    # /path/to/kubeconfig3
 """
 import base64
 import json
@@ -372,14 +387,29 @@ def generate_report(
         cluster_summary = generate_cluster_summary(mapping)
 
         if output_format.lower() == "json":
-            # Add Portworx pod count to the JSON output
-            output_data = {"portworx_pods": px_pod_count, "clusters": cluster_summary}
+            # Create brief JSON output with Portworx pod count
+            output_data = {
+                "portworx_pods_count": px_pod_count,
+                "total_esxi_hosts": sum(cluster_summary.values()),
+                "clusters": {}
+            }
+            
+            # Add each cluster with its host count
+            for cluster_name, host_count in cluster_summary.items():
+                output_data["clusters"][cluster_name] = {
+                    "hosts_count": host_count
+                }
+                
             console.print(json.dumps(output_data, indent=2))
         else:  # Default to table format
             # First show Portworx pod count
             console.print(
                 f"[bold]Portworx pods in namespace '{px_namespace}':[/bold] {px_pod_count}"
             )
+            console.print(
+                f"[bold]Total unique ESXi hosts:[/bold] {sum(cluster_summary.values())}"
+            )
+            console.print("")
 
             # Then show cluster table
             table = Table(title="VMware Clusters and ESXi Host Counts")
@@ -393,16 +423,55 @@ def generate_report(
         return
 
     if output_format.lower() == "json":
-        # Create a simplified version for JSON output
-        report_data = {"portworx_pods": px_pod_count, "machinesets": {}}
+        # Create a new JSON structure organized by datacenter and cluster
+        report_data = {
+            "portworx_pods_count": px_pod_count,
+            "total_esxi_hosts": 0
+        }
+        
+        # Track unique hosts across all datacenters and clusters
+        all_hosts = set()
+        
+        # First pass: collect all datacenter, cluster, and host information
+        datacenter_clusters = {}
         for machineset_name, cluster_info in mapping.items():
-            report_data["machinesets"][machineset_name] = {
-                "cluster_name": cluster_info["cluster_name"],
-                "host_count": cluster_info["host_count"],
-                "hosts": [host["name"] for host in cluster_info["hosts"]],
-                "datacenter": cluster_info.get("datacenter", ""),
-                "datastore": cluster_info.get("datastore", ""),
-            }
+            datacenter = cluster_info.get("datacenter", "Unknown")
+            cluster_name = cluster_info["cluster_name"]
+            
+            # Initialize datacenter if not seen before
+            if datacenter not in datacenter_clusters:
+                datacenter_clusters[datacenter] = {}
+            
+            # Initialize cluster if not seen before
+            if cluster_name not in datacenter_clusters[datacenter]:
+                datacenter_clusters[datacenter][cluster_name] = {
+                    "hosts": set(),
+                    "hosts_count": 0
+                }
+            
+            # Add unique hosts to this cluster
+            for host in cluster_info["hosts"]:
+                host_name = host["name"]
+                datacenter_clusters[datacenter][cluster_name]["hosts"].add(host_name)
+                all_hosts.add(host_name)
+        
+        # Second pass: build the final report structure
+        for datacenter, clusters in datacenter_clusters.items():
+            report_data[datacenter] = {}
+            for cluster_name, cluster_data in clusters.items():
+                # Convert set to sorted list for JSON serialization
+                host_list = sorted(list(cluster_data["hosts"]))
+                hosts_count = len(host_list)
+                
+                report_data[datacenter][cluster_name] = {
+                    "hosts": host_list,
+                    "hosts_count": hosts_count
+                }
+        
+        # Set the total ESXi hosts count
+        report_data["total_esxi_hosts"] = len(all_hosts)
+        
+        # Output the JSON
         console.print(json.dumps(report_data, indent=2))
     else:  # Default to table format
         # First show Portworx pod count
@@ -432,22 +501,77 @@ def generate_report(
             hosts_table.add_column("CPU Cores", justify="right", style="yellow")
             hosts_table.add_column("Memory (GB)", justify="right", style="yellow")
             hosts_table.add_column("State", style="magenta")
+            
+            # Track unique hosts using a set of (cluster_name, host_name) tuples
+            seen_hosts = set()
+            
+            # Collect all unique hosts across all clusters
+            unique_hosts = []
             for machineset_name, cluster_info in mapping.items():
                 if cluster_info["host_count"] > 0:
                     for host in cluster_info["hosts"]:
-                        hosts_table.add_row(
-                            cluster_info["cluster_name"],
-                            host["name"],
-                            str(host.get("cpu_cores", "N/A")),
-                            str(host.get("memory_size_gb", "N/A")),
-                            host.get("power_state", "N/A"),
-                        )
+                        # Create a unique identifier for each host
+                        host_key = (cluster_info["cluster_name"], host["name"])
+                        if host_key not in seen_hosts:
+                            seen_hosts.add(host_key)
+                            unique_hosts.append({
+                                "cluster_name": cluster_info["cluster_name"],
+                                "host": host
+                            })
+            
+            # Sort unique hosts by cluster name and then by host name
+            unique_hosts.sort(key=lambda x: (x["cluster_name"], x["host"]["name"]))
+            
+            # Add rows for unique hosts
+            for host_info in unique_hosts:
+                host = host_info["host"]
+                hosts_table.add_row(
+                    host_info["cluster_name"],
+                    host["name"],
+                    str(host.get("cpu_cores", "N/A")),
+                    str(host.get("memory_size_gb", "N/A")),
+                    host.get("power_state", "N/A"),
+                )
             console.print(hosts_table)
+
+
+def extract_cluster_name_from_api_url(api_url: str) -> str:
+    """
+    Extract the cluster name from the Kubernetes API URL.
+    
+    Args:
+        api_url: The Kubernetes API URL (e.g., https://api.hostname.fqdn)
+        
+    Returns:
+        The extracted hostname (e.g., hostname)
+    """
+    try:
+        # Remove the protocol part (https://)
+        if "://" in api_url:
+            api_url = api_url.split("://")[1]
+        
+        # Remove the 'api.' prefix if present
+        if api_url.startswith("api."):
+            api_url = api_url[4:]
+        
+        # Extract the hostname part (remove domain/fqdn)
+        hostname = api_url.split(".")[0]
+        
+        logger.info(f"Extracted cluster name '{hostname}' from API URL '{api_url}'")
+        return hostname
+    except Exception as e:
+        logger.warning(f"Failed to extract cluster name from API URL '{api_url}': {e}")
+        return "unknown-cluster"
 
 
 @click.command()
 @click.option(
-    "--kubeconfig", default=None, help="Path to the kubeconfig file for OpenShift", required=True
+    "--kubeconfig", 
+    help="Path to a kubeconfig file for a single OpenShift cluster"
+)
+@click.option(
+    "--clusterlist",
+    help="Path to a file containing a list of kubeconfig files (one per line)"
 )
 @click.option("--vsphere-host", help="VMware vSphere host address")
 @click.option("--vsphere-user", help="VMware vSphere username")
@@ -485,7 +609,8 @@ def generate_report(
     "--px-namespace", default="portworx", help="Namespace where Portworx pods are running"
 )
 def main(
-    kubeconfig: Optional[str],
+    kubeconfig: str,
+    clusterlist: str,
     vsphere_host: Optional[str],
     vsphere_user: Optional[str],
     vsphere_password: Optional[str],
@@ -508,149 +633,318 @@ def main(
     # Set timeout for API calls
     socket.setdefaulttimeout(timeout)
 
-    # Load Kubernetes configuration
-    try:
-        if kubeconfig:
-            if not os.path.isfile(kubeconfig):
-                logger.error(f"Kubeconfig file not found: {kubeconfig}")
-                sys.exit(1)
-            config.load_kube_config(config_file=kubeconfig)
-            logger.info(f"Using custom kubeconfig: {kubeconfig}")
-        else:
-            try:
-                config.load_kube_config()
-                logger.info("Using default kubeconfig")
-            except config.config_exception.ConfigException:
-                try:
-                    config.load_incluster_config()
-                    logger.info("Using in-cluster configuration")
-                except config.config_exception.ConfigException:
-                    logger.error("Failed to load any Kubernetes configuration")
-                    sys.exit(1)
-    except Exception as e:
-        logger.error(f"Failed to load Kubernetes configuration: {str(e)}")
+    # Initialize data structure to store results from all clusters
+    all_clusters_data = {}
+    total_px_pods = 0
+    total_esxi_hosts = set()
+
+    # Process each kubeconfig file
+    if clusterlist:
+        try:
+            with open(clusterlist, 'r') as f:
+                kubeconfigs = [line.strip() for line in f.readlines()]
+        except FileNotFoundError:
+            logger.error(f"Cluster list file not found: {clusterlist}")
+            sys.exit(1)
+    elif kubeconfig:
+        kubeconfigs = [kubeconfig]
+    else:
+        logger.error("Either --kubeconfig or --clusterlist must be provided")
         sys.exit(1)
 
-    try:
-        # Get MachineSets from OpenShift
-        logger.info(f"Retrieving MachineSets from namespace '{namespace}'")
+    for config_file in kubeconfigs:
         try:
-            custom_api = get_custom_objects_api()
-            machinesets = get_machinesets(custom_api, namespace)
-            if not machinesets:
-                logger.error(f"No MachineSets found in namespace '{namespace}'")
-                sys.exit(1)
-            logger.info(f"Found {len(machinesets)} MachineSets")
-        except Exception as e:
-            logger.error(f"Error retrieving MachineSets: {str(e)}")
-            sys.exit(1)
+            # Load Kubernetes configuration
+            if not os.path.isfile(config_file):
+                logger.error(f"Kubeconfig file not found: {config_file}")
+                continue
 
-        # Extract vSphere information from MachineSets
-        try:
-            logger.info("Extracting vSphere information from MachineSets")
-            vsphere_info = extract_vsphere_info_from_machinesets(machinesets)
-            if not vsphere_info:
-                logger.error("No vSphere information found in MachineSets")
-                sys.exit(1)
-            logger.info(f"Extracted vSphere information from {len(vsphere_info)} MachineSets")
-        except Exception as e:
-            logger.error(f"Error extracting vSphere information: {str(e)}")
-            sys.exit(1)
+            # Load the specific kubeconfig
+            config.load_kube_config(config_file=config_file)
+            logger.info(f"Using kubeconfig: {config_file}")
 
-        # Get VMware credentials from Secret if specified
-        if credentials_secret:
+            # Get the API host to extract cluster name
+            api_host = client.Configuration._default.host
+            cluster_name = extract_cluster_name_from_api_url(api_host)
+            logger.info(f"Processing cluster: {cluster_name}")
+
+            # Get MachineSets from OpenShift
+            logger.info(f"Retrieving MachineSets from namespace '{namespace}'")
             try:
-                logger.info(
-                    f"Retrieving VMware credentials from Secret '{credentials_secret}' in namespace '{credentials_namespace}'"
-                )
-                credentials = get_vmware_credentials_from_secret(
-                    credentials_namespace, credentials_secret
-                )
-                if not credentials:
-                    logger.error("Secret exists but doesn't contain required VMware credentials")
-                    sys.exit(1)
-                first_key = list(vsphere_info.keys())[0]
-                vsphere_host = vsphere_info[first_key]['server']
-                vsphere_user = credentials["username"]
-                vsphere_password = credentials["password"]
-                logger.info("Successfully retrieved VMware credentials from Secret")
-
+                custom_api = get_custom_objects_api()
+                machinesets = get_machinesets(custom_api, namespace)
+                if not machinesets:
+                    logger.warning(f"No MachineSets found in namespace '{namespace}' for cluster {cluster_name}")
+                    continue
+                logger.info(f"Found {len(machinesets)} MachineSets in cluster {cluster_name}")
             except Exception as e:
-                logger.error(f"Error retrieving credentials from Secret: {str(e)}")
-                sys.exit(1)
-        else:
-            # Get vSphere password from environment variable if not provided
-            if not vsphere_password:
-                vsphere_password = os.environ.get("VSPHERE_PASSWORD")
-                if vsphere_password:
-                    logger.info("Using vSphere password from VSPHERE_PASSWORD environment variable")
+                logger.error(f"Error retrieving MachineSets from cluster {cluster_name}: {str(e)}")
+                continue
 
-        # Validate required VMware credentials
-        missing_credentials = []
-        if not vsphere_host:
-            missing_credentials.append("vSphere host")
-        if not vsphere_user:
-            missing_credentials.append("vSphere username")
-        if not vsphere_password:
-            missing_credentials.append("vSphere password")
+            # Extract vSphere information from MachineSets
+            try:
+                logger.info(f"Extracting vSphere information from MachineSets in cluster {cluster_name}")
+                vsphere_info = extract_vsphere_info_from_machinesets(machinesets)
+                if not vsphere_info:
+                    logger.warning(f"No vSphere information found in MachineSets for cluster {cluster_name}")
+                    continue
+                logger.info(f"Extracted vSphere information from {len(vsphere_info)} MachineSets in cluster {cluster_name}")
+            except Exception as e:
+                logger.error(f"Error extracting vSphere information from cluster {cluster_name}: {str(e)}")
+                continue
 
-        if missing_credentials:
-            logger.error(f"Missing required VMware credentials: {', '.join(missing_credentials)}")
-            logger.error("Provide them via command line options, environment variables, or Secrets")
-            sys.exit(1)
+            # Get VMware credentials from Secret if specified
+            cluster_vsphere_host = vsphere_host
+            cluster_vsphere_user = vsphere_user
+            cluster_vsphere_password = vsphere_password
 
-        # Connect to vSphere
-        logger.info(f"Connecting to vSphere host: {vsphere_host}")
-        si = None
-        try:
-            si = connect_to_vsphere(vsphere_host, vsphere_user, vsphere_password, disable_ssl)
-            if not si:
-                logger.error("Failed to establish connection to vSphere")
-                sys.exit(1)
-            logger.info("Successfully connected to vSphere")
-        except Exception as e:
-            logger.error(f"Error connecting to vSphere: {str(e)}")
-            sys.exit(1)
+            if credentials_secret:
+                try:
+                    logger.info(
+                        f"Retrieving VMware credentials from Secret '{credentials_secret}' in namespace '{credentials_namespace}'"
+                    )
+                    credentials = get_vmware_credentials_from_secret(
+                        credentials_namespace, credentials_secret
+                    )
+                    if not credentials:
+                        logger.error(f"Secret exists but doesn't contain required VMware credentials for cluster {cluster_name}")
+                        continue
+                    first_key = list(vsphere_info.keys())[0]
+                    cluster_vsphere_host = vsphere_info[first_key]['server']
+                    cluster_vsphere_user = credentials["username"]
+                    cluster_vsphere_password = credentials["password"]
+                    logger.info(f"Successfully retrieved VMware credentials from Secret for cluster {cluster_name}")
 
-        # Get ESXi hosts per VMware cluster
-        try:
-            logger.info("Retrieving ESXi hosts information from vSphere")
-            hosts_per_cluster = get_esxi_hosts_per_cluster(si)
-            if not hosts_per_cluster:
-                logger.error("No VMware clusters found or error retrieving ESXi hosts")
-                sys.exit(1)
-            logger.info(
-                f"Found {len(hosts_per_cluster)} VMware clusters with {sum(len(hosts) for hosts in hosts_per_cluster.values())} ESXi hosts"
-            )
-        except Exception as e:
-            logger.error(f"Error retrieving ESXi hosts information: {str(e)}")
-            sys.exit(1)
-
-        # Map MachineSets to VMware clusters
-        try:
-            logger.info("Mapping OpenShift MachineSets to VMware clusters")
-            mapping = map_machinesets_to_clusters(vsphere_info, hosts_per_cluster)
-            if not mapping:
-                logger.warning("Could not map any MachineSets to VMware clusters")
+                except Exception as e:
+                    logger.error(f"Error retrieving credentials from Secret for cluster {cluster_name}: {str(e)}")
+                    continue
             else:
-                logger.info(f"Successfully mapped {len(mapping)} MachineSets to VMware clusters")
-        except Exception as e:
-            logger.error(f"Error mapping MachineSets to VMware clusters: {str(e)}")
-            sys.exit(1)
+                # Get vSphere password from environment variable if not provided
+                if not cluster_vsphere_password:
+                    cluster_vsphere_password = os.environ.get("VSPHERE_PASSWORD")
+                    if cluster_vsphere_password:
+                        logger.info("Using vSphere password from VSPHERE_PASSWORD environment variable")
 
-        # Generate report
-        try:
-            logger.info("Generating report")
-            generate_report(mapping, output_format, brief, px_namespace)
-        except Exception as e:
-            logger.error(f"Error generating report: {str(e)}")
-            sys.exit(1)
+            # Validate required VMware credentials
+            missing_credentials = []
+            if not cluster_vsphere_host:
+                missing_credentials.append("vSphere host")
+            if not cluster_vsphere_user:
+                missing_credentials.append("vSphere username")
+            if not cluster_vsphere_password:
+                missing_credentials.append("vSphere password")
 
-    finally:
-        if not si:
-            # Disconnect from vSphere
-            logger.info("Disconnecting from vSphere")
-            Disconnect(si)
+            if missing_credentials:
+                logger.error(f"Missing required VMware credentials for cluster {cluster_name}: {', '.join(missing_credentials)}")
+                logger.error("Provide them via command line options, environment variables, or Secrets")
+                continue
+
+            # Connect to vSphere
+            logger.info(f"Connecting to vSphere host: {cluster_vsphere_host} for cluster {cluster_name}")
+            si = None
+            try:
+                si = connect_to_vsphere(cluster_vsphere_host, cluster_vsphere_user, cluster_vsphere_password, disable_ssl)
+                if not si:
+                    logger.error(f"Failed to establish connection to vSphere for cluster {cluster_name}")
+                    continue
+                logger.info(f"Successfully connected to vSphere for cluster {cluster_name}")
+            except Exception as e:
+                logger.error(f"Error connecting to vSphere for cluster {cluster_name}: {str(e)}")
+                continue
+
+            try:
+                # Get ESXi hosts per VMware cluster
+                logger.info(f"Retrieving ESXi hosts information from vSphere for cluster {cluster_name}")
+                hosts_per_cluster = get_esxi_hosts_per_cluster(si)
+                if not hosts_per_cluster:
+                    logger.error(f"No VMware clusters found or error retrieving ESXi hosts for cluster {cluster_name}")
+                    continue
+                logger.info(
+                    f"Found {len(hosts_per_cluster)} VMware clusters with {sum(len(hosts) for hosts in hosts_per_cluster.values())} ESXi hosts for cluster {cluster_name}"
+                )
+
+                # Map MachineSets to VMware clusters
+                logger.info(f"Mapping OpenShift MachineSets to VMware clusters for cluster {cluster_name}")
+                mapping = map_machinesets_to_clusters(vsphere_info, hosts_per_cluster)
+                if not mapping:
+                    logger.warning(f"Could not map any MachineSets to VMware clusters for cluster {cluster_name}")
+                    continue
+                logger.info(f"Successfully mapped {len(mapping)} MachineSets to VMware clusters for cluster {cluster_name}")
+
+                # Count Portworx pods
+                px_pod_count = count_portworx_pods(px_namespace)
+                total_px_pods += px_pod_count
+                logger.info(f"Found {px_pod_count} Portworx pods in namespace '{px_namespace}' for cluster {cluster_name}")
+
+                # Store the results for this cluster
+                all_clusters_data[cluster_name] = {
+                    "mapping": mapping,
+                    "portworx_pods_count": px_pod_count
+                }
+
+                # Track all unique ESXi hosts
+                for cluster_info in mapping.values():
+                    for host in cluster_info["hosts"]:
+                        total_esxi_hosts.add(host["name"])
+
+            finally:
+                # Disconnect from vSphere
+                if si:
+                    logger.info(f"Disconnecting from vSphere for cluster {cluster_name}")
+                    Disconnect(si)
+
+        except Exception as e:
+            logger.error(f"Error processing kubeconfig {config_file}: {str(e)}")
+            continue
+
+    # If no clusters were successfully processed
+    if not all_clusters_data:
+        logger.error("No clusters were successfully processed")
+        sys.exit(1)
+
+    # Generate combined report
+    try:
+        logger.info("Generating combined report for all clusters")
+        if output_format.lower() == "json":
+            # Create a new JSON structure organized by cluster, datacenter, and VMware cluster
+            report_data = {}
+            
+            # Process each OpenShift cluster
+            for cluster_name, cluster_data in all_clusters_data.items():
+                mapping = cluster_data["mapping"]
+                px_pod_count = cluster_data["portworx_pods_count"]
+                
+                # Track unique hosts for this cluster
+                cluster_hosts = set()
+                
+                # First pass: collect all datacenter, cluster, and host information for this cluster
+                datacenter_clusters = {}
+                for machineset_name, cluster_info in mapping.items():
+                    datacenter = cluster_info.get("datacenter", "Unknown")
+                    vmware_cluster_name = cluster_info["cluster_name"]
+                    
+                    # Initialize datacenter if not seen before
+                    if datacenter not in datacenter_clusters:
+                        datacenter_clusters[datacenter] = {}
+                    
+                    # Initialize VMware cluster if not seen before
+                    if vmware_cluster_name not in datacenter_clusters[datacenter]:
+                        datacenter_clusters[datacenter][vmware_cluster_name] = {
+                            "hosts": set(),
+                            "hosts_count": 0
+                        }
+                    
+                    # Add unique hosts to this VMware cluster
+                    for host in cluster_info["hosts"]:
+                        host_name = host["name"]
+                        datacenter_clusters[datacenter][vmware_cluster_name]["hosts"].add(host_name)
+                        cluster_hosts.add(host_name)
+                
+                # Add this OpenShift cluster's data to the report
+                report_data[cluster_name] = {
+                    "portworx_pods_count": px_pod_count,
+                    "total_esxi_hosts": len(cluster_hosts)
+                }
+                
+                # Add datacenter and VMware cluster information
+                for datacenter, vmware_clusters in datacenter_clusters.items():
+                    if "datacenters" not in report_data[cluster_name]:
+                        report_data[cluster_name]["datacenters"] = {}
+                    
+                    report_data[cluster_name]["datacenters"][datacenter] = {}
+                    for vmware_cluster_name, vmware_cluster_data in vmware_clusters.items():
+                        # Convert set to sorted list for JSON serialization
+                        host_list = sorted(list(vmware_cluster_data["hosts"]))
+                        hosts_count = len(host_list)
+                        
+                        report_data[cluster_name]["datacenters"][datacenter][vmware_cluster_name] = {
+                            "hosts": host_list,
+                            "hosts_count": hosts_count
+                        }
+            
+            # Output the JSON
+            console.print(json.dumps(report_data, indent=2))
+        else:  # Default to table format
+            # Create a table for each cluster
+            for cluster_name, cluster_data in all_clusters_data.items():
+                mapping = cluster_data["mapping"]
+                px_pod_count = cluster_data["portworx_pods_count"]
+                
+                # Get unique hosts for this cluster
+                cluster_hosts = set()
+                for machineset_name, cluster_info in mapping.items():
+                    for host in cluster_info["hosts"]:
+                        cluster_hosts.add(host["name"])
+                
+                console.print(f"[bold]Cluster: {cluster_name}[/bold]")
+                console.print(f"[bold]Portworx pods in namespace '{px_namespace}':[/bold] {px_pod_count}")
+                console.print(f"[bold]Total unique ESXi hosts in this cluster:[/bold] {len(cluster_hosts)}")
+                console.print("")
+                
+                # Show the main table for this cluster
+                table = Table(title=f"OpenShift MachineSets to VMware ESXi Clusters Mapping for {cluster_name}")
+                table.add_column("MachineSet", style="cyan")
+                table.add_column("VMware Cluster", style="green")
+                table.add_column("ESXi Host Count", justify="right", style="yellow")
+                table.add_column("Datacenter", style="magenta")
+                table.add_column("Datastore", style="blue")
+                
+                for machineset_name, cluster_info in mapping.items():
+                    table.add_row(
+                        machineset_name,
+                        cluster_info["cluster_name"],
+                        str(cluster_info["host_count"]),
+                        cluster_info.get("datacenter", ""),
+                        cluster_info.get("datastore", ""),
+                    )
+                console.print(table)
+                
+                # If there are hosts, print a detailed hosts table for this cluster
+                if any(info["host_count"] > 0 for info in mapping.values()):
+                    hosts_table = Table(title=f"ESXi Hosts Details for {cluster_name}")
+                    hosts_table.add_column("Cluster", style="green")
+                    hosts_table.add_column("Host", style="cyan")
+                    hosts_table.add_column("CPU Cores", justify="right", style="yellow")
+                    hosts_table.add_column("Memory (GB)", justify="right", style="yellow")
+                    hosts_table.add_column("State", style="magenta")
+                    
+                    # Track unique hosts using a set of (cluster_name, host_name) tuples
+                    seen_hosts = set()
+                    
+                    # Collect all unique hosts across all clusters
+                    unique_hosts = []
+                    for machineset_name, cluster_info in mapping.items():
+                        if cluster_info["host_count"] > 0:
+                            for host in cluster_info["hosts"]:
+                                # Create a unique identifier for each host
+                                host_key = (cluster_info["cluster_name"], host["name"])
+                                if host_key not in seen_hosts:
+                                    seen_hosts.add(host_key)
+                                    unique_hosts.append({
+                                        "cluster_name": cluster_info["cluster_name"],
+                                        "host": host
+                                    })
+                    
+                    # Sort unique hosts by cluster name and then by host name
+                    unique_hosts.sort(key=lambda x: (x["cluster_name"], x["host"]["name"]))
+                    
+                    # Add rows for unique hosts
+                    for host_info in unique_hosts:
+                        host = host_info["host"]
+                        hosts_table.add_row(
+                            host_info["cluster_name"],
+                            host["name"],
+                            str(host.get("cpu_cores", "N/A")),
+                            str(host.get("memory_size_gb", "N/A")),
+                            host.get("power_state", "N/A"),
+                        )
+                    console.print(hosts_table)
+                
+                console.print("")  # Add a blank line between clusters
+                
+    except Exception as e:
+        logger.error(f"Error generating combined report: {str(e)}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

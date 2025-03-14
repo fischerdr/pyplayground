@@ -126,15 +126,24 @@ def connect_to_vsphere(
     """
     try:
         if disable_ssl:
-            # Disable SSL verification
-            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            context.verify_mode = ssl.CERT_NONE
+            # Create unverified SSL context - this is the most reliable approach for VMware
+            context = ssl._create_unverified_context()
             logger.info("SSL verification disabled for vSphere connection")
         else:
-            # Load SSL certificate from file
+            # Create default SSL context
             context = ssl.create_default_context()
-            context.load_verify_locations(cert_path)
-            # Connect to vSphere with SSL verification
+            
+            # Try to load certificate if the file exists
+            if os.path.isfile(cert_path):
+                try:
+                    context.load_verify_locations(cert_path)
+                    logger.info(f"Loaded SSL certificate from {cert_path}")
+                except Exception as cert_error:
+                    logger.warning(f"Failed to load certificate from {cert_path}: {cert_error}")
+                    logger.warning("Falling back to default SSL verification")
+            else:
+                logger.warning(f"Certificate file not found at {cert_path}")
+                logger.warning("Using default SSL verification")
 
         si = SmartConnect(host=host, user=username, pwd=password, sslContext=context)
         if not si:
@@ -339,7 +348,7 @@ def get_esxi_hosts_per_cluster(si: Any, cluster_names: List[str]) -> Dict[str, L
                 }
                 hosts.append(host_info)
             clusters_hosts[cluster_name] = hosts
-        
+
         logger.info(f"Retrieved ESXi hosts from {len(clusters_hosts)} VMware clusters (filtered from {len(cluster_names)} requested clusters)")
         return clusters_hosts
     except Exception as e:

@@ -252,9 +252,14 @@ def process_cluster_variables(cluster_name: Optional[str] = None) -> None:
             raise ValueError("Cluster name is not defined")
 
         # Parse cluster name and update config with the components
-        config.cluster_user, config.platform, config.cluster_env, config.region, config.zone, config.cluster_id = parse_cluster_name(
-            config.cluster_name
-        )
+        (
+            config.cluster_user,
+            config.platform,
+            config.cluster_env,
+            config.region,
+            config.zone,
+            config.cluster_id,
+        ) = parse_cluster_name(config.cluster_name)
 
         try:
             logger.info("Fetching inventory data...")

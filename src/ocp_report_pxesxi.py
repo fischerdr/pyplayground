@@ -30,7 +30,6 @@ import socket
 import ssl
 import sys
 from typing import Any, Dict, List, Optional
-from tenacity import stop_after_attempt, wait_fixed, retry_if_exception_type, retry
 
 import click
 from kubernetes import client, config
@@ -38,6 +37,7 @@ from pyVim.connect import Disconnect, SmartConnect
 from pyVmomi import vim
 from rich.console import Console
 from rich.table import Table
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 # Import utility functions
 from utils.k8s_utils import get_custom_objects_api
@@ -84,7 +84,7 @@ def get_vmware_credentials_from_secret(
 
         if "VSPHERE_USER" in configmap.data:
             credentials["username"] = (
-                base64.b64decode(configmap.data["VSPHERE_USER"]).decode('utf-8').strip()
+                base64.b64decode(configmap.data["VSPHERE_USER"]).decode("utf-8").strip()
             )
         else:
             logger.error(f"VMware username not found in Secrets {secret_name}")
@@ -92,7 +92,7 @@ def get_vmware_credentials_from_secret(
 
         if "VSPHERE_PASSWORD" in configmap.data:
             credentials["password"] = (
-                base64.b64decode(configmap.data["VSPHERE_PASSWORD"]).decode('utf-8').strip()
+                base64.b64decode(configmap.data["VSPHERE_PASSWORD"]).decode("utf-8").strip()
             )
         else:
             logger.error(f"VMware password not found in Secrets {secret_name}")
@@ -132,7 +132,7 @@ def connect_to_vsphere(
         else:
             # Create default SSL context
             context = ssl.create_default_context()
-            
+
             # Try to load certificate if the file exists
             if os.path.isfile(cert_path):
                 try:
@@ -231,7 +231,7 @@ def extract_vsphere_info_from_machinesets(
 
 
 def extract_vmware_clusters_from_machinesets(
-    machinesets_vsphere_info: Dict[str, Dict[str, Any]]
+    machinesets_vsphere_info: Dict[str, Dict[str, Any]],
 ) -> List[str]:
     """
     Extract unique VMware cluster names from MachineSets vSphere information.
@@ -285,17 +285,25 @@ def get_filtered_clusters(si: Any, cluster_names: List[str]) -> List[Any]:
         # Create filter specification to define the filter conditions
         filter_spec = vim.PropertyFilterSpec(
             objectSet=[
-                vim.ObjectSpec(obj=container_view, skip=False, selectSet=[
-                    vim.TraversalSpec(name="traverseEntities", type=vim.ContainerView, path="view", skip=False)
-                ])
+                vim.ObjectSpec(
+                    obj=container_view,
+                    skip=False,
+                    selectSet=[
+                        vim.TraversalSpec(
+                            name="traverseEntities", type=vim.ContainerView, path="view", skip=False
+                        )
+                    ],
+                )
             ],
             propSet=[property_spec],
-            reportMissingObjectsInResults=False
+            reportMissingObjectsInResults=False,
         )
 
         # Perform the query using PropertyCollector
         collector = content.propertyCollector
-        query_result = collector.RetrievePropertiesEx(specSet=[filter_spec], options=vim.RetrieveOptions())
+        query_result = collector.RetrievePropertiesEx(
+            specSet=[filter_spec], options=vim.RetrieveOptions()
+        )
 
         cluster_list = []
         for result in query_result.objects:
@@ -306,7 +314,9 @@ def get_filtered_clusters(si: Any, cluster_names: List[str]) -> List[Any]:
         # Destroy the container view
         container_view.Destroy()
 
-        logger.info(f"Found {len(cluster_list)} VMware clusters matching the filter criteria (out of {len(cluster_names)} requested)")
+        logger.info(
+            f"Found {len(cluster_list)} VMware clusters matching the filter criteria (out of {len(cluster_names)} requested)"
+        )
         return cluster_list
     except Exception as e:
         logger.error(f"Failed to retrieve filtered clusters: {e}")
@@ -317,9 +327,11 @@ def get_filtered_clusters(si: Any, cluster_names: List[str]) -> List[Any]:
 @retry(
     stop=stop_after_attempt(3),  # Retry up to 3 times
     wait=wait_fixed(5),  # Wait 5 seconds between attempts
-    retry=retry_if_exception_type(Exception)  # Retry on any exception
+    retry=retry_if_exception_type(Exception),  # Retry on any exception
 )
-def get_esxi_hosts_per_cluster(si: Any, cluster_names: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+def get_esxi_hosts_per_cluster(
+    si: Any, cluster_names: List[str]
+) -> Dict[str, List[Dict[str, Any]]]:
     """
     Get all ESXi hosts per VMware cluster.
 
@@ -349,7 +361,9 @@ def get_esxi_hosts_per_cluster(si: Any, cluster_names: List[str]) -> Dict[str, L
                 hosts.append(host_info)
             clusters_hosts[cluster_name] = hosts
 
-        logger.info(f"Retrieved ESXi hosts from {len(clusters_hosts)} VMware clusters (filtered from {len(cluster_names)} requested clusters)")
+        logger.info(
+            f"Retrieved ESXi hosts from {len(clusters_hosts)} VMware clusters (filtered from {len(cluster_names)} requested clusters)"
+        )
         return clusters_hosts
     except Exception as e:
         logger.error(f"Failed to retrieve ESXi hosts per cluster: {e}")
@@ -576,7 +590,7 @@ def main(
     # Process each kubeconfig file
     if clusterlist:
         try:
-            with open(clusterlist, 'r') as f:
+            with open(clusterlist, "r") as f:
                 kubeconfigs = [line.strip() for line in f.readlines()]
         except FileNotFoundError:
             logger.error(f"Cluster list file not found: {clusterlist}")
@@ -657,7 +671,7 @@ def main(
                         )
                         continue
                     first_key = list(vsphere_info.keys())[0]
-                    cluster_vsphere_host = vsphere_info[first_key]['server']
+                    cluster_vsphere_host = vsphere_info[first_key]["server"]
                     cluster_vsphere_user = credentials["username"]
                     cluster_vsphere_password = credentials["password"]
                     logger.info(
@@ -715,7 +729,9 @@ def main(
                     continue
                 logger.info(f"Successfully connected to vSphere for cluster {cluster_name}")
             except Exception as e:
-                logger.error(f"Error connecting to vSphere:{cluster_vsphere_host} for cluster {cluster_name}: {str(e)}")
+                logger.error(
+                    f"Error connecting to vSphere:{cluster_vsphere_host} for cluster {cluster_name}: {str(e)}"
+                )
                 continue
 
             try:
@@ -735,7 +751,9 @@ def main(
                 )
 
                 # Map MachineSets to VMware clusters
-                logger.info(f"Mapping OpenShift MachineSets to VMware clusters for cluster {cluster_name}")
+                logger.info(
+                    f"Mapping OpenShift MachineSets to VMware clusters for cluster {cluster_name}"
+                )
                 mapping = map_machinesets_to_clusters(vsphere_info, hosts_per_cluster)
                 if not mapping:
                     logger.warning(

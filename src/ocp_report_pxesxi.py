@@ -838,11 +838,13 @@ def main(
                     ocp_cluster, vmware_cluster = full_cluster_name.split("/", 1)
 
                     if ocp_cluster not in output_data["clusters"]:
-                        output_data["clusters"][ocp_cluster] = {"vmware_clusters": {}}
+                        output_data["clusters"][ocp_cluster] = {
+                            "px_pod_count": data["px_pod_count"],
+                            "vmware_clusters": {},
+                        }
 
                     output_data["clusters"][ocp_cluster]["vmware_clusters"][vmware_cluster] = {
-                        "hosts_count": data["host_count"],
-                        "px_pod_count": data["px_pod_count"],
+                        "hosts_count": data["host_count"]
                     }
                 console.print(json.dumps(output_data, indent=2))
 
@@ -862,12 +864,23 @@ def main(
                 table.add_column("VMware Cluster", style="green")
                 table.add_column("ESXi Host Count", justify="right", style="yellow")
                 table.add_column("Portworx Pod Count", justify="right", style="magenta")
+
                 # Sort by OpenShift cluster and then by VMware cluster
+                current_ocp_cluster = None
                 for full_cluster_name in sorted(all_clusters_summary.keys()):
                     ocp_cluster, vmware_cluster = full_cluster_name.split("/", 1)
                     host_count = all_clusters_summary[full_cluster_name]["host_count"]
                     px_pod_count = all_clusters_summary[full_cluster_name]["px_pod_count"]
-                    table.add_row(ocp_cluster, vmware_cluster, str(host_count), str(px_pod_count))
+
+                    # Only show Portworx pod count for the first entry of each OpenShift cluster
+                    if current_ocp_cluster != ocp_cluster:
+                        table.add_row(
+                            ocp_cluster, vmware_cluster, str(host_count), str(px_pod_count)
+                        )
+                        current_ocp_cluster = ocp_cluster
+                    else:
+                        # For subsequent entries of the same OpenShift cluster, don't show pod count
+                        table.add_row(ocp_cluster, vmware_cluster, str(host_count), "")
                 console.print(table)
 
             return

@@ -35,7 +35,7 @@ pip install -r requirements.txt
 
 ```bash
 # Clean and consolidate contexts
-python src/clean_kubeconfig_contexts.py --namespace <target-namespace> --context-name <new-context-name> [--dry-run] [--verbose]
+python src/clean_kubeconfig_contexts.py --kubeconfig <path-to-kubeconfig> --namespace <target-namespace> --context-name <new-context-name> [--dry-run] [--verbose]
 
 # List all contexts
 python src/clean_kubeconfig_contexts.py --list-contexts [--verbose]
@@ -48,6 +48,7 @@ python src/clean_kubeconfig_contexts.py --show-current-context
 
 | Option | Required | Description |
 |--------|----------|-------------|
+| `--kubeconfig` | No | Path to the kubeconfig file (default: `~/.kube/config`) |
 | `--namespace` | Yes* | Target namespace for the consolidated context |
 | `--context-name` | Yes* | Name of the new consolidated context |
 | `--dry-run` | No | Show what would be changed without applying |
@@ -62,7 +63,7 @@ python src/clean_kubeconfig_contexts.py --show-current-context
 ### Basic Usage
 
 ```bash
-python src/clean_kubeconfig_contexts.py --namespace default --context-name consolidated-context
+python src/clean_kubeconfig_contexts.py --kubeconfig <path-to-kubeconfig> --namespace default --context-name consolidated-context
 ```
 
 This command will:
@@ -75,7 +76,7 @@ This command will:
 ### Dry Run Mode
 
 ```bash
-python src/clean_kubeconfig_contexts.py --namespace default --context-name consolidated-context --dry-run
+python src/clean_kubeconfig_contexts.py --kubeconfig <path-to-kubeconfig> --namespace default --context-name consolidated-context --dry-run
 ```
 
 This will show what changes would be made without actually applying them.
@@ -83,7 +84,7 @@ This will show what changes would be made without actually applying them.
 ### Verbose Logging
 
 ```bash
-python src/clean_kubeconfig_contexts.py --namespace default --context-name consolidated-context --verbose
+python src/clean_kubeconfig_contexts.py --kubeconfig <path-to-kubeconfig> --namespace default --context-name consolidated-context --verbose
 ```
 
 Enables detailed logging of all operations.
@@ -91,13 +92,13 @@ Enables detailed logging of all operations.
 ### List All Contexts
 
 ```bash
-python src/clean_kubeconfig_contexts.py --list-contexts
+python src/clean_kubeconfig_contexts.py --kubeconfig <path-to-kubeconfig> --list-contexts
 ```
 
 Lists all available contexts in the kubeconfig file with a simple, colorful table format.
 
 ```bash
-python src/clean_kubeconfig_contexts.py --list-contexts --verbose
+python src/clean_kubeconfig_contexts.py --kubeconfig <path-to-kubeconfig> --list-contexts --verbose
 ```
 
 Lists all contexts with detailed information including cluster, user, and namespace in a rich, formatted table.

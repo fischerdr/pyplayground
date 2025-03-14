@@ -970,17 +970,17 @@ def main(
                     title=f"OpenShift MachineSets to VMware ESXi Clusters Mapping for {cluster_name}"
                 )
                 table.add_column("MachineSet", style="cyan")
-                table.add_column("VMware Cluster", style="green")
-                table.add_column("ESXi Host Count", justify="right", style="yellow")
                 table.add_column("Datacenter", style="magenta")
+                table.add_column("VMware Cluster", style="green")
+                # table.add_column("ESXi Host Count", justify="right", style="yellow")
                 table.add_column("Datastore", style="blue")
 
                 for machineset_name, cluster_info in mapping.items():
                     table.add_row(
                         machineset_name,
-                        cluster_info["cluster_name"],
-                        str(cluster_info["host_count"]),
                         cluster_info.get("datacenter", ""),
+                        cluster_info["cluster_name"],
+                        # str(cluster_info["host_count"]),
                         cluster_info.get("datastore", ""),
                     )
                 console.print(table)

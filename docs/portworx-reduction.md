@@ -1,551 +1,224 @@
-# Reducing the Footprint of Portworx Enterprise in OpenShift Deployments
+# **Portworx Encrypted Volume Migration Plan**
 
-## 1. Executive Summary
+## **Objective**
 
-This document outlines a strategic approach to reducing the resource footprint of Portworx Enterprise within OpenShift deployments. The focus is on enhancing performance, optimizing resource allocation, and ensuring scalability to meet evolving customer demands. The key initiatives include refactoring Helm charts for efficient node scheduling, reorganizing OpenShift deployments to target specific ESXi hosts, optimizing the decision engine for intelligent workload placement, and establishing a robust monitoring framework for capacity and performance analysis.
+This document outlines the transition strategy for migrating **Portworx-encrypted volumes** from using **HashiCorp Vault** to **Kubernetes Secrets** while also phasing out encrypted storage where applicable. The plan ensures:
 
-### Objectives
+- **Cluster-wide migration** from HashiCorp Vault to Kubernetes Secrets for key management.
+- **Gradual decommissioning** of encrypted storage for workloads that do not require encryption.
+- **No data loss** for persistent workloads requiring encryption migration.
+- **Minimal service disruption** through a controlled rollout strategy.
 
-* 30-40% reduction in resource utilization
-* Improved data locality and performance
-* Enhanced operational resilience
-* Better capacity planning and forecasting
-* Robust monitoring and analytics
+## **Migration Strategy**
 
-### Key Initiatives
+The migration involves two key phases:
 
-* Refactoring Helm charts for efficient node scheduling
-* Reorganizing OpenShift deployments to target specific ESXi hosts
-* Optimizing the decision engine for intelligent workload placement
-* Establishing a robust monitoring framework for capacity and performance analysis
+1. **Cluster-Wide Key Management Migration**: Transition all existing **Portworx-encrypted volumes** from HashiCorp Vault to Kubernetes Secrets.
+2. **Decommissioning Encrypted Storage**: Gradually shift workloads to **non-encrypted storage classes**, where feasible.
 
-### Expected Benefits
+### **Phase 1: Cluster-Wide Migration from HashiCorp Vault to Kubernetes Secrets**
 
-* 30-40% reduction in resource utilization
-* Improved data locality and performance
-* Enhanced operational resilience
-* Better capacity planning and forecasting
+Portworx enforces a cluster-wide approach to secret management, meaning the migration must be executed simultaneously for all encrypted volumes.
 
-### Timeline and Resources
+#### **Step 1: Prepare Kubernetes Secrets**
 
-* Implementation Duration: 8 to 12 months
-* Required Teams: Platform, Storage, Operations
-* Key Stakeholders: Infrastructure, Development, Operations
+- **Create a Kubernetes Secret to Store the Cluster-Wide Encryption Key:**
 
-## 2. Introduction / Background
+  ```sh
+  NAMESPACE=<px-namespace>
+  kubectl -n ${NAMESPACE} create secret generic px-vol-encryption \
+    --from-literal=<cluster-wide-secret-key>=<value>
+  ```
 
-Portworx Enterprise plays a critical role in managing persistent storage for OpenShift clusters. However, as the scale of deployments grows, inefficiencies in resource usage, data distribution, and workload placement have emerged. This document addresses these challenges, focusing on reducing unnecessary overhead, improving data locality, and enhancing operational resilience across ESXi-backed OpenShift environments.
+- This secret (`px-vol-encryption`) will be used by all encrypted Portworx volumes going forward.
 
-### Current Challenges
+#### **Step 2: Create an Encrypted Storage Class using Kubernetes Secrets**
 
-* Resource inefficiency with Portworx running on nodes without storage workloads
-* Data redundancy gaps due to non-optimized zone configurations
-* Inconsistent workload placement across clusters, leading to resource fragmentation
-* Limited visibility into capacity trends, making future scaling unpredictable
-* Complexity in managing cross-cluster replication and data protection
-* Complex data protection and recovery mechanisms
+- **Define the StorageClass with Kubernetes Secrets:**
 
-### Technical Environment
+  ```yaml
+  kind: StorageClass
+  apiVersion: storage.k8s.io/v1
+  metadata:
+    name: px-encrypted-sc
+  provisioner: pxd.portworx.com
+  allowVolumeExpansion: true
+  parameters:
+    repl: "2"
+    priority_io: "high"
+    io_profile: auto
+    encryption: "true"
+    secret_name: "px-vol-encryption"
+    secret_namespace: "<px-namespace>"
+  ```
 
-* Portworx Enterprise: 3.2.1.1 or later
-* OpenShift: 4.14 or later
-* VMware ESXi: 7.0 U3 or later
-* Minimum Node Requirements:
-  * CPU: 32 cores
-  * Memory: 192GB RAM
-  * Storage: 50TB NVMe storage per node
-  * Network: 10Gbps per node
+- **Apply the StorageClass:**
 
-## 3. Scope and Assumptions
+  ```sh
+  kubectl apply -f px-encrypted-sc.yaml
+  ```
 
-### Scope
+#### **Step 3: Configure Portworx to Use Kubernetes Secrets**
 
-* Applies to all OpenShift clusters deployed on ESXi infrastructure
-* Focus on clusters managed via IPI (Installer-Provisioned Infrastructure)
-* Portworx zonal configurations for environments with multiple ESXi clusters
-* Portworx deployment with affinity and anti-affinity rules
-* Portworx metrics are available for integration with the monitoring stack
+- **Modify Portworx Configuration:**
+  - Update the StorageCluster specification to select **Kubernetes** as the secrets store type.
+- **Set the Cluster-Wide Secret Key:**
 
-### Assumptions
+  ```sh
+  PX_POD=$(kubectl get pods -l name=portworx -n ${NAMESPACE} -o jsonpath='{.items[0].metadata.name}')
+  kubectl exec $PX_POD -n ${NAMESPACE} -- /opt/pwx/bin/pxctl secrets set-cluster-key \
+    --secret <cluster-wide-secret-key>
+  ```
 
-* All ESXi hosts can be labeled and grouped based on storage capabilities
-* OpenShift IPI configurations can be modified without vendor constraints
-* Prometheus and Grafana deployed in the cluster
+- This ensures that Portworx references Kubernetes Secrets instead of HashiCorp Vault for encryption.
 
-### Prerequisites
+#### **Step 4: Migrate Existing PVCs to Kubernetes Secrets**
 
-* Administrative access to OpenShift clusters
-* VMware vSphere privileges for resource pool management
-* Network connectivity between all components
-* Prometheus and Grafana deployed in the cluster
+- **Recreate PVCs to Use the New Encrypted Storage Class:**
 
-## 4. Goals and Success Metrics
+  ```yaml
+  kind: PersistentVolumeClaim
+  apiVersion: v1
+  metadata:
+    name: encrypted-pvc
+  spec:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: px-encrypted-sc
+  ```
 
-### Goals
+  ```sh
+  kubectl apply -f encrypted-pvc.yaml
+  ```
 
-* Reduce Portworx resource consumption across non-storage nodes
-* Improve data resiliency through optimized multi-zone replication
-* Ensure customer workloads are intelligently routed based on storage needs
-* Proactively predict capacity requirements to prevent resource bottlenecks
+- **Validate Data Accessibility:**
+  - Ensure that applications can still access their encrypted data post-migration.
 
-### Key Metrics
+#### **Step 5: Remove HashiCorp Vault Configuration**
 
-* Resource Efficiency: Reduction in CPU/memory usage for Portworx services
-* Deployment Accuracy: % of workloads placed correctly based on storage needs
-* Data Resiliency: Improved RTO (Recovery Time Objective) with zonal replication
-* Capacity Forecasting Accuracy: Prediction variance within acceptable thresholds (<5%)
+- Once all volumes are migrated, update the Portworx configuration to remove **HashiCorp Vault references**.
+- **Perform validation tests** to ensure no disruptions.
 
-## 5. Key Initiatives
+### **Phase 2: Gradual Decommissioning of Encrypted Storage**
 
-### 5.1 Refactoring Helm Charts with Affinity and Anti-Affinity Rules
+Once Kubernetes Secrets fully replace HashiCorp Vault, we proceed with transitioning workloads to **non-encrypted storage classes** where possible. This phase includes two independent approaches:
 
-#### Objective
+#### **Approach 1: Data-Preserving Migration (Recommended for Persistent Data)**
 
-Optimize Portworx deployments to run exclusively on storage-enabled nodes using Kubernetes affinity/anti-affinity rules.
+1. **Identify Encrypted PVCs**
 
-#### Implementation
+   ```sh
+   kubectl get pvc -A -o wide | grep <encrypted-storage-class>
+   ```
 
-**Node Labeling:**
+2. **Extract Encryption Secret and Store in Kubernetes**
 
-```bash
-oc label node <node-name> storage=enabled
-```
+   ```sh
+   vault kv get -format=json secret/<namespace>/<pvc-name> | jq -r '.data.data.key'
+   ```
 
-**Helm Chart Modifications:**
+   ```sh
+   kubectl create secret generic <pvc-secret> --from-literal=key=<retrieved-key> -n <namespace>
+   ```
 
-```yaml
-affinity:
-  nodeAffinity:
-    requiredDuringSchedulingIgnoredDuringExecution:
-      nodeSelectorTerms:
-        - matchExpressions:
-            - key: storage
-              operator: In
-              values:
-                - enabled
-  podAntiAffinity:
-    requiredDuringSchedulingIgnoredDuringExecution:
-      - labelSelector:
-          matchExpressions:
-            - key: app
-              operator: In
-              values:
-                - portworx
-        topologyKey: "kubernetes.io/hostname"
-```
+3. **Delete and Recreate the PVC with Non-Encrypted Storage**
 
-#### Expected Impact
+   ```sh
+   kubectl delete pvc <pvc-name> -n <namespace>
+   ```
 
-* Reduced resource consumption on non-storage nodes
-* Improved workload performance through optimal data locality
+   - Recreate the PVC using a **non-encrypted storage class**.
+4. **Validate Data Integrity**
+   - Ensure applications function correctly after migration.
 
-### 5.2 Reorganizing OpenShift Deployments for Targeted Portworx Utilization
+#### **Approach 2: Non-Encrypted Redeployment for Non-Persistent Data**
 
-#### Objective
+This is a standalone approach for workloads where data persistence is not required.
 
-Ensure Portworx operates only on designated ESXi hosts with local storage, while OpenShift IPI deployments land worker nodes on these hosts. Implement a zonal model for data distribution across ESXi clusters.
+1. **Create a Non-Encrypted Storage Class**
 
-#### Example Implementation
+   ```yaml
+   kind: StorageClass
+   apiVersion: storage.k8s.io/v1
+   metadata:
+     name: px-storage-class
+   provisioner: pxd.portworx.com
+   allowVolumeExpansion: true
+   parameters:
+     repl: "2"
+     priority_io: "high"
+     io_profile: auto
+   ```
 
-**VM Placement (vSphere):**
-Configure VM affinity rules to target specific ESXi hosts with local disks.
+   ```sh
+   kubectl apply -f px-storage-class.yaml
+   ```
 
-**OpenShift IPI Customization:**
+2. **Redeploy Applications with Non-Encrypted Storage**
+   - Applications using ephemeral data should be redeployed using the **new non-encrypted storage class**.
+   - **Important Note**: This method **results in data loss** but is appropriate for **stateless applications** or applications where data can be regenerated.
 
-```yaml
-spec:
-  providerSpec:
-    value:
-      placement:
-        resourcePool: /Datacenter/host/Cluster/Resources/StoragePool
-        hosts:
-          - esxi-01.local
-          - esxi-02.local
-```
+3. **Update Application Manifests**
+   - Modify application deployment manifests to reference the non-encrypted storage class.
+   - Example PVC definition:
 
-**Portworx Zonal Model:**
+   ```yaml
+   kind: PersistentVolumeClaim
+   apiVersion: v1
+   metadata:
+     name: app-data
+   spec:
+     accessModes:
+       - ReadWriteOnce
+     resources:
+       requests:
+         storage: 10Gi
+     storageClassName: px-storage-class
+   ```
 
-Node Labeling:
+4. **Apply the Updated Manifests**
 
-```bash
-oc label node worker-1 topology.portworx.io/zone=zone-a
-oc label node worker-2 topology.portworx.io/zone=zone-b
-```
-
-Cluster Configuration:
-
-```yaml
-spec:
-  storageCluster:
-    spec:
-      placement:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: topology.portworx.io/zone
-                    operator: In
-                    values:
-                      - zone-a
-                      - zone-b
-```
-
-#### Expected Impact
-
-* Focused Portworx utilization on storage-optimized infrastructure
-* Enhanced data resilience with cross-cluster replication
-
-### 5.3 Optimizing the Decision Engine for Intelligent Cluster Placement
-
-#### Objective
-
-Enhance the decision engine to route customer deployments based on storage requirements and real-time cluster capacity. The decision engine should be able to make informed decisions even in the presence of dynamic workload patterns. The decision engine should be able to:
-
-* Route workloads efficiently based on storage requirements
-* Optimize cluster placement based on real-time capacity
-* Prioritize workload placement based on storage usage patterns
-
-#### Predictive Analytics
-
-* Use historical data for capacity forecasting, integrating with Prometheus metrics
-
-#### Expected Impact
-
-* Optimal resource allocation with reduced deployment delays
-* Data-driven placement decisions improving workload performance
-* Improved capacity forecasting and planning
-
-### 5.4 Monitoring and Analyzing Capacity and Performance
-
-#### Objective
-
-Implement a comprehensive monitoring framework to track capacity and performance, enabling proactive scaling and resource planning.
-
-#### Implementation
-
-**Monitoring Stack:**
-
-* Prometheus: For metric collection
-* Grafana: For visualization
-* Portworx Metrics: For storage performance tracking
-
-**Key Metrics to Monitor:**
-
-* Resource Utilization
-  * `portworx_cluster_disk_utilized_bytes`
-  * `portworx_cluster_disk_available_bytes`
-  * `portworx_node_cpu_usage_percent`
-  * `portworx_node_memory_usage_bytes`
-
-* Worker Node Metrics
-  * `container_cpu_usage_seconds_total{container!="",pod!=""}`
-  * `container_memory_usage_bytes{container!="",pod!=""}`
-  * `node_cpu_seconds_total{mode="idle"}`
-  * `node_memory_MemAvailable_bytes`
-  * `node_memory_MemTotal_bytes`
-  * `kubelet_volume_stats_used_bytes`
-  * `kubelet_volume_stats_capacity_bytes`
-
-* vSphere ESXi Metrics (via vSphere Exporter)
-  * Cluster Metrics
-    * `vsphere_cluster_cpu_usage_percent`
-    * `vsphere_cluster_mem_usage_percent`
-    * `vsphere_cluster_cpu_total_mhz`
-    * `vsphere_cluster_mem_total_mb`
-    * `vsphere_cluster_vm_count`
-  * Host Metrics
-    * `vsphere_host_cpu_usage_percent{host="esxi-host"}`
-    * `vsphere_host_memory_usage_percent{host="esxi-host"}`
-    * `vsphere_host_memory_size_bytes{host="esxi-host"}`
-    * `vsphere_host_cpu_mhz{host="esxi-host"}`
-  * Datastore Metrics
-    * `vsphere_datastore_capacity_size{datastore="name"}`
-    * `vsphere_datastore_freespace_size{datastore="name"}`
-    * `vsphere_datastore_uncommitted_size{datastore="name"}`
-
-* Performance Metrics
-  * `portworx_disk_ops_total`
-  * `portworx_disk_read_latency_seconds`
-  * `portworx_disk_write_latency_seconds`
-  * `portworx_volume_iops`
-
-* Health Metrics
-  * `portworx_cluster_status`
-  * `portworx_node_status`
-  * `portworx_volume_ha_level`
-
-**Example Grafana Dashboard:**
-
-```yaml
-dashboard:
-  title: "Portworx Cluster Overview"
-  panels:
-    - title: "Cluster Storage Utilization"
-      type: "graph"
-      metrics:
-        - expr: "sum(portworx_cluster_disk_utilized_bytes) / sum(portworx_cluster_disk_available_bytes) * 100"
-    
-    - title: "Node CPU Usage"
-      type: "graph"
-      metrics:
-        - expr: "avg(portworx_node_cpu_usage_percent) by (node)"
-    
-    - title: "Worker Node CPU Usage"
-      type: "graph"
-      metrics:
-        - expr: "sum(rate(container_cpu_usage_seconds_total{container!=''}[5m])) by (node) / on(node) sum(machine_cpu_cores) by (node) * 100"
-    
-    - title: "Worker Node Memory Usage"
-      type: "graph"
-      metrics:
-        - expr: "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100"
-    
-    - title: "ESXi Cluster Resource Usage"
-      type: "graph"
-      metrics:
-        - expr: "avg(vsphere_cluster_cpu_usage_percent)"
-        - expr: "avg(vsphere_cluster_mem_usage_percent)"
-    
-    - title: "ESXi Host Resource Usage"
-      type: "graph"
-      metrics:
-        - expr: "avg(vsphere_host_cpu_usage_percent) by (host)"
-        - expr: "avg(vsphere_host_memory_usage_percent) by (host)"
-    
-    - title: "Datastore Utilization"
-      type: "graph"
-      metrics:
-        - expr: "(vsphere_datastore_capacity_size - vsphere_datastore_freespace_size) / vsphere_datastore_capacity_size * 100"
-```
-
-**Automated Alerts:**
-
-```yaml
-groups:
-  - name: capacity-alerts
-    rules:
-      - alert: HighCPUUsage
-        expr: sum(rate(container_cpu_usage_seconds_total[5m])) by (instance) > 0.85
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High CPU usage detected on {{ $labels.instance }}"
-      
-      - alert: StorageUtilizationHigh
-        expr: sum(portworx_cluster_disk_utilized_bytes) / sum(portworx_cluster_disk_available_bytes) * 100 > 80
-        for: 15m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Storage utilization exceeds 80%"
-      
-      - alert: HighLatency
-        expr: avg(portworx_disk_write_latency_seconds) > 0.1
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High storage latency detected"
-
-      - alert: WorkerNodeHighCPU
-        expr: sum(rate(container_cpu_usage_seconds_total{container!=""}[5m])) by (node) / on(node) sum(machine_cpu_cores) by (node) * 100 > 85
-        for: 15m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Worker node CPU usage exceeds 85% on {{ $labels.node }}"
-
-      - alert: WorkerNodeHighMemory
-        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 90
-        for: 15m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Worker node memory usage exceeds 90% on {{ $labels.node }}"
-
-      - alert: ESXiClusterHighCPU
-        expr: avg(vsphere_cluster_cpu_usage_percent) > 80
-        for: 15m
-        labels:
-          severity: warning
-        annotations:
-          summary: "ESXi cluster CPU usage exceeds 80%"
-
-      - alert: ESXiClusterHighMemory
-        expr: avg(vsphere_cluster_mem_usage_percent) > 85
-        for: 15m
-        labels:
-          severity: warning
-        annotations:
-          summary: "ESXi cluster memory usage exceeds 85%"
-
-      - alert: DatastoreSpaceCritical
-        expr: (vsphere_datastore_capacity_size - vsphere_datastore_freespace_size) / vsphere_datastore_capacity_size * 100 > 85
-        for: 15m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Datastore {{ $labels.datastore }} usage exceeds 85%"
-```
-
-### Capacity Forecasting
-
-Apply machine learning models to predict future resource requirements based on historical metrics:
-
-* Storage Growth Prediction
-
-* Resource Trend Analysis
-  * Use historical data from Prometheus for:
-    * Storage utilization trends
-    * CPU/Memory usage patterns
-    * Workload growth patterns
-    * ESXi cluster resource consumption
-
-* Capacity Planning Metrics
-  * Growth rate per resource type
-  * Seasonal patterns identification
-  * Resource exhaustion predictions
-  * Recommended scaling thresholds
-
-#### Expected Impact
-
-* Real-time insights into system health and capacity
-* Proactive capacity planning to support future growth
-* Early warning system for resource constraints
-* Data-driven infrastructure scaling decisions
-
-## 6. Technical Architecture Overview
-
-* Current vs. Target Architecture Diagrams (to be created)
-* Data flow between OpenShift, Portworx, ESXi, and the decision engine
-
-## 7. Implementation Roadmap
-
-* Phase 1: Refactor Helm Charts (Month 1-2)
-* Phase 2: Reorganize OpenShift Deployments (Month 3-4)
-* Phase 3: Enhance Decision Engine (Month 5-6)
-* Phase 4: Implement Monitoring & Forecasting (Month 7-8)
-* Phase 5: Implement Data Protection (Month 9-10)
-* Phase 6: Implement Backup and DR (Month 11-12)
-
-## 8. Risk Assessment and Mitigation
-
-* Data Locality Issues: Mitigated through rigorous zone tagging validation
-* Capacity Misalignment: Continuous integration with monitoring feedback loops
-* Operational Disruptions: Change management protocols and staged rollouts
-
-## 9. Operational Considerations
-
-* Day-2 operations adjustments for monitoring and troubleshooting
-* Backup and DR implications with zonal data distribution
-* Training and documentation for operations teams
-
-## 10. Cost and Resource Analysis
-
-* Potential cost savings through resource optimization
-* Resource investments needed for implementation (tooling, training)
-
-## 11. Future Considerations / Continuous Improvement
-
-* Scaling to multi-cloud environments
-* Integrating with automation tools like Ansible and Terraform
-* Continuous optimization based on performance data
-
-### Advanced Storage Optimization
-
-#### Intelligent Tiering
-
-* What to Consider: Implement dynamic storage tiering within Portworx to automatically move less frequently accessed data to lower-cost storage (e.g., cold storage on slower disks)
-* Impact: Reduces storage costs while maintaining high performance for critical workloads
-
-#### Volume Placement Strategies
-
-* What to Consider: Leverage Portworx Autopilot rules for dynamic resizing and optimizing volume placement based on IOPS and latency thresholds
-* Impact: Enhances performance efficiency without manual intervention
-
-### Enhancements in the Decision Engine
-
-#### AI-Driven Placement Algorithms
-
-* What to Consider: Introduce machine learning algorithms that not only factor in current resource utilization but also predict future workload demands
-* Impact: Proactively optimizes workload distribution to prevent bottlenecks before they occur
-
-#### Policy-Based Governance
-
-* What to Consider: Integrate governance policies for data residency, compliance, and workload affinity rules directly into the decision engine
-* Impact: Ensures workloads meet both technical and regulatory requirements automatically
-
-### Resilience and Disaster Recovery (DR)
-
-#### Cross-Cluster Failover Automation
-
-* What to Consider: Implement Portworx Disaster Recovery (PX-DR) with automated failover between OpenShift clusters across different ESXi hosts or even data centers
-* Impact: Enhances business continuity with near-zero downtime in case of catastrophic failures
-
-#### Chaos Engineering for Storage
-
-* What to Consider: Incorporate chaos testing (e.g., using tools like LitmusChaos) to simulate storage failures, network partitions, and node crashes regularly
-* Impact: Validates system resilience under extreme conditions, ensuring reliability
-
-### Observability & Predictive Insights
-
-#### Enhanced SLOs and Error Budgets
-
-* What to Consider: Define Service Level Objectives (SLOs) with error budgets for storage latency, availability, and performance, integrated into Grafana dashboards
-* Impact: Provides proactive indicators of performance degradation before they breach SLAs
-
-#### Predictive Analytics
-
-* What to Consider: Expand Prometheus with AI-based analytics to forecast capacity and performance anomalies before they occur, using historical data trends
-* Impact: Moves from reactive monitoring to proactive operations
-
-## 12. Conclusion
-
-This strategic approach will reduce Portworx’s resource footprint, enhance workload placement efficiency, and improve system resiliency. The initiatives will ensure that OpenShift environments remain scalable, cost-effective, and ready for future demands.
-
-## 13. Troubleshooting Guide
-
-### Common Issues and Solutions
-
-1. **Node Scheduling Issues**
-   * Symptom: Pods not scheduling on storage nodes
-   * Solution: Verify node labels and taints
-   * Validation: `oc get nodes --show-labels`
-
-2. **Performance Degradation**
-   * Symptom: High latency in storage operations
-   * Solution: Check network connectivity and storage device health
-   * Validation: Review Prometheus metrics
-
-3. **Replication Issues**
-   * Symptom: Volumes not maintaining HA level
-   * Solution: Verify zone configuration and network connectivity
-   * Validation: `pxctl status`
-
-### Rollback Procedures
-
-1. **Zone Configuration**
-   * Backup current configuration
-   * Restore previous zone labels
-   * Verify volume distribution
-
-## 14. References
-
-### Documentation
-
-* [Portworx Documentation](https://docs.portworx.com/)
-* [OpenShift Documentation](https://docs.openshift.com/)
-* [VMware ESXi Documentation](https://docs.vmware.com/en/VMware-vSphere/)
-
-### Tools and Utilities
-
-* [Prometheus Operator](https://github.com/prometheus-operator/prometheus-operator)
-* [Grafana Dashboards](https://grafana.com/grafana/dashboards/)
-* [PX-Backup](https://docs.portworx.com/reference/px-backup/)
-
-### Best Practices
-
-* [Kubernetes Storage Best Practices](https://kubernetes.io/docs/concepts/storage/)
-* [OpenShift Scaling and Performance](https://docs.openshift.com/container-platform/latest/scalability_and_performance/recommended-host-practices.html)
-* [Portworx Deployment Best Practices](https://docs.portworx.com/operations/operate-kubernetes/)
+   ```sh
+   kubectl apply -f updated-app-deployment.yaml
+   ```
+
+## **Helm Chart Changes**
+
+To enforce these changes, updates are required in Helm charts.
+
+### **Helm Chart Modifications**
+
+- **Set Default Storage Class to Non-Encrypted**
+
+  ```yaml
+  storage:
+    class: "px-storage-class"
+    size: "100Gi"
+  ```
+
+- **Conditional Handling for Existing Encrypted PVCs**
+
+  ```yaml
+  storage:
+    useEncrypted: false  # Default for new deployments
+    existingPVC: ""      # Set for migrations
+  ```
+
+## **Deployment Strategy**
+
+1. **Phase 1: Deploy Helm Chart Updates**
+   - Ensure all new deployments default to **non-encrypted storage**.
+   - Stop new workloads from using HashiCorp Vault.
+2. **Phase 2: Migrate Existing Workloads**
+   - Perform **data-preserving migration** where required.
+   - Guide customers in **redeploying ephemeral workloads**.
+3. **Phase 3: Full Transition and Validation**
+   - Validate that **no new workloads use encryption**.
+   - Remove legacy encrypted storage classes.
+
+## **Conclusion**
+
+This plan enables a **smooth migration** from **HashiCorp Vault to Kubernetes Secrets** while gradually **decommissioning encrypted storage**. The phased approach ensures **minimal disruption** and **data integrity** throughout the transition.

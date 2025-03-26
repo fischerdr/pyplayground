@@ -16,6 +16,8 @@ The migration involves two key phases:
 1. **Cluster-Wide Key Management Migration**: Transition all existing **Portworx-encrypted volumes** from HashiCorp Vault to Kubernetes Secrets.
 2. **Decommissioning Encrypted Storage**: Gradually shift workloads to **non-encrypted storage classes**, where feasible.
 
+> **IMPORTANT**: This migration must be performed across **all Portworx-encrypted volumes simultaneously**. Portworx enforces a cluster-wide approach to secret management, meaning partial migrations are not supported. The entire cluster must transition from HashiCorp Vault to Kubernetes Secrets in a coordinated operation.
+
 ### **Phase 1: Cluster-Wide Migration from HashiCorp Vault to Kubernetes Secrets**
 
 Portworx enforces a cluster-wide approach to secret management, meaning the migration must be executed simultaneously for all encrypted volumes.
@@ -185,6 +187,86 @@ This is a standalone approach for workloads where data persistence is not requir
    kubectl apply -f updated-app-deployment.yaml
    ```
 
+## **Migration Approach Comparison**
+
+The following table provides a side-by-side comparison of the two migration approaches to help with decision-making:
+
+| Approach | Pros | Cons | Best For |
+|----------|------|------|----------|
+| **Data-Preserving Migration** | • Preserves all existing data• No application downtime if done correctly• Maintains data integrity | • More complex process• Requires manual PVC recreation• Higher risk of errors | • Production workloads• Databases• Any application with valuable persistent data |
+| **Non-Encrypted Redeployment** | • Simpler implementation• Clean slate for applications• Faster execution | • Complete data loss• Requires application redeployment• Service interruption | • Development/test environments• Stateless applications• Caches and temporary storage |
+
+## **Risk Assessment and Mitigation**
+
+### **Potential Risks**
+
+| Risk | Impact | Mitigation Strategy |
+|------|--------|---------------------|
+| **Secret Key Mismatch** | Data becomes inaccessible | Verify secret key values before migration; maintain HashiCorp Vault access until migration is complete |
+| **Application Downtime** | Service interruption | Schedule migration during maintenance windows; perform in stages |
+| **Data Loss** | Permanent loss of information | Backup all PVCs before migration; test recovery procedures |
+| **PVC Recreation Failures** | Migration incomplete | Document current PVC specifications; prepare rollback plan |
+| **Partial Cluster Migration** | Inconsistent encryption state | Ensure all volumes are migrated simultaneously; validate cluster-wide configuration |
+
+### **Rollback Plan**
+
+If issues arise during migration, follow these steps to roll back:
+
+1. **Revert to HashiCorp Vault Configuration**:
+
+   ```sh
+   kubectl exec $PX_POD -n ${NAMESPACE} -- /opt/pwx/bin/pxctl secrets set-cluster-key --vault <vault-options>
+   ```
+
+2. **Restore Original Storage Classes**:
+
+   ```sh
+   kubectl apply -f original-storage-classes.yaml
+   ```
+
+3. **Restore PVCs from Backups** if data loss occurred.
+
+## **Testing and Validation**
+
+### **Pre-Migration Testing**
+
+1. **Environment Validation**:
+
+   ```sh
+   # Verify Portworx status
+   kubectl exec $PX_POD -n ${NAMESPACE} -- /opt/pwx/bin/pxctl status
+   
+   # Verify current encryption configuration
+   kubectl exec $PX_POD -n ${NAMESPACE} -- /opt/pwx/bin/pxctl secrets list
+   ```
+
+2. **Create Test Volumes**:
+   - Deploy test applications with encrypted volumes
+   - Verify data can be written and read correctly
+
+3. **Backup Verification**:
+   - Ensure backup procedures are working correctly
+   - Test restore functionality in a separate environment
+
+### **Post-Migration Validation**
+
+1. **Encryption Verification**:
+
+   ```sh
+   # Verify volumes are using Kubernetes Secrets
+   kubectl exec $PX_POD -n ${NAMESPACE} -- /opt/pwx/bin/pxctl volume list
+   kubectl exec $PX_POD -n ${NAMESPACE} -- /opt/pwx/bin/pxctl volume inspect <volume-id>
+   ```
+
+2. **Application Testing**:
+   - Verify all applications can access their data
+   - Run application-specific validation tests
+   - Check for any performance impacts
+
+3. **Security Validation**:
+   - Ensure HashiCorp Vault is no longer being accessed
+   - Verify Kubernetes Secrets are properly secured
+
 ## **Helm Chart Changes**
 
 To enforce these changes, updates are required in Helm charts.
@@ -207,6 +289,35 @@ To enforce these changes, updates are required in Helm charts.
     existingPVC: ""      # Set for migrations
   ```
 
+### **Affected Helm Values**
+
+The following Helm chart values will need to be updated across all applications:
+
+| Helm Value | Current Setting | New Setting | Purpose |
+|------------|----------------|------------|---------|
+| `storage.class` | `px-encrypted-sc` | `px-storage-class` | Change default storage class to non-encrypted |
+| `storage.useEncryption` | `true` | `false` | Disable encryption by default |
+| `portworx.secretsProvider` | `vault` | `k8s` | Change secrets provider to Kubernetes |
+| `portworx.secretsNamespace` | `<vault-namespace>` | `<px-namespace>` | Update secrets namespace |
+
+### **Implementation Example**
+
+For applications using the standard Helm chart structure:
+
+```yaml
+# values.yaml modifications
+global:
+  storageClass: px-storage-class  # Previously px-encrypted-sc
+  
+persistence:
+  enabled: true
+  storageClass: ""  # Will use global.storageClass
+  
+portworx:
+  secretsProvider: k8s  # Previously vault
+  secretsNamespace: portworx-system
+```
+
 ## **Deployment Strategy**
 
 1. **Phase 1: Deploy Helm Chart Updates**
@@ -219,6 +330,21 @@ To enforce these changes, updates are required in Helm charts.
    - Validate that **no new workloads use encryption**.
    - Remove legacy encrypted storage classes.
 
+## **Success Criteria**
+
+The migration will be considered successful when the following measurable outcomes are achieved:
+
+| Metric | Target | Validation Method |
+|--------|--------|------------------|
+| **HashiCorp Vault References** | 0 active references | Audit cluster configuration and application logs |
+| **New Workloads Using Non-Encrypted Storage** | 100% | Monitor StorageClass usage in new PVCs |
+| **Existing Workloads Migrated** | 100% | Verify all PVCs use either K8s Secrets or non-encrypted storage |
+| **Application Availability** | 99.9% during migration | Monitor application uptime metrics |
+| **Data Integrity** | 100% preserved | Run data validation tests on migrated volumes |
+| **Performance Impact** | < 5% degradation | Compare pre- and post-migration performance metrics |
+
 ## **Conclusion**
 
 This plan enables a **smooth migration** from **HashiCorp Vault to Kubernetes Secrets** while gradually **decommissioning encrypted storage**. The phased approach ensures **minimal disruption** and **data integrity** throughout the transition.
+
+By following the detailed steps, risk mitigation strategies, and validation procedures outlined in this document, organizations can successfully complete this migration with confidence and maintain the security and reliability of their Kubernetes environments.

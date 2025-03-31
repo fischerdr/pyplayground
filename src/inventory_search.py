@@ -160,17 +160,17 @@ def cli(
 ) -> None:
     """
     Search for inventory clusters with flexible filtering options.
-    
+
     This command allows you to search for clusters in the inventory with
     various filter criteria. Results can be displayed as a table or JSON.
-    
+
     Examples:
         # Search for production clusters
         inventory_search.py --base-url https://api.example.com --env prod
-        
+
         # Search for clusters with specific features and tags
         inventory_search.py --base-url https://api.example.com --feature feature1 --feature feature2 --tag tag1
-        
+
         # Get results in JSON format
         inventory_search.py --base-url https://api.example.com --output json
     """
@@ -197,7 +197,7 @@ def cli(
 
         # Search for inventory
         logger.info("Searching inventory...")
-        
+
         # Process tags - support both multiple --tag options and comma-separated lists
         processed_tags = []
         if tag:
@@ -207,7 +207,7 @@ def cli(
                     processed_tags.extend([t.strip() for t in tag_item.split(",")])
                 else:
                     processed_tags.append(tag_item)
-        
+
         results = search_inventory(
             base_url=base_url,
             api_key=api_key,
@@ -245,7 +245,7 @@ def cli(
 def display_results_as_table(results: dict) -> None:
     """
     Display inventory search results as a rich table.
-    
+
     Args:
         results: The inventory search results
     """
@@ -257,25 +257,25 @@ def display_results_as_table(results: dict) -> None:
 
     # Create a table
     table = Table(title="Inventory Clusters")
-    
+
     # Add columns based on the first cluster's keys
     if clusters:
         # Get all possible keys from all clusters
         all_keys = set()
         for cluster in clusters:
             all_keys.update(cluster.keys())
-        
+
         # Add columns for common fields first, then others
         priority_fields = ["id", "name", "env", "region", "zone", "status"]
         for field in priority_fields:
             if field in all_keys:
                 table.add_column(field.upper())
                 all_keys.remove(field)
-        
+
         # Add remaining fields
         for field in sorted(all_keys):
             table.add_column(field.upper())
-        
+
         # Add rows
         for cluster in clusters:
             row = []
@@ -284,17 +284,17 @@ def display_results_as_table(results: dict) -> None:
                 if field in table.columns:
                     value = cluster.get(field, "")
                     row.append(str(value) if value is not None else "")
-            
+
             # Add remaining fields
             for field in sorted(all_keys):
                 value = cluster.get(field, "")
                 row.append(str(value) if value is not None else "")
-            
+
             table.add_row(*row)
-    
+
     # Print the table
     console.print(table)
-    
+
     # Print summary
     total = results.get("total", 0)
     console.print(f"[green]Total clusters: {total}[/green]")

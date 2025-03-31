@@ -2,6 +2,7 @@
 
 import logging
 from typing import Dict, List, Optional, Union
+
 import requests
 from requests.exceptions import RequestException
 
@@ -106,9 +107,7 @@ def search_inventory(
 
     try:
         logger.debug(f"Sending inventory search request to {endpoint}")
-        response = requests.get(
-            endpoint, headers=headers, params=params, timeout=timeout
-        )
+        response = requests.get(endpoint, headers=headers, params=params, timeout=timeout)
         response.raise_for_status()
         return response.json()
     except RequestException as e:

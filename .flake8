@@ -9,6 +9,8 @@ per-file-ignores =
 ignore =
     # Missing docstring in magic method
     D105,
+    # Import errors imports must be at the top of the file
+    E402,
     # line too long
     E501,
     # line break before binary operator

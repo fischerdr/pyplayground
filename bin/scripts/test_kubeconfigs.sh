@@ -145,7 +145,18 @@ test_kubeconfig() {
                     local cert_expiry
                     cert_expiry=$(echo "${cert_data}" | base64 --decode | "${OPENSSL_CMD}" x509 -noout -enddate | cut -d= -f2)
                     local expiry_timestamp
-                    expiry_timestamp=$(date -d "${cert_expiry}" +%s)
+                    # Use a more portable way to get timestamp from date string
+                    if date --version >/dev/null 2>&1; then
+                        # GNU date (Linux)
+                        expiry_timestamp=$(date -d "${cert_expiry}" +%s 2>/dev/null)
+                    else
+                        # BSD date (macOS)
+                        # Convert the OpenSSL date format to something BSD date can understand
+                        local formatted_date
+                        formatted_date=$(echo "${cert_expiry}" | sed -E 's/(.{3}) (.{2}) (.{2}):(.{2}):(.{2}) (.{4})/\1 \2 \6 \3:\4:\5/')
+                        expiry_timestamp=$(date -j -f "%b %d %Y %H:%M:%S" "${formatted_date}" +%s 2>/dev/null)
+                    fi
+                    
                     local current_timestamp
                     current_timestamp=$(date +%s)
                     local days_remaining

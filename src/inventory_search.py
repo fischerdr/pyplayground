@@ -112,7 +112,7 @@ console = Console()
 @click.option(
     "--tag",
     multiple=True,
-    help="Filter by tag (can be specified multiple times)",
+    help="Filter by tag (can be specified multiple times or as comma-separated list: --tag tag1,tag2,tag3)",
 )
 @click.option(
     "--workload",
@@ -197,6 +197,17 @@ def cli(
 
         # Search for inventory
         logger.info("Searching inventory...")
+        
+        # Process tags - support both multiple --tag options and comma-separated lists
+        processed_tags = []
+        if tag:
+            for tag_item in tag:
+                if "," in tag_item:
+                    # Split comma-separated tags and add them individually
+                    processed_tags.extend([t.strip() for t in tag_item.split(",")])
+                else:
+                    processed_tags.append(tag_item)
+        
         results = search_inventory(
             base_url=base_url,
             api_key=api_key,
@@ -213,7 +224,7 @@ def cli(
             is_under_maintenance=is_under_maintenance if is_under_maintenance else None,
             car_ids=list(car_id) if car_id else None,
             features=list(feature) if feature else None,
-            tags=list(tag) if tag else None,
+            tags=processed_tags if processed_tags else None,
             workloads=list(workload) if workload else None,
             timeout=timeout,
         )

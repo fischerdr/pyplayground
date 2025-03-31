@@ -131,7 +131,19 @@ test_kubeconfig() {
         else
             result_line="${result_line} | Connection successful ${SUCCESS_MARKER}"
             
-            # Test 3: Check SSL certificate
+            # Test 3: Check if kubectl can get nodes
+            if ! KUBECONFIG="${kubeconfig_file}" "${KUBECTL_CMD}" get nodes &>/dev/null; then
+                log "WARNING" "Cannot get nodes information with this kubeconfig: ${kubeconfig_file}"
+                result_line="${result_line} | Nodes access failed ⚠️"
+            else
+                local node_count
+                node_count=$(KUBECONFIG="${kubeconfig_file}" "${KUBECTL_CMD}" get nodes -o name | wc -l)
+                node_count=$(echo "${node_count}" | tr -d '[:space:]')
+                log "INFO" "Successfully retrieved ${node_count} nodes with kubeconfig: ${kubeconfig_file}"
+                result_line="${result_line} | Nodes access OK (${node_count} nodes) ${SUCCESS_MARKER}"
+            fi
+            
+            # Test 4: Check SSL certificate
             cert_data=$(KUBECONFIG="${kubeconfig_file}" "${KUBECTL_CMD}" config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
             
             if [[ -n "${cert_data}" ]]; then

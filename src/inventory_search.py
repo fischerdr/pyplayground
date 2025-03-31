@@ -136,6 +136,16 @@ console = Console()
     is_flag=True,
     help="Enable debug logging",
 )
+@click.option(
+    "--no-verify-ssl",
+    is_flag=True,
+    help="Disable SSL certificate verification",
+)
+@click.option(
+    "--cert-path",
+    type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
+    help="Path to a custom SSL certificate file",
+)
 def cli(
     base_url: str,
     api_key: Optional[str],
@@ -157,6 +167,8 @@ def cli(
     timeout: int,
     output: str,
     debug: bool,
+    no_verify_ssl: bool,
+    cert_path: Optional[str],
 ) -> None:
     """
     Search for inventory clusters with flexible filtering options.
@@ -173,12 +185,18 @@ def cli(
 
         # Get results in JSON format
         inventory_search.py --base-url https://api.example.com --output json
+
+        # Handle self-signed certificates
+        inventory_search.py --base-url https://api.example.com --no-verify-ssl
+        inventory_search.py --base-url https://api.example.com --cert-path /path/to/certificate.pem
     """
     # Set debug logging if requested
     if debug:
         logger.setLevel(logging.DEBUG)
         # Also set the root logger to debug
         logging.getLogger().setLevel(logging.DEBUG)
+        logging.getLogger("urllib3").setLevel(logging.DEBUG)
+        logging.getLogger("requests").setLevel(logging.DEBUG)
         logger.debug("Debug logging enabled")
 
     try:
@@ -195,9 +213,6 @@ def cli(
                 # If conversion fails, use as string
                 converted_tier = tier
 
-        # Search for inventory
-        logger.info("Searching inventory...")
-
         # Process tags - support both multiple --tag options and comma-separated lists
         processed_tags = []
         if tag:
@@ -208,6 +223,35 @@ def cli(
                 else:
                     processed_tags.append(tag_item)
 
+        # Log request details in debug mode
+        if debug:
+            logger.debug(f"Request URL: {base_url.rstrip('/')}/v1/inventory/clusters")
+            logger.debug(f"SSL Verification: {'Disabled' if no_verify_ssl else 'Enabled'}")
+            if cert_path:
+                logger.debug(f"Using custom certificate: {cert_path}")
+
+            # Log all parameters
+            params_log = {
+                "offset": offset,
+                "limit": limit,
+                "env": env,
+                "install_type": install_type,
+                "network": network,
+                "region": region,
+                "zone": zone,
+                "tenancy": tenancy,
+                "tier": converted_tier,
+                "status": status,
+                "is_under_maintenance": is_under_maintenance if is_under_maintenance else None,
+                "car_ids": list(car_id) if car_id else None,
+                "features": list(feature) if feature else None,
+                "tags": processed_tags if processed_tags else None,
+                "workloads": list(workload) if workload else None,
+            }
+            logger.debug(f"Request parameters: {json.dumps(params_log, default=str, indent=2)}")
+
+        # Search for inventory
+        logger.info("Searching inventory...")
         results = search_inventory(
             base_url=base_url,
             api_key=api_key,
@@ -227,6 +271,9 @@ def cli(
             tags=processed_tags if processed_tags else None,
             workloads=list(workload) if workload else None,
             timeout=timeout,
+            verify_ssl=not no_verify_ssl,
+            cert_path=cert_path,
+            debug_request=debug,
         )
 
         # Display results based on output format

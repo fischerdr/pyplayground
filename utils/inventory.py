@@ -1,5 +1,6 @@
 """Utility functions for inventory operations."""
 
+import json
 import logging
 from typing import Dict, List, Optional, Union
 
@@ -28,6 +29,9 @@ def search_inventory(
     tags: Optional[List[str]] = None,
     workloads: Optional[List[str]] = None,
     timeout: int = 30,
+    verify_ssl: bool = True,
+    cert_path: Optional[str] = None,
+    debug_request: bool = False,
 ) -> Dict:
     """
     Search for inventory clusters with flexible filtering options.
@@ -51,6 +55,9 @@ def search_inventory(
         tags: Filter by tags
         workloads: Filter by workloads
         timeout: Request timeout in seconds
+        verify_ssl: Whether to verify SSL certificates
+        cert_path: Path to a custom certificate file to use for verification
+        debug_request: Whether to enable detailed request debugging
 
     Returns:
         Dict containing the inventory search results
@@ -105,11 +112,82 @@ def search_inventory(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    # Enable request debugging if needed
+    if debug_request:
+        # Set up a session with debugging
+        session = requests.Session()
+
+        # Create a request object for logging purposes
+        req = requests.Request("GET", endpoint, headers=headers, params=params)
+        prepared_req = session.prepare_request(req)
+
+        # Log the request details
+        logger.debug("=" * 80)
+        logger.debug("REQUEST DETAILS:")
+        logger.debug("-" * 80)
+        logger.debug(f"Method: {prepared_req.method}")
+        logger.debug(f"URL: {prepared_req.url}")
+        logger.debug("Headers:")
+        for name, value in prepared_req.headers.items():
+            # Mask sensitive headers
+            if name.lower() in ["authorization", "x-api-key"]:
+                logger.debug(f"  {name}: ****REDACTED****")
+            else:
+                logger.debug(f"  {name}: {value}")
+        logger.debug(f"SSL Verification: {verify_ssl if cert_path is None else cert_path}")
+        logger.debug("-" * 80)
+
     try:
         logger.debug(f"Sending inventory search request to {endpoint}")
-        response = requests.get(endpoint, headers=headers, params=params, timeout=timeout)
+        # Use the verify parameter with either a boolean or path to cert
+        verify = cert_path if cert_path else verify_ssl
+
+        # Make the request
+        response = requests.get(
+            endpoint, headers=headers, params=params, timeout=timeout, verify=verify
+        )
+
+        # Log response details if debug is enabled
+        if debug_request:
+            logger.debug("=" * 80)
+            logger.debug("RESPONSE DETAILS:")
+            logger.debug("-" * 80)
+            logger.debug(f"Status Code: {response.status_code}")
+            logger.debug(f"Reason: {response.reason}")
+            logger.debug("Headers:")
+            for name, value in response.headers.items():
+                logger.debug(f"  {name}: {value}")
+            logger.debug("-" * 80)
+
+            # Log response content preview (truncated if too large)
+            content_preview = (
+                response.text[:1000] + "..." if len(response.text) > 1000 else response.text
+            )
+            logger.debug("Response Content Preview:")
+            logger.debug(content_preview)
+            logger.debug("=" * 80)
+
         response.raise_for_status()
         return response.json()
     except RequestException as e:
         logger.error(f"Inventory search request failed: {str(e)}")
+        # Add more detailed error information in debug mode
+        if debug_request and hasattr(e, "response") and e.response is not None:
+            logger.debug("=" * 80)
+            logger.debug("ERROR RESPONSE DETAILS:")
+            logger.debug("-" * 80)
+            logger.debug(f"Status Code: {e.response.status_code}")
+            logger.debug(f"Reason: {e.response.reason}")
+            logger.debug("Headers:")
+            for name, value in e.response.headers.items():
+                logger.debug(f"  {name}: {value}")
+
+            # Log error response content
+            try:
+                error_content = e.response.text
+                logger.debug("Error Response Content:")
+                logger.debug(error_content)
+            except Exception:
+                logger.debug("Could not retrieve error response content")
+            logger.debug("=" * 80)
         raise

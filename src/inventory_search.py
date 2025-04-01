@@ -12,6 +12,7 @@ import os
 import sys
 from typing import List, Optional
 
+import certifi
 import click
 from dotenv import load_dotenv
 from rich.console import Console
@@ -139,12 +140,24 @@ console = Console()
 @click.option(
     "--no-verify-ssl",
     is_flag=True,
-    help="Disable SSL certificate verification",
+    help="Disable SSL certificate verification. Use only in trusted environments.",
 )
 @click.option(
     "--cert-path",
     type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
-    help="Path to a custom SSL certificate file",
+    envvar="INVENTORY_CERT_PATH",
+    help="Path to a custom SSL certificate file or CA bundle for verification.",
+)
+@click.option(
+    "--use-certifi",
+    is_flag=True,
+    default=True,
+    help="Use certifi's default CA bundle for SSL verification (default: True).",
+)
+@click.option(
+    "--show-ca-bundle-path",
+    is_flag=True,
+    help="Display the path to the CA bundle being used and exit.",
 )
 def cli(
     base_url: str,
@@ -169,6 +182,8 @@ def cli(
     debug: bool,
     no_verify_ssl: bool,
     cert_path: Optional[str],
+    use_certifi: bool,
+    show_ca_bundle_path: bool,
 ) -> None:
     """
     Search for inventory clusters with flexible filtering options.
@@ -198,6 +213,45 @@ def cli(
         logging.getLogger("urllib3").setLevel(logging.DEBUG)
         logging.getLogger("requests").setLevel(logging.DEBUG)
         logger.debug("Debug logging enabled")
+
+    # Handle CA bundle configuration
+    if show_ca_bundle_path:
+        ca_bundle_path = os.environ.get("REQUESTS_CA_BUNDLE") or certifi.where()
+        console.print(f"[bold]Current CA bundle path:[/bold] {ca_bundle_path}")
+        if os.path.exists(ca_bundle_path):
+            console.print(f"[green]✓ CA bundle file exists[/green]")
+            try:
+                with open(ca_bundle_path, "r", encoding="utf-8") as f:
+                    cert_count = f.read().count("-----BEGIN CERTIFICATE-----")
+                console.print(f"[green]✓ CA bundle contains {cert_count} certificates[/green]")
+            except Exception as e:
+                console.print(f"[red]Error reading CA bundle: {e}[/red]")
+        else:
+            console.print(f"[red]✗ CA bundle file does not exist[/red]")
+        return
+
+    # Configure SSL verification
+    if no_verify_ssl:
+        verify_ssl = False
+        logger.warning("SSL certificate verification is disabled. This is not recommended for production use.")
+    elif cert_path:
+        verify_ssl = True
+        logger.debug(f"Using custom certificate path: {cert_path}")
+    elif use_certifi:
+        # Use certifi's CA bundle
+        cert_path = certifi.where()
+        verify_ssl = True
+        logger.debug(f"Using certifi's CA bundle: {cert_path}")
+        # Set environment variable for requests
+        os.environ["REQUESTS_CA_BUNDLE"] = cert_path
+    else:
+        verify_ssl = True
+        logger.debug("Using system default CA certificates")
+
+    # Check for REQUESTS_CA_BUNDLE environment variable
+    if os.environ.get("REQUESTS_CA_BUNDLE") and not cert_path and not no_verify_ssl:
+        cert_path = os.environ.get("REQUESTS_CA_BUNDLE")
+        logger.debug(f"Using REQUESTS_CA_BUNDLE environment variable: {cert_path}")
 
     try:
         # Convert tier to appropriate type if provided
@@ -271,7 +325,7 @@ def cli(
             tags=processed_tags if processed_tags else None,
             workloads=list(workload) if workload else None,
             timeout=timeout,
-            verify_ssl=not no_verify_ssl,
+            verify_ssl=verify_ssl,
             cert_path=cert_path,
             debug_request=debug,
         )

@@ -1,6 +1,5 @@
 """Utility functions for inventory operations."""
 
-import json
 import logging
 from typing import Dict, List, Optional, Union
 
@@ -141,6 +140,13 @@ def search_inventory(
         logger.debug(f"Sending inventory search request to {endpoint}")
         # Use the verify parameter with either a boolean or path to cert
         verify = cert_path if cert_path else verify_ssl
+        
+        # For self-signed certificates, you might need to set the CA bundle
+        # or disable verification if you're using a trusted internal network
+        if debug_request:
+            logger.debug(f"SSL verification setting: {verify}")
+            if isinstance(verify, str):
+                logger.debug(f"Using custom certificate file: {verify}")
 
         # Make the request
         response = requests.get(
@@ -170,7 +176,16 @@ def search_inventory(
         response.raise_for_status()
         return response.json()
     except RequestException as e:
-        logger.error(f"Inventory search request failed: {str(e)}")
+        # Provide more specific guidance for SSL certificate errors
+        if "SSLError" in str(e) and "certificate verify failed" in str(e):
+            logger.error(f"Inventory search request failed: {str(e)}")
+            logger.error("This appears to be an SSL certificate verification error.")
+            logger.error("To fix this, you can:")
+            logger.error("  1. Use --no-verify-ssl if this is a trusted internal service")
+            logger.error("  2. Use --cert-path to specify the path to your CA certificate bundle")
+            logger.error("  3. Set the REQUESTS_CA_BUNDLE environment variable to your CA certificate bundle")
+        else:
+            logger.error(f"Inventory search request failed: {str(e)}")
         # Add more detailed error information in debug mode
         if debug_request and hasattr(e, "response") and e.response is not None:
             logger.debug("=" * 80)

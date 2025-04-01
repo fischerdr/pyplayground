@@ -366,9 +366,54 @@ def inspect_https_endpoint(url: str, verbose: bool = False) -> None:
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+        # Make the request and capture detailed information
         response = requests.get(url, verify=False)
 
         console.print(f"[green]✓ Connected successfully (Status: {response.status_code})[/green]")
+
+        # Display site information
+        console.print(Panel("[bold]Site Information[/bold]", style="blue"))
+        
+        # Create a table for site information
+        site_table = Table(title="Website Details")
+        site_table.add_column("Property", style="cyan")
+        site_table.add_column("Value", style="green")
+        
+        # Add basic site information
+        site_table.add_row("URL", url)
+        site_table.add_row("Status Code", str(response.status_code))
+        site_table.add_row("Content Type", response.headers.get("Content-Type", "Not specified"))
+        
+        # Add server information if available
+        server = response.headers.get("Server", "Not specified")
+        site_table.add_row("Server", server)
+        
+        # Add security headers
+        security_headers = {
+            "Strict-Transport-Security": "HSTS",
+            "Content-Security-Policy": "CSP",
+            "X-Content-Type-Options": "X-Content-Type-Options",
+            "X-Frame-Options": "X-Frame-Options",
+            "X-XSS-Protection": "XSS Protection"
+        }
+        
+        for header, description in security_headers.items():
+            value = response.headers.get(header, "Not set")
+            site_table.add_row(f"{description}", value)
+        
+        # Add TLS version information if available
+        if hasattr(response.raw.connection, "sock") and hasattr(response.raw.connection.sock, "version"):
+            tls_version = response.raw.connection.sock.version()
+            site_table.add_row("TLS Version", tls_version)
+        
+        # Add cipher information if available
+        if hasattr(response.raw.connection, "sock") and hasattr(response.raw.connection.sock, "cipher"):
+            cipher = response.raw.connection.sock.cipher()
+            if cipher:
+                cipher_name, tls_version, bits = cipher
+                site_table.add_row("Cipher", f"{cipher_name} ({bits} bits)")
+        
+        console.print(site_table)
 
         # Get certificate from the connection
         cert = OpenSSL.crypto.load_certificate(

@@ -359,47 +359,94 @@ def display_results_as_table(results: dict) -> None:
     # Create a table
     table = Table(title="Inventory Clusters")
     
-    # Add columns based on the first cluster's keys
+    # Define priority fields that should be displayed first
+    priority_fields = [
+        "id", 
+        "name", 
+        "environment",  
+        "region", 
+        "zone", 
+        "status", 
+        "tier", 
+        "network",
+        "network_group",
+        "tenancy",
+        "tenant_name",
+        "install_type",
+        "is_under_maintenance"
+    ]
+    
+    # Define fields that should be displayed as comma-separated lists
+    list_fields = ["tags", "features", "workloads"]
+    
+    # Define fields that should be skipped (complex nested objects)
+    skip_fields = ["infrastructures", "kubernetes_platform"]
+    
+    # Get all fields from the first result
     if clusters:
-        # Get all possible keys from all clusters
-        all_keys = set()
-        for cluster in clusters:
-            all_keys.update(cluster.keys())
+        all_fields = set(clusters[0].keys())
         
-        # Add columns for common fields first, then others
-        priority_fields = ["id", "name", "environment", "region", "zone", "status", "tier", "network"]
+        # Add priority fields first
         for field in priority_fields:
-            if field in all_keys:
+            if field in all_fields:
                 table.add_column(field.upper())
-                all_keys.remove(field)
+                all_fields.discard(field)
         
-        # Add remaining fields
-        for field in sorted(all_keys):
-            # Skip complex nested objects to keep the table readable
-            if isinstance(clusters[0].get(field), (dict, list)) and field not in ["tags", "features", "workloads"]:
+        # Add list fields next
+        for field in list_fields:
+            if field in all_fields:
+                table.add_column(field.upper())
+                all_fields.discard(field)
+        
+        # Add remaining simple fields
+        for field in sorted(all_fields):
+            # Skip complex nested objects
+            if field in skip_fields:
                 continue
+            
+            # Skip timestamp fields to keep the table readable
+            if "_timestamp" in field:
+                continue
+                
             table.add_column(field.upper())
         
         # Add rows
         for cluster in clusters:
             row = []
-            # Add priority fields first
+            
+            # Add priority fields
             for field in priority_fields:
                 if field in table.columns:
-                    value = cluster.get(field, "")
-                    row.append(str(value) if value is not None else "")
+                    value = cluster.get(field)
+                    if value is None:
+                        row.append("")
+                    elif isinstance(value, bool):
+                        row.append("Yes" if value else "No")
+                    else:
+                        row.append(str(value))
+            
+            # Add list fields
+            for field in list_fields:
+                if field in table.columns:
+                    value = cluster.get(field, [])
+                    if value and isinstance(value, list):
+                        row.append(", ".join(str(item) for item in value))
+                    else:
+                        row.append("")
             
             # Add remaining fields
-            for field in sorted(all_keys):
-                # Skip complex nested objects
-                if isinstance(cluster.get(field), (dict, list)) and field not in ["tags", "features", "workloads"]:
-                    continue
-                
-                value = cluster.get(field, "")
-                # Format lists for better readability
-                if isinstance(value, list):
-                    value = ", ".join(str(item) for item in value)
-                row.append(str(value) if value is not None else "")
+            remaining_fields = [col for col in table.columns if col.lower() not in [f.lower() for f in priority_fields + list_fields]]
+            for col in remaining_fields:
+                field = col.lower()
+                value = cluster.get(field)
+                if value is None:
+                    row.append("")
+                elif isinstance(value, bool):
+                    row.append("Yes" if value else "No")
+                elif isinstance(value, list):
+                    row.append(", ".join(str(item) for item in value))
+                else:
+                    row.append(str(value))
             
             table.add_row(*row)
     

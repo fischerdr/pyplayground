@@ -219,7 +219,7 @@ def cli(
         ca_bundle_path = os.environ.get("REQUESTS_CA_BUNDLE") or certifi.where()
         console.print(f"[bold]Current CA bundle path:[/bold] {ca_bundle_path}")
         if os.path.exists(ca_bundle_path):
-            console.print(f"[green]✓ CA bundle file exists[/green]")
+            console.print("[green]✓ CA bundle file exists[/green]")
             try:
                 with open(ca_bundle_path, "r", encoding="utf-8") as f:
                     cert_count = f.read().count("-----BEGIN CERTIFICATE-----")
@@ -227,7 +227,7 @@ def cli(
             except Exception as e:
                 console.print(f"[red]Error reading CA bundle: {e}[/red]")
         else:
-            console.print(f"[red]✗ CA bundle file does not exist[/red]")
+            console.print("[red]✗ CA bundle file does not exist[/red]")
         return
 
     # Configure SSL verification
@@ -350,33 +350,36 @@ def display_results_as_table(results: dict) -> None:
     Args:
         results: The inventory search results
     """
-    # Check if we have clusters in the results
-    clusters = results.get("clusters", [])
+    # Check if we have results in the response
+    clusters = results.get("results", [])
     if not clusters:
         console.print("[yellow]No clusters found matching the criteria[/yellow]")
         return
 
     # Create a table
     table = Table(title="Inventory Clusters")
-
+    
     # Add columns based on the first cluster's keys
     if clusters:
         # Get all possible keys from all clusters
         all_keys = set()
         for cluster in clusters:
             all_keys.update(cluster.keys())
-
+        
         # Add columns for common fields first, then others
-        priority_fields = ["id", "name", "env", "region", "zone", "status"]
+        priority_fields = ["id", "name", "environment", "region", "zone", "status", "tier", "network"]
         for field in priority_fields:
             if field in all_keys:
                 table.add_column(field.upper())
                 all_keys.remove(field)
-
+        
         # Add remaining fields
         for field in sorted(all_keys):
+            # Skip complex nested objects to keep the table readable
+            if isinstance(clusters[0].get(field), (dict, list)) and field not in ["tags", "features", "workloads"]:
+                continue
             table.add_column(field.upper())
-
+        
         # Add rows
         for cluster in clusters:
             row = []
@@ -385,19 +388,26 @@ def display_results_as_table(results: dict) -> None:
                 if field in table.columns:
                     value = cluster.get(field, "")
                     row.append(str(value) if value is not None else "")
-
+            
             # Add remaining fields
             for field in sorted(all_keys):
+                # Skip complex nested objects
+                if isinstance(cluster.get(field), (dict, list)) and field not in ["tags", "features", "workloads"]:
+                    continue
+                
                 value = cluster.get(field, "")
+                # Format lists for better readability
+                if isinstance(value, list):
+                    value = ", ".join(str(item) for item in value)
                 row.append(str(value) if value is not None else "")
-
+            
             table.add_row(*row)
-
+    
     # Print the table
     console.print(table)
-
+    
     # Print summary
-    total = results.get("total", 0)
+    total = results.get("size", 0)
     console.print(f"[green]Total clusters: {total}[/green]")
 
 

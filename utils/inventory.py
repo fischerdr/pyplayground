@@ -147,12 +147,10 @@ def search_inventory(
             logger.debug(f"SSL verification setting: {verify}")
             if isinstance(verify, str):
                 logger.debug(f"Using custom certificate file: {verify}")
-
+        
         # Make the request
-        response = requests.get(
-            endpoint, headers=headers, params=params, timeout=timeout, verify=verify
-        )
-
+        response = requests.get(endpoint, headers=headers, params=params, timeout=timeout, verify=verify)
+        
         # Log response details if debug is enabled
         if debug_request:
             logger.debug("=" * 80)
@@ -164,17 +162,24 @@ def search_inventory(
             for name, value in response.headers.items():
                 logger.debug(f"  {name}: {value}")
             logger.debug("-" * 80)
-
+            
             # Log response content preview (truncated if too large)
-            content_preview = (
-                response.text[:1000] + "..." if len(response.text) > 1000 else response.text
-            )
+            content_preview = response.text[:1000] + "..." if len(response.text) > 1000 else response.text
             logger.debug("Response Content Preview:")
             logger.debug(content_preview)
             logger.debug("=" * 80)
-
+        
         response.raise_for_status()
-        return response.json()
+        
+        # Parse the JSON response
+        response_data = response.json()
+        
+        # Validate the response structure
+        if "results" not in response_data:
+            logger.warning("Unexpected response format: 'results' key not found")
+            
+        # Return the complete response
+        return response_data
     except RequestException as e:
         # Provide more specific guidance for SSL certificate errors
         if "SSLError" in str(e) and "certificate verify failed" in str(e):

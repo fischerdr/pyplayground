@@ -386,16 +386,21 @@ def display_results_as_table(results: dict) -> None:
     if clusters:
         all_fields = set(clusters[0].keys())
         
+        # Track which columns we've added to the table
+        added_columns = []
+        
         # Add priority fields first
         for field in priority_fields:
             if field in all_fields:
                 table.add_column(field.upper())
+                added_columns.append(field)
                 all_fields.discard(field)
         
         # Add list fields next
         for field in list_fields:
             if field in all_fields:
                 table.add_column(field.upper())
+                added_columns.append(field)
                 all_fields.discard(field)
         
         # Add remaining simple fields
@@ -409,36 +414,17 @@ def display_results_as_table(results: dict) -> None:
                 continue
                 
             table.add_column(field.upper())
+            added_columns.append(field)
         
         # Add rows
         for cluster in clusters:
             row = []
             
-            # Add priority fields
-            for field in priority_fields:
-                if field in table.columns:
-                    value = cluster.get(field)
-                    if value is None:
-                        row.append("")
-                    elif isinstance(value, bool):
-                        row.append("Yes" if value else "No")
-                    else:
-                        row.append(str(value))
-            
-            # Add list fields
-            for field in list_fields:
-                if field in table.columns:
-                    value = cluster.get(field, [])
-                    if value and isinstance(value, list):
-                        row.append(", ".join(str(item) for item in value))
-                    else:
-                        row.append("")
-            
-            # Add remaining fields
-            remaining_fields = [col for col in table.columns if col.lower() not in [f.lower() for f in priority_fields + list_fields]]
-            for col in remaining_fields:
-                field = col.lower()
+            # Process each column in the order they were added
+            for field in added_columns:
                 value = cluster.get(field)
+                
+                # Format the value based on its type
                 if value is None:
                     row.append("")
                 elif isinstance(value, bool):

@@ -326,7 +326,9 @@ def cli(
             logger.debug(f"Request parameters: {json.dumps(params_log, default=str, indent=2)}")
 
         # Load field configuration if specified
-        fields_config = load_fields_configuration(display_fields_only, fields, display_fields_config)
+        fields_config = load_fields_configuration(
+            display_fields_only, fields, display_fields_config
+        )
 
         # Search for inventory
         logger.info("Searching inventory...")
@@ -371,64 +373,65 @@ def cli(
         sys.exit(1)
 
 
-def load_fields_configuration(display_fields_only: Optional[str], extra_fields: Optional[str], 
-                             config_file: Optional[str]) -> dict:
+def load_fields_configuration(
+    display_fields_only: Optional[str], extra_fields: Optional[str], config_file: Optional[str]
+) -> dict:
     """
     Load and process field display configuration from various sources.
-    
+
     Priority order:
     1. --display-fields-only parameter or INVENTORY_DISPLAY_FIELDS_ONLY env var
     2. --display-fields-config parameter or INVENTORY_DISPLAY_FIELDS_CONFIG env var
     3. --fields parameter or INVENTORY_DISPLAY_FIELDS env var
     4. Default priority fields
-    
+
     Args:
         display_fields_only: Comma-separated list of fields to display exclusively
         extra_fields: Comma-separated list of additional fields to display
         config_file: Path to a JSON configuration file
-        
+
     Returns:
         Dictionary with field configuration
     """
     # Default configuration
     config = {
         "mode": "priority",  # Can be "priority", "only", or "custom"
-        "fields": None,      # List of fields for "only" mode
-        "extra_fields": None # List of extra fields for "priority" mode
+        "fields": None,  # List of fields for "only" mode
+        "extra_fields": None,  # List of extra fields for "priority" mode
     }
-    
+
     # Check for display_fields_only (highest priority)
     if display_fields_only:
         config["mode"] = "only"
         config["fields"] = [field.strip() for field in display_fields_only.split(",")]
         return config
-    
+
     # Check for config file
     if config_file:
         try:
-            with open(config_file, 'r') as f:
+            with open(config_file, "r") as f:
                 file_config = json.load(f)
-                
+
             # Validate and use file configuration
             if isinstance(file_config, dict):
                 if "mode" in file_config and file_config["mode"] in ["priority", "only", "custom"]:
                     config["mode"] = file_config["mode"]
-                
+
                 if "fields" in file_config and isinstance(file_config["fields"], list):
                     config["fields"] = file_config["fields"]
-                    
+
                 if "extra_fields" in file_config and isinstance(file_config["extra_fields"], list):
                     config["extra_fields"] = file_config["extra_fields"]
-                    
+
                 # If mode is "custom" but no fields defined, fall back to priority
                 if config["mode"] == "custom" and not config["fields"]:
                     config["mode"] = "priority"
-                    
+
                 return config
         except (json.JSONDecodeError, IOError) as e:
             logger.warning(f"Error loading field configuration file: {str(e)}")
             # Continue with other options
-    
+
     # Check for extra_fields
     if extra_fields:
         config["mode"] = "priority"
@@ -436,58 +439,56 @@ def load_fields_configuration(display_fields_only: Optional[str], extra_fields: 
             config["extra_fields"] = "*"
         else:
             config["extra_fields"] = [field.strip() for field in extra_fields.split(",")]
-    
+
     return config
 
 
 def get_display_fields(clusters: list, fields_config: dict) -> tuple:
     """
     Determine which fields to display based on configuration.
-    
+
     Args:
         clusters: The list of clusters from the results
         fields_config: Field configuration dictionary
-        
+
     Returns:
         Tuple of (display_fields, priority_mode)
     """
     # Default priority fields
     priority_fields = [
-        "name", 
-        "environment",  
-        "region", 
-        "zone", 
-        "status", 
-        "tier", 
+        "name",
+        "environment",
+        "region",
+        "zone",
+        "status",
         "network",
-        "tenancy",
         "tenant_name",
         "install_type",
-        "is_under_maintenance"
+        "is_under_maintenance",
     ]
-    
+
     # Define fields that should be skipped (complex nested objects)
     skip_fields = ["infrastructures", "kubernetes_platform"]
-    
+
     # Handle different modes
     mode = fields_config.get("mode", "priority")
-    
+
     if mode == "only" and fields_config.get("fields"):
         # Only show specified fields
         return fields_config["fields"], False
-    
+
     if mode == "custom" and fields_config.get("fields"):
         # Custom field order
         return fields_config["fields"], False
-    
+
     # Default to priority mode
     display_fields = []
-    
+
     # Add priority fields first
     for field in priority_fields:
         if clusters and field in clusters[0]:
             display_fields.append(field)
-    
+
     # Add extra fields
     extra_fields = fields_config.get("extra_fields")
     if extra_fields:
@@ -495,17 +496,19 @@ def get_display_fields(clusters: list, fields_config: dict) -> tuple:
             # Include all fields except complex objects
             if clusters:
                 for field in clusters[0].keys():
-                    if (field not in display_fields 
+                    if (
+                        field not in display_fields
                         and field not in skip_fields
                         and not isinstance(clusters[0].get(field), (dict, list))
-                        and "_timestamp" not in field):
+                        and "_timestamp" not in field
+                    ):
                         display_fields.append(field)
         else:
             # Include only the specified extra fields
             for field in extra_fields:
                 if field not in display_fields:
                     display_fields.append(field)
-    
+
     return display_fields, True
 
 
@@ -525,26 +528,26 @@ def display_results_as_table(results: dict, fields_config: Optional[dict] = None
 
     # Create a table
     table = Table(title="Inventory Clusters")
-    
+
     # Get fields to display
     if fields_config is None:
         fields_config = {}
-    
+
     display_fields, priority_mode = get_display_fields(clusters, fields_config)
-    
+
     # Track which columns we've added to the table
     added_columns = []
-    
+
     # Add columns for all display fields
     for field in display_fields:
         column_name = field.upper()
         table.add_column(column_name)
         added_columns.append(field)
-    
+
     # Add rows
     for cluster in clusters:
         row = []
-        
+
         # Process each column in the order they were added
         for field in added_columns:
             if "." in field:
@@ -552,7 +555,7 @@ def display_results_as_table(results: dict, fields_config: Optional[dict] = None
                 value = extract_nested_field(cluster, field)
             else:
                 value = cluster.get(field)
-            
+
             # Format the value based on its type
             if value is None:
                 row.append("")
@@ -562,12 +565,12 @@ def display_results_as_table(results: dict, fields_config: Optional[dict] = None
                 row.append(", ".join(str(item) for item in value))
             else:
                 row.append(str(value))
-        
+
         table.add_row(*row)
-    
+
     # Print the table
     console.print(table)
-    
+
     # Print summary
     total = results.get("size", 0)
     console.print(f"[green]Total clusters: {total}[/green]")
@@ -583,26 +586,26 @@ def display_results_as_csv(results: dict, fields_config: Optional[dict] = None) 
     """
     import csv
     import io
-    
+
     # Check if we have results in the response
     clusters = results.get("results", [])
     if not clusters:
         console.print("[yellow]No clusters found matching the criteria[/yellow]")
         return
-    
+
     # Get fields to display
     if fields_config is None:
         fields_config = {}
-    
+
     display_fields, priority_mode = get_display_fields(clusters, fields_config)
-    
+
     # Create CSV output
     output = io.StringIO()
     writer = csv.writer(output)
-    
+
     # Write header
     writer.writerow([field.upper() for field in display_fields])
-    
+
     # Write data rows
     for cluster in clusters:
         row = []
@@ -612,7 +615,7 @@ def display_results_as_csv(results: dict, fields_config: Optional[dict] = None) 
                 value = extract_nested_field(cluster, field)
             else:
                 value = cluster.get(field)
-            
+
             # Format the value based on its type
             if value is None:
                 row.append("")
@@ -622,12 +625,12 @@ def display_results_as_csv(results: dict, fields_config: Optional[dict] = None) 
                 row.append(", ".join(str(item) for item in value))
             else:
                 row.append(str(value))
-        
+
         writer.writerow(row)
-    
+
     # Print the CSV
     console.print(output.getvalue())
-    
+
     # Print summary
     total = results.get("size", 0)
     console.print(f"[green]Total clusters: {total}[/green]")
@@ -646,24 +649,24 @@ def display_results_as_text(results: dict, fields_config: Optional[dict] = None)
     if not clusters:
         console.print("[yellow]No clusters found matching the criteria[/yellow]")
         return
-    
+
     # Get fields to display
     if fields_config is None:
         fields_config = {}
-    
+
     display_fields, priority_mode = get_display_fields(clusters, fields_config)
-    
+
     # Print each cluster as a text block
     for i, cluster in enumerate(clusters):
-        console.print(f"\n[bold]Cluster {i+1}:[/bold]")
-        
+        console.print(f"\n[bold]Cluster {i + 1}:[/bold]")
+
         for field in display_fields:
             if "." in field:
                 # This is a nested field
                 value = extract_nested_field(cluster, field)
             else:
                 value = cluster.get(field)
-            
+
             # Format the value based on its type
             if value is None:
                 formatted_value = ""
@@ -673,9 +676,9 @@ def display_results_as_text(results: dict, fields_config: Optional[dict] = None)
                 formatted_value = ", ".join(str(item) for item in value)
             else:
                 formatted_value = str(value)
-            
+
             console.print(f"  [bold]{field.upper()}:[/bold] {formatted_value}")
-    
+
     # Print summary
     total = results.get("size", 0)
     console.print(f"\n[green]Total clusters: {total}[/green]")
@@ -725,9 +728,7 @@ def process_extra_fields(clusters: list, extra_fields: Optional[str] = None) -> 
         "region",
         "zone",
         "status",
-        "tier",
         "network",
-        "tenancy",
         "tenant_name",
         "install_type",
         "is_under_maintenance",

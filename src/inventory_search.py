@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import sys
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import certifi
 import click
@@ -128,7 +128,7 @@ console = Console()
 )
 @click.option(
     "--output",
-    type=click.Choice(["table", "json"]),
+    type=click.Choice(["table", "json", "text", "csv"]),
     default="table",
     help="Output format",
 )
@@ -159,6 +159,10 @@ console = Console()
     is_flag=True,
     help="Display the path to the CA bundle being used and exit.",
 )
+@click.option(
+    "--fields",
+    help="Additional fields to display (comma-separated). Use '*' for all fields.",
+)
 def cli(
     base_url: str,
     api_key: Optional[str],
@@ -184,12 +188,13 @@ def cli(
     cert_path: Optional[str],
     use_certifi: bool,
     show_ca_bundle_path: bool,
+    fields: Optional[str],
 ) -> None:
     """
     Search for inventory clusters with flexible filtering options.
 
     This command allows you to search for clusters in the inventory with
-    various filter criteria. Results can be displayed as a table or JSON.
+    various filter criteria. Results can be displayed as a table, JSON, text, or CSV.
 
     Examples:
         # Search for production clusters
@@ -233,7 +238,9 @@ def cli(
     # Configure SSL verification
     if no_verify_ssl:
         verify_ssl = False
-        logger.warning("SSL certificate verification is disabled. This is not recommended for production use.")
+        logger.warning(
+            "SSL certificate verification is disabled. This is not recommended for production use."
+        )
     elif cert_path:
         verify_ssl = True
         logger.debug(f"Using custom certificate path: {cert_path}")
@@ -333,8 +340,12 @@ def cli(
         # Display results based on output format
         if output == "json":
             console.print(json.dumps(results, indent=2))
+        elif output == "csv":
+            display_results_as_csv(results, fields)
+        elif output == "text":
+            display_results_as_text(results, fields)
         else:  # table
-            display_results_as_table(results)
+            display_results_as_table(results, fields)
 
     except Exception as e:
         logger.error(f"Error: {str(e)}")
@@ -343,12 +354,94 @@ def cli(
         sys.exit(1)
 
 
-def display_results_as_table(results: dict) -> None:
+def extract_nested_field(data: dict, field_path: str) -> Any:
+    """
+    Extract a nested field from a dictionary using dot notation.
+
+    Args:
+        data: The dictionary to extract from
+        field_path: The path to the field in dot notation (e.g., "kubernetes_platform.version")
+
+    Returns:
+        The value of the nested field, or None if not found
+    """
+    if not data or not field_path:
+        return None
+
+    parts = field_path.split(".")
+    current = data
+
+    for part in parts:
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
+            return None
+
+    return current
+
+
+def process_extra_fields(clusters: list, extra_fields: Optional[str] = None) -> list:
+    """
+    Process extra fields specification and return a list of fields to display.
+
+    Args:
+        clusters: The list of clusters from the results
+        extra_fields: Comma-separated list of additional fields to display
+
+    Returns:
+        List of additional fields to display
+    """
+    # Define priority fields that should be displayed first
+    priority_fields = [
+        "name",
+        "environment",
+        "region",
+        "zone",
+        "status",
+        "tier",
+        "network",
+        "tenancy",
+        "tenant_name",
+        "install_type",
+        "is_under_maintenance",
+    ]
+
+    # Define fields that should be skipped (complex nested objects)
+    skip_fields = ["infrastructures", "kubernetes_platform"]
+
+    additional_fields = []
+    if extra_fields:
+        if extra_fields.strip() == "*":
+            # Include all fields except complex objects
+            if clusters:
+                additional_fields = [
+                    field
+                    for field in clusters[0].keys()
+                    if field not in priority_fields
+                    and field not in skip_fields
+                    and not isinstance(clusters[0].get(field), (dict, list))
+                    and "_timestamp" not in field
+                ]
+        else:
+            # Include only the specified extra fields
+            for field in extra_fields.split(","):
+                field = field.strip()
+                if "." in field:
+                    # This is a nested field
+                    additional_fields.append(field)
+                elif field not in priority_fields:
+                    additional_fields.append(field)
+
+    return additional_fields
+
+
+def display_results_as_table(results: dict, extra_fields: Optional[str] = None) -> None:
     """
     Display inventory search results as a rich table.
 
     Args:
         results: The inventory search results
+        extra_fields: Comma-separated list of additional fields to display
     """
     # Check if we have results in the response
     clusters = results.get("results", [])
@@ -358,41 +451,55 @@ def display_results_as_table(results: dict) -> None:
 
     # Create a table
     table = Table(title="Inventory Clusters")
-    
+
     # Define priority fields that should be displayed first
     priority_fields = [
-        "name", 
-        "environment",  
-        "region", 
-        "zone", 
-        "status", 
-        "tier", 
+        "name",
+        "environment",
+        "region",
+        "zone",
+        "status",
+        "tier",
         "network",
         "tenancy",
         "tenant_name",
         "install_type",
-        "is_under_maintenance"
+        "is_under_maintenance",
     ]
-    
+
+    # Process extra fields
+    additional_fields = process_extra_fields(clusters, extra_fields)
+
     # Get all fields from the first result
     if clusters:
         # Track which columns we've added to the table
         added_columns = []
-        
-        # Add only priority fields
+
+        # Add priority fields
         for field in priority_fields:
             if field in clusters[0]:
                 table.add_column(field.upper())
                 added_columns.append(field)
-        
+
+        # Add additional fields
+        for field in additional_fields:
+            # For nested fields, use the full path as the column name
+            column_name = field.upper()
+            table.add_column(column_name)
+            added_columns.append(field)
+
         # Add rows
         for cluster in clusters:
             row = []
-            
+
             # Process each column in the order they were added
             for field in added_columns:
-                value = cluster.get(field)
-                
+                if "." in field:
+                    # This is a nested field
+                    value = extract_nested_field(cluster, field)
+                else:
+                    value = cluster.get(field)
+
                 # Format the value based on its type
                 if value is None:
                     row.append("")
@@ -402,15 +509,167 @@ def display_results_as_table(results: dict) -> None:
                     row.append(", ".join(str(item) for item in value))
                 else:
                     row.append(str(value))
-            
+
             table.add_row(*row)
-    
+
     # Print the table
     console.print(table)
-    
+
     # Print summary
     total = results.get("size", 0)
     console.print(f"[green]Total clusters: {total}[/green]")
+
+
+def display_results_as_csv(results: dict, extra_fields: Optional[str] = None) -> None:
+    """
+    Display inventory search results as CSV.
+
+    Args:
+        results: The inventory search results
+        extra_fields: Comma-separated list of additional fields to display
+    """
+    import csv
+    import io
+
+    # Check if we have results in the response
+    clusters = results.get("results", [])
+    if not clusters:
+        console.print("[yellow]No clusters found matching the criteria[/yellow]")
+        return
+
+    # Define priority fields that should be displayed first
+    priority_fields = [
+        "name",
+        "environment",
+        "region",
+        "zone",
+        "status",
+        "tier",
+        "network",
+        "tenancy",
+        "tenant_name",
+        "install_type",
+        "is_under_maintenance",
+    ]
+
+    # Process extra fields
+    additional_fields = process_extra_fields(clusters, extra_fields)
+
+    # Determine fields to include
+    fields = []
+    for field in priority_fields:
+        if field in clusters[0]:
+            fields.append(field)
+
+    for field in additional_fields:
+        if "." in field or (field in clusters[0] and field not in fields):
+            fields.append(field)
+
+    # Create CSV output
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Write header
+    writer.writerow([field.upper() for field in fields])
+
+    # Write data rows
+    for cluster in clusters:
+        row = []
+        for field in fields:
+            if "." in field:
+                # This is a nested field
+                value = extract_nested_field(cluster, field)
+            else:
+                value = cluster.get(field)
+
+            # Format the value based on its type
+            if value is None:
+                row.append("")
+            elif isinstance(value, bool):
+                row.append("Yes" if value else "No")
+            elif isinstance(value, list):
+                row.append(", ".join(str(item) for item in value))
+            else:
+                row.append(str(value))
+
+        writer.writerow(row)
+
+    # Print the CSV
+    console.print(output.getvalue())
+
+    # Print summary
+    total = results.get("size", 0)
+    console.print(f"[green]Total clusters: {total}[/green]")
+
+
+def display_results_as_text(results: dict, extra_fields: Optional[str] = None) -> None:
+    """
+    Display inventory search results as plain text.
+
+    Args:
+        results: The inventory search results
+        extra_fields: Comma-separated list of additional fields to display
+    """
+    # Check if we have results in the response
+    clusters = results.get("results", [])
+    if not clusters:
+        console.print("[yellow]No clusters found matching the criteria[/yellow]")
+        return
+
+    # Define priority fields that should be displayed first
+    priority_fields = [
+        "name",
+        "environment",
+        "region",
+        "zone",
+        "status",
+        "tier",
+        "network",
+        "tenancy",
+        "tenant_name",
+        "install_type",
+        "is_under_maintenance",
+    ]
+
+    # Process extra fields
+    additional_fields = process_extra_fields(clusters, extra_fields)
+
+    # Determine fields to include
+    fields = []
+    for field in priority_fields:
+        if field in clusters[0]:
+            fields.append(field)
+
+    for field in additional_fields:
+        if "." in field or (field in clusters[0] and field not in fields):
+            fields.append(field)
+
+    # Print each cluster as a text block
+    for i, cluster in enumerate(clusters):
+        console.print(f"\n[bold]Cluster {i+1}:[/bold]")
+
+        for field in fields:
+            if "." in field:
+                # This is a nested field
+                value = extract_nested_field(cluster, field)
+            else:
+                value = cluster.get(field)
+
+            # Format the value based on its type
+            if value is None:
+                formatted_value = ""
+            elif isinstance(value, bool):
+                formatted_value = "Yes" if value else "No"
+            elif isinstance(value, list):
+                formatted_value = ", ".join(str(item) for item in value)
+            else:
+                formatted_value = str(value)
+
+            console.print(f"  [bold]{field.upper()}:[/bold] {formatted_value}")
+
+    # Print summary
+    total = results.get("size", 0)
+    console.print(f"\n[green]Total clusters: {total}[/green]")
 
 
 if __name__ == "__main__":

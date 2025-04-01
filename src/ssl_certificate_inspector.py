@@ -16,7 +16,7 @@ import ssl
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
 import certifi
 import OpenSSL
@@ -127,24 +127,24 @@ def print_cert_info_verbose(
 def use_custom_ca_bundle(custom_bundle_path: str) -> Optional[str]:
     """
     Configure the system to use a custom CA bundle.
-    
+
     Args:
         custom_bundle_path: Path to the custom CA bundle file
-        
+
     Returns:
         The original SSL_CERT_FILE value or None if it wasn't set
     """
     if not os.path.exists(custom_bundle_path):
         console.print(f"[red]Error: Custom CA bundle not found at {custom_bundle_path}[/red]")
         return None
-        
+
     # Save the original path for reference
     original_ca_path = os.environ.get("SSL_CERT_FILE")
-    
+
     # Set the environment variable
     os.environ["SSL_CERT_FILE"] = custom_bundle_path
     console.print(f"[green]Using custom CA bundle: {custom_bundle_path}[/green]")
-    
+
     # Return the original path so it can be restored if needed
     return original_ca_path
 
@@ -156,7 +156,7 @@ def create_custom_ca_bundle(custom_cert_path: str, output_path: str) -> Optional
     Args:
         custom_cert_path: Path to the custom certificate file
         output_path: Path to save the combined bundle
-        
+
     Returns:
         Path to the created bundle or None if creation failed
     """
@@ -164,27 +164,27 @@ def create_custom_ca_bundle(custom_cert_path: str, output_path: str) -> Optional
         if not os.path.exists(custom_cert_path):
             console.print(f"[red]Error: Custom certificate not found at {custom_cert_path}[/red]")
             return None
-            
+
         # Create directory for output if it doesn't exist
         output_dir = os.path.dirname(output_path)
         if output_dir and not os.path.exists(output_dir):
             os.makedirs(output_dir)
-        
+
         # Read the original certifi bundle
         with open(certifi.where(), "r", encoding="utf-8") as certifi_file:
             certifi_content = certifi_file.read()
-        
+
         # Read the custom certificate
         with open(custom_cert_path, "r", encoding="utf-8") as custom_cert_file:
             custom_cert_content = custom_cert_file.read()
-        
+
         # Combine them
         combined_content = certifi_content + "\n" + custom_cert_content
-        
+
         # Write to the output file
         with open(output_path, "w", encoding="utf-8") as output_file:
             output_file.write(combined_content)
-        
+
         console.print(f"[green]Created custom CA bundle at {output_path}[/green]")
         return output_path
     except Exception as e:
@@ -373,46 +373,50 @@ def inspect_https_endpoint(url: str, verbose: bool = False) -> None:
 
         # Display site information
         console.print(Panel("[bold]Site Information[/bold]", style="blue"))
-        
+
         # Create a table for site information
         site_table = Table(title="Website Details")
         site_table.add_column("Property", style="cyan")
         site_table.add_column("Value", style="green")
-        
+
         # Add basic site information
         site_table.add_row("URL", url)
         site_table.add_row("Status Code", str(response.status_code))
         site_table.add_row("Content Type", response.headers.get("Content-Type", "Not specified"))
-        
+
         # Add server information if available
         server = response.headers.get("Server", "Not specified")
         site_table.add_row("Server", server)
-        
+
         # Add security headers
         security_headers = {
             "Strict-Transport-Security": "HSTS",
             "Content-Security-Policy": "CSP",
             "X-Content-Type-Options": "X-Content-Type-Options",
             "X-Frame-Options": "X-Frame-Options",
-            "X-XSS-Protection": "XSS Protection"
+            "X-XSS-Protection": "XSS Protection",
         }
-        
+
         for header, description in security_headers.items():
             value = response.headers.get(header, "Not set")
             site_table.add_row(f"{description}", value)
-        
+
         # Add TLS version information if available
-        if hasattr(response.raw.connection, "sock") and hasattr(response.raw.connection.sock, "version"):
+        if hasattr(response.raw.connection, "sock") and hasattr(
+            response.raw.connection.sock, "version"
+        ):
             tls_version = response.raw.connection.sock.version()
             site_table.add_row("TLS Version", tls_version)
-        
+
         # Add cipher information if available
-        if hasattr(response.raw.connection, "sock") and hasattr(response.raw.connection.sock, "cipher"):
+        if hasattr(response.raw.connection, "sock") and hasattr(
+            response.raw.connection.sock, "cipher"
+        ):
             cipher = response.raw.connection.sock.cipher()
             if cipher:
                 cipher_name, tls_version, bits = cipher
                 site_table.add_row("Cipher", f"{cipher_name} ({bits} bits)")
-        
+
         console.print(site_table)
 
         # Get certificate from the connection

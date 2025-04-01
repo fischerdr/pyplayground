@@ -140,17 +140,19 @@ def search_inventory(
         logger.debug(f"Sending inventory search request to {endpoint}")
         # Use the verify parameter with either a boolean or path to cert
         verify = cert_path if cert_path else verify_ssl
-        
+
         # For self-signed certificates, you might need to set the CA bundle
         # or disable verification if you're using a trusted internal network
         if debug_request:
             logger.debug(f"SSL verification setting: {verify}")
             if isinstance(verify, str):
                 logger.debug(f"Using custom certificate file: {verify}")
-        
+
         # Make the request
-        response = requests.get(endpoint, headers=headers, params=params, timeout=timeout, verify=verify)
-        
+        response = requests.get(
+            endpoint, headers=headers, params=params, timeout=timeout, verify=verify
+        )
+
         # Log response details if debug is enabled
         if debug_request:
             logger.debug("=" * 80)
@@ -162,22 +164,24 @@ def search_inventory(
             for name, value in response.headers.items():
                 logger.debug(f"  {name}: {value}")
             logger.debug("-" * 80)
-            
+
             # Log response content preview (truncated if too large)
-            content_preview = response.text[:1000] + "..." if len(response.text) > 1000 else response.text
+            content_preview = (
+                response.text[:1000] + "..." if len(response.text) > 1000 else response.text
+            )
             logger.debug("Response Content Preview:")
             logger.debug(content_preview)
             logger.debug("=" * 80)
-        
+
         response.raise_for_status()
-        
+
         # Parse the JSON response
         response_data = response.json()
-        
+
         # Validate the response structure
         if "results" not in response_data:
             logger.warning("Unexpected response format: 'results' key not found")
-            
+
         # Return the complete response
         return response_data
     except RequestException as e:
@@ -188,7 +192,9 @@ def search_inventory(
             logger.error("To fix this, you can:")
             logger.error("  1. Use --no-verify-ssl if this is a trusted internal service")
             logger.error("  2. Use --cert-path to specify the path to your CA certificate bundle")
-            logger.error("  3. Set the REQUESTS_CA_BUNDLE environment variable to your CA certificate bundle")
+            logger.error(
+                "  3. Set the REQUESTS_CA_BUNDLE environment variable to your CA certificate bundle"
+            )
         else:
             logger.error(f"Inventory search request failed: {str(e)}")
         # Add more detailed error information in debug mode

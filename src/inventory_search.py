@@ -361,7 +361,6 @@ def display_results_as_table(results: dict) -> None:
     
     # Define priority fields that should be displayed first
     priority_fields = [
-        "id", 
         "name", 
         "environment",  
         "region", 
@@ -369,52 +368,22 @@ def display_results_as_table(results: dict) -> None:
         "status", 
         "tier", 
         "network",
-        "network_group",
         "tenancy",
         "tenant_name",
         "install_type",
         "is_under_maintenance"
     ]
     
-    # Define fields that should be displayed as comma-separated lists
-    list_fields = ["tags", "features", "workloads"]
-    
-    # Define fields that should be skipped (complex nested objects)
-    skip_fields = ["infrastructures", "kubernetes_platform"]
-    
     # Get all fields from the first result
     if clusters:
-        all_fields = set(clusters[0].keys())
-        
         # Track which columns we've added to the table
         added_columns = []
         
-        # Add priority fields first
+        # Add only priority fields
         for field in priority_fields:
-            if field in all_fields:
+            if field in clusters[0]:
                 table.add_column(field.upper())
                 added_columns.append(field)
-                all_fields.discard(field)
-        
-        # Add list fields next
-        for field in list_fields:
-            if field in all_fields:
-                table.add_column(field.upper())
-                added_columns.append(field)
-                all_fields.discard(field)
-        
-        # Add remaining simple fields
-        for field in sorted(all_fields):
-            # Skip complex nested objects
-            if field in skip_fields:
-                continue
-            
-            # Skip timestamp fields to keep the table readable
-            if "_timestamp" in field:
-                continue
-                
-            table.add_column(field.upper())
-            added_columns.append(field)
         
         # Add rows
         for cluster in clusters:

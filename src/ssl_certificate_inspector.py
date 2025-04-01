@@ -6,7 +6,7 @@ This script displays all configured SSL CA certificates on the system and
 attempts to connect to an HTTPS endpoint, showing the SSL certificates and chains.
 
 Usage:
-    python ssl_certificate_inspector.py [--url URL] [--verbose]
+    python ssl_certificate_inspector.py [--url URL] [--verbose] [--ca-bundle PATH] [--add-cert PATH] [--output-bundle PATH]
 """
 
 import argparse
@@ -16,7 +16,7 @@ import ssl
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import certifi
 import OpenSSL
@@ -122,6 +122,74 @@ def print_cert_info_verbose(
         table.add_row(key, value)
 
     console.print(Panel(table))
+
+
+def use_custom_ca_bundle(custom_bundle_path: str) -> Optional[str]:
+    """
+    Configure the system to use a custom CA bundle.
+    
+    Args:
+        custom_bundle_path: Path to the custom CA bundle file
+        
+    Returns:
+        The original SSL_CERT_FILE value or None if it wasn't set
+    """
+    if not os.path.exists(custom_bundle_path):
+        console.print(f"[red]Error: Custom CA bundle not found at {custom_bundle_path}[/red]")
+        return None
+        
+    # Save the original path for reference
+    original_ca_path = os.environ.get("SSL_CERT_FILE")
+    
+    # Set the environment variable
+    os.environ["SSL_CERT_FILE"] = custom_bundle_path
+    console.print(f"[green]Using custom CA bundle: {custom_bundle_path}[/green]")
+    
+    # Return the original path so it can be restored if needed
+    return original_ca_path
+
+
+def create_custom_ca_bundle(custom_cert_path: str, output_path: str) -> Optional[str]:
+    """
+    Create a custom CA bundle by combining the certifi bundle with a custom certificate.
+
+    Args:
+        custom_cert_path: Path to the custom certificate file
+        output_path: Path to save the combined bundle
+        
+    Returns:
+        Path to the created bundle or None if creation failed
+    """
+    try:
+        if not os.path.exists(custom_cert_path):
+            console.print(f"[red]Error: Custom certificate not found at {custom_cert_path}[/red]")
+            return None
+            
+        # Create directory for output if it doesn't exist
+        output_dir = os.path.dirname(output_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        
+        # Read the original certifi bundle
+        with open(certifi.where(), "r", encoding="utf-8") as certifi_file:
+            certifi_content = certifi_file.read()
+        
+        # Read the custom certificate
+        with open(custom_cert_path, "r", encoding="utf-8") as custom_cert_file:
+            custom_cert_content = custom_cert_file.read()
+        
+        # Combine them
+        combined_content = certifi_content + "\n" + custom_cert_content
+        
+        # Write to the output file
+        with open(output_path, "w", encoding="utf-8") as output_file:
+            output_file.write(combined_content)
+        
+        console.print(f"[green]Created custom CA bundle at {output_path}[/green]")
+        return output_path
+    except Exception as e:
+        console.print(f"[red]Error creating custom CA bundle: {e}[/red]")
+        return None
 
 
 def get_system_ca_certs() -> List[Tuple[str, str]]:
@@ -352,11 +420,35 @@ def main() -> None:
         action="store_true",
         help="Show verbose certificate information including extensions",
     )
+    parser.add_argument(
+        "--ca-bundle",
+        type=str,
+        help="Path to a custom CA bundle file to use instead of the system default",
+    )
+    parser.add_argument(
+        "--add-cert",
+        type=str,
+        help="Path to a certificate file to add to the system CA bundle",
+    )
+    parser.add_argument(
+        "--output-bundle",
+        type=str,
+        default="./custom-ca-bundle.pem",
+        help="Path where to save the custom CA bundle when using --add-cert",
+    )
 
     args = parser.parse_args()
 
     # Display header
     console.print(Panel("[bold]SSL Certificate Inspector[/bold]", style="green"))
+
+    # Handle custom CA bundle options
+    if args.add_cert:
+        custom_bundle_path = create_custom_ca_bundle(args.add_cert, args.output_bundle)
+        if custom_bundle_path:
+            use_custom_ca_bundle(custom_bundle_path)
+    elif args.ca_bundle:
+        use_custom_ca_bundle(args.ca_bundle)
 
     # Display system CA certificates
     display_ca_certs(args.verbose)

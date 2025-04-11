@@ -116,24 +116,25 @@ It's important to understand how the script calculates "size" as this impacts bo
 
 ### How Sizes Are Calculated
 
-1.  **ConfigMaps, Secrets, Custom Resources (`TotalCoreResourcesSizeKiB`, `TotalCustomResourceSizeKiB`):**
-    *   The script fetches the **full YAML/JSON manifest** of each individual resource via the Kubernetes API.
-    *   This manifest is converted to a JSON string.
-    *   The size reported is the **byte length of this JSON string representation** (encoded as UTF-8).
-    *   These byte counts are summed up (ConfigMaps + Secrets for `TotalCoreResourcesSizeKiB`; all CRs for `TotalCustomResourceSizeKiB`) and converted to KiB.
-    *   **Key Point:** This measures the size of the object's *representation in the API*, not the disk space it uses in etcd or the memory it consumes in controllers. Fetching the full manifest for every object is resource-intensive. This size can be considered a proxy for *metadata complexity*.
+1. **ConfigMaps, Secrets, Custom Resources (`TotalCoreResourcesSizeKiB`, `TotalCustomResourceSizeKiB`):**
+    * The script fetches the **full YAML/JSON manifest** of each individual resource via the Kubernetes API.
+    * This manifest is converted to a JSON string.
+    * The size reported is the **byte length of this JSON string representation** (encoded as UTF-8).
+    * These byte counts are summed up (ConfigMaps + Secrets for `TotalCoreResourcesSizeKiB`; all CRs for `TotalCustomResourceSizeKiB`) and converted to KiB.
+    * **Key Point:** This measures the size of the object's *representation in the API*, not the disk space it uses in etcd or the memory it consumes in controllers. Fetching the full manifest for every object is resource-intensive. This size can be considered a proxy for *metadata complexity*.
 
-2.  **PersistentVolumeClaims (`TotalPVCCapacityGiB`):**
-    *   The script reads the `status.capacity.storage` field from the PVC's status.
-    *   This value represents the **storage capacity requested** by the claim.
-    *   These requested capacities are summed up and converted to GiB.
-    *   **Key Point:** This is the *requested* capacity, not the *actual* disk usage within the volume. Actual usage may be lower or potentially higher (with thin provisioning).
+2. **PersistentVolumeClaims (`TotalPVCCapacityGiB`):**
+    * The script reads the `status.capacity.storage` field from the PVC's status.
+    * This value represents the **storage capacity requested** by the claim.
+    * These requested capacities are summed up and converted to GiB.
+    * **Key Point:** This is the *requested* capacity, not the *actual* disk usage within the volume. Actual usage may be lower or potentially higher (with thin provisioning).
 
 ### Verification Methods
 
 While you cannot easily get the script's exact aggregated totals from `kubectl`, you can verify the underlying calculations:
 
-*   **Spot Check Manifest Sizes (CMs, Secrets, CRs):** Use `kubectl` to get the JSON representation of an individual object and pipe it to `wc -c` (byte count). This closely mimics the script's process for `TotalCoreResourcesSizeKiB` and `TotalCustomResourceSizeKiB` components.
+* **Spot Check Manifest Sizes (CMs, Secrets, CRs):** Use `kubectl` to get the JSON representation of an individual object and pipe it to `wc -c` (byte count). This closely mimics the script's process for `TotalCoreResourcesSizeKiB` and `TotalCustomResourceSizeKiB` components.
+
     ```bash
     # ConfigMap Example
     kubectl get configmap <cm-name> -n <namespace> -o json | wc -c
@@ -144,25 +145,28 @@ While you cannot easily get the script's exact aggregated totals from `kubectl`,
     # Custom Resource Example (replace kind/name)
     kubectl get <crd-kind>.<group> <cr-instance-name> -n <namespace> -o json | wc -c
     ```
+
     Compare the byte count from `wc -c` with the script's internal calculation for that object (minor differences due to formatting are possible).
 
-*   **Spot Check PVC Capacity:** Use `kubectl` to view the `status.capacity.storage` for a specific PVC.
+* **Spot Check PVC Capacity:** Use `kubectl` to view the `status.capacity.storage` for a specific PVC.
+
     ```bash
     kubectl get pvc <pvc-name> -n <namespace> -o jsonpath='{.status.capacity.storage}'
     ```
+
     Manually verify the parsing of this value (e.g., `10Gi` is 10 * 1024^3 bytes).
 
-*   **Test Namespace:** Create a small test namespace with a known number of resources and manually sum their `wc -c` sizes or capacities to compare against the script's output for that single namespace.
+* **Test Namespace:** Create a small test namespace with a known number of resources and manually sum their `wc -c` sizes or capacities to compare against the script's output for that single namespace.
 
 ## Performance Considerations and Impact
 
-*   **API Server Load & Network:** As explained above, calculating sizes requires fetching the *full manifest* for many objects (ConfigMaps, Secrets, optional CRs). This is much heavier than just listing objects and significantly increases the load on the Kubernetes API server and consumes more network bandwidth compared to only counting resources.
-*   **API Server Load:** The script makes numerous read requests (`LIST`, `GET`) to the Kubernetes API server. Running it against large clusters or scanning all namespaces can put a noticeable load on the API server.
-*   **Size Calculation Overhead:** To calculate sizes, the script fetches the *full* manifest for every ConfigMap, Secret, and (if `--include-crds` is used) Custom Resource instance. This is significantly more expensive than just listing them, consuming more network bandwidth, memory on the script's host, and API server resources.
-*   **CRD Impact (`--include-crds`):** Using the `--include-crds` flag dramatically increases the script's runtime and resource consumption:
-  * It first lists *all* CRDs in the cluster.
-  * Then, for *each* CRD, it tries to list *all* instances within *each* target namespace.
-  * Finally, it fetches the *full* manifest for *each* CR instance found to calculate its size.
+* **API Server Load & Network:** As explained above, calculating sizes requires fetching the *full manifest* for many objects (ConfigMaps, Secrets, optional CRs). This is much heavier than just listing objects and significantly increases the load on the Kubernetes API server and consumes more network bandwidth compared to only counting resources.
+* **API Server Load:** The script makes numerous read requests (`LIST`, `GET`) to the Kubernetes API server. Running it against large clusters or scanning all namespaces can put a noticeable load on the API server.
+* **Size Calculation Overhead:** To calculate sizes, the script fetches the *full* manifest for every ConfigMap, Secret, and (if `--include-crds` is used) Custom Resource instance. This is significantly more expensive than just listing them, consuming more network bandwidth, memory on the script's host, and API server resources.
+* **CRD Impact (`--include-crds`):** Using the `--include-crds` flag dramatically increases the script's runtime and resource consumption:
+* It first lists *all* CRDs in the cluster.
+* Then, for *each* CRD, it tries to list *all* instances within *each* target namespace.
+* Finally, it fetches the *full* manifest for *each* CR instance found to calculate its size.
     This can result in thousands of API calls on clusters with many CRDs and namespaces.
 * **Large Namespaces:** Processing namespaces containing thousands of objects will take longer and require more memory locally to hold the lists of objects before processing.
 * **Network Latency:** The script's speed is sensitive to the network latency between the machine running the script and the Kubernetes API server.

@@ -1,7 +1,7 @@
 import csv
+import datetime
 import json
 import logging
-import datetime
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
@@ -229,7 +229,9 @@ def count_resources(
                     )
 
         # Add calculated sizes to the results
-        namespace_resources["TotalCoreResourcesSizeKiB"] = round(total_core_resources_size_bytes / 1024, 2)
+        namespace_resources["TotalCoreResourcesSizeKiB"] = round(
+            total_core_resources_size_bytes / 1024, 2
+        )
         namespace_resources["TotalPVCCapacityGiB"] = round(total_pvc_capacity_bytes / (1024**3), 2)
         if include_crds:
             namespace_resources["TotalCustomResourceSizeKiB"] = round(total_cr_size_bytes / 1024, 2)
@@ -273,7 +275,11 @@ def count_resources(
     help="Output only namespace and size columns, omitting resource counts.",
 )
 def main(
-    target_namespace: Optional[str], include_crds: bool, output_file: str, kubeconfig: Optional[str], sizes_only: bool
+    target_namespace: Optional[str],
+    include_crds: bool,
+    output_file: str,
+    kubeconfig: Optional[str],
+    sizes_only: bool,
 ):
     """Counts Kubernetes resources and calculates sizes for ConfigMaps, Secrets,
     PVC capacity, and optionally Custom Resources within specified namespaces."""
@@ -286,7 +292,7 @@ def main(
 
     # --- Count Cluster-Wide Persistent Volumes --- #
     try:
-        v1_core = client.CoreV1Api(api_client) # Need a CoreV1Api instance
+        v1_core = client.CoreV1Api(api_client)  # Need a CoreV1Api instance
         pv_list = v1_core.list_persistent_volume()
         pv_count = len(pv_list.items)
         logging.info(f"Cluster-wide PersistentVolume count: {pv_count}")
@@ -355,7 +361,7 @@ def main(
         # Include Namespace, counts, and sizes
         count_fields = sorted(
             [f for f in all_field_names if not f.endswith(("KiB", "GiB")) and f != "Namespace"]
-        ) # Includes the new ServiceAccounts, Endpoints
+        )  # Includes the new ServiceAccounts, Endpoints
         ordered_fieldnames = ["Namespace"] + count_fields + size_fields
 
     lock_path = f"{output_file}.lock"

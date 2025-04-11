@@ -1,12 +1,13 @@
 import csv
 import json
 import logging
+import datetime
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 import click
 from filelock import FileLock
-from kubernetes import client, config
+from kubernetes import client
 from kubernetes.client import ApiClient
 
 # Import utilities from k8s_utils
@@ -21,6 +22,13 @@ from utils.k8s_utils import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
+def handle_datetime(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, datetime.datetime):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+
 def get_object_size(obj: Any) -> int:
     """Serializes an object to JSON and returns its size in bytes."""
     try:
@@ -33,7 +41,8 @@ def get_object_size(obj: Any) -> int:
             # Fallback for unexpected types, size is unknown
             logging.warning(f"Cannot determine size for object of type {type(obj)}")
             return 0
-        json_str = json.dumps(obj_dict, ensure_ascii=False)
+        # Use the custom handler for datetime objects
+        json_str = json.dumps(obj_dict, ensure_ascii=False, default=handle_datetime)
         return len(json_str.encode("utf-8"))
     except Exception as e:
         logging.error(f"Error serializing object to calculate size: {e}")
@@ -52,8 +61,8 @@ def count_resources(
 
     # Dictionary to store resource counts and sizes for the namespace
     namespace_resources = defaultdict(int)
-    total_cm_size_bytes = 0
-    total_secret_size_bytes = 0
+    # Combine CM and Secret sizes
+    total_core_resources_size_bytes = 0
     total_cr_size_bytes = 0
     total_pvc_capacity_bytes = 0
 
@@ -73,7 +82,8 @@ def count_resources(
         for cm in configmaps.items:
             try:
                 full_cm = v1.read_namespaced_config_map(name=cm.metadata.name, namespace=namespace)
-                total_cm_size_bytes += get_object_size(full_cm)
+                # Add to combined size
+                total_core_resources_size_bytes += get_object_size(full_cm)
             except client.exceptions.ApiException as e:
                 logging.error(f"Could not read ConfigMap {cm.metadata.name} in {namespace}: {e}")
 
@@ -86,7 +96,8 @@ def count_resources(
                 full_secret = v1.read_namespaced_secret(
                     name=secret.metadata.name, namespace=namespace
                 )
-                total_secret_size_bytes += get_object_size(full_secret)
+                # Add to combined size
+                total_core_resources_size_bytes += get_object_size(full_secret)
             except client.exceptions.ApiException as e:
                 logging.error(f"Could not read Secret {secret.metadata.name} in {namespace}: {e}")
 
@@ -109,6 +120,14 @@ def count_resources(
                 logging.error(
                     f"Error processing PVC {pvc.metadata.name} capacity in {namespace}: {e}"
                 )
+
+        # ServiceAccounts (Count only)
+        service_accounts = v1.list_namespaced_service_account(namespace)
+        namespace_resources["ServiceAccounts"] = len(service_accounts.items)
+
+        # Endpoints (Count only)
+        endpoints = v1.list_namespaced_endpoints(namespace)
+        namespace_resources["Endpoints"] = len(endpoints.items)
 
         # --- Count Apps Resources (Counts only for now) ---
         namespace_resources["Deployments"] = len(
@@ -210,8 +229,7 @@ def count_resources(
                     )
 
         # Add calculated sizes to the results
-        namespace_resources["TotalConfigMapSizeKiB"] = round(total_cm_size_bytes / 1024, 2)
-        namespace_resources["TotalSecretSizeKiB"] = round(total_secret_size_bytes / 1024, 2)
+        namespace_resources["TotalCoreResourcesSizeKiB"] = round(total_core_resources_size_bytes / 1024, 2)
         namespace_resources["TotalPVCCapacityGiB"] = round(total_pvc_capacity_bytes / (1024**3), 2)
         if include_crds:
             namespace_resources["TotalCustomResourceSizeKiB"] = round(total_cr_size_bytes / 1024, 2)
@@ -248,8 +266,14 @@ def count_resources(
     default=None,
     help="Path to the kubeconfig file to use (overrides default locations).",
 )
+@click.option(
+    "--sizes-only",
+    is_flag=True,
+    default=False,
+    help="Output only namespace and size columns, omitting resource counts.",
+)
 def main(
-    target_namespace: Optional[str], include_crds: bool, output_file: str, kubeconfig: Optional[str]
+    target_namespace: Optional[str], include_crds: bool, output_file: str, kubeconfig: Optional[str], sizes_only: bool
 ):
     """Counts Kubernetes resources and calculates sizes for ConfigMaps, Secrets,
     PVC capacity, and optionally Custom Resources within specified namespaces."""
@@ -259,6 +283,17 @@ def main(
 
     # Get API client *after* config is loaded
     api_client = client.ApiClient()  # Initialize once
+
+    # --- Count Cluster-Wide Persistent Volumes --- #
+    try:
+        v1_core = client.CoreV1Api(api_client) # Need a CoreV1Api instance
+        pv_list = v1_core.list_persistent_volume()
+        pv_count = len(pv_list.items)
+        logging.info(f"Cluster-wide PersistentVolume count: {pv_count}")
+    except client.exceptions.ApiException as e:
+        logging.error(f"Could not list PersistentVolumes: {e}. Skipping PV count.")
+    except Exception as e:
+        logging.error(f"Unexpected error counting PersistentVolumes: {e}")
 
     # --- Use utility functions for namespace handling --- #
     namespaces_to_scan: List[str] = []
@@ -310,12 +345,18 @@ def main(
 
     # Ensure a consistent order for columns, putting sizes at the end might be nice
     # Convert set to list and sort (optional, but good for consistency)
-    # Example sorting: Namespace first, then counts alphabetically, then sizes alphabetically
-    count_fields = sorted(
-        [f for f in all_field_names if not f.endswith(("KiB", "GiB")) and f != "Namespace"]
-    )
     size_fields = sorted([f for f in all_field_names if f.endswith(("KiB", "GiB"))])
-    ordered_fieldnames = ["Namespace"] + count_fields + size_fields
+
+    if sizes_only:
+        # Only include Namespace and size columns
+        ordered_fieldnames = ["Namespace"] + size_fields
+        logging.info("Sizes only flag detected, outputting only namespace and size columns.")
+    else:
+        # Include Namespace, counts, and sizes
+        count_fields = sorted(
+            [f for f in all_field_names if not f.endswith(("KiB", "GiB")) and f != "Namespace"]
+        ) # Includes the new ServiceAccounts, Endpoints
+        ordered_fieldnames = ["Namespace"] + count_fields + size_fields
 
     lock_path = f"{output_file}.lock"
     logging.info(f"Attempting to write results to {output_file}...")

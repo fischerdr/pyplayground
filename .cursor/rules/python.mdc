@@ -193,6 +193,8 @@ Guidelines for using the tmp directory:
 - Maximum Python version: 3.14
 - CLI Tools:
   - click/typer for command-line interfaces
+- Output to console:
+  - use the rich library
 - Code Quality:
   - black for code formatting
   - isort for import sorting

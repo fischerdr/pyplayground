@@ -4,8 +4,6 @@ Script to list all PersistentVolumeClaims (PVCs) with their StorageClass and Per
 
 This script uses the Kubernetes API to gather information about storage resources in a cluster.
 It provides details about PVCs, their associated StorageClasses, and PVs.
-
-Author: Cascade AI
 Date: 2025-01-27
 """
 

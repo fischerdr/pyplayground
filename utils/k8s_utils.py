@@ -681,3 +681,134 @@ def get_kubeconfig_from_vault(
         raise
 
     return str(kubeconfig_file), kubeconfig_data
+
+
+# Helper function to parse Kubernetes storage strings (e.g., "10Gi", "500Mi")
+def parse_storage_string(storage_str: str) -> Optional[int]:
+    """Parses Kubernetes storage strings into bytes."""
+    if not storage_str:
+        return 0
+
+    # Handle potential None or empty strings
+    if not isinstance(storage_str, str):
+        logger.warning(f"Invalid storage string type: {type(storage_str)}, value: {storage_str}")
+        return 0  # Or raise an error? Returning 0 for now.
+
+    multipliers = {
+        "K": 1000,
+        "M": 1000**2,
+        "G": 1000**3,
+        "T": 1000**4,
+        "P": 1000**5,
+        "E": 1000**6,
+        "Ki": 1024,
+        "Mi": 1024**2,
+        "Gi": 1024**3,
+        "Ti": 1024**4,
+        "Pi": 1024**5,
+        "Ei": 1024**6,
+    }
+    match = re.match(r"^(\d+)([KMGTPE]i?|)$", storage_str)
+    if match:
+        value, unit = match.groups()
+        value = int(value)
+        if unit in multipliers:
+            return value * multipliers[unit]
+        elif unit == "":  # Assume bytes if no unit
+            return value
+        else:
+            logger.warning(f"Unknown storage unit '{unit}' in string '{storage_str}'")
+            return None  # Indicate parsing failure
+    else:
+        # Handle cases like "1.5Gi" or other formats if necessary, for now just log warning
+        logger.warning(f"Could not parse storage string: '{storage_str}'")
+        return None  # Indicate parsing failure
+
+
+def load_kube_config_auto(config_file: Optional[str] = None, context: Optional[str] = None) -> bool:
+    """
+    Attempts to load Kubernetes config from default/specified file,
+    falling back to in-cluster config.
+
+    Args:
+        config_file: Optional path to kubeconfig file.
+        context: Optional context to use if loading from file.
+
+    Returns:
+        True if configuration was loaded successfully, False otherwise.
+    """
+    try:
+        # Try loading from file first
+        config.load_kube_config(config_file=config_file, context=context)
+        logger.info(
+            f"Loaded kubeconfig from file/context (file='{config_file}', context='{context}')."
+        )
+        return True
+    except config.ConfigException:
+        logger.debug("Could not load kubeconfig from file, attempting in-cluster config.")
+        try:
+            # Fallback to in-cluster config
+            config.load_incluster_config()
+            logger.info("Loaded in-cluster kubeconfig.")
+            return True
+        except config.ConfigException:
+            logger.error(
+                "Could not load Kubernetes configuration (neither from file/context nor in-cluster)."
+            )
+            return False
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during kubeconfig loading: {e}")
+        return False
+
+
+# Add list_all_namespaces and namespace_exists near other generic k8s functions
+
+
+def list_all_namespaces(api_client: Optional[ApiClient] = None) -> Optional[List[str]]:
+    """
+    Retrieves a list of all namespace names in the cluster.
+
+    Args:
+        api_client: Optional initialized Kubernetes ApiClient.
+
+    Returns:
+        A list of namespace names, or None if an error occurs.
+    """
+    try:
+        v1 = client.CoreV1Api(api_client)
+        namespaces_list = v1.list_namespace()
+        return [ns.metadata.name for ns in namespaces_list.items]
+    except ApiException as e:
+        logger.error(f"Error listing namespaces: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error listing namespaces: {e}")
+        return None
+
+
+def namespace_exists(namespace_name: str, api_client: Optional[ApiClient] = None) -> bool:
+    """
+    Checks if a specific namespace exists in the cluster.
+
+    Args:
+        namespace_name: The name of the namespace to check.
+        api_client: Optional initialized Kubernetes ApiClient.
+
+    Returns:
+        True if the namespace exists, False otherwise.
+    """
+    if not namespace_name:
+        return False
+    try:
+        v1 = client.CoreV1Api(api_client)
+        v1.read_namespace(name=namespace_name)
+        return True
+    except ApiException as e:
+        if e.status == 404:
+            logger.debug(f"Namespace '{namespace_name}' not found (404).")
+        else:
+            logger.error(f"Error checking namespace {namespace_name}: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error checking namespace {namespace_name}: {e}")
+        return False

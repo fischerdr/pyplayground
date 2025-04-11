@@ -9,6 +9,7 @@ import click
 from filelock import FileLock
 from kubernetes import client
 from kubernetes.client import ApiClient
+from kubernetes.client.rest import ApiException
 
 # Import utilities from k8s_utils
 from utils.k8s_utils import (
@@ -259,7 +260,7 @@ def count_resources(
 @click.option(
     "--output-file",
     type=click.Path(dir_okay=False, writable=True),
-    default="namespace_resources.csv",
+    default="tmp/namespace_resources.csv",
     help="Path to output CSV file.",
 )
 @click.option(
@@ -267,6 +268,11 @@ def count_resources(
     type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
     default=None,
     help="Path to the kubeconfig file to use (overrides default locations).",
+)
+@click.option(
+    "--label-selector",
+    default=None,
+    help="Filter namespaces using a Kubernetes label selector (e.g., 'env=prod'). Cannot be used with --namespace.",
 )
 @click.option(
     "--sizes-only",
@@ -280,9 +286,16 @@ def main(
     output_file: str,
     kubeconfig: Optional[str],
     sizes_only: bool,
+    label_selector: Optional[str],
 ):
     """Counts Kubernetes resources and calculates sizes for ConfigMaps, Secrets,
     PVC capacity, and optionally Custom Resources within specified namespaces."""
+    # --- Validate mutually exclusive options --- #
+    if target_namespace and label_selector:
+        logging.error("Cannot use --namespace and --label-selector simultaneously.")
+        click.echo("Error: Cannot use --namespace and --label-selector simultaneously.", err=True)
+        return
+
     # --- Use utility function for config loading, passing the kubeconfig path --- #
     if not load_kube_config_auto(config_file=kubeconfig):
         return
@@ -303,9 +316,26 @@ def main(
 
     # --- Use utility functions for namespace handling --- #
     namespaces_to_scan: List[str] = []
-    if target_namespace:
+    v1_core_for_ns = client.CoreV1Api(api_client)  # API client for namespace listing
+
+    if label_selector:
+        logging.info(f"Attempting to list namespaces with label selector: '{label_selector}'")
+        try:
+            selected_ns_list = v1_core_for_ns.list_namespace(label_selector=label_selector)
+            namespaces_to_scan = [ns.metadata.name for ns in selected_ns_list.items]
+            if not namespaces_to_scan:
+                logging.warning(f"No namespaces found matching label selector: '{label_selector}'")
+                return  # Exit if no namespaces match
+            logging.info(f"Found {len(namespaces_to_scan)} namespaces matching selector.")
+        except ApiException as e:
+            logging.error(f"Error listing namespaces with selector '{label_selector}': {e}")
+            return
+        except Exception as e:
+            logging.error(f"Unexpected error listing namespaces with selector: {e}")
+            return
+    elif target_namespace:
         # Check if the specified namespace exists
-        if namespace_exists(target_namespace, api_client=api_client):
+        if namespace_exists(target_namespace, api_client=v1_core_for_ns.api_client):
             namespaces_to_scan = [target_namespace]
             logging.info(f"Targeting specified namespace: {target_namespace}")
         else:
@@ -315,7 +345,7 @@ def main(
             return
     else:
         logging.info("Attempting to list all namespaces...")
-        all_ns = list_all_namespaces(api_client=api_client)
+        all_ns = list_all_namespaces(api_client=v1_core_for_ns.api_client)
         if all_ns is not None:
             namespaces_to_scan = all_ns
             logging.info(f"Targeting all {len(namespaces_to_scan)} namespaces.")
@@ -375,7 +405,7 @@ def main(
             ) as csvfile:  # Added encoding
                 # Use restval to handle missing keys gracefully if some namespaces lack certain resources/sizes
                 writer = csv.DictWriter(
-                    csvfile, fieldnames=ordered_fieldnames, restval="0"
+                    csvfile, fieldnames=ordered_fieldnames, restval="0", extrasaction="ignore"
                 )  # Default missing values to '0'
                 writer.writeheader()
                 writer.writerows(all_resources_data)  # Use writerows for efficiency

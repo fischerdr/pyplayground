@@ -62,7 +62,10 @@ python src/k8s_rcrscountsize.py [OPTIONS]
 * `--label-selector TEXT`: Filter namespaces using a standard Kubernetes label selector string (e.g., `'environment=production'`, `'tier!=frontend'`). Cannot be used with `--namespace`. Useful for targeting specific sets of namespaces in large clusters.
 * `--include-crds`: Include Custom Resources (CRDs) in the counts and size calculations. **Warning:** This significantly increases runtime and API load.
 * `--sizes-only`: Output only namespace and size columns, omitting resource counts. (Default: False)
-* `--output-file PATH`: Path to the output CSV file. (Default: `namespace_resources.csv`)
+* `--output-file PATH`: Path to the output CSV file. If omitted, a default name is generated in the `tmp/` directory based on the scope and options used:
+  * Scope: `all_namespaces` if scanning multiple namespaces (default or via `--label-selector`), or the sanitized namespace name if using `--namespace`.
+  * Suffixes: `_with_crds` is added if `--include-crds` is used; `_sizes_only` is added if `--sizes-only` is used.
+  * Example Defaults: `tmp/all_namespaces_resources.csv`, `tmp/my_namespace_resources_with_crds_sizes_only.csv`.
 * `--kubeconfig PATH`: Path to the kubeconfig file to use. If omitted, it uses the default kubeconfig location or in-cluster configuration.
 * `--help`: Show the help message and exit.
 

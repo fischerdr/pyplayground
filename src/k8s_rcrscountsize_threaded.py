@@ -1,3 +1,4 @@
+import concurrent.futures  # Import for threading
 import csv
 import datetime
 import json
@@ -54,14 +55,18 @@ def get_object_size(obj: Any) -> int:
 
 
 def count_resources(
-    namespace: str, include_crds: bool, api_client: Optional[ApiClient] = None
-) -> Dict[str, Any]:
+    namespace: str,
+    include_crds: bool,
+    api_client: Optional[ApiClient] = None,
+    crd_list: Optional[List[Any]] = None,  # Add crd_list parameter
+) -> Optional[Dict[str, Any]]:  # Allow returning None on failure
     # API Clients - Initialize using the passed client or default
+    # Important for threading: Create API client instances *within* the function/thread
+    # if the original api_client object is not thread-safe, or pass a thread-safe one.
     v1 = client.CoreV1Api(api_client)
     apps_v1 = client.AppsV1Api(api_client)
     batch_v1 = client.BatchV1Api(api_client)
     custom_api = client.CustomObjectsApi(api_client)
-    apiext_v1 = client.ApiextensionsV1Api(api_client)
 
     # Dictionary to store resource counts and sizes for the namespace
     namespace_resources = defaultdict(int)
@@ -151,13 +156,16 @@ def count_resources(
 
         # --- Count and Size Custom Resources (CRDs) ---
         if include_crds:
-            try:
-                crds = apiext_v1.list_custom_resource_definition().items
-            except client.exceptions.ApiException as e:
-                logging.error(f"Could not list CRDs: {e}. Skipping CRD processing.")
-                crds = []  # Ensure crds is iterable even on failure
+            # Use the pre-fetched CRD list passed as argument
+            if crd_list is None:
+                logging.error(
+                    f"CRD list not provided to count_resources for namespace {namespace} when include_crds is True. Skipping CRDs."
+                )
+                crds_to_process = []
+            else:
+                crds_to_process = crd_list
 
-            for crd in crds:
+            for crd in crds_to_process:
                 # Ensure basic CRD structure is present before proceeding
                 if not (
                     crd.spec
@@ -242,8 +250,10 @@ def count_resources(
 
     except client.exceptions.ApiException as e:
         logging.error(f"General K8s API error counting resources in namespace {namespace}: {e}")
+        return None  # Indicate failure for this namespace
     except Exception as e:  # Catch any other unexpected errors
         logging.error(f"Unexpected error counting resources in namespace {namespace}: {e}")
+        return None  # Indicate failure for this namespace
 
     return namespace_resources
 
@@ -276,7 +286,7 @@ def sanitize_filename(name: str) -> str:
 @click.option(
     "--output-file",
     type=click.Path(dir_okay=False, writable=True),
-    default=None,
+    default=None,  # Default will be determined dynamically
     help="Path to output CSV file.",
 )
 @click.option(
@@ -296,6 +306,13 @@ def sanitize_filename(name: str) -> str:
     default=False,
     help="Output only namespace and size columns, omitting resource counts.",
 )
+@click.option(
+    "--max-workers",
+    type=int,
+    default=10,
+    show_default=True,
+    help="Maximum number of namespaces to process concurrently.",
+)
 def main(
     target_namespace: Optional[str],
     include_crds: bool,
@@ -303,6 +320,7 @@ def main(
     kubeconfig: Optional[str],
     sizes_only: bool,
     label_selector: Optional[str],
+    max_workers: int,
 ):
     """Counts Kubernetes resources and calculates sizes for ConfigMaps, Secrets,
     PVC capacity, and optionally Custom Resources within specified namespaces."""
@@ -389,26 +407,74 @@ def main(
             logging.error("Could not list namespaces. Please check permissions.")
             return
 
+    # --- Pre-fetch CRD list if needed --- #
+    cluster_crd_list: Optional[List[Any]] = None
+    if include_crds:
+        logging.info("Pre-fetching Custom Resource Definition list...")
+        try:
+            apiext_v1_main = client.ApiextensionsV1Api(api_client)
+            cluster_crd_list = apiext_v1_main.list_custom_resource_definition().items
+            logging.info(f"Found {len(cluster_crd_list)} CRDs cluster-wide.")
+        except ApiException as e:
+            logging.error(f"Could not pre-fetch CRD list: {e}. Cannot process CRDs.")
+            include_crds = False  # Disable CRD processing if list fails
+            cluster_crd_list = []  # Ensure it's iterable later
+        except Exception as e:
+            logging.error(f"Unexpected error pre-fetching CRD list: {e}. Cannot process CRDs.")
+            include_crds = False  # Disable CRD processing
+            cluster_crd_list = []
+
     # Prepare output data
     all_resources_data: List[Dict[str, Any]] = []
     all_field_names = set(["Namespace"])  # Start with Namespace
 
-    for ns in namespaces_to_scan:
-        logging.info(f"Processing namespace: {ns}...")
-        resources = count_resources(ns, include_crds, api_client=api_client)
-        if resources:  # Only add if data was collected
-            # Combine namespace name with resource data
-            ns_data = {"Namespace": ns, **resources}
-            all_resources_data.append(ns_data)
-            all_field_names.update(ns_data.keys())  # Dynamically collect all headers
+    # --- Process namespaces using ThreadPoolExecutor --- #
+    logging.info(f"Starting namespace processing with up to {max_workers} worker threads...")
+    processed_count = 0
+    failed_namespaces = []
 
-            # Log summary for the namespace
-            logging.info(f"Finished processing namespace: {ns}. Resources found: {len(resources)}")
-            # Optional: Log detailed counts/sizes per namespace
-            # for resource_type, value in resources.items():
-            #     logging.debug(f"  {ns} - {resource_type}: {value}")
-        else:
-            logging.warning(f"No resources or data collected for namespace: {ns}")
+    # Use a context manager for the executor to ensure threads are cleaned up
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Prepare arguments for map - api_client and crd_list are shared
+        # Note: Ensure api_client is thread-safe or consider creating new ones per thread if issues arise.
+        # The standard kubernetes client *should* be thread-safe, but heavy concurrent use might reveal edge cases.
+        future_to_ns = {
+            executor.submit(count_resources, ns, include_crds, api_client, cluster_crd_list): ns
+            for ns in namespaces_to_scan
+        }
+
+        for future in concurrent.futures.as_completed(future_to_ns):
+            ns = future_to_ns[future]
+            try:
+                resources = (
+                    future.result()
+                )  # Get result from thread, may raise exception if thread failed
+                if resources:  # Check if count_resources returned data (not None)
+                    ns_data = {"Namespace": ns, **resources}
+                    all_resources_data.append(ns_data)
+                    all_field_names.update(ns_data.keys())  # Dynamically collect headers
+                    logging.info(
+                        f"Successfully processed namespace: {ns}. Resources found: {len(resources)}"
+                    )
+                    processed_count += 1
+                else:
+                    # count_resources returned None, indicating handled error within the function
+                    logging.warning(
+                        f"No data returned for namespace: {ns}. It might have failed processing."
+                    )
+                    failed_namespaces.append(ns)
+
+            except Exception as exc:
+                # Catch exceptions raised *by* the count_resources function within the thread
+                logging.error(f"Namespace {ns} generated an exception during processing: {exc}")
+                failed_namespaces.append(ns)
+            # No explicit logging for start needed as as_completed yields when done
+
+    logging.info(
+        f"Finished processing all namespaces. Successful: {processed_count}, Failed: {len(failed_namespaces)}."
+    )
+    if failed_namespaces:
+        logging.warning(f"Failed namespaces: {', '.join(failed_namespaces)}")
 
     # Write output to CSV with file locking
     if not all_resources_data:

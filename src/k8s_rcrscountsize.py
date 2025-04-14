@@ -155,7 +155,9 @@ def count_resources(
         if include_crds:
             # Use the pre-fetched CRD list passed as argument
             if crd_list is None:
-                logging.error(f"CRD list not provided to count_resources for namespace {namespace} when include_crds is True. Skipping CRDs.")
+                logging.error(
+                    f"CRD list not provided to count_resources for namespace {namespace} when include_crds is True. Skipping CRDs."
+                )
                 crds_to_process = []
             else:
                 crds_to_process = crd_list
@@ -245,10 +247,10 @@ def count_resources(
 
     except client.exceptions.ApiException as e:
         logging.error(f"General K8s API error counting resources in namespace {namespace}: {e}")
-        return None # Indicate failure
+        return None  # Indicate failure
     except Exception as e:  # Catch any other unexpected errors
         logging.error(f"Unexpected error counting resources in namespace {namespace}: {e}")
-        return None # Indicate failure
+        return None  # Indicate failure
 
     return namespace_resources
 
@@ -316,11 +318,13 @@ def main(
     log_file = os.path.join(log_dir, "k8s_rcrscountsize.log")
     os.makedirs(log_dir, exist_ok=True)
 
-    log_formatter_file = logging.Formatter("%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s")
+    log_formatter_file = logging.Formatter(
+        "%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s"
+    )
     log_formatter_console = logging.Formatter("%(levelname)s: %(message)s")
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO) # Set root logger to lowest level (INFO)
+    root_logger.setLevel(logging.INFO)  # Set root logger to lowest level (INFO)
 
     # File Handler (INFO level and above)
     file_handler = logging.FileHandler(log_file)
@@ -334,7 +338,7 @@ def main(
     console_handler.setLevel(logging.WARNING)
     root_logger.addHandler(console_handler)
 
-    logging.info("Script execution started.") # Example: This will go only to file
+    logging.info("Script execution started.")  # Example: This will go only to file
 
     # --- Validate mutually exclusive options --- #
     if target_namespace and label_selector:
@@ -430,8 +434,8 @@ def main(
             logging.info(f"Found {len(cluster_crd_list)} CRDs cluster-wide.")
         except ApiException as e:
             logging.error(f"Could not pre-fetch CRD list: {e}. Disabling CRD processing.")
-            include_crds = False # Disable further CRD processing
-            cluster_crd_list = [] # Ensure it's iterable
+            include_crds = False  # Disable further CRD processing
+            cluster_crd_list = []  # Ensure it's iterable
         except Exception as e:
             logging.error(f"Unexpected error pre-fetching CRD list: {e}. Disabling CRD processing.")
             include_crds = False
@@ -451,33 +455,43 @@ def main(
         with click.progressbar(
             namespaces_to_scan,
             label="Processing namespaces",
-            item_show_func=lambda item: f"Scanning {item}..." if item else "", # Show current namespace
-            length=len(namespaces_to_scan)
+            item_show_func=lambda item: (
+                f"Scanning {item}..." if item else ""
+            ),  # Show current namespace
+            length=len(namespaces_to_scan),
         ) as bar:
             for ns in bar:
-                logging.info(f"Processing namespace: {ns}...") # Log to file only
+                logging.info(f"Processing namespace: {ns}...")  # Log to file only
                 # Pass the pre-fetched CRD list to the function
-                resources = count_resources(ns, include_crds, api_client=api_client, crd_list=cluster_crd_list)
+                resources = count_resources(
+                    ns, include_crds, api_client=api_client, crd_list=cluster_crd_list
+                )
                 if resources:  # Only add if data was collected
                     ns_data = {"Namespace": ns, **resources}
                     all_resources_data.append(ns_data)
                     all_field_names.update(ns_data.keys())
                 else:
-                    logging.warning(f"No resources or data collected for namespace: {ns}") # Log to file and console
+                    logging.warning(
+                        f"No resources or data collected for namespace: {ns}"
+                    )  # Log to file and console
     else:
         # Process without progress bar (single namespace or none)
         if namespaces_to_scan:
-            logging.info(f"Processing {len(namespaces_to_scan)} namespace(s).") # Log to file only
+            logging.info(f"Processing {len(namespaces_to_scan)} namespace(s).")  # Log to file only
         for ns in namespaces_to_scan:
-            logging.info(f"Processing namespace: {ns}...") # Log to file only
+            logging.info(f"Processing namespace: {ns}...")  # Log to file only
             # Pass the pre-fetched CRD list to the function
-            resources = count_resources(ns, include_crds, api_client=api_client, crd_list=cluster_crd_list)
+            resources = count_resources(
+                ns, include_crds, api_client=api_client, crd_list=cluster_crd_list
+            )
             if resources:  # Only add if data was collected
                 ns_data = {"Namespace": ns, **resources}
                 all_resources_data.append(ns_data)
                 all_field_names.update(ns_data.keys())
             else:
-                logging.warning(f"No resources or data collected for namespace: {ns}") # Log to file and console
+                logging.warning(
+                    f"No resources or data collected for namespace: {ns}"
+                )  # Log to file and console
 
     # --- Post-processing (CSV writing, etc.) --- #
 
@@ -565,7 +579,7 @@ def main(
         #         logging.warning(f"Could not remove lock file {lock_path}: {e_rm}")
         pass  # FileLock should release on exit
 
-    logging.info("Script execution finished.") # Goes to file log
+    logging.info("Script execution finished.")  # Goes to file log
 
 
 if __name__ == "__main__":

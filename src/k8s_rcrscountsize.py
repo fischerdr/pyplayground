@@ -23,7 +23,7 @@ from utils.k8s_utils import (
 )
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# Logging setup will be done in main()
 
 
 def handle_datetime(obj):
@@ -54,14 +54,16 @@ def get_object_size(obj: Any) -> int:
 
 
 def count_resources(
-    namespace: str, include_crds: bool, api_client: Optional[ApiClient] = None
-) -> Dict[str, Any]:
+    namespace: str,
+    include_crds: bool,
+    api_client: Optional[ApiClient] = None,
+    crd_list: Optional[List[Any]] = None,
+) -> Optional[Dict[str, Any]]:
     # API Clients - Initialize using the passed client or default
     v1 = client.CoreV1Api(api_client)
     apps_v1 = client.AppsV1Api(api_client)
     batch_v1 = client.BatchV1Api(api_client)
     custom_api = client.CustomObjectsApi(api_client)
-    apiext_v1 = client.ApiextensionsV1Api(api_client)
 
     # Dictionary to store resource counts and sizes for the namespace
     namespace_resources = defaultdict(int)
@@ -151,13 +153,14 @@ def count_resources(
 
         # --- Count and Size Custom Resources (CRDs) ---
         if include_crds:
-            try:
-                crds = apiext_v1.list_custom_resource_definition().items
-            except client.exceptions.ApiException as e:
-                logging.error(f"Could not list CRDs: {e}. Skipping CRD processing.")
-                crds = []  # Ensure crds is iterable even on failure
+            # Use the pre-fetched CRD list passed as argument
+            if crd_list is None:
+                logging.error(f"CRD list not provided to count_resources for namespace {namespace} when include_crds is True. Skipping CRDs.")
+                crds_to_process = []
+            else:
+                crds_to_process = crd_list
 
-            for crd in crds:
+            for crd in crds_to_process:
                 # Ensure basic CRD structure is present before proceeding
                 if not (
                     crd.spec
@@ -242,8 +245,10 @@ def count_resources(
 
     except client.exceptions.ApiException as e:
         logging.error(f"General K8s API error counting resources in namespace {namespace}: {e}")
+        return None # Indicate failure
     except Exception as e:  # Catch any other unexpected errors
         logging.error(f"Unexpected error counting resources in namespace {namespace}: {e}")
+        return None # Indicate failure
 
     return namespace_resources
 
@@ -306,6 +311,31 @@ def main(
 ):
     """Counts Kubernetes resources and calculates sizes for ConfigMaps, Secrets,
     PVC capacity, and optionally Custom Resources within specified namespaces."""
+    # --- Logging Setup --- #
+    log_dir = "logs"
+    log_file = os.path.join(log_dir, "k8s_rcrscountsize.log")
+    os.makedirs(log_dir, exist_ok=True)
+
+    log_formatter_file = logging.Formatter("%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s")
+    log_formatter_console = logging.Formatter("%(levelname)s: %(message)s")
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO) # Set root logger to lowest level (INFO)
+
+    # File Handler (INFO level and above)
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(log_formatter_file)
+    file_handler.setLevel(logging.INFO)
+    root_logger.addHandler(file_handler)
+
+    # Console Handler (WARNING level and above)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(log_formatter_console)
+    console_handler.setLevel(logging.WARNING)
+    root_logger.addHandler(console_handler)
+
+    logging.info("Script execution started.") # Example: This will go only to file
+
     # --- Validate mutually exclusive options --- #
     if target_namespace and label_selector:
         logging.error("Cannot use --namespace and --label-selector simultaneously.")
@@ -389,26 +419,67 @@ def main(
             logging.error("Could not list namespaces. Please check permissions.")
             return
 
+    # --- Pre-fetch CRD list if needed --- #
+    cluster_crd_list: Optional[List[Any]] = None
+    if include_crds:
+        logging.info("Pre-fetching Custom Resource Definition list...")
+        try:
+            # Need an ApiextensionsV1Api client instance here
+            apiext_v1_main = client.ApiextensionsV1Api(api_client)
+            cluster_crd_list = apiext_v1_main.list_custom_resource_definition().items
+            logging.info(f"Found {len(cluster_crd_list)} CRDs cluster-wide.")
+        except ApiException as e:
+            logging.error(f"Could not pre-fetch CRD list: {e}. Disabling CRD processing.")
+            include_crds = False # Disable further CRD processing
+            cluster_crd_list = [] # Ensure it's iterable
+        except Exception as e:
+            logging.error(f"Unexpected error pre-fetching CRD list: {e}. Disabling CRD processing.")
+            include_crds = False
+            cluster_crd_list = []
+
     # Prepare output data
     all_resources_data: List[Dict[str, Any]] = []
     all_field_names = set(["Namespace"])  # Start with Namespace
 
-    for ns in namespaces_to_scan:
-        logging.info(f"Processing namespace: {ns}...")
-        resources = count_resources(ns, include_crds, api_client=api_client)
-        if resources:  # Only add if data was collected
-            # Combine namespace name with resource data
-            ns_data = {"Namespace": ns, **resources}
-            all_resources_data.append(ns_data)
-            all_field_names.update(ns_data.keys())  # Dynamically collect all headers
+    # --- Process Namespaces --- #
+    # Determine if progress bar should be shown (more than 1 namespace being scanned)
+    show_progress = not target_namespace and namespaces_to_scan and len(namespaces_to_scan) > 1
 
-            # Log summary for the namespace
-            logging.info(f"Finished processing namespace: {ns}. Resources found: {len(resources)}")
-            # Optional: Log detailed counts/sizes per namespace
-            # for resource_type, value in resources.items():
-            #     logging.debug(f"  {ns} - {resource_type}: {value}")
-        else:
-            logging.warning(f"No resources or data collected for namespace: {ns}")
+    if show_progress:
+        logging.info(f"Processing {len(namespaces_to_scan)} namespaces with progress bar.")
+        # Use click.progressbar as a context manager
+        with click.progressbar(
+            namespaces_to_scan,
+            label="Processing namespaces",
+            item_show_func=lambda item: f"Scanning {item}..." if item else "", # Show current namespace
+            length=len(namespaces_to_scan)
+        ) as bar:
+            for ns in bar:
+                logging.info(f"Processing namespace: {ns}...") # Log to file only
+                # Pass the pre-fetched CRD list to the function
+                resources = count_resources(ns, include_crds, api_client=api_client, crd_list=cluster_crd_list)
+                if resources:  # Only add if data was collected
+                    ns_data = {"Namespace": ns, **resources}
+                    all_resources_data.append(ns_data)
+                    all_field_names.update(ns_data.keys())
+                else:
+                    logging.warning(f"No resources or data collected for namespace: {ns}") # Log to file and console
+    else:
+        # Process without progress bar (single namespace or none)
+        if namespaces_to_scan:
+            logging.info(f"Processing {len(namespaces_to_scan)} namespace(s).") # Log to file only
+        for ns in namespaces_to_scan:
+            logging.info(f"Processing namespace: {ns}...") # Log to file only
+            # Pass the pre-fetched CRD list to the function
+            resources = count_resources(ns, include_crds, api_client=api_client, crd_list=cluster_crd_list)
+            if resources:  # Only add if data was collected
+                ns_data = {"Namespace": ns, **resources}
+                all_resources_data.append(ns_data)
+                all_field_names.update(ns_data.keys())
+            else:
+                logging.warning(f"No resources or data collected for namespace: {ns}") # Log to file and console
+
+    # --- Post-processing (CSV writing, etc.) --- #
 
     # Write output to CSV with file locking
     if not all_resources_data:
@@ -493,6 +564,8 @@ def main(
         #     except OSError as e_rm:
         #         logging.warning(f"Could not remove lock file {lock_path}: {e_rm}")
         pass  # FileLock should release on exit
+
+    logging.info("Script execution finished.") # Goes to file log
 
 
 if __name__ == "__main__":

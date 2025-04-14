@@ -31,6 +31,8 @@ It can be used for tasks such as general resource inventory, identifying resourc
 * **CRD Support:** Optionally includes Custom Resource Definitions (CRDs) in the counts and size calculations.
 * **CSV Output:** Exports the results to a customizable CSV file.
 * **Safe File Writing:** Uses a file lock to prevent issues when writing the CSV file.
+* **Logging:** Writes detailed (INFO level) logs to `logs/k8s_rcrscountsize.log`. Only outputs WARNING and ERROR messages to the console during execution.
+* **Progress Bar:** Displays a progress bar (using `click.progressbar`) on the console when scanning multiple namespaces (via default scan or `--label-selector`).
 
 ## Dependencies
 

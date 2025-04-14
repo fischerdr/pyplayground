@@ -331,7 +331,9 @@ def main(
     log_file = os.path.join(log_dir, f"k8s_rcrscountsize_threaded_{timestamp}.log")
     os.makedirs(log_dir, exist_ok=True)
 
-    log_formatter_file = logging.Formatter("%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s")
+    log_formatter_file = logging.Formatter(
+        "%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s"
+    )
     log_formatter_console = logging.Formatter("%(levelname)s: %(message)s")
 
     root_logger = logging.getLogger()
@@ -494,13 +496,19 @@ def main(
                             ns_data = {"Namespace": ns, **resources}
                             all_resources_data.append(ns_data)
                             all_field_names.update(ns_data.keys())  # Dynamically collect headers
-                            logging.info(f"Successfully processed namespace: {ns}. Resources found: {len(resources)}")
+                            logging.info(
+                                f"Successfully processed namespace: {ns}. Resources found: {len(resources)}"
+                            )
                             processed_count += 1
                         else:
-                            logging.warning(f"No data returned for namespace: {ns}. It might have failed processing.")
+                            logging.warning(
+                                f"No data returned for namespace: {ns}. It might have failed processing."
+                            )
                             failed_namespaces.append(ns)
                     except Exception as exc:
-                        logging.error(f"Namespace {ns} generated an exception during processing: {exc}")
+                        logging.error(
+                            f"Namespace {ns} generated an exception during processing: {exc}"
+                        )
                         failed_namespaces.append(ns)
                     finally:
                         bar.update(1)  # Update progress bar for each completed future
@@ -516,10 +524,14 @@ def main(
                         ns_data = {"Namespace": ns, **resources}
                         all_resources_data.append(ns_data)
                         all_field_names.update(ns_data.keys())  # Dynamically collect headers
-                        logging.info(f"Successfully processed namespace: {ns}. Resources found: {len(resources)}")
+                        logging.info(
+                            f"Successfully processed namespace: {ns}. Resources found: {len(resources)}"
+                        )
                         processed_count += 1
                     else:
-                        logging.warning(f"No data returned for namespace: {ns}. It might have failed processing.")
+                        logging.warning(
+                            f"No data returned for namespace: {ns}. It might have failed processing."
+                        )
                         failed_namespaces.append(ns)
                 except Exception as exc:
                     logging.error(f"Namespace {ns} generated an exception during processing: {exc}")

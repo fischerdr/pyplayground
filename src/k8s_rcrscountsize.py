@@ -341,6 +341,8 @@ def main(
 
     logging.info("Script execution started.")  # Example: This will go only to file
 
+    start_time = time.monotonic()  # Record start time
+
     # --- Validate mutually exclusive options --- #
     if target_namespace and label_selector:
         logging.error("Cannot use --namespace and --label-selector simultaneously.")
@@ -581,6 +583,9 @@ def main(
         #         logging.warning(f"Could not remove lock file {lock_path}: {e_rm}")
         pass  # FileLock should release on exit
 
+    end_time = time.monotonic()  # Record end time
+    duration = end_time - start_time
+    logging.info(f"Total execution time: {duration:.2f} seconds")  # Log duration
     logging.info("Script execution finished.")  # Goes to file log
 
 

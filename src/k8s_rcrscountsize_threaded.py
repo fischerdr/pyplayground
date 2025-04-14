@@ -354,6 +354,8 @@ def main(
 
     logging.info("Threaded script execution started.")
 
+    start_time = time.monotonic()  # Record start time
+
     # --- Validate mutually exclusive options --- #
     if target_namespace and label_selector:
         logging.error("Cannot use --namespace and --label-selector simultaneously.")
@@ -463,7 +465,9 @@ def main(
     processed_count = 0
     failed_namespaces = []
 
-    # Use a context manager for the executor to ensure threads are cleaned up
+    # Determine if progress bar should be shown
+    show_progress = not target_namespace and namespaces_to_scan and len(namespaces_to_scan) > 1
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Prepare arguments for map - api_client and crd_list are shared
         # Note: Ensure api_client is thread-safe or consider creating new ones per thread if issues arise.
@@ -473,32 +477,53 @@ def main(
             for ns in namespaces_to_scan
         }
 
-        for future in concurrent.futures.as_completed(future_to_ns):
-            ns = future_to_ns[future]
-            try:
-                resources = (
-                    future.result()
-                )  # Get result from thread, may raise exception if thread failed
-                if resources:  # Check if count_resources returned data (not None)
-                    ns_data = {"Namespace": ns, **resources}
-                    all_resources_data.append(ns_data)
-                    all_field_names.update(ns_data.keys())  # Dynamically collect headers
-                    logging.info(
-                        f"Successfully processed namespace: {ns}. Resources found: {len(resources)}"
-                    )
-                    processed_count += 1
-                else:
-                    # count_resources returned None, indicating handled error within the function
-                    logging.warning(
-                        f"No data returned for namespace: {ns}. It might have failed processing."
-                    )
+        # Use click progress bar if processing multiple namespaces
+        iterable_futures = concurrent.futures.as_completed(future_to_ns)
+        if show_progress:
+            logging.info(f"Processing {len(namespaces_to_scan)} namespaces with progress bar.")
+            with click.progressbar(
+                length=len(namespaces_to_scan),
+                label="Processing namespaces",
+                # item_show_func not practical here as results are out of order
+            ) as bar:
+                for future in iterable_futures:
+                    ns = future_to_ns[future]
+                    try:
+                        resources = future.result()  # Get result
+                        if resources:  # Check if count_resources returned data
+                            ns_data = {"Namespace": ns, **resources}
+                            all_resources_data.append(ns_data)
+                            all_field_names.update(ns_data.keys())  # Dynamically collect headers
+                            logging.info(f"Successfully processed namespace: {ns}. Resources found: {len(resources)}")
+                            processed_count += 1
+                        else:
+                            logging.warning(f"No data returned for namespace: {ns}. It might have failed processing.")
+                            failed_namespaces.append(ns)
+                    except Exception as exc:
+                        logging.error(f"Namespace {ns} generated an exception during processing: {exc}")
+                        failed_namespaces.append(ns)
+                    finally:
+                        bar.update(1)  # Update progress bar for each completed future
+        else:
+            # Process without progress bar (single namespace or none)
+            if namespaces_to_scan:
+                logging.info(f"Processing {len(namespaces_to_scan)} namespace(s).")
+            for future in iterable_futures:
+                ns = future_to_ns[future]
+                try:
+                    resources = future.result()  # Get result
+                    if resources:  # Check if count_resources returned data
+                        ns_data = {"Namespace": ns, **resources}
+                        all_resources_data.append(ns_data)
+                        all_field_names.update(ns_data.keys())  # Dynamically collect headers
+                        logging.info(f"Successfully processed namespace: {ns}. Resources found: {len(resources)}")
+                        processed_count += 1
+                    else:
+                        logging.warning(f"No data returned for namespace: {ns}. It might have failed processing.")
+                        failed_namespaces.append(ns)
+                except Exception as exc:
+                    logging.error(f"Namespace {ns} generated an exception during processing: {exc}")
                     failed_namespaces.append(ns)
-
-            except Exception as exc:
-                # Catch exceptions raised *by* the count_resources function within the thread
-                logging.error(f"Namespace {ns} generated an exception during processing: {exc}")
-                failed_namespaces.append(ns)
-            # No explicit logging for start needed as as_completed yields when done
 
     logging.info(
         f"Finished processing all namespaces. Successful: {processed_count}, Failed: {len(failed_namespaces)}."
@@ -590,6 +615,11 @@ def main(
         #     except OSError as e_rm:
         #         logging.warning(f"Could not remove lock file {lock_path}: {e_rm}")
         pass  # FileLock should release on exit
+
+    end_time = time.monotonic()  # Record end time
+    duration = end_time - start_time
+    logging.info(f"Total execution time: {duration:.2f} seconds")  # Log duration
+    logging.info("Script execution finished.")  # Goes to file log
 
 
 if __name__ == "__main__":

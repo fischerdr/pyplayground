@@ -27,12 +27,13 @@ It can be used for tasks such as general resource inventory, identifying resourc
   * Calculates the combined size (in KiB) of ConfigMaps and Secrets (`TotalCoreResourcesSizeKiB`).
   * Calculates the total requested storage capacity (in GiB) of PVCs (`TotalPVCCapacityGiB`).
   * Optionally calculates the combined size (in KiB) of all Custom Resource (CR) instances found (`TotalCustomResourceSizeKiB`).
-* **Namespace Targeting:** Can scan all namespaces or a single specified namespace.
-* **CRD Support:** Optionally includes Custom Resource Definitions (CRDs) in the counts and size calculations.
+* **Namespace Targeting:** Can scan all namespaces, a single specified namespace (`--namespace`), or namespaces matching a label selector (`--label-selector`).
+* **CRD Support:** Optionally includes Custom Resource Definitions (CRDs) in the counts and size calculations. Fetches the CRD list only once for efficiency when scanning multiple namespaces.
 * **CSV Output:** Exports the results to a customizable CSV file.
 * **Safe File Writing:** Uses a file lock to prevent issues when writing the CSV file.
-* **Logging:** Writes detailed (INFO level) logs to `logs/k8s_rcrscountsize.log`. Only outputs WARNING and ERROR messages to the console during execution.
-* **Progress Bar:** Displays a progress bar (using `click.progressbar`) on the console when scanning multiple namespaces (via default scan or `--label-selector`).
+* **Logging:** Writes detailed (INFO+) logs to a timestamped file in the `logs/` directory (e.g., `logs/k8s_rcrscountsize_YYYYMMDD_HHMMSS.log`). Only outputs WARNING and ERROR messages to the console.
+* **Progress Bar:** Displays a progress bar (using `click.progressbar`) on the console when scanning multiple namespaces.
+* **Large Scan Warning:** Provides a console warning and a pause before starting if scanning more than 75 namespaces without filters.
 
 ## Dependencies
 
@@ -67,7 +68,8 @@ python src/k8s_rcrscountsize.py [OPTIONS]
 * `--output-file PATH`: Path to the output CSV file. If omitted, a default name is generated in the `tmp/` directory based on the scope and options used:
   * Scope: `all_namespaces` if scanning multiple namespaces (default or via `--label-selector`), or the sanitized namespace name if using `--namespace`.
   * Suffixes: `_with_crds` is added if `--include-crds` is used; `_sizes_only` is added if `--sizes-only` is used.
-  * Example Defaults: `tmp/all_namespaces_resources.csv`, `tmp/my_namespace_resources_with_crds_sizes_only.csv`.
+  * Timestamp: A timestamp (e.g., `_YYYYMMDD_HHMMSS`) is appended before the `.csv` extension.
+  * Example Defaults: `tmp/all_namespaces_resources_20231027_103000.csv`, `tmp/my_ns_resources_with_crds_sizes_only_20231027_103500.csv`.
 * `--kubeconfig PATH`: Path to the kubeconfig file to use. If omitted, it uses the default kubeconfig location or in-cluster configuration.
 * `--help`: Show the help message and exit.
 
@@ -182,3 +184,21 @@ While you cannot easily get the script's exact aggregated totals from `kubectl`,
 * Consider running during off-peak hours.
 * If possible, target specific namespaces using `--namespace` instead of scanning all namespaces.
 * Monitor API server performance if running the script regularly on critical clusters.
+
+## Sequential vs. Threaded Execution
+
+Two versions of this script exist:
+
+1. **`src/k8s_rcrscountsize.py` (Sequential):**
+    * Processes namespaces one after another.
+    * **Pros:** Simpler execution flow, lower *peak* load on the API server and etcd (spread out over time), potentially easier to debug issues related to a specific namespace.
+    * **Cons:** Can be significantly slower when scanning a large number of namespaces.
+    * **Use When:** Suitable for smaller clusters, environments sensitive to API load spikes, initial testing, or when debugging.
+
+2. **`src/k8s_rcrscountsize_threaded.py` (Threaded):**
+    * Processes multiple namespaces concurrently using a configurable number of worker threads (`--max-workers` flag, default 10).
+    * **Pros:** Can provide a substantial speedup for scanning many namespaces, especially when network latency or API response time is the main bottleneck.
+    * **Cons:** Generates higher *peak* load on the API server and etcd due to concurrent requests. Requires careful tuning of `--max-workers` based on cluster capacity and load tolerance. Log output for specific namespaces might be interleaved, making debugging concurrent errors slightly harder.
+    * **Use When:** Scanning large numbers of namespaces where overall execution time is a concern, *provided* the cluster control plane can handle the increased concurrent load. **Monitoring API/etcd performance (see `docs/benchmarking_api_etcd_load.md`) is crucial when using and tuning the threaded version.**
+
+**Recommendation:** Start with the sequential version for initial analysis or on smaller/sensitive clusters. Use the threaded version for large-scale scans where performance is key, but monitor the impact and adjust `--max-workers` accordingly.

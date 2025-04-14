@@ -314,8 +314,9 @@ def main(
     """Counts Kubernetes resources and calculates sizes for ConfigMaps, Secrets,
     PVC capacity, and optionally Custom Resources within specified namespaces."""
     # --- Logging Setup --- #
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     log_dir = "logs"
-    log_file = os.path.join(log_dir, "k8s_rcrscountsize.log")
+    log_file = os.path.join(log_dir, f"k8s_rcrscountsize_{timestamp}.log")
     os.makedirs(log_dir, exist_ok=True)
 
     log_formatter_file = logging.Formatter(
@@ -534,7 +535,8 @@ def main(
         if sizes_only:
             suffix += "_sizes_only"
 
-        final_output_file = f"tmp/{scope_name}{suffix}.csv"
+        # Add timestamp to the default filename
+        final_output_file = f"tmp/{scope_name}{suffix}_{timestamp}.csv"
         logging.info(f"Using generated default output file: {final_output_file}")
 
     # Ensure the output directory exists

@@ -324,6 +324,36 @@ def main(
 ):
     """Counts Kubernetes resources and calculates sizes for ConfigMaps, Secrets,
     PVC capacity, and optionally Custom Resources within specified namespaces."""
+    # --- Logging Setup (Aligned with non-threaded version) --- #
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir = "logs"
+    # Use a distinct log filename for the threaded version
+    log_file = os.path.join(log_dir, f"k8s_rcrscountsize_threaded_{timestamp}.log")
+    os.makedirs(log_dir, exist_ok=True)
+
+    log_formatter_file = logging.Formatter("%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s")
+    log_formatter_console = logging.Formatter("%(levelname)s: %(message)s")
+
+    root_logger = logging.getLogger()
+    # Clear existing handlers if any (e.g., if script is re-run in same process)
+    if root_logger.hasHandlers():
+        root_logger.handlers.clear()
+    root_logger.setLevel(logging.INFO)
+
+    # File Handler (INFO level and above)
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(log_formatter_file)
+    file_handler.setLevel(logging.INFO)
+    root_logger.addHandler(file_handler)
+
+    # Console Handler (WARNING level and above)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(log_formatter_console)
+    console_handler.setLevel(logging.WARNING)
+    root_logger.addHandler(console_handler)
+
+    logging.info("Threaded script execution started.")
+
     # --- Validate mutually exclusive options --- #
     if target_namespace and label_selector:
         logging.error("Cannot use --namespace and --label-selector simultaneously.")
@@ -515,7 +545,8 @@ def main(
         if sizes_only:
             suffix += "_sizes_only"
 
-        final_output_file = f"tmp/{scope_name}{suffix}.csv"
+        # Add timestamp to the default filename
+        final_output_file = f"tmp/{scope_name}{suffix}_{timestamp}.csv"
         logging.info(f"Using generated default output file: {final_output_file}")
 
     # Ensure the output directory exists

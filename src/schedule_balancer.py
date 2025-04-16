@@ -123,7 +123,9 @@ def main(
         namespaces_data = process_input_csv(input_csv, weight_pvc, weight_core, weight_cr)
 
         if not namespaces_data:
-            console.print("[bold yellow]Warning:[/bold yellow] No valid namespace data found in the input CSV.")
+            console.print(
+                "[bold yellow]Warning:[/bold yellow] No valid namespace data found in the input CSV."
+            )
             logging.warning("No valid namespace data found in the input CSV. Exiting.")
             sys.exit(0)
 
@@ -154,6 +156,7 @@ def main(
 
 # --- Core Logic Functions --- #
 
+
 def process_input_csv(
     input_csv_path: str, weight_pvc: float, weight_core: float, weight_cr: float
 ) -> List[Dict[str, Any]]:
@@ -161,11 +164,13 @@ def process_input_csv(
     namespaces_data: List[Dict[str, Any]] = []
     logging.info(f"Reading and processing CSV: {input_csv_path}")
     try:
-        with open(input_csv_path, mode='r', newline='', encoding='utf-8') as csvfile:
+        with open(input_csv_path, mode="r", newline="", encoding="utf-8") as csvfile:
             reader = csv.DictReader(csvfile)
             if "Namespace" not in reader.fieldnames:
                 logging.error(f"Input CSV '{input_csv_path}' missing required 'Namespace' column.")
-                raise ValueError(f"Input CSV '{input_csv_path}' missing required 'Namespace' column.")
+                raise ValueError(
+                    f"Input CSV '{input_csv_path}' missing required 'Namespace' column."
+                )
 
             for row in reader:
                 ns_name = row.get("Namespace", "")
@@ -175,11 +180,13 @@ def process_input_csv(
 
                 # Helper to safely get and convert size fields
                 def get_size(field_name: str) -> float:
-                    val_str = row.get(field_name, '0')
+                    val_str = row.get(field_name, "0")
                     try:
                         return float(val_str)
                     except (ValueError, TypeError):
-                        logging.warning(f"Invalid value '{val_str}' for {field_name} in namespace {ns_name}, using 0.")
+                        logging.warning(
+                            f"Invalid value '{val_str}' for {field_name} in namespace {ns_name}, using 0."
+                        )
                         return 0.0
 
                 pvc_gib = get_size("TotalPVCCapacityGiB")
@@ -189,13 +196,15 @@ def process_input_csv(
                 # Calculate weight
                 weight = (pvc_gib * weight_pvc) + (core_kib * weight_core) + (cr_kib * weight_cr)
 
-                namespaces_data.append({
-                    "name": ns_name,
-                    "weight": weight,
-                    "pvc_gib": pvc_gib,
-                    "core_kib": core_kib,
-                    "cr_kib": cr_kib
-                })
+                namespaces_data.append(
+                    {
+                        "name": ns_name,
+                        "weight": weight,
+                        "pvc_gib": pvc_gib,
+                        "core_kib": core_kib,
+                        "cr_kib": cr_kib,
+                    }
+                )
     except FileNotFoundError:
         logging.error(f"Input CSV file not found: {input_csv_path}")
         raise
@@ -207,7 +216,9 @@ def process_input_csv(
     return namespaces_data
 
 
-def balance_namespaces_greedy(namespaces_data: List[Dict[str, Any]], num_groups: int) -> List[Dict[str, Any]]:
+def balance_namespaces_greedy(
+    namespaces_data: List[Dict[str, Any]], num_groups: int
+) -> List[Dict[str, Any]]:
     """Distributes namespaces into groups using a greedy algorithm based on weight."""
     if not namespaces_data:
         return []
@@ -219,15 +230,17 @@ def balance_namespaces_greedy(namespaces_data: List[Dict[str, Any]], num_groups:
     # Initialize groups
     groups: List[Dict[str, Any]] = []
     for i in range(num_groups):
-        groups.append({
-            "id": f"group_{i}",
-            "namespaces": [],
-            "namespace_count": 0,
-            "total_calculated_weight": 0.0,
-            "sum_pvc_gib": 0.0,
-            "sum_core_kib": 0.0,
-            "sum_cr_kib": 0.0,
-        })
+        groups.append(
+            {
+                "id": f"group_{i}",
+                "namespaces": [],
+                "namespace_count": 0,
+                "total_calculated_weight": 0.0,
+                "sum_pvc_gib": 0.0,
+                "sum_core_kib": 0.0,
+                "sum_cr_kib": 0.0,
+            }
+        )
     logging.info(f"Initialized {num_groups} empty groups.")
 
     # Apply greedy algorithm
@@ -255,7 +268,7 @@ def write_json_output(groups: List[Dict[str, Any]], output_json_path: str):
         json_dir = os.path.dirname(output_json_path)
         if json_dir:
             os.makedirs(json_dir, exist_ok=True)
-        with open(output_json_path, 'w', encoding='utf-8') as f:
+        with open(output_json_path, "w", encoding="utf-8") as f:
             json.dump(json_output_data, f, indent=2)
         logging.info(f"Successfully wrote JSON output to {output_json_path}")
     except OSError as e:
@@ -293,12 +306,7 @@ def output_summary(groups: List[Dict[str, Any]], output_summary_path: str, conso
         core_str = f"{group['sum_core_kib']:.2f}"
         cr_str = f"{group['sum_cr_kib']:.2f}"
         summary_table.add_row(
-            group["id"],
-            str(group["namespace_count"]),
-            weight_str,
-            pvc_str,
-            core_str,
-            cr_str
+            group["id"], str(group["namespace_count"]), weight_str, pvc_str, core_str, cr_str
         )
         line = f"{group['id']:<12} {group['namespace_count']:>12} {weight_str:>18} {pvc_str:>18} {core_str:>18} {cr_str:>18}"
         summary_lines.append(line)
@@ -312,7 +320,7 @@ def output_summary(groups: List[Dict[str, Any]], output_summary_path: str, conso
         summary_dir = os.path.dirname(output_summary_path)
         if summary_dir:
             os.makedirs(summary_dir, exist_ok=True)
-        with open(output_summary_path, 'w', encoding='utf-8') as f:
+        with open(output_summary_path, "w", encoding="utf-8") as f:
             f.write("Namespace Group Balancing Summary\n")
             f.write("=" * len(header) + "\n")
             for line in summary_lines:
@@ -321,11 +329,15 @@ def output_summary(groups: List[Dict[str, Any]], output_summary_path: str, conso
     except OSError as e:
         logging.error(f"Could not write summary file '{output_summary_path}': {e}")
         # Don't exit, just log the error and notify user
-        console.print(f"[bold red]Error:[/bold red] Could not write summary file '{output_summary_path}': {e}")
+        console.print(
+            f"[bold red]Error:[/bold red] Could not write summary file '{output_summary_path}': {e}"
+        )
     except Exception:  # Remove unused 'e' variable
         logging.exception(f"Unexpected error writing summary file: {output_summary_path}")
         # Print generic error to console, details are in the log
-        console.print("[bold red]Error:[/bold red] Unexpected error writing summary file. See log for details.")
+        console.print(
+            "[bold red]Error:[/bold red] Unexpected error writing summary file. See log for details."
+        )
 
 
 if __name__ == "__main__":

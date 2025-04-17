@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import sys
+import datetime  # Add datetime import
 from typing import Any, Dict, List
 
 import click
@@ -83,6 +84,7 @@ def setup_logging(log_file_path: str):
 )
 @click.option(
     "--output-summary",
+    dest="output_summary_path",
     type=click.Path(dir_okay=False, writable=True),
     default="logs/schedule_summary.txt",
     show_default=True,
@@ -95,21 +97,43 @@ def main(
     weight_core: float,
     weight_cr: float,
     output_json: str,
-    output_summary: str,
+    output_summary_path: str,
 ):
     """Balances namespaces from an input CSV into a specified number of groups
     based on calculated weights derived from resource sizes, outputting a JSON
     file and a summary text file/console output.
     """
-    setup_logging("logs/schedule_balancer.log")
+    # Generate timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # --- Setup Logging with Timestamp ---
+    log_dir = os.path.dirname("logs/schedule_balancer.log")
+    log_filename = f"schedule_balancer_{timestamp}.log"
+    log_file_path = os.path.join(log_dir, log_filename)
+    setup_logging(log_file_path)  # Use timestamped log file path
+
     logging.info("Schedule balancer started.")
     logging.info(f"Input CSV: {input_csv}")
     logging.info(f"Number of groups: {num_groups}")
     logging.info(f"Weights: PVC={weight_pvc}, Core={weight_core}, CR={weight_cr}")
-    logging.info(f"Output JSON: {output_json}")
-    logging.info(f"Output Summary: {output_summary}")
+    logging.info(f"Output JSON path pattern: {output_json}")
+    logging.info(f"Output Summary path pattern: {output_summary_path}")
 
     console = Console()
+
+    # --- Construct Timestamped Output Paths ---
+    output_json_dir, output_json_filename = os.path.split(output_json)
+    output_json_name, output_json_ext = os.path.splitext(output_json_filename)
+    timestamped_json_filename = f"{output_json_name}_{timestamp}{output_json_ext}"
+    final_output_json_path = os.path.join(output_json_dir, timestamped_json_filename)
+
+    output_summary_dir, output_summary_filename = os.path.split(output_summary_path)
+    output_summary_name, output_summary_ext = os.path.splitext(output_summary_filename)
+    timestamped_summary_filename = f"{output_summary_name}_{timestamp}{output_summary_ext}"
+    final_output_summary_path = os.path.join(output_summary_dir, timestamped_summary_filename)
+
+    logging.info(f"Final Output JSON: {final_output_json_path}")
+    logging.info(f"Final Output Summary: {final_output_summary_path}")
 
     if num_groups <= 0:
         logging.error("Number of groups must be positive.")
@@ -133,10 +157,10 @@ def main(
         groups = balance_namespaces_greedy(namespaces_data, num_groups)
 
         # 3. Write JSON output
-        write_json_output(groups, output_json)
+        write_json_output(groups, final_output_json_path)  # Use timestamped path
 
         # 4. Output summary (console and file)
-        output_summary(groups, output_summary, console)
+        output_summary(groups, final_output_summary_path, console)  # Use timestamped path
 
     except ValueError as e:  # Catch specific error from process_input_csv
         # Ensure error is logged and printed
@@ -149,8 +173,10 @@ def main(
         sys.exit(1)
 
     console.print("\n[bold green]Balancing complete.[/bold green]")
-    console.print(f"Detailed group assignments saved to: {output_json}")
-    console.print(f"Summary saved to: {output_summary}")
+    console.print(
+        f"Detailed group assignments saved to: {final_output_json_path}"
+    )  # Use timestamped path
+    console.print(f"Summary saved to: {final_output_summary_path}")  # Use timestamped path
     logging.info("Schedule balancer finished.")
 
 

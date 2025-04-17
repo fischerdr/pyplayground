@@ -1,7 +1,6 @@
 ---
-description: 
+description: Enforces consistent code formatting using Black, the uncompromising Python code formatter, promoting readability and reducing diffs. Covers best practices related to Black's configuration, usage, and integrations.
 globs: **/*.py
-alwaysApply: false
 ---
 - Adopt Black as the primary code formatter for all Python projects.
 - Adhere to Black's default style guide for consistent formatting across projects.
@@ -124,7 +123,7 @@ repos:
 
 toml
 [tool.black]
-line-length = 100
+line-length = 88
 target-version = ['py38', 'py39', 'py310']
 include = '\.pyi?$'
 exclude = '''

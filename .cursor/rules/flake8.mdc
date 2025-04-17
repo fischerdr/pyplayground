@@ -1,7 +1,6 @@
 ---
-description: 
+description: Comprehensive guide for using Flake8 effectively in Python projects, covering code style, error prevention, security, testing, and optimization. It outlines best practices, patterns, and common pitfalls to help developers maintain high code quality and adherence to standards.
 globs: **/*.py
-alwaysApply: false
 ---
 # Flake8 Best Practices: A Comprehensive Guide
 
@@ -213,7 +212,7 @@ Flake8 does not directly optimize code, but it encourages practices that lead to
 ## 6. Common Pitfalls and Gotchas
 
 ### Frequent Mistakes
-- **Spacing in comments** Make sure to at least have two spaces before inline comment
+
 - **Ignoring Flake8 warnings:** Ignoring Flake8 warnings can lead to code quality issues and potential errors.
 - **Over-reliance on `# noqa`:** Overusing `# noqa` comments can mask underlying problems in your code.
 - **Inconsistent coding style:** Inconsistent coding style can make code harder to read and understand.

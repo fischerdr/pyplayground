@@ -557,32 +557,32 @@ def main(
     try:
         with lock:
             logging.info(f"Acquired lock on {lock_path}")
-            with open(
-                final_output_file, mode="w", newline="", encoding="utf-8"
-            ) as csvfile:  # Added encoding
-                # Use restval to handle missing keys gracefully if some namespaces lack certain resources/sizes
-                # Add extrasaction='ignore' to handle cases where data has more fields than headers (e.g., --sizes-only)
-                writer = csv.DictWriter(
-                    csvfile, fieldnames=ordered_fieldnames, restval="0", extrasaction="ignore"
-                )
-                writer.writeheader()
-                writer.writerows(all_resources_data)  # Use writerows for efficiency
-                logging.info(
-                    f"Successfully wrote data for {len(all_resources_data)} namespaces to {final_output_file}"
-                )
-    except IOError as e:
-        logging.error(f"Error writing to output file {final_output_file}: {e}")
-    except Exception as e:
-        logging.error(f"An unexpected error occurred during file writing: {e}")
+            try:
+                with open(
+                    final_output_file, mode="w", newline="", encoding="utf-8"
+                ) as csvfile:  # Added encoding
+                    # Use restval to handle missing keys gracefully if some namespaces lack certain resources/sizes
+                    # Add extrasaction='ignore' to handle cases where data has more fields than headers (e.g., --sizes-only)
+                    writer = csv.DictWriter(
+                        csvfile, fieldnames=ordered_fieldnames, restval="0", extrasaction="ignore"
+                    )
+                    writer.writeheader()
+                    writer.writerows(all_resources_data)  # Use writerows for efficiency
+                    logging.info(
+                        f"Successfully wrote data for {len(all_resources_data)} namespaces to {final_output_file}"
+                    )
+            except IOError as e:
+                logging.error(f"Error writing to output file {final_output_file}: {e}")
+            except Exception as e:
+                logging.error(f"An unexpected error occurred during file writing: {e}")
     finally:
-        # Clean up lock file if it exists (optional, FileLock might handle this)
-        # import os
-        # if os.path.exists(lock_path):
-        #     try:
-        #         os.remove(lock_path)
-        #     except OSError as e_rm:
-        #         logging.warning(f"Could not remove lock file {lock_path}: {e_rm}")
-        pass  # FileLock should release on exit
+        # Ensure the lock file is removed after the lock is released
+        if os.path.exists(lock_path):
+            try:
+                os.remove(lock_path)
+                logging.debug(f"Removed lock file: {lock_path}")
+            except OSError as e_rm:
+                logging.warning(f"Could not remove lock file {lock_path}: {e_rm}")
 
     end_time = time.monotonic()  # Record end time
     duration = end_time - start_time

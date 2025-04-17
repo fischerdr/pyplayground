@@ -7,15 +7,17 @@ similar to the pxbackup_list_all_backups.yml playbook.
 """
 
 import logging
-from typing import Dict, List, Optional, Any
+import re  # Import re at the top level
+from typing import Any, Dict, List, Optional
+
 import click
 import requests
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
-import re  # Import re at the top level
-from dotenv import load_dotenv
-from utils.px_api import PXBackupClient, generate_token  # Import shared utilities
+
 from utils.logging_utils import setup_logging  # Import the new logging setup function
+from utils.px_api import PXBackupClient, generate_token  # Import shared utilities
 
 # --- Logging Setup ---
 logger = logging.getLogger(__name__)
@@ -214,7 +216,9 @@ def inspect_backup(
         # directly or nested under a key like 'backup'. Let's check common patterns.
         if "backup" in response:
             backup_details = response["backup"]
-        elif isinstance(response, dict) and response:  # Check if the response itself is the backup dict
+        elif (
+            isinstance(response, dict) and response
+        ):  # Check if the response itself is the backup dict
             backup_details = response
         else:
             logger.error(f"Unexpected response structure for inspect backup: {response}")
@@ -230,9 +234,7 @@ def inspect_backup(
     except requests.exceptions.RequestException as e:
         # Check for 404 explicitly
         if hasattr(e, "response") and e.response is not None and e.response.status_code == 404:
-            logger.error(
-                f"Backup not found: {backup_name} (UID: {backup_uid}) - API returned 404"
-            )
+            logger.error(f"Backup not found: {backup_name} (UID: {backup_uid}) - API returned 404")
             raise ValueError(f"Backup not found: {backup_name} (UID: {backup_uid})") from e
         logger.error(f"Failed to inspect backup {backup_name}: {e}")
         raise  # Re-raise other request exceptions
@@ -248,7 +250,10 @@ def inspect_backup(
     help="PX-Backup API URL (e.g., px-backup.example.com). Env: PX_BACKUP_API_URL",
 )
 @click.option(
-    "--org-id", required=True, envvar="PX_BACKUP_ORG_ID", help="Organization ID. Env: PX_BACKUP_ORG_ID"
+    "--org-id",
+    required=True,
+    envvar="PX_BACKUP_ORG_ID",
+    help="Organization ID. Env: PX_BACKUP_ORG_ID",
 )
 @click.option(
     "--token",
@@ -483,10 +488,119 @@ def main(
             try:
                 backup_details = inspect_backup(client, org_id, backup_name, backup_uid)
                 console.print(f"Details for Backup: {backup_name} (UID: {backup_uid})")
-                # Use rich.print for pretty-printing the dictionary
-                from rich import print as rprint
 
-                rprint(backup_details)
+                # Create a table for the detailed output
+                table = Table(
+                    title=f"Backup Details: {backup_name}",
+                    show_header=False,
+                    box=None,
+                    padding=(0, 2),
+                )
+                table.add_column("Field", style="bold cyan")
+                table.add_column("Value")
+
+                # Extract data, handling potential missing keys
+                metadata = backup_details.get("metadata", {})
+                backup_info = backup_details.get("backup_info", {})
+                cluster_ref = backup_info.get("cluster_ref", {})
+                location_ref = backup_info.get("backup_location_ref", {})
+                backup_type_info = backup_info.get("backup_type", {})
+                status_info = backup_info.get("status", {})
+                schedule_ref = backup_info.get("schedule_ref", {})
+                namespaces = backup_info.get("namespaces", [])
+                volumes = backup_info.get("volumes", [])
+
+                # Safely access nested fields
+                backup_type_str = (
+                    backup_type_info.get("type", "N/A")
+                    if isinstance(backup_type_info, dict)
+                    else "N/A"
+                )
+                status_str = (
+                    status_info.get("status", "N/A") if isinstance(status_info, dict) else "N/A"
+                )
+
+                # --- Populate the main details table ---
+                table.add_row("Name:", metadata.get("name", "N/A"))
+                table.add_row("UID:", metadata.get("uid", "N/A"))
+                table.add_row("Status:", status_str)
+                table.add_row("Backup Type:", backup_type_str)
+                table.add_row("Cluster:", cluster_ref.get("name", "N/A"))
+                table.add_row("Backup Location:", location_ref.get("name", "N/A"))
+                table.add_row("Namespace Count:", str(len(namespaces)))
+                table.add_row("Created Time:", metadata.get("create_time", "N/A"))
+                table.add_row("Start Time:", backup_info.get("start_time", "N/A"))
+                table.add_row("Completion Time:", backup_info.get("completion_time", "N/A"))
+                schedule_name = schedule_ref.get("name")
+                if schedule_name:
+                    table.add_row("Schedule Name:", schedule_name)
+
+                # --- Add Volume Status Summary to main table ---
+                if volumes:
+                    from collections import Counter
+
+                    volume_statuses = Counter(
+                        vol.get("status", {}).get("status", "Unknown") for vol in volumes
+                    )
+                    table.add_row("", "")  # Add a separator line
+                    table.add_row("[bold]Volume Status Summary:[/bold]", "")
+                    for status, count in sorted(volume_statuses.items()):
+                        table.add_row(f"  {status}:", str(count))
+                else:
+                    table.add_row("Volumes:", "0")
+
+                console.print(table)  # Print the main details table
+
+                # --- Create and Print Detailed Volume Table (if volumes exist) ---
+                if volumes:
+                    volume_table = Table(
+                        title="Included Volumes",
+                        show_header=True,
+                        header_style="bold magenta",
+                        padding=(0, 1),
+                    )
+                    volume_table.add_column("Name", style="dim", overflow="fold")
+                    volume_table.add_column("Namespace")
+                    volume_table.add_column("PVC")
+                    volume_table.add_column("Status")
+                    volume_table.add_column("Reason", overflow="fold")
+
+                    # Define custom sort order: Pending/Failed first
+                    status_order = {
+                        "Pending": 0,  # Example statuses, adjust based on actual PX-Backup values
+                        "Failed": 1,
+                        "InProgress": 2,
+                        "Successful": 3,
+                        "Unknown": 4,
+                        # Add other potential statuses here
+                    }
+
+                    # Sort volumes based on status
+                    def get_status_sort_key(volume):
+                        status = volume.get("status", {}).get("status", "Unknown")
+                        return status_order.get(status, 99)  # Default to end if status unknown
+
+                    sorted_volumes = sorted(volumes, key=get_status_sort_key)
+
+                    for vol in sorted_volumes:
+                        vol_status_info = vol.get("status", {})
+                        vol_status = vol_status_info.get("status", "N/A")
+                        vol_reason = vol_status_info.get("reason", "")
+
+                        volume_table.add_row(
+                            vol.get("name", "N/A"),
+                            vol.get("namespace", "N/A"),
+                            vol.get("pvc", "N/A"),
+                            vol_status,
+                            vol_reason,
+                        )
+                    console.print("")  # Add space before volume table
+                    console.print(volume_table)
+
+                # Optionally print the full details too if needed for debugging or completeness
+                # from rich import print as rprint
+                # rprint(backup_details)
+
             except ValueError as e:  # Catch the specific error for not found
                 # Use ClickException for error handling
                 raise click.ClickException(f"[bold red]Error:[/bold red] {e}")
@@ -497,7 +611,9 @@ def main(
     except click.ClickException:
         raise  # Re-raise Click exceptions to let Click handle them
     except Exception as e:
-        logger.exception("An unexpected error occurred.")  # Log the full traceback for unexpected errors
+        logger.exception(
+            "An unexpected error occurred."
+        )  # Log the full traceback for unexpected errors
         # Use ClickException for error handling
         raise click.ClickException(f"[bold red]An unexpected error occurred:[/bold red] {e}")
 

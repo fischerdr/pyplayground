@@ -6,7 +6,8 @@ Shared PX-Backup API Client and Authentication Utilities.
 """
 
 import logging
-from typing import Dict, Optional, Any
+from typing import Any, Dict, Optional
+
 import requests
 
 logger = logging.getLogger(__name__)
@@ -25,19 +26,22 @@ class PXBackupClient:
             validate_certs: Whether to validate SSL certificates. Defaults to True.
         """
         # Add protocol if not present
-        if not api_url.startswith(('http://', 'https://')):
+        if not api_url.startswith(("http://", "https://")):
             # Defaulting to https based on playbook usage
             api_url = f"https://{api_url}"
             logger.info(f"Protocol not specified, assuming HTTPS: {api_url}")
-        self.api_url = api_url.rstrip('/')
-        self.headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f"Bearer {token}"
-        }
+        self.api_url = api_url.rstrip("/")
+        self.headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
         self.validate_certs = validate_certs
         logger.debug(f"API Client initialized for {self.api_url}")
 
-    def make_request(self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def make_request(
+        self,
+        method: str,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """
         Make HTTP request to PX-Backup API.
 
@@ -55,7 +59,9 @@ class PXBackupClient:
             ValueError: If the response is not valid JSON.
         """
         url = f"{self.api_url}/{endpoint.lstrip('/')}"
-        logger.debug(f"Making {method} request to {url} with params: {params}, data: {data is not None}")
+        logger.debug(
+            f"Making {method} request to {url} with params: {params}, data: {data is not None}"
+        )
 
         try:
             response = requests.request(
@@ -64,7 +70,7 @@ class PXBackupClient:
                 headers=self.headers,
                 json=data,
                 params=params,
-                verify=self.validate_certs
+                verify=self.validate_certs,
             )
             logger.debug(f"Response status code: {response.status_code}")
             response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
@@ -80,7 +86,9 @@ class PXBackupClient:
                 error_msg = f"{error_msg} - Response: {http_err.response.text}"
             logger.error(error_msg)
             # Re-raise as RequestException attaching the original response
-            raise requests.exceptions.RequestException(error_msg, response=http_err.response) from http_err
+            raise requests.exceptions.RequestException(
+                error_msg, response=http_err.response
+            ) from http_err
         except requests.exceptions.RequestException as req_err:
             # Handle other request errors (connection, timeout, etc.)
             logger.error(f"Request failed: {req_err}")
@@ -91,7 +99,9 @@ class PXBackupClient:
             raise ValueError(f"Invalid JSON received from API: {response.text}") from json_err
 
 
-def generate_token(auth_url: str, client_id: str, username: str, password: str, validate_certs: bool) -> str:
+def generate_token(
+    auth_url: str, client_id: str, username: str, password: str, validate_certs: bool
+) -> str:
     """
     Requests a bearer token from the authentication endpoint.
 
@@ -109,20 +119,20 @@ def generate_token(auth_url: str, client_id: str, username: str, password: str, 
         requests.exceptions.RequestException: If the token request fails.
         ValueError: If the access token is not found in the response.
     """
-    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
     # Add protocol if not present (defaulting to https)
-    if not auth_url.startswith(('http://', 'https://')):
+    if not auth_url.startswith(("http://", "https://")):
         auth_url = f"https://{auth_url}"
         logger.info(f"Auth URL protocol not specified, assuming HTTPS: {auth_url}")
 
     # Endpoint confirmed from auth.py
     url = f"{auth_url.rstrip('/')}/auth/realms/master/protocol/openid-connect/token"
     data = {
-        'grant_type': 'password',  # Hardcoded based on auth.py
-        'client_id': client_id,
-        'username': username,
-        'password': password,
+        "grant_type": "password",  # Hardcoded based on auth.py
+        "client_id": client_id,
+        "username": username,
+        "password": password,
         # 'token-duration' is not included here, using server default
     }
     logger.info(f"Requesting token from {url} for user {username}")
@@ -131,7 +141,7 @@ def generate_token(auth_url: str, client_id: str, username: str, password: str, 
         logger.debug(f"Token response status code: {response.status_code}")
         response.raise_for_status()
         token_response = response.json()
-        access_token = token_response.get('access_token')
+        access_token = token_response.get("access_token")
         if not access_token:
             raise ValueError("Access token not found in authentication response.")
         logger.info("Successfully obtained access token.")
@@ -144,7 +154,9 @@ def generate_token(auth_url: str, client_id: str, username: str, password: str, 
         except ValueError:
             error_msg = f"{error_msg} - Response: {http_err.response.text}"
         logger.error(error_msg)
-        raise requests.exceptions.RequestException(error_msg, response=http_err.response) from http_err
+        raise requests.exceptions.RequestException(
+            error_msg, response=http_err.response
+        ) from http_err
     except requests.exceptions.RequestException as req_err:
         logger.error(f"Token request failed: {req_err}")
         raise

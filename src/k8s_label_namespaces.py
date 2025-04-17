@@ -39,7 +39,7 @@ def setup_logging(log_file_path: str):
     # Console Handler (INFO level and above for this script for better feedback)
     console_handler = logging.StreamHandler(sys.stderr)  # Log to stderr
     console_handler.setFormatter(log_formatter_console)
-    console_handler.setLevel(logging.INFO)  # Show info on console
+    console_handler.setLevel(logging.ERROR)  # Show only ERRORS (and CRITICAL) on console
     root_logger.addHandler(console_handler)
 
 

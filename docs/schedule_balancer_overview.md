@@ -1,4 +1,4 @@
-# Namespace Schedule Balancer Script (`schedule_balancer.py`)
+# Namespace Schedule Balancer Script (`k8s_schedule_balancer.py`)
 
 ## Purpose
 
@@ -50,7 +50,7 @@ The effectiveness of the balancing depends heavily on the chosen weight multipli
 ## Usage Example
 
 ```bash
-python src/schedule_balancer.py \
+python src/k8s_schedule_balancer.py \
     --input-csv data/namespace_sizes.csv \
     --num-groups 5 \
     --weight-pvc-gib 1048576 \
@@ -66,4 +66,4 @@ The script includes error handling for:
 * Invalid CSV formats (e.g., missing "Namespace" column).
 * Non-numeric or missing size data (defaults to 0 with a warning).
 * Issues writing output files.
-Errors during critical processing (CSV reading, JSON writing) will cause the script to exit with an error code, while errors writing the non-essential summary text file will be logged and reported but allow the script to finish. Log messages are written to `logs/schedule_balancer.log`.
+Errors during critical processing (CSV reading, JSON writing) will cause the script to exit with an error code, while errors writing the non-essential summary text file will be logged and reported but allow the script to finish. Log messages are written to `logs/k8s_schedule_balancer.log`.

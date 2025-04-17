@@ -153,7 +153,7 @@ def get_namespaces_with_label(v1_api: client.CoreV1Api, label_key: str) -> Optio
     "--input-json",
     required=True,
     type=click.Path(exists=True, dir_okay=False, readable=True),
-    help="Path to the LATEST schedule groups JSON file from schedule_balancer.py.",
+    help="Path to the LATEST schedule groups JSON file from k8s_schedule_balancer.py.",
 )
 @click.option(
     "--config-yaml",

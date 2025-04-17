@@ -113,7 +113,7 @@ def patch_namespace_label(
     "--input-json",
     required=True,
     type=click.Path(exists=True, dir_okay=False, readable=True),
-    help="Path to the schedule groups JSON file from schedule_balancer.py.",
+    help="Path to the schedule groups JSON file from k8s_schedule_balancer.py.",
 )
 @click.option(
     "--config-yaml",

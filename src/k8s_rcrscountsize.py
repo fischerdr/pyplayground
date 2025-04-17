@@ -16,6 +16,7 @@ from kubernetes.client.rest import ApiException
 
 # Import utilities from k8s_utils
 from utils.k8s_utils import (
+    format_duration,
     list_all_namespaces,
     load_kube_config_auto,
     namespace_exists,
@@ -585,7 +586,7 @@ def main(
 
     end_time = time.monotonic()  # Record end time
     duration = end_time - start_time
-    logging.info(f"Total execution time: {duration:.2f} seconds")  # Log duration
+    logging.info(f"Total execution time: {format_duration(duration)}")  # Use the helper function
     logging.info("Script execution finished.")  # Goes to file log
 
 

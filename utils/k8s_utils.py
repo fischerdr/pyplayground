@@ -812,3 +812,38 @@ def namespace_exists(namespace_name: str, api_client: Optional[ApiClient] = None
     except Exception as e:
         logger.error(f"Unexpected error checking namespace {namespace_name}: {e}")
         return False
+
+
+def format_duration(seconds: float) -> str:
+    """Formats a duration in seconds into a human-readable string (D H M S)."""
+    if seconds < 0:
+        return "Invalid duration"
+    if seconds == 0:
+        return "0 seconds"
+
+    # Calculate components
+    total_seconds = int(seconds)
+    days, remainder = divmod(total_seconds, 86400)  # 60 * 60 * 24
+    hours, remainder = divmod(remainder, 3600)  # 60 * 60
+    minutes, secs = divmod(remainder, 60)
+
+    # Build the string
+    parts = []
+    if days > 0:
+        parts.append(f"{days} day{'s' if days != 1 else ''}")
+    if hours > 0:
+        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    if minutes > 0:
+        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+    # Always show seconds if > 0 or if it's the only unit
+    if secs > 0 or not parts:
+        # Add fractional part if original input was float and < 60s
+        if seconds < 60 and seconds != float(total_seconds):
+            sec_str = f"{seconds:.2f}"
+        else:
+            sec_str = str(secs)
+        parts.append(
+            f"{sec_str} second{'s' if secs != 1 or (seconds < 60 and seconds != 1.0) else ''}"
+        )
+
+    return ", ".join(parts)

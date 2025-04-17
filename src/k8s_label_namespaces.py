@@ -1,8 +1,8 @@
+import datetime
 import json
 import logging
 import os
 import sys
-import datetime
 from typing import Any, Dict, Optional
 
 import click
@@ -46,7 +46,7 @@ def setup_logging(log_file_path: str):
 def load_json_data(file_path: str) -> Optional[Dict[str, Any]]:
     """Loads JSON data from a file."""
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         logging.error(f"Input JSON file not found: {file_path}")
@@ -62,7 +62,7 @@ def load_json_data(file_path: str) -> Optional[Dict[str, Any]]:
 def load_yaml_config(file_path: str) -> Optional[Dict[str, Any]]:
     """Loads YAML configuration from a file."""
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
     except FileNotFoundError:
         logging.error(f"Configuration YAML file not found: {file_path}")
@@ -83,13 +83,7 @@ def patch_namespace_label(
     dry_run: bool = False,
 ) -> bool:
     """Applies a single label to a namespace using patching."""
-    patch_body = {
-        "metadata": {
-            "labels": {
-                label_key: label_value
-            }
-        }
-    }
+    patch_body = {"metadata": {"labels": {label_key: label_value}}}
 
     action = f"Label namespace '{namespace_name}' with '{label_key}={label_value}'"
     if dry_run:
@@ -105,7 +99,9 @@ def patch_namespace_label(
         if e.status == 404:
             logging.error(f"Namespace '{namespace_name}' not found. Cannot apply label.")
         else:
-            logging.error(f"Failed to patch namespace '{namespace_name}': {e.status} - {e.reason} - {e.body}")
+            logging.error(
+                f"Failed to patch namespace '{namespace_name}': {e.status} - {e.reason} - {e.body}"
+            )
         return False
     except Exception as e:
         logging.exception(f"Unexpected error patching namespace '{namespace_name}': {e}")
@@ -208,13 +204,17 @@ def main(
 
         if label_value is None:
             if group_id not in unmapped_groups:
-                logging.warning(f"No label mapping found for group '{group_id}'. Skipping namespaces in this group.")
+                logging.warning(
+                    f"No label mapping found for group '{group_id}'. Skipping namespaces in this group."
+                )
                 unmapped_groups.add(group_id)
             skipped_count += len(namespaces)
             continue  # Skip this group
 
         if not isinstance(label_value, str):
-            logging.warning(f"Invalid label value '{label_value}' defined for group '{group_id}' in YAML (must be a string). Skipping.")
+            logging.warning(
+                f"Invalid label value '{label_value}' defined for group '{group_id}' in YAML (must be a string). Skipping."
+            )
             unmapped_groups.add(group_id)  # Treat as unmapped
             skipped_count += len(namespaces)
             continue
@@ -223,13 +223,13 @@ def main(
 
         for ns_name in namespaces:
             if not isinstance(ns_name, str) or not ns_name:
-                logging.warning(f"Skipping invalid namespace name '{ns_name}' in group '{group_id}'.")
+                logging.warning(
+                    f"Skipping invalid namespace name '{ns_name}' in group '{group_id}'."
+                )
                 skipped_count += 1
                 continue
 
-            success = patch_namespace_label(
-                v1_api, ns_name, label_key, label_value, dry_run
-            )
+            success = patch_namespace_label(v1_api, ns_name, label_key, label_value, dry_run)
             if success:
                 labeled_count += 1
             else:
@@ -242,10 +242,14 @@ def main(
         logging.info(f"DRY RUN: Would have attempted to label {labeled_count} namespaces.")
     else:
         logging.info(f"Successfully labeled: {labeled_count} namespaces.")
-    logging.info(f"Skipped (invalid name/group not mapped/invalid mapping): {skipped_count} namespaces.")
+    logging.info(
+        f"Skipped (invalid name/group not mapped/invalid mapping): {skipped_count} namespaces."
+    )
     logging.info(f"Errors during patching: {error_count} namespaces.")
     if unmapped_groups:
-        logging.warning(f"Groups found in JSON but not in YAML mapping: {', '.join(sorted(list(unmapped_groups)))}")
+        logging.warning(
+            f"Groups found in JSON but not in YAML mapping: {', '.join(sorted(list(unmapped_groups)))}"
+        )
 
     if error_count > 0 and not dry_run:
         logging.error("Completed with errors. Please check the logs above for details.")

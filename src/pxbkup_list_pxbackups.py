@@ -20,6 +20,7 @@ from rich.table import Table
 
 from utils.logging_utils import setup_logging  # Import the new logging setup function
 from utils.px_api import PXBackupClient, generate_token  # Import shared utilities
+from utils.report_utils import save_inspect_backup_report  # Add import for the new function
 from utils.report_utils import (  # Import the summary utility, ensure it's correctly named
     save_volume_issue_report,
 )
@@ -553,12 +554,20 @@ def main(
                     )
                     table.add_row("", "")  # Add a separator line
                     table.add_row("[bold]Volume Status Summary:[/bold]", "")
+                    # Show all statuses in the console summary
                     for status, count in sorted(volume_statuses.items()):
                         table.add_row(f"  {status}:", str(count))
                 else:
                     table.add_row("Volumes:", "0")
 
                 console.print(table)  # Print the main details table
+
+                # --- Save Detailed Inspect Report --- #
+                # Pass the full backup_details dictionary to the new report function
+                save_inspect_backup_report(
+                    backup_details=backup_details,
+                    script_name=script_base_name,
+                )
 
                 # --- Create and Print Detailed Volume Table (if volumes exist) ---
                 if volumes:
@@ -598,7 +607,7 @@ def main(
                         vol_reason = vol_status_info.get("reason", "")
 
                         if (
-                            vol_status != "Successful"
+                            vol_status != "Success"
                         ):  # Adjust condition if needed based on actual status names
                             non_successful_volumes.append(
                                 {

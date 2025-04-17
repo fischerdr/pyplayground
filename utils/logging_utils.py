@@ -130,6 +130,3 @@ def get_logger(name: str) -> logging.Logger:
     # Removed optional level setting to rely on root config
     logger = logging.getLogger(name)
     return logger
-
-
-# Removed get_log_files as it's no longer relevant with a single log file.

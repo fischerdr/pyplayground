@@ -15,6 +15,7 @@ DEFAULT_LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
 def setup_logging(
     level: Union[str, int] = logging.INFO,
     log_dir: Optional[Union[str, Path]] = DEFAULT_LOG_DIR,
+    script_name: str = "app_log",
     # Use specific formats similar to k8s script
     log_format_file: str = "%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s] - %(message)s",
     log_format_console: str = "%(levelname)s: %(message)s",
@@ -27,6 +28,7 @@ def setup_logging(
     Args:
         level: Logging level for the file handler (default: INFO). Console is fixed at WARNING.
         log_dir: Directory for log files (default: PROJECT_ROOT/logs).
+        script_name: Name of the script, used for the log filename (default: app_log).
         log_format_file: Log message format for the file handler.
         log_format_console: Log message format for the console handler.
         date_format: Date format for log messages.
@@ -78,7 +80,7 @@ def setup_logging(
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         # Generate a base filename, perhaps based on the main script?
         # For now, using a generic name. Consider passing script name if needed.
-        log_file_path = os.path.join(log_dir, f"app_log_{timestamp}.log")
+        log_file_path = os.path.join(log_dir, f"{script_name}_{timestamp}.log")
         try:
             file_handler = logging.FileHandler(log_file_path)
             file_handler.setLevel(level_int)  # Use the integer level here

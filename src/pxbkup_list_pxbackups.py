@@ -7,6 +7,7 @@ similar to the pxbackup_list_all_backups.yml playbook.
 """
 
 import logging
+import os  # Import os module
 import re  # Import re at the top level
 from typing import Any, Dict, List, Optional
 
@@ -18,6 +19,7 @@ from rich.table import Table
 
 from utils.logging_utils import setup_logging  # Import the new logging setup function
 from utils.px_api import PXBackupClient, generate_token  # Import shared utilities
+from utils.report_utils import save_summary_report  # Import the summary utility
 
 # --- Logging Setup ---
 logger = logging.getLogger(__name__)
@@ -338,8 +340,9 @@ def main(
     Authenticates using a provided token or generates one using username/password.
     """
     # --- Setup Logging --- #
+    script_base_name = os.path.basename(__file__).replace(".py", "")
     log_level = logging.DEBUG if debug else logging.INFO
-    setup_logging(level=log_level)
+    setup_logging(level=log_level, script_name=script_base_name)  # Pass script_name
     logger.debug("Logging setup complete.")
 
     # Remove manual level setting and basicConfig call
@@ -582,10 +585,24 @@ def main(
 
                     sorted_volumes = sorted(volumes, key=get_status_sort_key)
 
+                    non_successful_volumes = []
                     for vol in sorted_volumes:
                         vol_status_info = vol.get("status", {})
-                        vol_status = vol_status_info.get("status", "N/A")
+                        vol_status = vol_status_info.get("status", "Unknown")
                         vol_reason = vol_status_info.get("reason", "")
+
+                        if (
+                            vol_status != "Successful"
+                        ):  # Adjust condition if needed based on actual status names
+                            non_successful_volumes.append(
+                                {
+                                    "VolumeName": vol.get("name", "N/A"),
+                                    "Namespace": vol.get("namespace", "N/A"),
+                                    "PVC": vol.get("pvc", "N/A"),
+                                    "Status": vol_status,
+                                    "Reason": vol_reason,
+                                }
+                            )
 
                         volume_table.add_row(
                             vol.get("name", "N/A"),
@@ -596,6 +613,45 @@ def main(
                         )
                     console.print("")  # Add space before volume table
                     console.print(volume_table)
+
+                # --- Generate and Save Summary File (Simple Dict) ---
+                if backup_details:
+                    # Re-extract core details for the simple summary
+                    metadata = backup_details.get("metadata", {})
+                    backup_info = backup_details.get("backup_info", {})
+                    cluster_ref = backup_info.get("cluster_ref", {})
+                    location_ref = backup_info.get("backup_location_ref", {})
+                    backup_type_info = backup_info.get("backup_type", {})
+                    status_info = backup_info.get("status", {})
+                    schedule_ref = backup_info.get("schedule_ref", {})
+                    namespaces = backup_info.get("namespaces", [])
+                    volumes_for_count = backup_info.get("volumes", [])  # Use a different var name
+                    backup_type_str = (
+                        backup_type_info.get("type", "N/A")
+                        if isinstance(backup_type_info, dict)
+                        else "N/A"
+                    )
+                    status_str = (
+                        status_info.get("status", "N/A") if isinstance(status_info, dict) else "N/A"
+                    )
+                    schedule_name = schedule_ref.get("name", "N/A")
+
+                    summary_dict = {
+                        "Name": metadata.get("name", "N/A"),
+                        "UID": metadata.get("uid", "N/A"),
+                        "Status": status_str,
+                        "Backup Type": backup_type_str,
+                        "Cluster": cluster_ref.get("name", "N/A"),
+                        "Backup Location": location_ref.get("name", "N/A"),
+                        "Namespace Count": str(len(namespaces)),
+                        "Volume Count": str(len(volumes_for_count)),  # Use the count var
+                        "Created Time": metadata.get("create_time", "N/A"),
+                        "Start Time": backup_info.get("start_time", "N/A"),
+                        "Completion Time": backup_info.get("completion_time", "N/A"),
+                        "Schedule Name": schedule_name,
+                    }
+                    report_title = f"PX-Backup Backup Inspect Summary: {backup_name}"
+                    save_summary_report(summary_dict, report_title, script_base_name)
 
                 # Optionally print the full details too if needed for debugging or completeness
                 # from rich import print as rprint

@@ -6,6 +6,7 @@ Manages PX-Backup Clusters: listing and inspecting.
 """
 
 import logging
+import os  # Import os module
 from typing import Any, Dict, List, Optional
 
 import click
@@ -17,6 +18,7 @@ from rich.table import Table
 
 from utils.logging_utils import setup_logging
 from utils.px_api import PXBackupClient, generate_token
+from utils.report_utils import save_summary_report  # Import the summary utility
 
 # --- Logging Setup ---
 logger = logging.getLogger(__name__)
@@ -210,8 +212,9 @@ def main(
     Authenticates using a provided token or generates one using username/password.
     """
     # --- Setup Logging ---
+    script_base_name = os.path.basename(__file__).replace(".py", "")
     log_level = logging.DEBUG if debug else logging.INFO
-    setup_logging(level=log_level)
+    setup_logging(level=log_level, script_name=script_base_name)  # Pass script_name
     logger.debug("Logging setup complete.")
 
     console = Console()
@@ -316,6 +319,30 @@ def main(
                 )
                 console.print(f"Details for Cluster: {cluster_name} (UID: {cluster_uid})")
                 rprint(cluster_details)  # Pretty print the dictionary
+
+                # --- Generate and Save Summary File ---
+                if cluster_details:  # Ensure details were fetched
+                    metadata = cluster_details.get("metadata", {})
+                    status = cluster_details.get("status", "N/A")
+                    cluster_info = cluster_details.get("clusterinfo", {})
+                    status_str = status if isinstance(status, str) else status.get("status", "N/A")
+                    kube_source = "N/A"
+                    if cluster_details.get("kubeconfig"):
+                        kube_source = "Direct Input"
+                    elif cluster_info.get("service_token"):
+                        kube_source = "Service Token"
+
+                    summary_dict = {
+                        "Name": metadata.get("name", "N/A"),
+                        "UID": metadata.get("uid", "N/A"),
+                        "Status": status_str,
+                        "Kubeconfig Source": kube_source,
+                        "Cloud Type": cluster_details.get("cloud_type", "N/A"),
+                        "Created Time": metadata.get("create_time", "N/A"),
+                        # Add other relevant fields if needed
+                    }
+                    report_title = f"PX-Backup Cluster Inspect Summary: {cluster_name}"
+                    save_summary_report(summary_dict, report_title, script_base_name)
             except ValueError as e:  # Catch the specific error for not found
                 # Use ClickException for error handling
                 raise click.ClickException(f"[bold red]Error:[/bold red] {e}")

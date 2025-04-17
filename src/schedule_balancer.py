@@ -84,7 +84,6 @@ def setup_logging(log_file_path: str):
 )
 @click.option(
     "--output-summary",
-    dest="output_summary_path",
     type=click.Path(dir_okay=False, writable=True),
     default="logs/schedule_summary.txt",
     show_default=True,
@@ -97,7 +96,7 @@ def main(
     weight_core: float,
     weight_cr: float,
     output_json: str,
-    output_summary_path: str,
+    output_summary: str,
 ):
     """Balances namespaces from an input CSV into a specified number of groups
     based on calculated weights derived from resource sizes, outputting a JSON
@@ -117,7 +116,7 @@ def main(
     logging.info(f"Number of groups: {num_groups}")
     logging.info(f"Weights: PVC={weight_pvc}, Core={weight_core}, CR={weight_cr}")
     logging.info(f"Output JSON path pattern: {output_json}")
-    logging.info(f"Output Summary path pattern: {output_summary_path}")
+    logging.info(f"Output Summary path pattern: {output_summary}")
 
     console = Console()
 
@@ -127,7 +126,7 @@ def main(
     timestamped_json_filename = f"{output_json_name}_{timestamp}{output_json_ext}"
     final_output_json_path = os.path.join(output_json_dir, timestamped_json_filename)
 
-    output_summary_dir, output_summary_filename = os.path.split(output_summary_path)
+    output_summary_dir, output_summary_filename = os.path.split(output_summary)
     output_summary_name, output_summary_ext = os.path.splitext(output_summary_filename)
     timestamped_summary_filename = f"{output_summary_name}_{timestamp}{output_summary_ext}"
     final_output_summary_path = os.path.join(output_summary_dir, timestamped_summary_filename)
@@ -160,7 +159,7 @@ def main(
         write_json_output(groups, final_output_json_path)  # Use timestamped path
 
         # 4. Output summary (console and file)
-        output_summary(groups, final_output_summary_path, console)  # Use timestamped path
+        generate_and_write_summary(groups, final_output_summary_path, console)
 
     except ValueError as e:  # Catch specific error from process_input_csv
         # Ensure error is logged and printed
@@ -305,7 +304,9 @@ def write_json_output(groups: List[Dict[str, Any]], output_json_path: str):
         raise  # Re-raise to be caught by main
 
 
-def output_summary(groups: List[Dict[str, Any]], output_summary_path: str, console: Console):
+def generate_and_write_summary(
+    groups: List[Dict[str, Any]], output_summary_path: str, console: Console
+):
     """Generates summary, prints to console, and writes to text file."""
     logging.info(f"Generating summary for console and {output_summary_path}")
     if not groups:

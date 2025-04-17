@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional
 
 import click
 import requests
+
+import urllib3
 from dotenv import load_dotenv
 from rich import print as rprint  # For pretty printing dicts
 from rich.console import Console
@@ -18,7 +20,9 @@ from rich.table import Table
 
 from utils.logging_utils import setup_logging
 from utils.px_api import PXBackupClient, generate_token
-from utils.report_utils import save_summary_report  # Import the summary utility
+
+# Disable SSL warnings - due to self-signed certs
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Logging Setup ---
 logger = logging.getLogger(__name__)
@@ -263,7 +267,9 @@ def main(
                 # No need to exit here, just inform the user
                 return  # Exit cleanly if no clusters found
 
-            table = Table(title="PX-Backup Clusters", show_header=True, header_style="bold magenta")
+            table = Table(
+                title="PX-Backup Clusters", show_header=True, header_style="bold magenta"
+            )
             table.add_column("Name", style="dim", width=30, overflow="fold")
             table.add_column("UID", width=36)
             table.add_column("Status")
@@ -282,7 +288,9 @@ def main(
             for cluster in clusters:
                 metadata = cluster.get("metadata", {})
                 status = cluster.get("status", "N/A")  # Status might be top-level or nested
-                cluster_info = cluster.get("clusterinfo", {})  # Cluster Info might contain details
+                cluster_info = (
+                    cluster.get("clusterinfo", {})
+                )  # Cluster Info might contain details
 
                 # Determine status string
                 status_str = status if isinstance(status, str) else status.get("status", "N/A")
@@ -319,30 +327,6 @@ def main(
                 )
                 console.print(f"Details for Cluster: {cluster_name} (UID: {cluster_uid})")
                 rprint(cluster_details)  # Pretty print the dictionary
-
-                # --- Generate and Save Summary File ---
-                if cluster_details:  # Ensure details were fetched
-                    metadata = cluster_details.get("metadata", {})
-                    status = cluster_details.get("status", "N/A")
-                    cluster_info = cluster_details.get("clusterinfo", {})
-                    status_str = status if isinstance(status, str) else status.get("status", "N/A")
-                    kube_source = "N/A"
-                    if cluster_details.get("kubeconfig"):
-                        kube_source = "Direct Input"
-                    elif cluster_info.get("service_token"):
-                        kube_source = "Service Token"
-
-                    summary_dict = {
-                        "Name": metadata.get("name", "N/A"),
-                        "UID": metadata.get("uid", "N/A"),
-                        "Status": status_str,
-                        "Kubeconfig Source": kube_source,
-                        "Cloud Type": cluster_details.get("cloud_type", "N/A"),
-                        "Created Time": metadata.get("create_time", "N/A"),
-                        # Add other relevant fields if needed
-                    }
-                    report_title = f"PX-Backup Cluster Inspect Summary: {cluster_name}"
-                    save_summary_report(summary_dict, report_title, script_base_name)
             except ValueError as e:  # Catch the specific error for not found
                 # Use ClickException for error handling
                 raise click.ClickException(f"[bold red]Error:[/bold red] {e}")

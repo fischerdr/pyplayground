@@ -13,13 +13,19 @@ from typing import Any, Dict, List, Optional
 
 import click
 import requests
+import urllib3
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
 from utils.logging_utils import setup_logging  # Import the new logging setup function
 from utils.px_api import PXBackupClient, generate_token  # Import shared utilities
-from utils.report_utils import save_summary_report  # Import the summary utility
+from utils.report_utils import (  # Import the summary utility, ensure it's correctly named
+    save_volume_issue_report,
+)
+
+# Disable SSL warnings - due to self-signed certs
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Logging Setup ---
 logger = logging.getLogger(__name__)
@@ -614,44 +620,18 @@ def main(
                     console.print("")  # Add space before volume table
                     console.print(volume_table)
 
-                # --- Generate and Save Summary File (Simple Dict) ---
-                if backup_details:
-                    # Re-extract core details for the simple summary
-                    metadata = backup_details.get("metadata", {})
-                    backup_info = backup_details.get("backup_info", {})
-                    cluster_ref = backup_info.get("cluster_ref", {})
-                    location_ref = backup_info.get("backup_location_ref", {})
-                    backup_type_info = backup_info.get("backup_type", {})
-                    status_info = backup_info.get("status", {})
-                    schedule_ref = backup_info.get("schedule_ref", {})
-                    namespaces = backup_info.get("namespaces", [])
-                    volumes_for_count = backup_info.get("volumes", [])  # Use a different var name
-                    backup_type_str = (
-                        backup_type_info.get("type", "N/A")
-                        if isinstance(backup_type_info, dict)
-                        else "N/A"
-                    )
-                    status_str = (
-                        status_info.get("status", "N/A") if isinstance(status_info, dict) else "N/A"
-                    )
-                    schedule_name = schedule_ref.get("name", "N/A")
-
-                    summary_dict = {
-                        "Name": metadata.get("name", "N/A"),
-                        "UID": metadata.get("uid", "N/A"),
-                        "Status": status_str,
-                        "Backup Type": backup_type_str,
-                        "Cluster": cluster_ref.get("name", "N/A"),
-                        "Backup Location": location_ref.get("name", "N/A"),
-                        "Namespace Count": str(len(namespaces)),
-                        "Volume Count": str(len(volumes_for_count)),  # Use the count var
-                        "Created Time": metadata.get("create_time", "N/A"),
-                        "Start Time": backup_info.get("start_time", "N/A"),
-                        "Completion Time": backup_info.get("completion_time", "N/A"),
-                        "Schedule Name": schedule_name,
-                    }
-                    report_title = f"PX-Backup Backup Inspect Summary: {backup_name}"
-                    save_summary_report(summary_dict, report_title, script_base_name)
+                    # --- Generate and Save Non-Successful Volume Report ---
+                    if non_successful_volumes:
+                        save_volume_issue_report(
+                            backup_name=metadata.get("name", "N/A"),  # Use extracted metadata name
+                            backup_uid=metadata.get("uid", "N/A"),  # Use extracted metadata uid
+                            non_successful_volumes=non_successful_volumes,
+                            script_name=script_base_name,
+                        )
+                    else:
+                        logger.info(
+                            f"No non-successful volumes found for backup {backup_name} to include in report."
+                        )
 
                 # Optionally print the full details too if needed for debugging or completeness
                 # from rich import print as rprint

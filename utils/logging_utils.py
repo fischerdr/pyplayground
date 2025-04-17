@@ -15,110 +15,117 @@ DEFAULT_LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
 def setup_logging(
     level: Union[str, int] = logging.INFO,
     log_dir: Optional[Union[str, Path]] = DEFAULT_LOG_DIR,
-    log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    # Use specific formats similar to k8s script
+    log_format_file: str = "%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s] - %(message)s",
+    log_format_console: str = "%(levelname)s: %(message)s",
     date_format: str = "%Y-%m-%d %H:%M:%S",
     handlers: Optional[List[logging.Handler]] = None,
 ) -> None:
     """
-    Set up logging configuration with console and file output.
+    Set up logging configuration with console (errors only) and a single file output.
 
     Args:
-        level: Logging level (default: INFO)
-        log_dir: Directory for log files (default: PROJECT_ROOT/logs)
-        log_format: Log message format
-        date_format: Date format for log messages
-        handlers: Optional list of custom handlers
+        level: Logging level for the file handler (default: INFO). Console is fixed at WARNING.
+        log_dir: Directory for log files (default: PROJECT_ROOT/logs).
+        log_format_file: Log message format for the file handler.
+        log_format_console: Log message format for the console handler.
+        date_format: Date format for log messages.
+        handlers: Optional list of custom handlers to add.
     """
+    # Store the level name before potentially converting
     if isinstance(level, str):
-        level = getattr(logging, level.upper())
+        level_name = level.upper()
+        level_int = getattr(logging, level_name, logging.INFO)
+    else:  # Assumed int
+        level_int = level
+        level_name = logging.getLevelName(level_int)  # Getting name from int is okay here for init msg
+        # Alternatively, handle only expected int levels:
+        # level_name = 'DEBUG' if level_int == logging.DEBUG else 'INFO' # etc.
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(level)
+    # Set root logger level to the most verbose level needed (DEBUG if file is DEBUG)
+    root_logger.setLevel(min(level_int, logging.WARNING))  # Ensure root captures everything needed
 
-    formatter = logging.Formatter(fmt=log_format, datefmt=date_format)
+    file_formatter = logging.Formatter(fmt=log_format_file, datefmt=date_format)
+    console_formatter = logging.Formatter(fmt=log_format_console)
 
     # Clear any existing handlers
     root_logger.handlers.clear()
 
     # Create logs directory if it doesn't exist
     if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+        try:
+            os.makedirs(log_dir)
+        except OSError as e:
+            # Fallback gracefully if dir creation fails (e.g., permissions)
+            print(
+                f"Warning: Could not create log directory '{log_dir}': {e}. File logging disabled.",
+                file=sys.stderr,
+            )
+            log_dir = None  # Disable file logging
 
-    # Add console handlers for different levels
-    console_error_handler = logging.StreamHandler(sys.stderr)
-    console_error_handler.setLevel(logging.ERROR)
-    console_error_handler.setFormatter(formatter)
-    root_logger.addHandler(console_error_handler)
+    # Add Console Handler (WARNING level and above)
+    console_handler = logging.StreamHandler(sys.stderr)  # Explicitly use stderr for warnings/errors
+    console_handler.setLevel(logging.WARNING)
+    console_handler.setFormatter(console_formatter)
+    root_logger.addHandler(console_handler)
 
-    console_debug_handler = logging.StreamHandler(sys.stdout)
-    console_debug_handler.setLevel(logging.DEBUG)
-    console_debug_handler.setFormatter(formatter)
-    console_debug_handler.addFilter(lambda record: record.levelno < logging.ERROR)
-    root_logger.addHandler(console_debug_handler)
-
-    # Add file handlers for different levels
-    current_date = datetime.now().strftime("%Y-%m-%d")
-
-    # Debug and info log file
-    debug_log_file = os.path.join(log_dir, f"{current_date}_debug.log")
-    file_debug_handler = logging.FileHandler(debug_log_file)
-    file_debug_handler.setLevel(logging.DEBUG)
-    file_debug_handler.setFormatter(formatter)
-    root_logger.addHandler(file_debug_handler)
-
-    # Error log file (errors and above)
-    error_log_file = os.path.join(log_dir, f"{current_date}_error.log")
-    file_error_handler = logging.FileHandler(error_log_file)
-    file_error_handler.setLevel(logging.ERROR)
-    file_error_handler.setFormatter(formatter)
-    root_logger.addHandler(file_error_handler)
+    # Add File Handler (INFO or DEBUG based on level) if log_dir is valid
+    log_file_path = None
+    if log_dir:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Generate a base filename, perhaps based on the main script?
+        # For now, using a generic name. Consider passing script name if needed.
+        log_file_path = os.path.join(log_dir, f"app_log_{timestamp}.log")
+        try:
+            file_handler = logging.FileHandler(log_file_path)
+            file_handler.setLevel(level_int)  # Use the integer level here
+            file_handler.setFormatter(file_formatter)
+            root_logger.addHandler(file_handler)
+        except IOError as e:
+            print(
+                f"Warning: Could not open log file '{log_file_path}': {e}. File logging disabled.",
+                file=sys.stderr,
+            )
+            log_file_path = None  # Indicate file logging failed
 
     # Add custom handlers if provided
     if handlers:
         for handler in handlers:
             if not handler.formatter:
-                handler.setFormatter(formatter)
+                # Try to apply a sensible default formatter if none is set
+                if isinstance(handler, logging.FileHandler):
+                    handler.setFormatter(file_formatter)
+                else:
+                    handler.setFormatter(console_formatter)
             root_logger.addHandler(handler)
 
-    # Prevent propagation to avoid duplicate logs
+    # Prevent propagation to avoid duplicate logs if other loggers are configured
     root_logger.propagate = False
 
-    logger = get_logger(__name__)
-    logger.debug(f"Logging initialized. Debug log: {debug_log_file}, Error log: {error_log_file}")
+    # Log initialization message (will go to file if level allows, and console if WARNING+)
+    init_msg = f"Logging initialized. Level: {level_name}."  # Use the stored level name
+    if log_file_path:
+        init_msg += f" Log file: {log_file_path}"
+    else:
+        init_msg += " File logging disabled."
+    # Use a logger instance to emit the message
+    get_logger(__name__).info(init_msg)
 
 
-def get_logger(name: str, level: Optional[Union[str, int]] = None) -> logging.Logger:
+def get_logger(name: str) -> logging.Logger:
     """
-    Get a logger instance with optional level setting.
+    Get a logger instance.
 
     Args:
         name: Logger name
-        level: Optional logging level
 
     Returns:
         logging.Logger instance
     """
+    # Removed optional level setting to rely on root config
     logger = logging.getLogger(name)
-
-    if level is not None:
-        if isinstance(level, str):
-            level = getattr(logging, level.upper())
-        logger.setLevel(level)
-
     return logger
 
 
-def get_log_files() -> dict:
-    """
-    Get the paths to the current log files.
-
-    Returns:
-        Dictionary containing paths to debug and error log files
-    """
-    current_date = datetime.now().strftime("%Y-%m-%d")
-    log_dir = DEFAULT_LOG_DIR
-
-    return {
-        "debug": os.path.join(log_dir, f"{current_date}_debug.log"),
-        "error": os.path.join(log_dir, f"{current_date}_error.log"),
-    }
+# Removed get_log_files as it's no longer relevant with a single log file.

@@ -21,9 +21,6 @@ from rich.table import Table
 from utils.logging_utils import setup_logging  # Import the new logging setup function
 from utils.px_api import PXBackupClient, generate_token  # Import shared utilities
 from utils.report_utils import save_inspect_backup_report  # Add import for the new function
-from utils.report_utils import (  # Import the summary utility, ensure it's correctly named
-    save_volume_issue_report,
-)
 
 # Disable SSL warnings - due to self-signed certs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -628,23 +625,6 @@ def main(
                         )
                     console.print("")  # Add space before volume table
                     console.print(volume_table)
-
-                    # --- Generate and Save Non-Successful Volume Report ---
-                    if non_successful_volumes:
-                        save_volume_issue_report(
-                            backup_name=metadata.get("name", "N/A"),  # Use extracted metadata name
-                            backup_uid=metadata.get("uid", "N/A"),  # Use extracted metadata uid
-                            non_successful_volumes=non_successful_volumes,
-                            script_name=script_base_name,
-                        )
-                    else:
-                        logger.info(
-                            f"No non-successful volumes found for backup {backup_name} to include in report."
-                        )
-
-                # Optionally print the full details too if needed for debugging or completeness
-                # from rich import print as rprint
-                # rprint(backup_details)
 
             except ValueError as e:  # Catch the specific error for not found
                 # Use ClickException for error handling

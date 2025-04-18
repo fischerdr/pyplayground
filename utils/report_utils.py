@@ -159,7 +159,8 @@ def save_inspect_backup_report(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     # Sanitize backup name for filename
     sanitized_backup_name = "".join(c if c.isalnum() else "_" for c in backup_name)
-    report_filename = f"{script_name}_inspect_{sanitized_backup_name}_{timestamp}.txt"
+    # Adjust filename slightly for clarity (single inspect report)
+    report_filename = f"{script_name}_inspect_report_{sanitized_backup_name}_{timestamp}.txt"
     report_filepath = os.path.join(log_dir, report_filename)
 
     try:
@@ -231,6 +232,41 @@ def save_inspect_backup_report(
                 formatted_text += "  No volume status information available.\n"
         else:
             formatted_text += "  Volumes: 0\n"
+
+        # --- Add Detailed Non-Successful Volume List --- #
+        non_successful_volumes = []
+        if volumes:
+            for vol in volumes:
+                vol_status_info = vol.get("status", {})
+                vol_status = vol_status_info.get("status", "Unknown")
+                if vol_status != "Success":
+                    non_successful_volumes.append(
+                        {
+                            "VolumeName": vol.get("name", "N/A"),
+                            "Namespace": vol.get("namespace", "N/A"),
+                            "PVC": vol.get("pvc", "N/A"),
+                            "Status": vol_status,
+                            "Reason": vol_status_info.get("reason", "N/A"),
+                        }
+                    )
+
+        if non_successful_volumes:
+            formatted_text += "\n--- Non-Successful Volumes ---\n"
+            formatted_text += f"Found {len(non_successful_volumes)} non-successful volume(s):\n"
+            for vol_detail in non_successful_volumes:
+                formatted_text += (
+                    f"\n  Volume: {vol_detail.get('VolumeName', 'N/A')}\n"
+                    f"    Namespace: {vol_detail.get('Namespace', 'N/A')}\n"
+                    f"    PVC: {vol_detail.get('PVC', 'N/A')}\n"
+                    f"    Status: {vol_detail.get('Status', 'N/A')}\n"
+                    f"    Reason: {vol_detail.get('Reason', 'N/A')}\n"
+                )
+        else:
+            # Optionally add a note if all volumes were successful
+            if volumes:  # Only add this note if there were volumes to check
+                formatted_text += (
+                    "\nAll volumes included in the backup reported a status of Success.\n"
+                )
 
         # --- Write to file ---
         with open(report_filepath, "w", encoding="utf-8") as f:

@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Optional
 
 import click
 import requests
-
 import urllib3
 from dotenv import load_dotenv
 from rich import print as rprint  # For pretty printing dicts
@@ -267,9 +266,7 @@ def main(
                 # No need to exit here, just inform the user
                 return  # Exit cleanly if no clusters found
 
-            table = Table(
-                title="PX-Backup Clusters", show_header=True, header_style="bold magenta"
-            )
+            table = Table(title="PX-Backup Clusters", show_header=True, header_style="bold magenta")
             table.add_column("Name", style="dim", width=30, overflow="fold")
             table.add_column("UID", width=36)
             table.add_column("Status")
@@ -288,9 +285,7 @@ def main(
             for cluster in clusters:
                 metadata = cluster.get("metadata", {})
                 status = cluster.get("status", "N/A")  # Status might be top-level or nested
-                cluster_info = (
-                    cluster.get("clusterinfo", {})
-                )  # Cluster Info might contain details
+                cluster_info = cluster.get("clusterinfo", {})  # Cluster Info might contain details
 
                 # Determine status string
                 status_str = status if isinstance(status, str) else status.get("status", "N/A")

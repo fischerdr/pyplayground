@@ -437,8 +437,29 @@ def main(
                 # No need to exit, just inform the user
                 return  # Exit cleanly if no backups found
 
+            # --- Calculate max name length --- #
+            max_name_len = 0
+            if all_backups:
+                try:
+                    backup_names = [
+                        backup.get("metadata", {}).get("name", "") for backup in all_backups
+                    ]
+                    # Filter out any empty strings that might occur
+                    backup_names = [name for name in backup_names if name]
+                    if backup_names:  # Ensure list is not empty after filtering
+                        max_name_len = max(len(name) for name in backup_names)
+                except Exception as e:
+                    logger.warning(
+                        f"Could not calculate max backup name length: {e}", exc_info=False
+                    )
+                    max_name_len = 30  # Fallback to a default if calculation fails
+
+            # Use calculated length + buffer, or a sensible default if calculation failed/no names
+            name_col_width = max(max_name_len + 2, 20)  # Ensure minimum width of 20
+
             table = Table(title="PX-Backup Backups", show_header=True, header_style="bold magenta")
-            table.add_column("Name", style="dim", width=30, overflow="fold")
+            # Use the calculated width for the Name column
+            table.add_column("Name", style="dim", width=name_col_width, overflow="fold")
             table.add_column("UID", width=36)
             table.add_column("Cluster")
             table.add_column("Backup Location")

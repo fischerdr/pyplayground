@@ -1,6 +1,4 @@
-"""
-This module implements simple helper functions for managing service instance objects
-"""
+"""This module implements simple helper functions for managing service instance objects."""
 
 __author__ = "VMware, Inc."
 
@@ -10,12 +8,21 @@ from pyVim.connect import Disconnect, SmartConnect
 
 
 def connect(args):
-    """
-    Determine the most preferred API version supported by the specified server,
-    then connect to the specified server using that API version, login and return
-    the service instance object.
-    """
+    """Connects to a vSphere service instance (vCenter or ESXi).
 
+    Determines the most preferred API version supported by the server,
+    connects using that version, logs in using credentials from command-line
+    arguments, and returns the service instance object. Handles SSL verification
+    based on arguments.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments containing
+            host, port, user, password, and disable_ssl_verification flags.
+
+    Returns:
+        Optional[vim.ServiceInstance]: The connected ServiceInstance object upon
+            successful connection, or None if connection fails.
+    """
     service_instance = None
 
     # form a connection...

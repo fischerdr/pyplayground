@@ -1,6 +1,4 @@
-"""
-Property Collector helper module.
-"""
+"""Property Collector helper module."""
 
 import pyVmomi
 
@@ -8,8 +6,7 @@ import pyVmomi
 # Shamelessly borrowed from:
 # https://github.com/dnaeon/py-vconnector/blob/master/src/vconnector/core.py
 def collect_properties(si, view_ref, obj_type, path_set=None, include_mors=False):
-    """
-    Collect properties for managed objects from a view ref
+    """Collect properties for managed objects from a view ref.
 
     Check the vSphere API documentation for example on retrieving
     object properties:
@@ -76,11 +73,9 @@ def collect_properties(si, view_ref, obj_type, path_set=None, include_mors=False
 
 
 def get_container_view(si, obj_type, container=None):
-    """
-    Get a vSphere Container View reference to all objects of type 'obj_type'
+    """Get a vSphere Container View reference to all objects of type 'obj_type'.
 
-    It is up to the caller to take care of destroying the View when no longer
-    needed.
+    It is up to the caller to take care of destroying the View when no longer needed.
 
     Args:
         obj_type (list): A list of managed object types
@@ -98,8 +93,7 @@ def get_container_view(si, obj_type, container=None):
 
 
 def search_for_obj(content, vim_type, name, folder=None, recurse=True):
-    """
-    Search the managed object for the name and type specified
+    """Search the managed object for the name and type specified.
 
     Sample Usage:
 
@@ -120,8 +114,7 @@ def search_for_obj(content, vim_type, name, folder=None, recurse=True):
 
 
 def get_all_obj(content, vim_type, folder=None, recurse=True):
-    """
-    Search the managed object for the name and type specified
+    """Search the managed object for the name and type specified.
 
     Sample Usage:
 
@@ -141,8 +134,8 @@ def get_all_obj(content, vim_type, folder=None, recurse=True):
 
 
 def get_obj(content, vim_type, name, folder=None, recurse=True):
-    """
-    Retrieves the managed object for the name and type specified
+    """Retrieves the managed object for the name and type specified.
+
     Throws an exception if of not found.
 
     Sample Usage:

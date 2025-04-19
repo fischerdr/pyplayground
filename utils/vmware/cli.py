@@ -13,9 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-This module implements simple helper functions for python samples
-"""
+"""This module implements simple helper functions for python samples."""
+
 import argparse
 import getpass
 
@@ -23,9 +22,13 @@ __author__ = "VMware, Inc."
 
 
 class Parser:
-    """
-    Samples specific argument parser.
-    Wraps argparse to ease the setup of argument requirements for the samples.
+    """Parser for VMware vSphere samples command-line arguments.
+
+    Wraps Python's `argparse` module to simplify the setup of standard
+    vSphere connection arguments and sample-specific arguments.
+
+    Provides methods to add required, optional, and custom arguments easily.
+    Also handles prompting for the password if not provided via the command line.
 
     Example:
         parser = cli.Parser()
@@ -37,8 +40,8 @@ class Parser:
     """
 
     def __init__(self):
-        """
-        Defines two arguments groups.
+        """Defines two arguments groups.
+
         One for the standard arguments and one for sample specific arguments.
         The standard group cannot be extended.
         """
@@ -85,15 +88,13 @@ class Parser:
         )
 
     def get_args(self):
-        """
-        Supports the command-line arguments needed to form a connection to vSphere.
-        """
+        """Supports the command-line arguments needed to form a connection to vSphere."""
         args = self._parser.parse_args()
         return self._prompt_for_password(args)
 
     def _add_sample_specific_arguments(self, is_required: bool, *args):
-        """
-        Add an argument to the "sample specific arguments" group
+        """Add an argument to the "sample specific arguments" group.
+
         Requires a predefined argument from the Argument class.
         """
         for arg in args:
@@ -103,37 +104,35 @@ class Parser:
             self._specific_args_group.add_argument(*name_or_flags, **options)
 
     def add_required_arguments(self, *args):
-        """
-        Add a required argument to the "sample specific arguments" group
+        """Add a required argument to the "sample specific arguments" group.
+
         Requires a predefined argument from the Argument class.
         """
         self._add_sample_specific_arguments(True, *args)
 
     def add_optional_arguments(self, *args):
-        """
-        Add an optional argument to the "sample specific arguments" group.
+        """Add an optional argument to the "sample specific arguments" group.
+
         Requires a predefined argument from the Argument class.
         """
         self._add_sample_specific_arguments(False, *args)
 
     def add_custom_argument(self, *name_or_flags, **options):
-        """
-        Uses ArgumentParser.add_argument() to add a full definition of a command line argument
-        to the "sample specific arguments" group.
+        """Uses ArgumentParser.add_argument() to add a full definition of a command line argument to the "sample specific arguments" group.
+
         https://docs.python.org/3/library/argparse.html#the-add-argument-method
         """
         self._specific_args_group.add_argument(*name_or_flags, **options)
 
     def set_epilog(self, epilog):
-        """
-        Text to display after the argument help
+        """Set the epilog for the parser.
+
+        Text to display after the argument help.
         """
         self._parser.epilog = epilog
 
     def _prompt_for_password(self, args):
-        """
-        if no password is specified on the command line, prompt for it
-        """
+        """If no password is specified on the command line, prompt for it."""
         if not args.password:
             args.password = getpass.getpass(
                 prompt='"--password" not provided! Please enter password for host %s and user %s: '
@@ -143,8 +142,7 @@ class Parser:
 
 
 class Argument:
-    """
-    Predefined arguments to use in the Parser
+    """Predefined arguments to use in the Parser.
 
     Example:
         parser = cli.Parser()
@@ -153,6 +151,7 @@ class Argument:
     """
 
     def __init__(self):
+        """Initialize predefined arguments."""
         pass
 
     UUID = {
@@ -408,7 +407,9 @@ class Argument:
 
 
 def prompt_y_n_question(question, default="no"):
-    """based on:
+    """Prompt the user for a yes/no answer.
+
+    Based on:
         http://code.activestate.com/recipes/577058/
     :param question: Question to ask
     :param default: No

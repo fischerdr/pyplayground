@@ -83,9 +83,29 @@ warn_unreachable = true
 
 [tool.flake8]
 max-line-length = 100
-extend-ignore = "E203"
-docstring-convention = "google"
 max-complexity = 10
+docstring-convention = "google"
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    ".venv",
+    "tools",
+]
+extend-ignore = [
+    "E203",  # Existing: whitespace before ':' (needed for black)
+    "D105",  # From .flake8: Missing docstring in magic method
+    "E402",  # From .flake8: Module level import not at top of file
+    "E501",  # From .flake8: Line too long (handled by black, but good to ignore in flake8)
+    "W503",  # From .flake8: Line break before binary operator (conflicts with black)
+    "D401",  # From .flake8: First line should be imperative mood
+    "D200",  # From .flake8: One-line docstring should fit on one line
+]
+per-file-ignores = [
+    "__init__.py:F401", # Allow unused imports in __init__
+    "tests/*:D100,D101,D102,D103", # Allow missing docstrings in tests
+]
 
 [tool.isort]
 profile = "black"

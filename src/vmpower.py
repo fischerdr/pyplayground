@@ -1,14 +1,27 @@
-from pyVim.connect import Disconnect, SmartConnect
+"""This module provides a simple CLI tool to power on and off VMs in vSphere.
+
+Usage:
+    python vmpower.py --vm-name <vm_name>
+    python vmpower.py --uuid <vm_uuid>
+    python vmpower.py --vm-ip <vm_ip>
+    python vmpower.py --dns-name <vm_dns_name>
+    python vmpower.py --help
+    python vmpower.py --version
+
+"""
+from pyVim.connect import Disconnect
 from pyVmomi import vim
 
 from utils.vmware import cli, pchelper, service_instance, tasks
 
 
 def check_vm_power_state(vm):
+    """Check the power state of a VM."""
     return vm.runtime.powerState
 
 
 def power_on_vm(vm):
+    """Power on a VM."""
     if check_vm_power_state(vm) != vim.VirtualMachine.PowerState.poweredOn:
         task = vm.PowerOn()
         print("Powering on the VM...")
@@ -18,6 +31,7 @@ def power_on_vm(vm):
 
 
 def power_off_vm(vm):
+    """Power off a VM."""
     if check_vm_power_state(vm) != vim.VirtualMachine.PowerState.poweredOff:
         task = vm.PowerOff()
         print("Powering off the VM...")
@@ -27,6 +41,7 @@ def power_off_vm(vm):
 
 
 def reboot_vm(vm):
+    """Reboot a VM."""
     if check_vm_power_state(vm) == vim.VirtualMachine.PowerState.poweredOn:
         if vm.guest.toolsStatus == vim.vm.GuestInfo.ToolsStatus.toolsOk:
             print("Rebooting the guest OS...")
@@ -40,6 +55,7 @@ def reboot_vm(vm):
 
 
 def main():
+    """Main function to power on and off VMs in vSphere."""
     parser = cli.Parser()
     parser.add_optional_arguments(
         cli.Argument.VM_NAME, cli.Argument.DNS_NAME, cli.Argument.UUID, cli.Argument.VM_IP

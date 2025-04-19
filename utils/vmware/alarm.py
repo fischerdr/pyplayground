@@ -8,9 +8,7 @@ http://www.apache.org/licenses/LICENSE-2.0.html
 """
 
 import logging
-from xml.etree.ElementTree import Element
-from xml.etree.ElementTree import SubElement
-from xml.etree.ElementTree import tostring
+from xml.etree.ElementTree import Element, SubElement, tostring
 
 import requests
 
@@ -64,34 +62,31 @@ def _build_payload(**kwargs):
     entity_type = kwargs.get("entity_type")
     alarm_moref = kwargs.get("alarm_moref")
     if not entity_moref or not entity_type or not alarm_moref:
-        raise ValueError("entity_moref, entity_type, and alarm_moref "
-                         "must be set")
+        raise ValueError("entity_moref, entity_type, and alarm_moref " "must be set")
 
     attribs = {
-        'xmlns:xsd': 'http://www.w3.org/2001/XMLSchema',
-        'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
-        'xmlns:soap': 'http://schemas.xmlsoap.org/soap/envelope/'
+        "xmlns:xsd": "http://www.w3.org/2001/XMLSchema",
+        "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+        "xmlns:soap": "http://schemas.xmlsoap.org/soap/envelope/",
     }
-    root = Element('soap:Envelope', attribs)
-    body = SubElement(root, 'soap:Body')
-    alarm_status = SubElement(body, 'SetAlarmStatus', {'xmlns': 'urn:vim25'})
-    this = SubElement(alarm_status, '_this', {
-        'xsi:type': 'ManagedObjectReference',
-        'type': 'AlarmManager'
-    })
-    this.text = 'AlarmManager'
-    alarm = SubElement(alarm_status, 'alarm', {'type': 'Alarm'})
+    root = Element("soap:Envelope", attribs)
+    body = SubElement(root, "soap:Body")
+    alarm_status = SubElement(body, "SetAlarmStatus", {"xmlns": "urn:vim25"})
+    this = SubElement(
+        alarm_status, "_this", {"xsi:type": "ManagedObjectReference", "type": "AlarmManager"}
+    )
+    this.text = "AlarmManager"
+    alarm = SubElement(alarm_status, "alarm", {"type": "Alarm"})
     alarm.text = alarm_moref
-    entity = SubElement(alarm_status, 'entity', {
-        'xsi:type': 'ManagedObjectReference',
-        'type': entity_type
-    })
+    entity = SubElement(
+        alarm_status, "entity", {"xsi:type": "ManagedObjectReference", "type": entity_type}
+    )
     entity.text = entity_moref
-    status = SubElement(alarm_status, 'status')
-    status.text = 'green'
+    status = SubElement(alarm_status, "status")
+    status.text = "green"
     # I hate hard coding this but I have no idea how to do it any other way
     # pull requests welcome :)
-    return tostring(root, encoding='UTF-8', method='xml').decode()
+    return tostring(root, encoding="UTF-8", method="xml").decode()
 
 
 def _send_request(payload=None, session=None):
@@ -107,15 +102,20 @@ def _send_request(payload=None, session=None):
     host_port = stub.host
     # Ive seen some code in pyvmomi where it seems like we check for http vs
     # https but since the default is https do people really run it on http?
-    url = 'https://{0}/sdk'.format(host_port)
+    url = "https://{0}/sdk".format(host_port)
     logging.debug("Sending %s to %s", payload, url)
     # I opted to ignore invalid ssl here because that happens in pyvmomi.
     # Once pyvmomi validates ssl it wont take much to make it happen here.
-    res = requests.post(url=url, data=payload, headers={
-        'Cookie': stub.cookie,
-        'SOAPAction': 'urn:vim25',
-        'Content-Type': 'application/xml'
-    }, verify=False)
+    res = requests.post(
+        url=url,
+        data=payload,
+        headers={
+            "Cookie": stub.cookie,
+            "SOAPAction": "urn:vim25",
+            "Content-Type": "application/xml",
+        },
+        verify=False,
+    )
     if res.status_code != 200:
         logging.debug("Failed to reset alarm. HTTP Status: %s", res.status_code)
         return False
@@ -130,9 +130,9 @@ def print_triggered_alarms(entity=None):
     """
     alarms = entity.triggeredAlarmState
     for alarm in alarms:
-        print("#"*40)
+        print("#" * 40)
         # The alarm key looks like alarm-101.host-95
-        print("alarm_moref: {0}".format(alarm.key.split('.')[0]))
+        print("alarm_moref: {0}".format(alarm.key.split(".")[0]))
         print("alarm status: {0}".format(alarm.overallStatus))
 
 
@@ -148,9 +148,6 @@ def get_alarm_refs(entity=None):
     alarm_states = entity.triggeredAlarmState
     ret = []
     for alarm_state in alarm_states:
-        tdict = {
-            "alarm": alarm_state.key.split('.')[0],
-            "status": alarm_state.overallStatus
-        }
+        tdict = {"alarm": alarm_state.key.split(".")[0], "status": alarm_state.overallStatus}
         ret.append(tdict)
     return ret

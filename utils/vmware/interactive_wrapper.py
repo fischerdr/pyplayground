@@ -34,10 +34,9 @@ class VVC(object):
         """
         if not password:
             password = getpass("Password for {0}: ".format(self.hostname))
-        self.service_instance = connect.SmartConnect(host=self.hostname,
-                                                     user=username,
-                                                     pwd=password,
-                                                     port=443)
+        self.service_instance = connect.SmartConnect(
+            host=self.hostname, user=username, pwd=password, port=443
+        )
         atexit.register(connect.Disconnect, self.service_instance)
 
     def get_first_level_of_vm_folders(self):

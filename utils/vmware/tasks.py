@@ -9,22 +9,19 @@ http://www.apache.org/licenses/LICENSE-2.0.html
 
 Helper module for task operations.
 """
-from pyVmomi import vim
-from pyVmomi import vmodl
+
+from pyVmomi import vim, vmodl
 
 
 def wait_for_tasks(si, tasks):
     """Given the service instance and tasks, it returns after all the
-   tasks are complete
-   """
+    tasks are complete
+    """
     property_collector = si.content.propertyCollector
     task_list = [str(task) for task in tasks]
     # Create filter
-    obj_specs = [vmodl.query.PropertyCollector.ObjectSpec(obj=task)
-                 for task in tasks]
-    property_spec = vmodl.query.PropertyCollector.PropertySpec(type=vim.Task,
-                                                               pathSet=[],
-                                                               all=True)
+    obj_specs = [vmodl.query.PropertyCollector.ObjectSpec(obj=task) for task in tasks]
+    property_spec = vmodl.query.PropertyCollector.PropertySpec(type=vim.Task, pathSet=[], all=True)
     filter_spec = vmodl.query.PropertyCollector.FilterSpec()
     filter_spec.objectSet = obj_specs
     filter_spec.propSet = [property_spec]
@@ -38,9 +35,9 @@ def wait_for_tasks(si, tasks):
                 for obj_set in filter_set.objectSet:
                     task = obj_set.obj
                     for change in obj_set.changeSet:
-                        if change.name == 'info':
+                        if change.name == "info":
                             state = change.val.state
-                        elif change.name == 'info.state':
+                        elif change.name == "info.state":
                             state = change.val
                         else:
                             continue

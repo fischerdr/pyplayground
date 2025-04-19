@@ -28,7 +28,7 @@ def print_vm_info(vm, depth=1, max_depth=10):
 
     # if this is a group it will have children. if it does, recurse into them
     # and then return
-    if hasattr(vm, 'childEntity'):
+    if hasattr(vm, "childEntity"):
         if depth > max_depth:
             return
         vm_list = vm.childEntity

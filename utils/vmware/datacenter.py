@@ -11,6 +11,7 @@ useful to import into another project where you need to create a datacenter
 then use that object to further configure things like create a cluster or
 adding resources like HostSystems.
 """
+
 from pyVmomi import vim
 
 
@@ -43,8 +44,7 @@ def create_datacenter(dc_name=None, service_instance=None, folder=None):
     :return:
     """
     if len(dc_name) > 79:
-        raise ValueError("The name of the datacenter must be under "
-                         "80 characters.")
+        raise ValueError("The name of the datacenter must be under " "80 characters.")
     if folder is None:
         folder = service_instance.content.rootFolder
 
@@ -55,18 +55,18 @@ def create_datacenter(dc_name=None, service_instance=None, folder=None):
 
 if __name__ == "__main__":
     import atexit
-    from pyVim import connect
+
     import cli
+    from pyVim import connect
+
     PARSER = cli.build_arg_parser()
-    PARSER.add_argument("-n", "--name",
-                        required=True,
-                        action="store",
-                        help="Name of the Datacenter to create.")
+    PARSER.add_argument(
+        "-n", "--name", required=True, action="store", help="Name of the Datacenter to create."
+    )
     MY_ARGS = PARSER.parse_args()
     cli.prompt_for_password(MY_ARGS)
-    SI = connect.SmartConnect(host=MY_ARGS.host,
-                              user=MY_ARGS.user,
-                              pwd=MY_ARGS.password,
-                              port=MY_ARGS.port)
+    SI = connect.SmartConnect(
+        host=MY_ARGS.host, user=MY_ARGS.user, pwd=MY_ARGS.password, port=MY_ARGS.port
+    )
     create_datacenter(dc_name=MY_ARGS.name, service_instance=SI)
     atexit.register(connect.Disconnect, SI)

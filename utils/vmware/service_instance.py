@@ -1,10 +1,12 @@
 """
 This module implements simple helper functions for managing service instance objects
 """
+
 __author__ = "VMware, Inc."
 
 import atexit
-from pyVim.connect import SmartConnect, Disconnect
+
+from pyVim.connect import Disconnect, SmartConnect
 
 
 def connect(args):
@@ -19,16 +21,17 @@ def connect(args):
     # form a connection...
     try:
         if args.disable_ssl_verification:
-            service_instance = SmartConnect(host=args.host,
-                                            user=args.user,
-                                            pwd=args.password,
-                                            port=args.port,
-                                            disableSslCertValidation=True)
+            service_instance = SmartConnect(
+                host=args.host,
+                user=args.user,
+                pwd=args.password,
+                port=args.port,
+                disableSslCertValidation=True,
+            )
         else:
-            service_instance = SmartConnect(host=args.host,
-                                            user=args.user,
-                                            pwd=args.password,
-                                            port=args.port)
+            service_instance = SmartConnect(
+                host=args.host, user=args.user, pwd=args.password, port=args.port
+            )
 
         # doing this means you don't need to remember to disconnect your script/objects
         atexit.register(Disconnect, service_instance)

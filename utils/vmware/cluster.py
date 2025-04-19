@@ -15,6 +15,7 @@ Host.Inventory.CreateCluster
 Since
 VI API 2.5
 """
+
 from pyVmomi import vim
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Vault Token Information Script
+Vault Token Information Script.
 
 This script retrieves and displays information about a Vault token.
 It provides detailed token metadata and capabilities.

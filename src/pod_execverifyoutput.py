@@ -1,4 +1,3 @@
-import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import click
@@ -19,7 +18,7 @@ Explanation of the Script:
         Connects to the Kubernetes API and lists pods in the provided namespace with the specified label selector.
         Uses a function to execute a shell command on each pod, utilizing Kubernetes API’s read_namespaced_pod_exec.
         Utilizes a thread pool to run commands on multiple pods in parallel.
-        
+
     Results Dictionary:
         results dictionary is used to store the output from each pod, with pod names as keys and command outputs as values.
 
@@ -60,8 +59,7 @@ This will run ls / on each pod and mark it as "pass" if the output contains "bin
 )
 def execute_on_pods(kubeconfig, namespace, label_selector, command, threads, pass_keyword):
     """
-    Connect to the Kubernetes cluster, filter pods by namespace and label,
-    run a command on each pod in parallel, and group results by pass/fail.
+    Connect to the Kubernetes cluster, filter pods by namespace and label, run a command on each pod in parallel, and group results by pass/fail.
     """
     # Load kubeconfig
     config.load_kube_config(config_file=kubeconfig)

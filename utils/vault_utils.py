@@ -8,9 +8,9 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-import hvac  # type: ignore
+import hvac
 from dotenv import load_dotenv
-from hvac.exceptions import VaultError  # type: ignore
+from hvac.exceptions import VaultError
 
 logger = logging.getLogger(__name__)
 

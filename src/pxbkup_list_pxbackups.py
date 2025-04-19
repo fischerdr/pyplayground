@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Lists all PX-Backup backups from the specified PX-Backup instance,
-similar to the pxbackup_list_all_backups.yml playbook.
+Lists all PX-Backup backups from the specified PX-Backup instance, similar to the pxbackup_list_all_backups.yml playbook.
 """
 
 import logging
@@ -341,6 +340,7 @@ def main(
 ):
     """
     Lists PX-Backup backups or inspects a single backup.
+
     Authenticates using a provided token or generates one using username/password.
     """
     # --- Setup Logging --- #

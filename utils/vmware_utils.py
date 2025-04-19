@@ -20,11 +20,7 @@ setup_logging()
 
 
 def print_vm_info(vm, depth=1, max_depth=10):
-    """
-    Print information for a particular virtual machine or recurse into a
-    folder with depth protection
-    """
-
+    """Print information for a particular virtual machine or recurse into a folder with depth protection."""
     # if this is a group it will have children. if it does, recurse into them
     # and then return
     if hasattr(vm, "childEntity"):
@@ -53,9 +49,7 @@ def print_vm_info(vm, depth=1, max_depth=10):
 
 
 def wait_for_tasks(si, tasks):
-    """Given the service instance and tasks, it returns after all the
-    tasks are complete
-    """
+    """Given the service instance and tasks, it returns after all the tasks are complete."""
     property_collector = si.content.propertyCollector
     task_list = [str(task) for task in tasks]
     # Create filter
@@ -81,7 +75,7 @@ def wait_for_tasks(si, tasks):
                         else:
                             continue
 
-                        if not str(task) in task_list:
+                        if str(task) not in task_list:
                             continue
 
                         if state == vim.TaskInfo.State.success:
@@ -98,11 +92,8 @@ def wait_for_tasks(si, tasks):
 
 def connect(args):
     """
-    Determine the most preferred API version supported by the specified server,
-    then connect to the specified server using that API version, login and return
-    the service instance object.
+    Determine the most preferred API version supported by the specified server, then connect to the specified server using that API version, login and return the service instance object.
     """
-
     service_instance = None
 
     # form a connection...
@@ -146,7 +137,7 @@ def extract_path_from_datastore_path(datastore_path: str) -> str:
 
 def collect_properties(si, view_ref, obj_type, path_set=None, include_mors=False):
     """
-    Collect properties for managed objects from a view ref
+    Collect properties for managed objects from a view ref.
 
     Check the vSphere API documentation for example on retrieving
     object properties:
@@ -214,10 +205,9 @@ def collect_properties(si, view_ref, obj_type, path_set=None, include_mors=False
 
 def get_container_view(si, obj_type, container=None):
     """
-    Get a vSphere Container View reference to all objects of type 'obj_type'
+    Get a vSphere Container View reference to all objects of type 'obj_type'.
 
-    It is up to the caller to take care of destroying the View when no longer
-    needed.
+    It is up to the caller to take care of destroying the View when no longer needed.
 
     Args:
         obj_type (list): A list of managed object types
@@ -236,7 +226,7 @@ def get_container_view(si, obj_type, container=None):
 
 def search_for_obj(content, vim_type, name, folder=None, recurse=True):
     """
-    Search the managed object for the name and type specified
+    Search the managed object for the name and type specified.
 
     Sample Usage:
 
@@ -258,7 +248,7 @@ def search_for_obj(content, vim_type, name, folder=None, recurse=True):
 
 def get_all_obj(content, vim_type, folder=None, recurse=True):
     """
-    Search the managed object for the name and type specified
+    Search the managed object for the name and type specified.
 
     Sample Usage:
 
@@ -279,8 +269,9 @@ def get_all_obj(content, vim_type, folder=None, recurse=True):
 
 def get_obj(content, vim_type, name, folder=None, recurse=True):
     """
-    Retrieves the managed object for the name and type specified
-    Throws an exception if of not found.
+    Retrieves the managed object for the name and type specified.
+
+    Throws an exception if the managed object is not found.
 
     Sample Usage:
 

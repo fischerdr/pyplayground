@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
-Inventory Search Script
+Inventory Search Script.
 
 This script provides a command-line interface for searching inventory clusters
 with flexible filtering options.

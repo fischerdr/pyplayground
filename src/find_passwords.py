@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Secret Scanner Tool
+Secret Scanner Tool.
 
 This script searches for potential sensitive information exposures in various file types
 including JSON, YAML, Python, and Markdown files. It can detect:

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class PXBackupClient:
-    """Common API client for PX-Backup modules"""
+    """Common API client for PX-Backup modules."""
 
     def __init__(self, api_url: str, token: str, validate_certs: bool = True):
         """

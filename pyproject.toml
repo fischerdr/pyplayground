@@ -31,6 +31,15 @@ dependencies = [
     "pyyaml>=6.0.1",
     "requests>=2.31.0",
     "structlog>=23.2.0",
+    "rich>=14.0.0",
+    "boto3>=1.37.0",
+    "cryptography>=44.0.0",
+    "filelock>=3.18.0",
+    "pyOpenSSL>=25.0.0",
+    "pick>=2.4.0",
+    "pint>=0.24.0",
+    "tenacity>=9.1.0",
+    "markdown>=3.0.0",
 ]
 
 [project.optional-dependencies]
@@ -42,6 +51,8 @@ dev = [
     "flake8>=7.0.0",
     "flake8-docstrings>=1.7.0",
     "isort>=5.13.0",
+    "pre-commit>=4.2.0",
+    "pip-tools>=7.0.0",
 ]
 
 [tool.black]
@@ -88,3 +99,7 @@ skip = [".venv"]
 skip_glob = [".venv/*"]
 known_first_party = ["utils"]
 sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+
+[tool.hatch.build.targets.wheel]
+# Tell hatch that the code lives directly in 'src' and should be packaged at the root
+packages = ["src"]

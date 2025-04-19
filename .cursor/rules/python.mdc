@@ -162,7 +162,7 @@ Guidelines for using the tmp directory:
 
 *   **Single Responsibility Principle:** Each module should have a well-defined purpose.
 *   **Imports:**
-    *   Order: standard library, third-party, local.
+    *   Order: standard library, third-party, local. Use `isort` to enforce this automatically.
     *   Absolute imports are generally preferred (e.g., `from my_package.module1 import function1`).
     *   Use explicit relative imports (`from . import sibling_module`) when dealing with complex package layouts where absolute imports are overly verbose or impractical.
 *   **Constants:**  Define module-level constants in uppercase (e.g., `MAX_ITERATIONS = 100`).
@@ -198,24 +198,32 @@ Guidelines for using the tmp directory:
   - black for code formatting
   - isort for import sorting
   - flake8 for code linting
-- Testing: pytest for all unit tests
-- Logging: Always use logging for tracking progress and errors
+  - bandit for security linting
+  - mypy for static type checking
+- Testing: `pytest` for unit and integration tests. Utilize features like fixtures, parameterization, and mocking effectively.
+- Logging: Always use the standard `logging` module for tracking progress and errors. Configure handlers and formatters appropriately.
 - Documentation:
-  - Comprehensive docstrings required
-  - Type hints required
+  - Docstrings: Required for all public modules, classes, functions, and methods. Use Google style docstrings ([Example Format](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html)).
+  - Type Hints: Required for all function signatures (arguments and return types) and variables where ambiguity exists.
+    - Use types from the `typing` module (e.g., `List`, `Dict`, `Optional`, `Union`, `Callable`).
+    - Use forward references (e.g., `def foo(bar: 'MyClass')`) only when necessary to avoid circular imports.
+    - Use type aliases for complex types (e.g., `Point = tuple[float, float]`).
+    - Leverage generics for container types (e.g., `list[int]`, `dict[str, float]`).
+    - Run `mypy` for static analysis (see Tooling section).
   - Inline comments for complex logic
 - Line length: 100 characters maximum
 - Use double quotes for variable expansion
 - Define functions before calling them
 - Place functions at the top of the file
 - Define variables before use
-- Keep pyproject.toml in sync with:
-  - requirements.txt
-  - requirements-dev.txt
-- Use double quotes for environment variable values
+- Dependency Management:
+  - Use `pyproject.toml` (PEP 621) as the single source of truth for project metadata and dependencies.
+  - Employ tools like `Poetry` or `PDM` to manage dependencies and virtual environments. These tools handle both application and development dependencies and generate lock files (`poetry.lock`, `pdm.lock`) for reproducible builds.
+  - Avoid maintaining separate `requirements.txt` files manually. If needed for specific deployment targets or tools, generate them from `pyproject.toml` using the chosen manager (e.g., `poetry export -f requirements.txt`).
+- Environment Variables: Use double quotes for environment variable values in shell contexts if they contain spaces or special characters.
 - Binary and tool versions:
   - Document required versions in README.md
-  - Use version managers where available
+  - Use version managers like `pyenv` (for Python versions) or `asdf` (for multiple tools) where available.
   - Add binary paths to PATH in shell configuration
   - Keep binaries out of version control
 - Update documentation when making changes
@@ -223,6 +231,10 @@ Guidelines for using the tmp directory:
 - Maintain comprehensive docs in docs/ directory
 - Review documentation when changes are made
 - Update pyproject.toml when necessary
+- Documentation Maintenance:
+  - Keep README.md, `docs/` directory, and docstrings current.
+  - Review and update documentation whenever code changes are made.
+  - Ensure `pyproject.toml` reflects the current project state.
 
 ### 2.1. Design Patterns
 
@@ -236,10 +248,13 @@ Guidelines for using the tmp directory:
 ### 2.2. Recommended Approaches for Common Tasks
 
 *   **Data Validation:** Use libraries like `pydantic` or `marshmallow` for data validation and serialization.
-*   **Configuration Management:** Use libraries like `python-decouple`, `dynaconf` or standard library's `configparser` to manage environment-specific settings.
+*   **Configuration Management:** Use libraries like `python-decouple`, `dynaconf` or standard library's `configparser` to manage environment-specific settings. Consider using environment variables directly for simple cases, potentially validated with Pydantic's `BaseSettings`.
 *   **Logging:** Use the `logging` module for structured logging. Configure log levels and handlers appropriately.
 *   **Command-Line Interfaces:** Use `argparse`, `click` or `typer` for creating command-line interfaces.
 *   **Asynchronous Programming:** Use `asyncio` for I/O-bound and concurrency problems.
+    - Use `async def`, `await`, `async with` (for async context managers), and `async for` (for async iterators).
+    - Run concurrent tasks using `asyncio.gather` or `asyncio.TaskGroup` (Python 3.11+).
+    - Avoid calling blocking I/O or CPU-bound functions directly in async code. Use `loop.run_in_executor` to run them in a separate thread or process pool.
 
 ### 2.3. Anti-patterns and Code Smells
 
@@ -263,10 +278,13 @@ Guidelines for using the tmp directory:
 
 *   **Specific Exceptions:** Catch specific exceptions rather than broad `Exception` or `BaseException`.
 *   **`try...except...finally`:** Use `finally` to ensure cleanup code is always executed.
-*   **Context Managers:**  Use context managers (`with open(...) as f:`) for resource management.
+*   **Context Managers:**  Use context managers (`with open(...) as f:`) for resource management. Ensure custom context managers correctly handle exceptions.
 *   **Logging Errors:** Log exceptions with complete traceback information.
+    - Use `logging.exception("Informative message")` inside an `except` block to automatically include the traceback.
 *   **Raising Exceptions:** Raise exceptions with informative error messages.
-*   **Custom Exceptions:** Create custom exception classes for specific error conditions.
+*   **Custom Exceptions:** Create custom exception classes for specific error conditions within your application or library domain.
+    - Inherit from built-in exception types (e.g., `ValueError`, `TypeError`, `RuntimeError`) when appropriate.
+    - Consider defining a base custom exception class for your project (e.g., `class MyProjectError(Exception): pass`) from which other custom exceptions inherit.
 *   **Avoid using exceptions for control flow.** Exceptions should represent exceptional circumstances.
 
 ## 3. Performance Considerations
@@ -368,11 +386,12 @@ Guidelines for using the tmp directory:
 ### 5.1. Unit Testing Strategies
 
 *   **Test Individual Units:** Test individual functions, classes, or modules in isolation.
-*   **Test-Driven Development (TDD):** Write tests before writing code.
-*   **Coverage:**  Aim for high test coverage.
-*   **Assertion Styles:** Use appropriate assertion methods (e.g., `assertEqual`, `assertTrue`, `assertRaises`).
-*   **Boundary conditions:** Test boundary conditions and edge cases.
-*   **Error conditions:** Test that exceptions are raised when appropriate.
+*   **Test-Driven Development (TDD):** Consider writing tests before or alongside writing code.
+*   **Coverage:**  Aim for high test coverage using tools like `pytest-cov`. Analyze coverage reports to identify untested code paths.
+*   **Assertion Styles:** Use `pytest`'s plain `assert` statements for clear and concise assertions. Leverage its introspection for detailed failure messages.
+*   **Boundary conditions:** Test boundary conditions and edge cases thoroughly.
+*   **Error conditions:** Test that the correct exceptions are raised with appropriate messages using `pytest.raises`.
+*   **Parameterization:** Use `pytest.mark.parametrize` to test functions with multiple sets of inputs and expected outputs efficiently.
 
 ### 5.2. Integration Testing Approaches
 
@@ -396,13 +415,13 @@ Guidelines for using the tmp directory:
 *   **Mirror Source Structure:**  Mirror the source code structure in the test directory.
 *   **Test Modules:** Create test modules for each source module.
 *   **Test Classes:**  Use test classes to group related tests.
-*   **Use a test runner:** Use `pytest` or `unittest` test runners.
-*   **Use fixtures:** Utilize fixtures to setup and tear down resources for tests.
+*   **Use a test runner:** Use `pytest` or `unittest` test runners. `pytest` is generally recommended for its rich feature set, plugin ecosystem, and less boilerplate.
+*   **Use fixtures:** Utilize `pytest` fixtures extensively to manage test setup, teardown, and dependencies (e.g., database connections, temporary files, mocked objects). Fixtures improve test readability and reduce duplication.
 
 ### 5.5. Mocking and Stubbing Techniques
 
-*   **`unittest.mock`:** Use the `unittest.mock` module for mocking and stubbing.
-*   **Patching:**  Use `patch` to replace objects with mocks during tests.
+*   **`unittest.mock`:** Use the `unittest.mock` module (or the `pytest-mock` plugin which provides a `mocker` fixture) for mocking and stubbing.
+*   **Patching:**  Use `patch` (from `unittest.mock` or `mocker.patch`) to replace objects with mocks during tests, often within specific scopes (e.g., using `patch` as a decorator or context manager).
 *   **Side Effects:**  Define side effects for mocks to simulate different scenarios.
 *   **Mocking External Dependencies:** Mock external dependencies like databases, APIs, and file systems.
 *   **Use dependency injection for testability.** Dependency injection makes it easier to mock dependencies.
@@ -456,30 +475,31 @@ Guidelines for using the tmp directory:
 ### 7.1. Recommended Development Tools
 
 *   **IDEs:** PyCharm, VS Code (with Python extension), Sublime Text.
-*   **Virtual Environment Managers:** `venv` (built-in), `virtualenv`, `conda`, `pipenv`.
-*   **Package Managers:** `pip` (default), `conda`, `poetry`.
+*   **Python Version Management:** `pyenv`.
+*   **Virtual Environment & Package Managers:** `venv` (built-in, usually used with `pip`), `Poetry`, `PDM`, `conda`. (Choose one primary tool per project).
 *   **Debuggers:** `pdb`, IDE debuggers.
 *   **Profilers:** `cProfile`, `memory_profiler`.
 *   **Linters:** `pylint`, `flake8`.
-*   **Formatters:** `black`, `autopep8`, `YAPF`.
+*   **Formatters:** `black`, `autopep8`, `YAPF`. (`black` is often preferred for its opinionated style).
 *   **Static Analyzers:** `mypy`, `pytype`.
+*   **Security Linters:** `bandit`.
 *    **Notebook environments**: Jupyter Notebook, Jupyter Lab, Google Colab.
 
 ### 7.2. Build Configuration Best Practices
 
-*   **`pyproject.toml`:**  Use `pyproject.toml` for build configuration (PEP 518, PEP 621).
-*   **`setup.py`:**  Use `setup.py` for legacy projects (but prefer `pyproject.toml` for new projects).
-*   **Dependency Management:**  Specify dependencies in `requirements.txt` or `pyproject.toml`.
-*   **Virtual Environments:**  Use virtual environments to isolate project dependencies.
-*   **Reproducible builds:** Ensure reproducible builds by pinning dependencies.
+*   **`pyproject.toml`:**  Use `pyproject.toml` for build configuration (PEP 518, PEP 621). Configure linters, formatters, type checkers, and testing tools (like `pytest`, `black`, `isort`, `flake8`, `mypy`) within the `[tool.*]` sections of `pyproject.toml` whenever possible.
+*   **`setup.py`:**  Avoid using `setup.py` for new projects. It may be required for legacy systems or complex C extensions, but prefer `pyproject.toml` with build backends like `setuptools` or `flit`.
+*   **Dependency Management:** Specify dependencies, including development dependencies, exclusively in `pyproject.toml` when using tools like Poetry or PDM. Use their lock files (`poetry.lock`, `pdm.lock`) to ensure reproducible environments.
+*   **Virtual Environments:**  Always use virtual environments to isolate project dependencies.
+*   **Reproducible builds:** Ensure reproducible builds by committing the lock file generated by your chosen dependency manager.
 
 ### 7.3. Linting and Formatting Recommendations
 
 *   **PEP 8:** Adhere to PEP 8 style guidelines.
-*   **Linters:** Use linters to enforce code style and detect potential problems.
-*   **Formatters:** Use formatters to automatically format code according to PEP 8.
-*   **Pre-commit Hooks:** Use pre-commit hooks to run linters and formatters before committing code.
-*   **Consistent Style:** Maintain a consistent code style throughout the project.
+*   **Linters:** Use linters to enforce code style and detect potential problems. Configure them in `pyproject.toml`.
+*   **Formatters:** Use formatters to automatically format code according to agreed-upon standards (e.g., `black`). Configure them in `pyproject.toml`.
+*   **Pre-commit Hooks:** Strongly recommend using the `pre-commit` framework ([https://pre-commit.com/](https://pre-commit.com/)). Configure it with a `.pre-commit-config.yaml` file to automatically run checks (e.g., `black`, `isort`, `flake8`, `mypy`, `bandit`, trailing-whitespace, end-of-file-fixer) before each commit. This helps maintain code quality and consistency proactively.
+*   **Consistent Style:** Maintain a consistent code style throughout the project, primarily enforced by automated tools.
 
 ### 7.4. Deployment Best Practices
 
@@ -497,7 +517,7 @@ Guidelines for using the tmp directory:
 *   **Continuous Delivery (CD):** Automatically deploy code to staging or production environments.
 *   **CI/CD Tools:** Use CI/CD tools like Jenkins, GitLab CI, GitHub Actions, CircleCI, or Travis CI.
 *   **Automated Testing:**  Include automated tests in the CI/CD pipeline.
-*   **Code Analysis:** Integrate code analysis tools into the CI/CD pipeline.
+*   **Code Analysis:** Integrate code analysis tools (`flake8`, `mypy`, `bandit`) into the CI/CD pipeline to catch issues early.
 *   **Automated deployments.** Automate the deployment process to reduce manual effort and errors.
 
 By adhering to these best practices and coding standards, developers can create Python code that is more robust, maintainable, and secure.

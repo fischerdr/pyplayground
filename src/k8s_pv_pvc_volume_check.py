@@ -13,6 +13,7 @@ from typing import Dict, List, Set, Tuple
 import click  # Import click
 from kubernetes import client
 from kubernetes.client.rest import ApiException
+from rich import box
 from rich.console import Console
 from rich.table import Table
 
@@ -265,28 +266,37 @@ class K8sStorageAnalyzer:
         try:
             only_non_nfs, only_nfs, mixed = self.get_namespace_storage_types()
 
+            # Get terminal width and calculate column width
+            terminal_width = console.width
+            namespace_col_width = terminal_width // 3
+            self.logger.debug(f"Terminal width: {terminal_width}, calculated namespace column width: {namespace_col_width}")
+
             # Create and display the table
             table = Table(
-                title="Namespace Storage Type Analysis (Based on PV/PVCs)", title_style="bold blue"
+                title="Namespace Storage Type Analysis (Based on PV/PVCs)",
+                title_style="bold blue",
+                show_lines=True,  # Add row separators
+                box=box.ASCII,
             )
             table.add_column("Category", style="cyan", no_wrap=True, justify="right")
-            table.add_column("Namespaces", style="green")
+            # Set calculated width for the Namespaces column
+            table.add_column("Namespaces", style="green", width=namespace_col_width)
             table.add_column("Count", style="magenta", justify="right")
 
-            # Add rows for each category
+            # Add rows for each category, joining namespaces with commas
             table.add_row(
                 "Non-NFS Only",
-                "\n".join(sorted(only_non_nfs)) if only_non_nfs else "[dim]None[/dim]",
+                ", ".join(sorted(only_non_nfs)) if only_non_nfs else "[dim]None[/dim]",
                 str(len(only_non_nfs)),
             )
             table.add_row(
                 "NFS Only",
-                "\n".join(sorted(only_nfs)) if only_nfs else "[dim]None[/dim]",
+                ", ".join(sorted(only_nfs)) if only_nfs else "[dim]None[/dim]",
                 str(len(only_nfs)),
             )
             table.add_row(
                 "Mixed (NFS & Non-NFS)",
-                "\n".join(sorted(mixed)) if mixed else "[dim]None[/dim]",
+                ", ".join(sorted(mixed)) if mixed else "[dim]None[/dim]",
                 str(len(mixed)),
             )
 

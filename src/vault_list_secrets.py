@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Vault KV Secrets Listing Tool
+"""Vault KV Secrets Listing Tool.
 
 This script provides functionality to list keys in a Vault KV store using hvac.
 It includes proper logging and type hints as per project guidelines.
@@ -12,7 +11,6 @@ from typing import Any, Dict, Optional
 
 import hvac
 import typer
-from dotenv import load_dotenv
 from hvac.exceptions import InvalidRequest, VaultError
 from pick import pick
 
@@ -34,8 +32,7 @@ def get_vault_client(
     vault_token: Optional[str] = None,
     namespace: Optional[str] = None,
 ) -> hvac.Client:
-    """
-    CLI wrapper for create_vault_client with Typer-specific error handling.
+    """CLI wrapper for create_vault_client with Typer-specific error handling.
 
     Args:
         vault_addr: Optional Vault server address
@@ -63,8 +60,7 @@ def get_vault_client(
 def list_kv_secrets(
     client: hvac.Client, mount_point: str = "static_secrets", path: str = ""
 ) -> Dict[str, Any]:
-    """
-    List keys in the specified KV store path.
+    """List keys in the specified KV store path.
 
     Args:
         client: Authenticated Vault client
@@ -118,8 +114,7 @@ def list_kv_secrets(
 
 
 def format_data(data: Dict[str, Any], indent: int = 0, mask_values: bool = True) -> str:
-    """
-    Format secret data for display.
+    """Format secret data for display.
 
     Args:
         data: Dictionary containing secret data

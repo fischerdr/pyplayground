@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-S3 Bucket Cleanup Tool
+"""S3 Bucket Cleanup Tool.
 
 This script helps clean up old objects in S3-compatible storage buckets based on retention days.
 It supports both current and versioned objects, and can work with specific prefixes.
@@ -32,8 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def setup_s3_client(endpoint_url: str, access_key_id: str, secret_access_key: str) -> client:
-    """
-    Set up the S3 client with the provided credentials.
+    """Set up the S3 client with the provided credentials.
 
     Args:
         endpoint_url: The S3 endpoint URL
@@ -68,8 +66,7 @@ def setup_s3_client(endpoint_url: str, access_key_id: str, secret_access_key: st
 def list_objects_to_delete(
     s3_client: client, bucket: str, prefix: str, retention_days: int
 ) -> tuple[List[Dict], int, int]:
-    """
-    List objects that should be deleted based on retention policy.
+    """List objects that should be deleted based on retention policy.
 
     Args:
         s3_client: Configured S3 client
@@ -115,8 +112,7 @@ def list_objects_to_delete(
 def delete_objects(
     s3_client: client, bucket: str, objects: List[Dict], dry_run: bool = False
 ) -> None:
-    """
-    Delete objects from the bucket in batches.
+    """Delete objects from the bucket in batches.
 
     Args:
         s3_client: Configured S3 client
@@ -167,8 +163,7 @@ def main(
         False, "--dry-run", "-n", help="Show what would be deleted without performing deletions"
     ),
 ) -> None:
-    """
-    Clean up old objects in an S3-compatible bucket based on retention period.
+    """Clean up old objects in an S3-compatible bucket based on retention period.
 
     If --dry-run is specified, it will only show what would be deleted without performing actual deletions.
     """

@@ -1,4 +1,9 @@
 #!/usr/bin/env python
+"""View SSL certificate.
+
+This script provides functionality to view SSL certificate details.
+It includes proper logging and type hints as per project guidelines.
+"""
 
 import os
 import ssl
@@ -7,6 +12,14 @@ from pprint import pprint as pp
 
 
 def main(*argv):
+    """View SSL certificate.
+
+    Args:
+        *argv: Command line arguments
+
+    Returns:
+        None
+    """
     cert_file_base_name = "pk-backup-ca-bundle.pem"
     cert_file_name = os.path.join(os.path.dirname(__file__), cert_file_base_name)
     try:

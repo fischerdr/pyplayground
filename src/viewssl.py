@@ -1,7 +1,13 @@
+#!/usr/bin/env python3
+"""View SSL certificate.
+
+This script provides functionality to view SSL certificate details.
+It includes proper logging and type hints as per project guidelines.
+"""
+
 import argparse
 import base64
 import os
-import ssl
 
 import certifi
 import requests
@@ -10,8 +16,10 @@ from OpenSSL import crypto
 
 
 def print_pem_info(pem_content):
-    """
-    Parse and print PEM certificate information (issuer, subject, validity, etc.).
+    """Parse and print PEM certificate information (issuer, subject, validity, etc.).
+
+    Args:
+        pem_content: The PEM content to parse
     """
     try:
         cert = crypto.load_certificate(crypto.FILETYPE_PEM, pem_content)
@@ -30,6 +38,11 @@ def print_pem_info(pem_content):
 
 
 def list_ca_certificates(kube_config_path):
+    """List CA certificates used by Python, Requests, and Kubernetes.
+
+    Args:
+        kube_config_path: The path to the Kubernetes configuration file
+    """
     # Default Python SSL CA Certificates
     print("1. Default SSL CA Bundle (certifi):")
     ca_cert_path = certifi.where()

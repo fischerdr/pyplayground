@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Vault Token Information Script.
+"""Vault Token Information Script.
 
 This script retrieves and displays information about a Vault token.
 It provides detailed token metadata and capabilities.
@@ -30,8 +29,7 @@ class VaultTokenInfo:
     """Class to handle Vault token information retrieval and display."""
 
     def __init__(self, vault_addr: str, token: str, verify_pem: Optional[str] = None):
-        """
-        Initialize VaultTokenInfo with Vault address and token.
+        """Initialize VaultTokenInfo with Vault address and token.
 
         Args:
             vault_addr: The Vault server address
@@ -44,8 +42,7 @@ class VaultTokenInfo:
         self.client = self._create_client()
 
     def _create_client(self) -> hvac.Client:
-        """
-        Create and return an authenticated Vault client.
+        """Create and return an authenticated Vault client.
 
         Returns:
             hvac.Client: Authenticated Vault client
@@ -62,8 +59,7 @@ class VaultTokenInfo:
             raise
 
     def get_token_info(self) -> Dict[str, Any]:
-        """
-        Retrieve token information from Vault.
+        """Retrieve token information from Vault.
 
         Returns:
             Dict containing token metadata and capabilities
@@ -80,8 +76,7 @@ class VaultTokenInfo:
             raise
 
     def display_token_info(self, token_info: Dict[str, Any]) -> None:
-        """
-        Display token information in a formatted table.
+        """Display token information in a formatted table.
 
         Args:
             token_info: Dictionary containing token metadata
@@ -137,8 +132,7 @@ class VaultTokenInfo:
     type=click.Path(exists=True, dir_okay=False, path_type=str),
 )
 def main(vault_addr: str, token: str, verify_pem: Optional[str] = None) -> None:
-    """
-    Display information about a Vault token.
+    """Display information about a Vault token.
 
     This command connects to a Vault server and displays detailed information
     about the provided token, including its metadata and capabilities.

@@ -48,7 +48,9 @@ def _handle_character_turn(
     # Check if conscious AFTER processing effects
     if not character.is_conscious():  # Check if conscious after status effects
         # log_messages might already contain stun message from process_status_effects
-        return False  # Character is stunned or otherwise incapacitated, opponent not defeated by this
+        return (
+            False  # Character is stunned or otherwise incapacitated, opponent not defeated by this
+        )
 
     # Check if character survived status effects
     if character.hp <= 0:
@@ -80,7 +82,7 @@ def _handle_character_turn(
     opponent_defeated = _perform_action(character, opponent, environment, action, log_messages)
 
     character.end_turn()
-    return opponent_defeated # Return if opponent was defeated by the action
+    return opponent_defeated  # Return if opponent was defeated by the action
 
 
 def _perform_action(
@@ -89,7 +91,7 @@ def _perform_action(
     environment: BaseEnvironment,
     action: Action,
     log_messages: List[str],  # Add log_messages parameter
-) -> bool: # Changed return type to bool (opponent_defeated)
+) -> bool:  # Changed return type to bool (opponent_defeated)
     """Performs the chosen action for the character.
 
     Args:
@@ -102,7 +104,7 @@ def _perform_action(
     Returns:
         True if the action resulted in the opponent's defeat, False otherwise.
     """
-    opponent_defeated = False # Initialize flag
+    opponent_defeated = False  # Initialize flag
     log_messages.append(f"  Action: {action.value}")
 
     if action == Action.ATTACK:
@@ -127,7 +129,7 @@ def _perform_action(
         # Spellcasting doesn't currently interact with environment, but pass for consistency
         opponent_defeated = _handle_mage_spellcasting(character, opponent, log_messages)
 
-    return opponent_defeated # Return the defeat status
+    return opponent_defeated  # Return the defeat status
 
 
 def has_line_of_sight(
@@ -184,7 +186,7 @@ def calculate_distance(x1: int, y1: int, x2: int, y2: int) -> float:
 # flake8: noqa: C901
 def _handle_attack_action(
     character: Character, opponent: Character, environment: BaseEnvironment, log_messages: List[str]
-) -> bool: # Changed return type to bool (opponent_defeated)
+) -> bool:  # Changed return type to bool (opponent_defeated)
     """Handles the attack action, calculates hit/miss/damage, and checks for winner.
 
     Checks weapon range, Line of Sight for ranged attacks, and cover bonuses.
@@ -317,7 +319,7 @@ def _handle_attack_action(
             log_messages.append(f"    {opponent.name} has been defeated!")
             if isinstance(environment, BattleGrid):
                 environment.targeting_line = None  # Clear after successful hit
-            return True # Opponent defeated
+            return True  # Opponent defeated
     else:
         # Miss!
         log_messages.append(
@@ -330,7 +332,7 @@ def _handle_attack_action(
     if isinstance(environment, BattleGrid):
         environment.targeting_line = None
 
-    return False # Opponent not defeated by this attack
+    return False  # Opponent not defeated by this attack
 
 
 def _handle_move_action(
@@ -414,7 +416,7 @@ def _handle_move_action(
 
 def _handle_item_action(
     character: Character, opponent: Character, log_messages: List[str]
-) -> bool: # Changed return type to bool (opponent_defeated)
+) -> bool:  # Changed return type to bool (opponent_defeated)
     """Handles the Use Item action, allowing the character to use an item.
 
     Args:
@@ -452,12 +454,12 @@ def _handle_item_action(
     else:
         log_messages.append(f"  {character.name} has no suitable item to use.")
 
-    return False # Assume item did not directly defeat opponent
+    return False  # Assume item did not directly defeat opponent
 
 
 def _handle_mage_spellcasting(
     mage: Mage, opponent: Character, log_messages: List[str]
-) -> bool: # Changed return type to bool (opponent_defeated)
+) -> bool:  # Changed return type to bool (opponent_defeated)
     """Handles Mage spellcasting actions using the Mage.cast_spell method.
 
     Args:
@@ -489,7 +491,7 @@ def _handle_mage_spellcasting(
         # Check if the opponent was defeated by the spell's effect
         if opponent.hp <= 0:
             # Log message for defeat should be part of spell_result if it happened
-            return True # Opponent defeated
+            return True  # Opponent defeated
     else:
         # cast_spell should return a reason if it failed (e.g., no slots, already active)
         # If it returns None, it means something unexpected happened.
@@ -498,7 +500,7 @@ def _handle_mage_spellcasting(
             f"  {mage.name} failed to cast {chosen_spell_name} (Slots: {mage.spell_slots}). Reason unknown or invalid spell."
         )  # Adjusted log
 
-    return False # Opponent not defeated by this spell
+    return False  # Opponent not defeated by this spell
 
 
 def _determine_winner_post_loop(
@@ -581,8 +583,8 @@ def fight(
             # live.console.print(f"--- Turn {turn_count} ---") # No longer needed, log pane shows turns
 
             # Character 1's turn
-            if character1.hp > 0: # Check HP again in case of multi-hit hazards?
-                _ = _handle_character_turn( # We don't need the return value here anymore
+            if character1.hp > 0:  # Check HP again in case of multi-hit hazards?
+                _ = _handle_character_turn(  # We don't need the return value here anymore
                     character1, character2, environment, current_turn_logs
                 )
                 log_messages.extend(current_turn_logs)
@@ -600,9 +602,9 @@ def fight(
                     break
 
             # Character 2's turn
-            if character2.hp > 0: # Check HP again
+            if character2.hp > 0:  # Check HP again
                 current_turn_logs = []  # Reset for char 2
-                _ = _handle_character_turn( # Don't need return value
+                _ = _handle_character_turn(  # Don't need return value
                     character2, character1, environment, current_turn_logs
                 )
                 log_messages.extend(current_turn_logs)
@@ -636,7 +638,7 @@ def fight(
             winner_char = character1 if winner_name == character1.name else character2
             loser = character2 if winner_name == character1.name else character1
             # Use a default XP gain or calculate based on loser level etc.
-            xp_gain = 100 # Default for now, adjust as needed
+            xp_gain = 100  # Default for now, adjust as needed
             xp_messages = winner_char.gain_xp(xp_gain)
             log_messages.extend(xp_messages)
         elif winner_name.startswith("Draw"):
@@ -651,4 +653,4 @@ def fight(
 
     # Final status panel is printed in simulation.py after Live exits - Comment inaccurate
 
-    return winner_name # Return the determined winner name
+    return winner_name  # Return the determined winner name

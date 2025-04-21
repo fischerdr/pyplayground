@@ -39,6 +39,65 @@ load_dotenv()
 # --- Helper Functions ---
 
 
+def fetch_clusters(px_client: PXBackupClient, org_id: str) -> List[Dict]:
+    """Fetches the list of all clusters for the given organization."""
+    logger.info(f"Fetching clusters for organization ID: {org_id}")
+    endpoint = f"v1/cluster/{org_id}"
+    try:
+        response = px_client.make_request("GET", endpoint)
+        clusters = response.get("clusters", [])
+        if not isinstance(clusters, list):
+            logger.warning(
+                f"API response for clusters was not a list: {type(clusters)}. Returning empty list."
+            )
+            return []
+        logger.info(f"Successfully fetched {len(clusters)} clusters.")
+        return clusters
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to fetch clusters: {e}")
+        raise  # Re-raise the exception for handling in main
+
+
+def _filter_clusters_by_name(clusters: List[Dict], name_pattern: str) -> List[Dict[str, str]]:
+    """Filters clusters based on a regex name pattern.
+
+    Args:
+        clusters: The list of cluster dictionaries to filter.
+        name_pattern: Regex pattern to match cluster name.
+
+    Returns:
+        A list of matched cluster dictionaries, each containing 'name' and 'uid'.
+    """
+    import re  # Import here as it's only used in this function
+
+    matched = []
+    logger.info(f"Filtering {len(clusters)} clusters using name pattern: '{name_pattern}'")
+    try:
+        pattern = re.compile(name_pattern)
+    except re.error as e:
+        logger.error(f"Invalid regex pattern '{name_pattern}': {e}. Skipping filtering.")
+        # Return empty list if pattern is invalid, as we can't match
+        return []
+
+    for cluster in clusters:
+        metadata = cluster.get("metadata", {})
+        cluster_name = metadata.get("name")
+        cluster_uid = metadata.get("uid")
+
+        if not cluster_name or not cluster_uid:
+            logger.warning(f"Skipping cluster due to missing name or UID: {metadata}")
+            continue
+
+        if pattern.match(cluster_name):
+            match_info = {"name": cluster_name, "uid": cluster_uid}
+            if match_info not in matched:
+                matched.append(match_info)
+                logger.debug(f"Matched cluster by name: {cluster_name} (UID: {cluster_uid})")
+
+    logger.info(f"Found {len(matched)} cluster(s) matching name pattern.")
+    return matched
+
+
 def _fetch_all_backups_for_cluster(
     px_client: PXBackupClient, org_id: str, cluster_uid: str
 ) -> List[Dict]:
@@ -332,6 +391,50 @@ def _authenticate_and_setup_clients(
     return px_client, k8s_core_v1, k8s_batch_v1
 
 
+def _determine_target_cluster_uid(
+    px_client: PXBackupClient,
+    org_id: str,
+    cluster_name: Optional[str],
+    cluster_uid: Optional[str],
+) -> Optional[str]:
+    """Determines the target cluster UID based on provided CLI options."""
+    target_cluster_uid: Optional[str] = None
+    if cluster_uid and cluster_name:
+        logger.warning(
+            "Both --cluster-name and --cluster-uid provided. Prioritizing --cluster-uid."
+        )
+        target_cluster_uid = cluster_uid
+    elif cluster_uid:
+        target_cluster_uid = cluster_uid
+        logger.info(f"Targeting specific cluster UID: {target_cluster_uid}")
+    elif cluster_name:
+        logger.info(f"Filtering clusters by name pattern: '{cluster_name}'")
+        try:
+            all_clusters = fetch_clusters(px_client, org_id)
+            matched_clusters = _filter_clusters_by_name(all_clusters, cluster_name)
+
+            if len(matched_clusters) == 0:
+                raise click.UsageError(f"No clusters found matching name pattern: '{cluster_name}'")
+            elif len(matched_clusters) > 1:
+                cluster_names_found = [c["name"] for c in matched_clusters]
+                raise click.UsageError(
+                    f"Multiple clusters found matching name pattern '{cluster_name}': {cluster_names_found}. Please use --cluster-uid or a more specific pattern."
+                )
+            else:
+                target_cluster_uid = matched_clusters[0]["uid"]
+                logger.info(
+                    f"Found matching cluster: {matched_clusters[0]['name']} (UID: {target_cluster_uid})"
+                )
+        except requests.exceptions.RequestException as e:
+            # Raised by fetch_clusters
+            raise click.ClickException(f"Failed to fetch cluster list: {e}")
+    else:
+        logger.info("No cluster filter specified. Processing backups from all clusters.")
+        # target_cluster_uid remains None
+
+    return target_cluster_uid
+
+
 def _process_backup_logs(
     px_client: PXBackupClient,
     org_id: str,
@@ -449,6 +552,9 @@ def _process_backup_logs(
     hide_input=True,
 )
 # Filtering and Control Options
+@click.option(
+    "--cluster-name", required=False, help="Filter backups by cluster name (regex pattern)."
+)
 @click.option("--cluster-uid", required=False, help="Filter backups by a specific cluster UID.")
 @click.option(
     "--tail",
@@ -473,6 +579,7 @@ def main(
     client_id: str,
     username: Optional[str],
     password: Optional[str],
+    cluster_name: Optional[str],
     cluster_uid: Optional[str],
     tail: int,
     no_validate_certs: bool,
@@ -500,6 +607,11 @@ def main(
             password=password,
         )
 
+        # --- Determine Target Cluster UID ---
+        target_cluster_uid = _determine_target_cluster_uid(
+            px_client, org_id, cluster_name, cluster_uid
+        )
+
         console.print("[bold]Starting backup job log fetch process...[/bold]")
 
         # --- Call the main workflow function ---
@@ -509,7 +621,7 @@ def main(
             k8s_core_v1=k8s_core_v1,
             k8s_batch_v1=k8s_batch_v1,
             tail_lines=tail,
-            cluster_filter_uid=cluster_uid,
+            cluster_filter_uid=target_cluster_uid,  # Pass the determined UID
         )
 
     except click.ClickException as e:

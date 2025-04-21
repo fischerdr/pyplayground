@@ -474,7 +474,7 @@ def main(
     username: Optional[str],
     password: Optional[str],
     cluster_uid: Optional[str],
-    tail_lines: int,
+    tail: int,
     no_validate_certs: bool,
     debug: bool,
 ):
@@ -508,7 +508,7 @@ def main(
             org_id=org_id,
             k8s_core_v1=k8s_core_v1,
             k8s_batch_v1=k8s_batch_v1,
-            tail_lines=tail_lines,
+            tail_lines=tail,
             cluster_filter_uid=cluster_uid,
         )
 

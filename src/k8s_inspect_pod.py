@@ -54,6 +54,58 @@ def get_pod_details(namespace: str, pod_name: str) -> Optional[client.V1Pod]:
         return None
 
 
+def get_pod_logs(
+    namespace: str, pod_name: str, container_name: str, tail_lines: int
+) -> Optional[str]:
+    """Fetches the last N lines of logs for a specific container in a pod.
+
+    Args:
+        namespace: The namespace of the pod.
+        pod_name: The name of the pod.
+        container_name: The name of the container within the pod.
+        tail_lines: The number of recent log lines to fetch.
+
+    Returns:
+        A string containing the fetched logs, or None if an error occurred.
+    """
+    logger.info(
+        f"Attempting to fetch last {tail_lines} log lines for container '{container_name}' in pod '{pod_name}' (namespace: '{namespace}')."
+    )
+    try:
+        v1 = client.CoreV1Api()
+        logs = v1.read_namespaced_pod_log(
+            name=pod_name, namespace=namespace, container=container_name, tail_lines=tail_lines
+        )
+        logger.info(f"Successfully fetched logs for container '{container_name}'.")
+        return logs
+    except ApiException as e:
+        logger.error(
+            f"API error fetching logs for container '{container_name}' in pod '{pod_name}': {e.status} - {e.reason}"
+        )
+        # Check if the container exists but logs are not ready (e.g., ContainerCreating)
+        if "container not found" in str(e.body).lower():
+            console.print(
+                f"[bold yellow]Warning:[/bold yellow] Container '{container_name}' not found in pod '{pod_name}'."
+            )
+        elif "container is waiting" in str(e.body).lower():
+            console.print(
+                f"[bold yellow]Warning:[/bold yellow] Container '{container_name}' is still waiting to start, logs not available yet."
+            )
+        else:
+            console.print(
+                f"[bold red]Error:[/bold red] Could not fetch logs for container '{container_name}'. Reason: {e.reason}"
+            )
+        return None
+    except Exception as e:
+        logger.exception(
+            f"Unexpected error fetching logs for container '{container_name}' in pod '{pod_name}': {e}"
+        )
+        console.print(
+            f"[bold red]Error:[/bold red] An unexpected error occurred while fetching logs: {e}"
+        )
+        return None
+
+
 def format_container_status(status: client.V1ContainerStatus) -> str:
     """Formats the container status into a readable string."""
     state_str = "[grey50]Unknown State[/grey50]"
@@ -176,11 +228,19 @@ def _create_pvc_mounts_table(pod: client.V1Pod) -> Optional[Table]:
 # --- End Helper functions --- #
 
 
-def display_pod_info(pod: client.V1Pod) -> None:
+def display_pod_info(
+    pod: client.V1Pod,
+    logs: Optional[str] = None,
+    container_name_for_logs: Optional[str] = None,
+    tail_lines: Optional[int] = None,
+) -> None:
     """Displays the pod and container information using rich Table and Panel.
 
     Args:
         pod: The V1Pod object.
+        logs: Optional string containing fetched logs for a specific container.
+        container_name_for_logs: Optional name of the container logs were fetched for.
+        tail_lines: Optional number of log lines fetched.
     """
     if not pod:
         return
@@ -212,20 +272,49 @@ def display_pod_info(pod: client.V1Pod) -> None:
             Panel(volume_table, title="[bold]Persistent Volume Claims[/bold]", expand=False)
         )
 
+    # --- Container Logs Panel (if fetched) ---
+    if logs is not None and container_name_for_logs and tail_lines is not None:
+        log_title = f"[bold]Last {tail_lines} Log Lines for Container: [cyan]{container_name_for_logs}[/cyan][/bold]"
+        console.print(Panel(logs.strip(), title=log_title, expand=True))
+    elif container_name_for_logs:
+        # Display message if logs couldn't be fetched for the requested container
+        # (Error messages are printed directly in get_pod_logs)
+        pass
+
 
 @click.command()
 @click.option("--pod-name", "-p", required=True, help="The name of the pod to inspect.")
 @click.option("--namespace", "-n", required=True, help="The namespace where the pod resides.")
 @click.option(
+    "--container",
+    "-c",
+    "container_name",  # Use 'container_name' as the Python variable name
+    help="Specify the container name to fetch logs from.",
+)
+@click.option(
+    "--tail",
+    "-t",
+    type=int,
+    default=5,
+    show_default=True,
+    help="Number of recent log lines to display.",
+)
+@click.option(
     "--verbose", "-v", is_flag=True, default=False, help="Enable verbose (DEBUG level) logging."
 )
-def inspect_pod(pod_name: str, namespace: str, verbose: bool):
-    """Inspect a Kubernetes pod and display detailed information about its containers."""
+def inspect_pod(
+    pod_name: str, namespace: str, verbose: bool, container_name: Optional[str], tail_lines: int
+):
+    """Inspect a Kubernetes pod and display detailed information about its containers and optionally fetch logs."""
     # Setup logging (moved here from global scope)
     log_level = logging.DEBUG if verbose else logging.INFO
     setup_logging(level=log_level, script_name="k8s_inspect_pod")
 
     logger.info(f"Attempting to inspect pod '{pod_name}' in namespace '{namespace}'.")
+    if container_name:
+        logger.info(
+            f"Will attempt to fetch last {tail_lines} logs for container '{container_name}'."
+        )
     logger.debug(f"Verbose logging enabled: {verbose}")
 
     # Load Kubernetes configuration
@@ -236,9 +325,24 @@ def inspect_pod(pod_name: str, namespace: str, verbose: bool):
     # Get pod details
     pod_details = get_pod_details(namespace=namespace, pod_name=pod_name)
 
+    # Fetch logs if requested and pod details are available
+    fetched_logs: Optional[str] = None
+    if pod_details and container_name:
+        fetched_logs = get_pod_logs(
+            namespace=namespace,
+            pod_name=pod_name,
+            container_name=container_name,
+            tail_lines=tail_lines,
+        )
+
     # Display pod info if found
     if pod_details:
-        display_pod_info(pod_details)
+        display_pod_info(
+            pod_details,
+            logs=fetched_logs,
+            container_name_for_logs=container_name,
+            tail_lines=tail_lines,
+        )
     else:
         # Error message already printed in get_pod_details
         logger.warning(

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 Lists all PX-Backup backups from the specified PX-Backup instance, similar to the pxbackup_list_all_backups.yml playbook.
 """
@@ -43,8 +42,7 @@ load_dotenv()
 
 
 def fetch_clusters(client: PXBackupClient, org_id: str) -> List[Dict[str, Any]]:
-    """
-    Fetches the list of all clusters for the given organization.
+    """Fetches the list of all clusters for the given organization.
 
     Args:
         client: The initialized PXBackupClient.
@@ -78,8 +76,7 @@ def fetch_clusters(client: PXBackupClient, org_id: str) -> List[Dict[str, Any]]:
 def filter_clusters(
     clusters: List[Dict[str, Any]], name_pattern: Optional[str], uid: Optional[str]
 ) -> List[Dict[str, Any]]:
-    """
-    Filters clusters based on name pattern or UID.
+    """Filters clusters based on name pattern or UID.
 
     Args:
         clusters: The list of clusters to filter.
@@ -143,8 +140,7 @@ def filter_clusters(
 def fetch_backups_for_cluster(
     client: PXBackupClient, org_id: str, cluster_info: Dict[str, str]
 ) -> List[Dict[str, Any]]:
-    """
-    Fetches backups for a specific cluster.
+    """Fetches backups for a specific cluster.
 
     Args:
         client: The initialized PXBackupClient.
@@ -194,8 +190,7 @@ def fetch_backups_for_cluster(
 def inspect_backup(
     client: PXBackupClient, org_id: str, backup_name: str, backup_uid: str
 ) -> Dict[str, Any]:
-    """
-    Fetches details for a specific backup.
+    """Fetches details for a specific backup.
 
     Args:
         client: The initialized PXBackupClient.
@@ -338,8 +333,7 @@ def main(
     backup_name: Optional[str],
     backup_uid: Optional[str],
 ):
-    """
-    Lists PX-Backup backups or inspects a single backup.
+    """Lists PX-Backup backups or inspects a single backup.
 
     Authenticates using a provided token or generates one using username/password.
     """

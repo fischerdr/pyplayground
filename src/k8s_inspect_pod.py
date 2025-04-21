@@ -303,7 +303,7 @@ def display_pod_info(
     "--verbose", "-v", is_flag=True, default=False, help="Enable verbose (DEBUG level) logging."
 )
 def inspect_pod(
-    pod_name: str, namespace: str, verbose: bool, container_name: Optional[str], tail_lines: int
+    pod_name: str, namespace: str, verbose: bool, container_name: Optional[str], tail: int
 ):
     """Inspect a Kubernetes pod and display detailed information about its containers and optionally fetch logs."""
     # Setup logging (moved here from global scope)
@@ -313,7 +313,7 @@ def inspect_pod(
     logger.info(f"Attempting to inspect pod '{pod_name}' in namespace '{namespace}'.")
     if container_name:
         logger.info(
-            f"Will attempt to fetch last {tail_lines} logs for container '{container_name}'."
+            f"Will attempt to fetch last {tail} logs for container '{container_name}'."
         )
     logger.debug(f"Verbose logging enabled: {verbose}")
 
@@ -332,7 +332,7 @@ def inspect_pod(
             namespace=namespace,
             pod_name=pod_name,
             container_name=container_name,
-            tail_lines=tail_lines,
+            tail_lines=tail,
         )
 
     # Display pod info if found
@@ -341,7 +341,7 @@ def inspect_pod(
             pod_details,
             logs=fetched_logs,
             container_name_for_logs=container_name,
-            tail_lines=tail_lines,
+            tail_lines=tail,
         )
     else:
         # Error message already printed in get_pod_details

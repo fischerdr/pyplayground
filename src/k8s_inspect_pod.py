@@ -310,11 +310,17 @@ def inspect_pod(
     log_level = logging.DEBUG if verbose else logging.INFO
     setup_logging(level=log_level, script_name="k8s_inspect_pod")
 
+    # --- Argument Validation ---
+    # Check if --tail was used explicitly without --container
+    # We infer explicit use by checking if the value is different from the default.
+    if tail != 5 and container_name is None:
+        raise click.UsageError(
+            "The --container/-c option is required when explicitly setting --tail/-t."
+        )
+
     logger.info(f"Attempting to inspect pod '{pod_name}' in namespace '{namespace}'.")
     if container_name:
-        logger.info(
-            f"Will attempt to fetch last {tail} logs for container '{container_name}'."
-        )
+        logger.info(f"Will attempt to fetch last {tail} logs for container '{container_name}'.")
     logger.debug(f"Verbose logging enabled: {verbose}")
 
     # Load Kubernetes configuration

@@ -108,6 +108,59 @@ class Mage(Character):
                 return heal_amount
         return 0
 
+    def _find_spell(self, spell_name: str) -> Tuple[Optional[SpellDict], Optional[str]]:
+        """Finds a spell by name in the known spell lists.
+
+        Returns:
+            A tuple containing the spell dictionary (or None) and the spell type
+            ('offensive', 'defensive', or None).
+        """
+        for spell in OFFENSIVE_SPELLS:
+            if spell.get("name") == spell_name:
+                return spell, "offensive"
+        for spell in DEFENSIVE_SPELLS:
+            if spell.get("name") == spell_name:
+                return spell, "defensive"
+        return None, None
+
+    def _apply_offensive_spell(self, spell_dict: SpellDict, target: "Character") -> str:
+        """Applies the effects of an offensive spell.
+
+        Returns:
+            A message describing the outcome.
+        """
+        damage_range: Tuple[int, int] = spell_dict.get("damage", (0, 0))
+        damage: int = random.randint(damage_range[0], damage_range[1])
+        target.take_damage(damage)
+        return f"Hits {target.name} for {damage} damage!"
+
+    def _apply_defensive_spell(self, spell_dict: SpellDict) -> Optional[str]:
+        """Applies the effects of a defensive spell (AC or Heal).
+
+        Returns:
+            A message describing the outcome, or None if the spell could not be applied (e.g., already active).
+        """
+        spell_name = spell_dict.get("name", "Unknown Spell")
+        if "ac_bonus" in spell_dict:
+            if self.active_defense_spell and self.active_defense_spell["name"] == spell_name:
+                # Spell already active, don't consume slot (handled in caller) or apply effect
+                return f"{spell_name} is already active."
+            else:
+                if self.active_defense_spell:
+                    self.ac -= self.active_defense_spell.get("ac_bonus", 0)
+                self.active_defense_spell = spell_dict
+                self.defense_spell_duration = spell_dict.get("duration", 0)
+                ac_bonus = spell_dict.get("ac_bonus", 0)
+                self.ac += ac_bonus
+                return f"Gains +{ac_bonus} AC for {self.defense_spell_duration} turns."
+        elif "heal" in spell_dict:
+            heal_range: Tuple[int, int] = spell_dict.get("heal", (0, 0))
+            heal_amount: int = random.randint(heal_range[0], heal_range[1])
+            self.hp += heal_amount
+            self.hp = min(self.hp, self.max_hp)  # Ensure HP doesn't exceed max
+            return f"Heals self for {heal_amount} HP (Now {self.hp}/{self.max_hp})."
+        return f"Casting {spell_name} had no obvious effect."  # Fallback
+
     def cast_spell(self, spell_name: str, target: "Character") -> Optional[str]:
         """Attempts to cast a spell by name.
 
@@ -116,62 +169,28 @@ class Mage(Character):
             target: The target character (used for offensive spells).
 
         Returns:
-            A string describing the result, or None if the spell failed or wasn't found.
+            A string describing the result, or None if the spell failed.
         """
         if self.spell_slots <= 0:
             return "Out of spell slots!"
 
-        spell_dict: Optional[SpellDict] = None
-        spell_type = "unknown"
+        spell_dict, spell_type = self._find_spell(spell_name)
 
-        # Find the spell in offensive or defensive lists
-        for spell in OFFENSIVE_SPELLS:
-            if spell.get("name") == spell_name:
-                spell_dict = spell
-                spell_type = "offensive"
-                break
-        if not spell_dict:
-            for spell in DEFENSIVE_SPELLS:
-                if spell.get("name") == spell_name:
-                    spell_dict = spell
-                    spell_type = "defensive"
-                    break
-
-        if not spell_dict:
+        if not spell_dict or not spell_type:
             return f"Spell '{spell_name}' not known."
 
         self.spell_slots -= 1
         result_msg: Optional[str] = None
 
         if spell_type == "offensive":
-            damage_range: Tuple[int, int] = spell_dict.get("damage", (0, 0))
-            damage: int = random.randint(damage_range[0], damage_range[1])
-            target.take_damage(damage)
-            result_msg = f"Hits {target.name} for {damage} damage!"
+            result_msg = self._apply_offensive_spell(spell_dict, target)
         elif spell_type == "defensive":
-            if "ac_bonus" in spell_dict:
-                # Defensive AC spell logic (similar to cast_defensive_spell)
-                if self.active_defense_spell and self.active_defense_spell["name"] == spell_name:
-                    result_msg = f"{spell_name} is already active."
-                    self.spell_slots += 1  # Refund slot
-                else:
-                    if self.active_defense_spell:
-                        self.ac -= self.active_defense_spell.get("ac_bonus", 0)
-                    self.active_defense_spell = spell_dict
-                    self.defense_spell_duration = spell_dict.get("duration", 0)
-                    ac_bonus = spell_dict.get("ac_bonus", 0)
-                    self.ac += ac_bonus
-                    result_msg = f"Gains +{ac_bonus} AC for {self.defense_spell_duration} turns."
-            elif "heal" in spell_dict:
-                # Defensive heal spell logic
-                heal_range: Tuple[int, int] = spell_dict.get("heal", (0, 0))
-                heal_amount: int = random.randint(heal_range[0], heal_range[1])
-                self.hp += heal_amount  # Apply heal
-                # Ensure HP doesn't exceed max_hp
-                self.hp = min(self.hp, self.max_hp)
-                result_msg = f"Heals self for {heal_amount} HP (Now {self.hp}/{self.max_hp})."
+            result_msg = self._apply_defensive_spell(spell_dict)
+            # Handle refunding slot if spell was already active
+            if result_msg and f"{spell_name} is already active" in result_msg:
+                self.spell_slots += 1  # Refund slot
 
-        return result_msg if result_msg else f"Casting {spell_name} had no obvious effect."
+        return result_msg  # Return whatever the helper methods produced
 
     def end_turn(self) -> None:
         """Mage-specific end-of-turn logic, handling spell durations."""

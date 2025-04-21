@@ -122,18 +122,6 @@ def run_leveling_simulation(num_fights: int = 5):
         # Pass the environment object to fight
         winner_name = fight(fighter_a, fighter_b, leveling_environment)
 
-        if (
-            winner_name != "Draw"
-            and winner_name != "Draw (Mutual Destruction)"
-            and not winner_name.startswith("Draw")
-        ):
-            winner_char = fighter_a if winner_name == fighter_a.name else fighter_b
-            loser = fighter_b if winner_name == fighter_a.name else fighter_a
-            xp_gain = 50 + loser.level * 10
-            winner_char.gain_xp(xp_gain)
-        elif winner_name == "Draw":
-            print("Fight ended in a Draw, no XP awarded.")
-
         for fighter in fighters:
             if fighter in hp_before_fight:
                 fighter.hp = hp_before_fight[fighter]
@@ -234,9 +222,8 @@ def run_example_grid_fight():
     # Pass environment object to fight
     winner_name = fight(char_a, char_b, environment_main)
 
-    # --- Add Pause Here --- #
+    # --- Add Pause Here ---
     timed_input(f"[dim]Press Enter to exit or wait 5s...[/dim]", timeout=5.0)
-    # --- End Pause --- #
 
 
 # --- Main Execution Guard --- #

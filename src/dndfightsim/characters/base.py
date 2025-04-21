@@ -273,21 +273,31 @@ class Character:
         # print(f"{self.name} takes {damage} damage. HP: {self.hp}") # Handled by logs now
         return self.hp <= 0
 
-    def gain_xp(self, amount: int) -> None:
+    def gain_xp(self, amount: int) -> List[str]:
         """Adds experience points and checks for level up.
 
         Args:
             amount: The amount of XP to gain.
-        """
-        self.xp += amount
-        print(f"{self.name} gains {amount} XP.")
-        if self.xp >= self.xp_to_next_level:
-            self.level_up()
 
-    def level_up(self) -> None:
+        Returns:
+            A list of log messages generated (XP gain, level up).
+        """
+        log_messages = []
+        self.xp += amount
+        # print(f"{self.name} gains {amount} XP.")  # Remove print
+        log_messages.append(f"{self.name} gains {amount} XP.")  # Add to list
+        if self.xp >= self.xp_to_next_level:
+            level_up_message = self.level_up()  # Capture message
+            log_messages.append(level_up_message)  # Add level up message
+        return log_messages
+
+    def level_up(self) -> str:
         """Handles the character leveling up.
 
         Increases level, resets XP, increases XP threshold, and boosts stats.
+
+        Returns:
+            A log message describing the level up.
         """
         self.level += 1
         self.xp -= self.xp_to_next_level
@@ -305,7 +315,8 @@ class Character:
         # Recalculate AC based on new stats/potential armor changes (if any)
         self.ac = 10 + (self.dexterity - 10) // 2 + self.armor.get("ac_bonus", 0)
 
-        print(f"{self.name} leveled up to Level {self.level}! Stats increased.")
+        # print(f"{self.name} leveled up to Level {self.level}! Stats increased.")  # Remove print
+        return f"{self.name} leveled up to Level {self.level}! Stats increased."  # Return message
 
     def __str__(self) -> str:
         """Returns a string representation of the character."""

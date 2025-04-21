@@ -13,10 +13,10 @@ ItemDict = Dict[str, Any]  # e.g., {"name": str, "type": str, "heal"/"damage": .
 
 # Game Data
 WEAPONS: List[WeaponDict] = [
-    {"name": "Short Sword", "damage": (1, 6), "range_type": "melee", "range": 1.0},
-    {"name": "Long Sword", "damage": (1, 8), "range_type": "melee", "range": 1.0},
-    {"name": "Bow", "damage": (1, 8), "range_type": "ranged", "range": 10.0},
-    {"name": "Dagger", "damage": (1, 4), "range_type": "melee", "range": 1.0},
+    {"name": "Short Sword", "damage": (1, 8), "range_type": "melee", "range": 1.0},
+    {"name": "Long Sword", "damage": (1, 10), "range_type": "melee", "range": 1.0},
+    {"name": "Bow", "damage": (1, 10), "range_type": "ranged", "range": 10.0},
+    {"name": "Dagger", "damage": (1, 5), "range_type": "melee", "range": 1.0},
 ]
 
 ARMORS: List[ArmorDict] = [

@@ -1,7 +1,18 @@
 """Contains the main simulation loops for leveling and example fights."""
 
+import queue
 import random
-from typing import List
+import threading
+from typing import List, Optional
+
+# --- Rich Imports --- #
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.text import Text
+
+console = Console()
+# --- End Rich Imports --- #
 
 from .characters.base import Character
 from .characters.classes import Mage, Ranger, Rogue, Warrior
@@ -13,6 +24,34 @@ from .enums import CharacterClass
 # Import BaseEnvironment and BattleGrid (or just BattleGrid if Base is only for inheritance)
 from .environment import BaseEnvironment, BattleGrid
 from .generators import generate_field_environment
+
+
+# --- Timed Input Helper --- #
+def timed_input(prompt: str, timeout: float) -> Optional[str]:
+    """Asks for input but times out after a specified period."""
+    q = queue.Queue()
+
+    def ask_input():
+        # Prompt.ask handles the actual user interaction
+        response = Prompt.ask(prompt, default="", show_default=False)
+        q.put(response)
+
+    thread = threading.Thread(target=ask_input, daemon=True)
+    thread.start()
+
+    try:
+        # Wait for the specified timeout
+        result = q.get(timeout=timeout)
+        return result
+    except queue.Empty:
+        # Timeout occurred
+        console.print(
+            "\n[dim](Timeout reached, continuing...)[/dim]"
+        )  # Add a newline for clarity after timeout
+        return None
+
+
+# --- End Timed Input Helper --- #
 
 
 def create_random_character(name: str, character_class_enum: CharacterClass) -> Character:
@@ -83,8 +122,6 @@ def run_leveling_simulation(num_fights: int = 5):
         # Pass the environment object to fight
         winner_name = fight(fighter_a, fighter_b, leveling_environment)
 
-        print(f"The winner is {winner_name}!")
-
         if (
             winner_name != "Draw"
             and winner_name != "Draw (Mutual Destruction)"
@@ -108,6 +145,15 @@ def run_leveling_simulation(num_fights: int = 5):
                 fighter.defense_spell_duration = 0
                 fighter.spell_slots = 3
             fighter.end_turn()
+
+        # --- Add Pause Here --- #
+        if i < num_fights - 1:  # Don't pause after the last fight
+            timed_input(
+                f"[dim]Press Enter to continue to Battle {i + 2} or wait 5s...[/dim]", timeout=5.0
+            )
+        else:
+            print("Leveling simulation finished.")
+        # --- End Pause --- #
 
     print("\n--- Leveling Fights End ---")
 
@@ -186,7 +232,11 @@ def run_example_grid_fight():
         return  # Cannot run fight
 
     # Pass environment object to fight
-    fight(char_a, char_b, environment_main)
+    winner_name = fight(char_a, char_b, environment_main)
+
+    # --- Add Pause Here --- #
+    timed_input(f"[dim]Press Enter to exit or wait 5s...[/dim]", timeout=5.0)
+    # --- End Pause --- #
 
 
 # --- Main Execution Guard --- #

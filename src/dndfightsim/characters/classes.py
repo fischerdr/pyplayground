@@ -1,7 +1,7 @@
 """Defines specific character classes inheriting from the base Character."""
 
 import random
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from ..constants import DEFENSIVE_SPELLS, OFFENSIVE_SPELLS
 from ..datatypes import SpellDict
@@ -48,6 +48,12 @@ class Mage(Character):
         self.spell_slots: int = 3
         self.active_defense_spell: Optional[SpellDict] = None
         self.defense_spell_duration: int = 0
+
+    def get_available_spells(self) -> List[str]:
+        """Returns a list of spell names the Mage currently knows."""
+        known_spells = [spell.get("name") for spell in OFFENSIVE_SPELLS if spell.get("name")]
+        known_spells.extend([spell.get("name") for spell in DEFENSIVE_SPELLS if spell.get("name")])
+        return known_spells
 
     def cast_offensive_spell(self) -> Tuple[Optional[str], int]:
         """Casts a random offensive spell if spell slots are available.
@@ -102,22 +108,90 @@ class Mage(Character):
                 return heal_amount
         return 0
 
+    def cast_spell(self, spell_name: str, target: "Character") -> Optional[str]:
+        """Attempts to cast a spell by name.
+
+        Args:
+            spell_name: The name of the spell to cast.
+            target: The target character (used for offensive spells).
+
+        Returns:
+            A string describing the result, or None if the spell failed or wasn't found.
+        """
+        if self.spell_slots <= 0:
+            return "Out of spell slots!"
+
+        spell_dict: Optional[SpellDict] = None
+        spell_type = "unknown"
+
+        # Find the spell in offensive or defensive lists
+        for spell in OFFENSIVE_SPELLS:
+            if spell.get("name") == spell_name:
+                spell_dict = spell
+                spell_type = "offensive"
+                break
+        if not spell_dict:
+            for spell in DEFENSIVE_SPELLS:
+                if spell.get("name") == spell_name:
+                    spell_dict = spell
+                    spell_type = "defensive"
+                    break
+
+        if not spell_dict:
+            return f"Spell '{spell_name}' not known."
+
+        self.spell_slots -= 1
+        result_msg: Optional[str] = None
+
+        if spell_type == "offensive":
+            damage_range: Tuple[int, int] = spell_dict.get("damage", (0, 0))
+            damage: int = random.randint(damage_range[0], damage_range[1])
+            target.take_damage(damage)
+            result_msg = f"Hits {target.name} for {damage} damage!"
+        elif spell_type == "defensive":
+            if "ac_bonus" in spell_dict:
+                # Defensive AC spell logic (similar to cast_defensive_spell)
+                if self.active_defense_spell and self.active_defense_spell["name"] == spell_name:
+                    result_msg = f"{spell_name} is already active."
+                    self.spell_slots += 1  # Refund slot
+                else:
+                    if self.active_defense_spell:
+                        self.ac -= self.active_defense_spell.get("ac_bonus", 0)
+                    self.active_defense_spell = spell_dict
+                    self.defense_spell_duration = spell_dict.get("duration", 0)
+                    ac_bonus = spell_dict.get("ac_bonus", 0)
+                    self.ac += ac_bonus
+                    result_msg = f"Gains +{ac_bonus} AC for {self.defense_spell_duration} turns."
+            elif "heal" in spell_dict:
+                # Defensive heal spell logic
+                heal_range: Tuple[int, int] = spell_dict.get("heal", (0, 0))
+                heal_amount: int = random.randint(heal_range[0], heal_range[1])
+                self.hp += heal_amount  # Apply heal
+                # Ensure HP doesn't exceed max_hp
+                self.hp = min(self.hp, self.max_hp)
+                result_msg = f"Heals self for {heal_amount} HP (Now {self.hp}/{self.max_hp})."
+
+        return result_msg if result_msg else f"Casting {spell_name} had no obvious effect."
+
     def end_turn(self) -> None:
         """Mage-specific end-of-turn logic, handling spell durations."""
-        super().end_turn()  # Call base class end_turn first
+        # Note: Base class end_turn currently does nothing, so all logic is here.
 
         # Handle active defense spell duration and AC adjustment
         if self.active_defense_spell:
             self.defense_spell_duration -= 1
-            ac_bonus = self.active_defense_spell.get("ac_bonus", 0)
             if self.defense_spell_duration <= 0:
-                print(f"{self.name}'s {self.active_defense_spell['name']} wears off.")
-                # self.ac -= ac_bonus # AC reset is handled by super().end_turn()
-                # ac_bonus_removed = ac_bonus # Unused variable
+                ac_bonus_removed = self.active_defense_spell.get("ac_bonus", 0)
+                print(
+                    f"{self.name}'s {self.active_defense_spell['name']} wears off (-\
+{ac_bonus_removed} AC)."
+                )
+                self.ac -= ac_bonus_removed  # Correctly remove the bonus
                 self.active_defense_spell = None
-            else:
-                # If spell is still active, re-apply AC bonus after base reset
-                self.ac += ac_bonus
+            # No need to re-apply the bonus here, it persists until duration ends
+
+        # Call base class end_turn (even if it's empty, good practice)
+        super().end_turn()
 
 
 class Ranger(Character):
@@ -195,7 +269,12 @@ class Rogue(Character):
         base_weapon_damage = super().deal_damage()  # Get base damage (STR bonus)
 
         # Check for sneak attack conditions (placeholder: random chance)
-        if random.random() < 0.2:  # TODO: Replace with real condition check
+        # TODO: Replace random chance with proper sneak attack condition check:
+        #       1. Does the attacker have advantage on the attack roll?
+        #       OR
+        #       2. Is another enemy of the target within 5 feet of it, that enemy isn't incapacitated,
+        #          and the attacker doesn't have disadvantage on the attack roll?
+        if random.random() < 0.75:  # INCREASED CHANCE (75%) FOR TESTING - REPLACE LATER
             sneak_bonus = self._calculate_sneak_attack_damage()
             return base_weapon_damage + sneak_bonus
         else:

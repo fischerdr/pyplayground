@@ -13,6 +13,7 @@ import urllib3
 from dotenv import load_dotenv
 from kubernetes import client
 from kubernetes.client.rest import ApiException
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 
@@ -487,7 +488,7 @@ def _process_backup_logs(
                 if logs is not None:
                     results_found = True
                     log_title = f"Last {tail_lines} logs for [magenta]{KOPIAEXECUTOR_CONTAINER_NAME}[/magenta] in Pod [blue]{pod_name}[/blue]"
-                    console.print(Panel(logs.strip(), title=log_title, border_style="dim"))
+                    console.print(Panel(logs.strip(), title=log_title, box=box.SIMPLE_HEAD))
                 else:
                     # Message printed within get_kopia_logs_from_pod if container missing or error
                     # Added a generic message here for clarity when no logs are retrieved

@@ -6,8 +6,11 @@ storage types (NFS vs non-NFS). It provides a clear overview of which namespaces
 different storage types.
 """
 
+import csv  # Add import
+import json  # Add import
 import logging
 import os
+from datetime import datetime  # Add import
 from typing import Dict, List, Set, Tuple
 
 import click  # Import click
@@ -21,6 +24,10 @@ from utils.k8s_utils import load_kube_config_auto  # Import k8s util
 from utils.logging_utils import get_logger, setup_logging  # Import logging utils
 
 console = Console()
+
+# Define default output directory relative to project root
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "tmp")
 
 
 class K8sStorageAnalyzer:
@@ -261,53 +268,151 @@ class K8sStorageAnalyzer:
 
         return only_non_nfs, only_nfs, mixed
 
-    def display_results(self) -> None:
-        """Display the analysis results in a formatted table."""
+    def _display_console_output(
+        self, only_non_nfs: Set[str], only_nfs: Set[str], mixed: Set[str]
+    ) -> None:
+        """Display the analysis results in a formatted table to the console."""
+        # Get terminal width and calculate column width
+        terminal_width = console.width
+        namespace_col_width = terminal_width // 3
+        self.logger.debug(
+            f"Terminal width: {terminal_width}, calculated namespace column width: {namespace_col_width}"
+        )
+
+        # Create and display the table
+        table = Table(
+            title="Namespace Storage Type Analysis (Based on PV/PVCs)",
+            title_style="bold blue",
+            show_lines=True,  # Add row separators
+            box=box.ASCII,
+        )
+        table.add_column("Category", style="cyan", no_wrap=True, justify="right")
+        # Set calculated width for the Namespaces column
+        table.add_column("Namespaces", style="green", width=namespace_col_width)
+        table.add_column("Count", style="magenta", justify="right")
+
+        # Add rows for each category, joining namespaces with commas
+        table.add_row(
+            "Non-NFS Only",
+            ", ".join(sorted(only_non_nfs)) if only_non_nfs else "[dim]None[/dim]",
+            str(len(only_non_nfs)),
+        )
+        table.add_row(
+            "NFS Only",
+            ", ".join(sorted(only_nfs)) if only_nfs else "[dim]None[/dim]",
+            str(len(only_nfs)),
+        )
+        table.add_row(
+            "Mixed (NFS & Non-NFS)",
+            ", ".join(sorted(mixed)) if mixed else "[dim]None[/dim]",
+            str(len(mixed)),
+        )
+
+        # Display the table
+        console.print()
+        console.print(table)
+        console.print()
+
+    def _write_json_output(
+        self,
+        only_non_nfs: Set[str],
+        only_nfs: Set[str],
+        mixed: Set[str],
+        output_dir: str,
+        script_base_name: str,
+    ) -> None:
+        """Write the analysis results to a JSON file."""
+        output_data = {
+            "non_nfs_only": sorted(list(only_non_nfs)),
+            "nfs_only": sorted(list(only_nfs)),
+            "mixed": sorted(list(mixed)),
+            "counts": {
+                "non_nfs_only": len(only_non_nfs),
+                "nfs_only": len(only_nfs),
+                "mixed": len(mixed),
+            },
+        }
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{script_base_name}_output_{timestamp}.json"
+        filepath = os.path.join(output_dir, filename)
+
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(output_data, f, indent=2)
+            self.logger.info(f"JSON output saved to: {filepath}")
+            console.print(f"[green]JSON output saved to:[/green] {filepath}")
+        except IOError as e:
+            self.logger.error(f"Failed to write JSON output to {filepath}: {e}")
+            console.print(
+                f"[bold red]Error:[/bold red] Could not write JSON file to {filepath}. Reason: {e}"
+            )
+        except Exception as e:
+            self.logger.exception(f"Unexpected error writing JSON output: {e}")
+            console.print(f"[bold red]Error:[/bold red] Unexpected error writing JSON file: {e}")
+
+    def _write_csv_output(
+        self,
+        only_non_nfs: Set[str],
+        only_nfs: Set[str],
+        mixed: Set[str],
+        output_dir: str,
+        script_base_name: str,
+    ) -> None:
+        """Write the analysis results to a CSV file."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{script_base_name}_output_{timestamp}.csv"
+        filepath = os.path.join(output_dir, filename)
+
+        rows = []
+        for ns in sorted(only_non_nfs):
+            rows.append({"namespace": ns, "category": "Non-NFS Only"})
+        for ns in sorted(only_nfs):
+            rows.append({"namespace": ns, "category": "NFS Only"})
+        for ns in sorted(mixed):
+            rows.append({"namespace": ns, "category": "Mixed (NFS & Non-NFS)"})
+
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            with open(filepath, "w", newline="", encoding="utf-8") as csvfile:
+                if rows:  # Only write header if there is data
+                    fieldnames = list(rows[0].keys())  # Get headers from first row
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(rows)
+                else:
+                    # Write only header if no data
+                    writer = csv.writer(csvfile)
+                    writer.writerow(["namespace", "category"])  # Default header
+
+            self.logger.info(f"CSV output saved to: {filepath}")
+            console.print(f"[green]CSV output saved to:[/green] {filepath}")
+        except IOError as e:
+            self.logger.error(f"Failed to write CSV output to {filepath}: {e}")
+            console.print(
+                f"[bold red]Error:[/bold red] Could not write CSV file to {filepath}. Reason: {e}"
+            )
+        except Exception as e:
+            self.logger.exception(f"Unexpected error writing CSV output: {e}")
+            console.print(f"[bold red]Error:[/bold red] Unexpected error writing CSV file: {e}")
+
+    def process_and_output(
+        self, output_format: str, output_dir: str, script_base_name: str
+    ) -> None:
+        """Get storage types and output results based on the specified format."""
         try:
             only_non_nfs, only_nfs, mixed = self.get_namespace_storage_types()
 
-            # Get terminal width and calculate column width
-            terminal_width = console.width
-            namespace_col_width = terminal_width // 3
-            self.logger.debug(f"Terminal width: {terminal_width}, calculated namespace column width: {namespace_col_width}")
-
-            # Create and display the table
-            table = Table(
-                title="Namespace Storage Type Analysis (Based on PV/PVCs)",
-                title_style="bold blue",
-                show_lines=True,  # Add row separators
-                box=box.ASCII,
-            )
-            table.add_column("Category", style="cyan", no_wrap=True, justify="right")
-            # Set calculated width for the Namespaces column
-            table.add_column("Namespaces", style="green", width=namespace_col_width)
-            table.add_column("Count", style="magenta", justify="right")
-
-            # Add rows for each category, joining namespaces with commas
-            table.add_row(
-                "Non-NFS Only",
-                ", ".join(sorted(only_non_nfs)) if only_non_nfs else "[dim]None[/dim]",
-                str(len(only_non_nfs)),
-            )
-            table.add_row(
-                "NFS Only",
-                ", ".join(sorted(only_nfs)) if only_nfs else "[dim]None[/dim]",
-                str(len(only_nfs)),
-            )
-            table.add_row(
-                "Mixed (NFS & Non-NFS)",
-                ", ".join(sorted(mixed)) if mixed else "[dim]None[/dim]",
-                str(len(mixed)),
-            )
-
-            # Display the table
-            console.print()
-            console.print(table)
-            console.print()
+            if output_format == "json":
+                self._write_json_output(only_non_nfs, only_nfs, mixed, output_dir, script_base_name)
+            elif output_format == "csv":
+                self._write_csv_output(only_non_nfs, only_nfs, mixed, output_dir, script_base_name)
+            else:  # Default to console
+                self._display_console_output(only_non_nfs, only_nfs, mixed)
 
         except Exception as e:
-            self.logger.exception("An error occurred during result display.")
-            console.print(f"[bold red]Error displaying results:[/bold red] {e}")
+            self.logger.exception("An error occurred during processing or output.")
+            console.print(f"[bold red]Error during processing/output:[/bold red] {e}")
 
 
 @click.command()
@@ -318,8 +423,25 @@ class K8sStorageAnalyzer:
     help="Path to kubeconfig file.",
     envvar="KUBECONFIG",  # Allow setting via KUBECONFIG env var
 )
+@click.option(
+    "-f",
+    "--format",
+    "output_format",  # Use 'output_format' as the variable name
+    type=click.Choice(["console", "json", "csv"], case_sensitive=False),
+    default="console",
+    show_default=True,
+    help="Output format.",
+)
+@click.option(
+    "-o",
+    "--output-dir",
+    type=click.Path(file_okay=False, writable=True),  # Ensure it's a writable directory
+    default=DEFAULT_OUTPUT_DIR,
+    show_default=True,
+    help="Directory to save output files.",
+)
 @click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
-def main(kubeconfig: str, debug: bool):
+def main(kubeconfig: str, output_format: str, output_dir: str, debug: bool):
     """Analyze and categorize namespaces based on their storage types (NFS vs non-NFS)."""
     # Setup logging
     script_base_name = os.path.basename(__file__).replace(".py", "")
@@ -328,7 +450,9 @@ def main(kubeconfig: str, debug: bool):
     setup_logging(level=log_level, script_name=script_base_name)
     logger = get_logger(__name__)  # Get logger instance after setup
 
-    logger.info("Starting Kubernetes Storage Analyzer script.")
+    logger.info(
+        f"Starting Kubernetes Storage Analyzer script. Output format: {output_format}, Output dir: {output_dir}"
+    )
 
     # Load Kubernetes configuration using util
     if not load_kube_config_auto(config_file=kubeconfig):
@@ -340,7 +464,8 @@ def main(kubeconfig: str, debug: bool):
     try:
         # Initialize and run the analyzer
         analyzer = K8sStorageAnalyzer()
-        analyzer.display_results()
+        # Call the new processing method
+        analyzer.process_and_output(output_format, output_dir, script_base_name)
         logger.info("Kubernetes Storage Analyzer script finished successfully.")
     except RuntimeError as e:  # Catch initialization errors
         console.print(f"[bold red]Initialization Error:[/bold red] {e}")

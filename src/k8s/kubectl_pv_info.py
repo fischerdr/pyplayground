@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Script to list all PersistentVolumeClaims (PVCs) with their StorageClass and PersistentVolumes (PVs).
+"""Script to list all PersistentVolumeClaims (PVCs) with their StorageClass and PersistentVolumes (PVs).
 
 This script uses the Kubernetes API to gather information about storage resources in a cluster.
 It provides details about PVCs, their associated StorageClasses, and PVs.
@@ -29,8 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def setup_kubernetes_client() -> None:
-    """
-    Initialize the Kubernetes client configuration.
+    """Initialize the Kubernetes client configuration.
 
     Attempts to load either in-cluster config or local kubeconfig.
     """
@@ -47,8 +45,7 @@ def setup_kubernetes_client() -> None:
 
 
 def get_storage_resources() -> tuple[List[Dict], List[Dict], List[Dict]]:
-    """
-    Retrieve PVCs, PVs, and StorageClasses from the Kubernetes cluster.
+    """Retrieve PVCs, PVs, and StorageClasses from the Kubernetes cluster.
 
     Returns:
         tuple: Contains lists of PVCs, PVs, and StorageClasses
@@ -69,8 +66,7 @@ def get_storage_resources() -> tuple[List[Dict], List[Dict], List[Dict]]:
 
 
 def format_storage_info(pvcs: List[Dict], pvs: List[Dict], storage_classes: List[Dict]) -> None:
-    """
-    Format and display storage information for all PVCs with their StorageClass and PV details.
+    """Format and display storage information for all PVCs with their StorageClass and PV details.
 
     Args:
         pvcs: List of PersistentVolumeClaims
@@ -101,7 +97,7 @@ def format_storage_info(pvcs: List[Dict], pvs: List[Dict], storage_classes: List
         )
 
         if pv_name != "N/A" and pv_name in pv_dict:
-            pv = pv_dict[pv_name]
+            # pv = pv_dict[pv_name]
             logger.debug("Found matching PV for PVC %s/%s: %s", namespace, name, pv_name)
 
 
@@ -112,8 +108,7 @@ def format_storage_info(pvcs: List[Dict], pvs: List[Dict], storage_classes: List
     help="Enable debug logging",
 )
 def main(debug: bool) -> None:
-    """
-    List all PVCs with their StorageClass and PV information in the Kubernetes cluster.
+    """List all PVCs with their StorageClass and PV information in the Kubernetes cluster.
 
     This command provides a comprehensive view of storage resources in your cluster,
     including PVCs, their associated StorageClasses, and PV details.

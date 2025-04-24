@@ -19,9 +19,10 @@ from kubernetes import client
 from kubernetes.client import ApiClient
 from kubernetes.client.rest import ApiException
 
-# Import utilities
+# Import utilities from k8s_utils
 from utils.k8s_utils import (
     format_duration,
+    list_all_namespaces,
     load_kube_config_auto,
     parse_storage_string,
 )
@@ -751,9 +752,40 @@ def count_resources(
     return dict(namespace_resources)  # Convert back to regular dict
 
 
+# --- Helper function to handle scanning all namespaces --- #
+def _handle_scan_all_namespaces(api_client: ApiClient) -> Optional[List[str]]:
+    """Handles the logic for listing all namespaces, including warnings and pauses."""
+    logger.info("Attempting to list all namespaces...")
+    all_ns = list_all_namespaces(api_client=api_client)
+    if all_ns is None:
+        logger.error("Could not list namespaces. Please check permissions.")
+        return None
+
+    num_ns = len(all_ns)
+    logger.info(f"Found {num_ns} total namespaces.")
+    if num_ns > 75:
+        warning_msg = (
+            f"WARNING: Preparing to scan {num_ns} namespaces. "
+            "This may take a long time and put significant load on the API server. "
+            "Consider using --namespace or --label-selector to limit the scope."
+        )
+        logger.warning(warning_msg)
+        click.echo(
+            f"\n{warning_msg}\nPausing for 15 seconds. Press Ctrl+C to cancel scan.\n",
+            err=True,
+        )
+        try:
+            time.sleep(15)
+            logger.info("Resuming scan...")
+        except KeyboardInterrupt:
+            logger.warning("Scan cancelled by user during pause.")
+            click.echo("Scan cancelled.", err=True)
+            return None  # Indicate cancellation
+    logger.info(f"Targeting all {num_ns} namespaces for scan.")
+    return all_ns
+
+
 # --- Namespace Filtering and Processing ---
-
-
 def _determine_namespaces_to_scan(
     api_client: ApiClient,
     target_namespace: Optional[str],
@@ -765,7 +797,7 @@ def _determine_namespaces_to_scan(
 
     if target_namespace:
         namespaces_to_scan.append(target_namespace)
-    else:
+    elif label_selector:
         logger.info(f"Attempting to list namespaces with label selector: '{label_selector}'")
         try:
             selected_ns_list = v1_core_for_ns.list_namespace(label_selector=label_selector)
@@ -783,6 +815,10 @@ def _determine_namespaces_to_scan(
             return None
         except Exception as e:
             logger.error(f"Unexpected error listing namespaces with selector: {e}")
+            return None
+    else:
+        namespaces_to_scan = _handle_scan_all_namespaces(api_client)
+        if namespaces_to_scan is None:
             return None
 
     return namespaces_to_scan

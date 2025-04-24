@@ -675,7 +675,9 @@ def _write_output_csv(
     ordered_fieldnames = _determine_csv_headers(all_field_names, sizes_only)
 
     # Determine final output file path
-    final_output_file = _determine_output_file_path(output_file, target_namespace, include_crds, sizes_only, timestamp)
+    final_output_file = _determine_output_file_path(
+        output_file, target_namespace, include_crds, sizes_only, timestamp
+    )
 
     # Ensure the output directory exists
     try:

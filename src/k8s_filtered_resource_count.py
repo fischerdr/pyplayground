@@ -11,7 +11,7 @@ import os
 import re
 import time
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import click
 from filelock import FileLock
@@ -222,6 +222,59 @@ def _calculate_crd_items_size(
     return total_size
 
 
+def _list_custom_resource_items(
+    custom_api: client.CustomObjectsApi,
+    namespace: str,
+    group: str,
+    version: str,
+    plural: str,
+    kind: str,  # For logging
+) -> Optional[List[Dict[str, Any]]]:
+    """Lists all items for a specific custom resource, handling pagination.
+
+    Returns:
+        List of items if successful or no items found, None if a listing error occurred.
+    """
+    items: List[Dict[str, Any]] = []
+    continue_token = None
+    try:
+        while True:
+            logger.debug(
+                f"Listing CRD {kind} ({group}/{version}) in {namespace} (continue={continue_token is not None})..."
+            )
+            custom_objects = custom_api.list_namespaced_custom_object(
+                group=group,
+                version=version,
+                namespace=namespace,
+                plural=plural,
+                limit=500,
+                _continue=continue_token,
+            )
+            current_items = custom_objects.get("items", [])
+            items.extend(current_items)
+
+            # Safely get the next continue token from metadata
+            continue_token = getattr(getattr(custom_objects, "metadata", None), "_continue", None)
+            if not continue_token:
+                break  # Exit loop if no more pages
+        logger.debug(f"Found {len(items)} total items for CRD {kind} in {namespace}.")
+        return items
+    except ApiException as e_list:
+        if e_list.status == 403:
+            logger.warning(
+                f"Permission denied listing {kind} ({group}/{version}) in {namespace}. Skipping."
+            )
+        elif e_list.status != 404:  # Log other API errors
+            logger.error(
+                f"Could not list instances for {kind} ({group}/{version}) in namespace {namespace}: {e_list.status} - {e_list.reason}"
+            )
+        # If 404, it might just mean no instances exist, which is fine, return empty list implicitly handled by return items
+        return None  # Indicate error or no permissions
+    except Exception as e_general:
+        logger.error(f"Unexpected error listing CRD {kind} in namespace {namespace}: {e_general}")
+        return None  # Indicate error
+
+
 def _process_custom_resources(
     custom_api: client.CustomObjectsApi,
     namespace: str,
@@ -232,6 +285,7 @@ def _process_custom_resources(
     total_cr_size_bytes = 0
 
     for crd in crd_list:
+        # --- CRD Spec Validation ---
         if not (
             hasattr(crd, "spec")
             and crd.spec
@@ -259,61 +313,23 @@ def _process_custom_resources(
             )
             continue
 
-        # Prioritize storedVersions if available, otherwise take the first one
         stored_version = next((v.name for v in versions if v.storage), None)
         version = stored_version if stored_version else versions[0].name
+        # --- End CRD Spec Validation ---
+
         logger.debug(f"Processing CRD {kind} using version {version} in namespace {namespace}")
 
-        try:
-            custom_objects = custom_api.list_namespaced_custom_object(
-                group=group,
-                version=version,
-                namespace=namespace,
-                plural=plural,
-                limit=500,  # Add limit
-            )
-            items = custom_objects.get("items", [])
+        # --- List Items using Helper ---
+        items = _list_custom_resource_items(custom_api, namespace, group, version, plural, kind)
+        # --- End List Items ---
+
+        if items is not None:  # Proceed only if listing was successful (or returned empty list)
             cr_counts[kind] = len(items)
-
-            # Handle potential pagination if 'continue' token exists
-            continue_token = custom_objects.get("metadata", {}).get("continue")
-            while continue_token:
-                logger.debug(f"Paginating CRD list for {kind} in {namespace}...")
-                custom_objects = custom_api.list_namespaced_custom_object(
-                    group=group,
-                    version=version,
-                    namespace=namespace,
-                    plural=plural,
-                    limit=500,
-                    _continue=continue_token,
-                )
-                more_items = custom_objects.get("items", [])
-                items.extend(more_items)
-                cr_counts[kind] += len(more_items)
-                continue_token = custom_objects.get("metadata", {}).get("continue")
-
-            # Calculate size after fetching all items
-            if items:  # Only calculate if items exist
+            if items:  # Only calculate size if items exist
                 total_cr_size_bytes += _calculate_crd_items_size(
                     custom_api, namespace, group, version, plural, kind, items
                 )
-
-        except ApiException as e_list:
-            # 403 likely means no permission to list this CRD type in this namespace
-            # 404 might mean the CRD version/plural is incorrect *for this namespace* (less likely cluster-wide if pre-fetched)
-            if e_list.status == 403:
-                logger.warning(
-                    f"Permission denied listing {kind} ({group}/{version}) in {namespace}. Skipping."
-                )
-            elif e_list.status != 404:  # Log other API errors
-                logger.error(
-                    f"Could not list instances for {kind} ({group}/{version}) in namespace {namespace}: {e_list.status} - {e_list.reason}"
-                )
-            # If 404, it might just mean no instances exist, which is fine.
-        except Exception as e_general:
-            logger.error(
-                f"Unexpected error processing CRD {kind} in namespace {namespace}: {e_general}"
-            )
+        # If items is None, an error occurred during listing and was logged by the helper
 
     return dict(cr_counts), total_cr_size_bytes
 
@@ -426,6 +442,141 @@ def _process_pvcs(v1: client.CoreV1Api, namespace: str) -> Tuple[int, int]:
     return pvc_count, total_pvc_capacity_bytes
 
 
+def _list_and_count_resource(
+    list_func,
+    resource_name: str,
+    namespace: str,
+    return_names: bool = False,  # New parameter
+) -> Union[int, Tuple[int, List[str]]]:  # Updated return type
+    """Lists a specific resource type, handling pagination.
+
+    Returns the count and optionally the names of the resources found.
+    """
+    count = 0
+    items = []
+    item_names: List[str] = []  # To store names if requested
+    continue_token = None
+    try:
+        while True:
+            logger.debug(
+                f"Listing {resource_name} in {namespace} (continue={continue_token is not None})..."
+            )
+            listed_objects = list_func(namespace, limit=500, _continue=continue_token)
+            items = listed_objects.items
+            count += len(items)
+            if return_names:
+                # Extract names safely
+                item_names.extend(  # Use extend for lists
+                    [
+                        item.metadata.name
+                        for item in items
+                        if hasattr(item, "metadata") and hasattr(item.metadata, "name")
+                    ]  # Added safe access
+                )
+
+            # Safely get continue token
+            continue_token = getattr(getattr(listed_objects, "metadata", None), "_continue", None)
+            if not continue_token:
+                break
+        logger.debug(f"Found {count} {resource_name} in {namespace}.")
+        # Return count and names if requested, otherwise just count
+        return (count, item_names) if return_names else count
+    except ApiException as e_list:
+        if e_list.status != 404:
+            logger.error(
+                f"Could not list {resource_name} in {namespace}: {e_list.status} - {e_list.reason}"
+            )
+        # Return appropriate type on error
+        return (0, []) if return_names else 0
+    except Exception as e:
+        logger.error(f"Unexpected error listing {resource_name} in {namespace}: {e}")
+        # Return appropriate type on error
+        return (0, []) if return_names else 0
+
+
+def _count_core_v1_standard_resources(
+    v1: client.CoreV1Api, namespace: str
+) -> Tuple[Dict[str, int], int]:
+    """Counts standard CoreV1 resources and sizes ConfigMaps."""
+    counts = defaultdict(int)
+    total_cm_size_bytes = 0
+    cm_names: List[str] = []  # Store CM names here
+
+    core_resources = {
+        "Pods": v1.list_namespaced_pod,
+        "Services": v1.list_namespaced_service,
+        "ConfigMaps": v1.list_namespaced_config_map,
+        "ServiceAccounts": v1.list_namespaced_service_account,
+        "Endpoints": v1.list_namespaced_endpoints,
+    }
+
+    for name, list_func in core_resources.items():
+        if name == "ConfigMaps":
+            # Request names along with the count for ConfigMaps
+            count_result, name_result = _list_and_count_resource(
+                list_func, name, namespace, return_names=True
+            )
+            counts[name] = count_result
+            cm_names = name_result  # Store names for sizing below
+        else:
+            # Just get the count for other resources
+            counts[name] = _list_and_count_resource(list_func, name, namespace)
+
+    # ConfigMap sizing using the fetched names
+    if counts["ConfigMaps"] > 0 and cm_names:
+        logger.debug(f"Calculating size for {len(cm_names)} ConfigMaps in {namespace}")
+        for cm_name in cm_names:
+            try:
+                full_cm = v1.read_namespaced_config_map(name=cm_name, namespace=namespace)
+                total_cm_size_bytes += get_object_size(full_cm)
+            except ApiException as e_read:
+                if e_read.status == 404:
+                    logger.warning(
+                        f"ConfigMap {cm_name} not found in {namespace} during size calc (deleted?)."
+                    )
+                else:
+                    logger.error(
+                        f"Could not read ConfigMap {cm_name} in {namespace} for size: {e_read.status} - {e_read.reason}"
+                    )
+            except Exception as e_size:
+                logger.error(
+                    f"Error calculating size for ConfigMap {cm_name} in {namespace}: {e_size}"
+                )
+    elif counts["ConfigMaps"] > 0 and not cm_names:
+        # This case might happen if _list_and_count_resource fails partially or names couldn't be extracted
+        logger.warning(
+            f"ConfigMap count is {counts['ConfigMaps']} but no names were retrieved for sizing in {namespace}. Size will be 0."
+        )
+
+    return dict(counts), total_cm_size_bytes
+
+
+def _count_apps_v1_resources(apps_v1: client.AppsV1Api, namespace: str) -> Dict[str, int]:
+    """Counts standard AppsV1 resources."""
+    counts = defaultdict(int)
+    apps_resources = {
+        "Deployments": apps_v1.list_namespaced_deployment,
+        "ReplicaSets": apps_v1.list_namespaced_replica_set,
+        "StatefulSets": apps_v1.list_namespaced_stateful_set,
+        "DaemonSets": apps_v1.list_namespaced_daemon_set,
+    }
+    for name, list_func in apps_resources.items():
+        counts[name] = _list_and_count_resource(list_func, name, namespace)
+    return dict(counts)
+
+
+def _count_batch_v1_resources(batch_v1: client.BatchV1Api, namespace: str) -> Dict[str, int]:
+    """Counts standard BatchV1 resources."""
+    counts = defaultdict(int)
+    batch_resources = {
+        "Jobs": batch_v1.list_namespaced_job,
+        "CronJobs": batch_v1.list_namespaced_cron_job,
+    }
+    for name, list_func in batch_resources.items():
+        counts[name] = _list_and_count_resource(list_func, name, namespace)
+    return dict(counts)
+
+
 def count_resources(
     namespace: str,
     include_crds: bool,
@@ -448,142 +599,39 @@ def count_resources(
         return None
 
     namespace_resources = defaultdict(int)
-    total_core_resources_size_bytes = 0  # Size of CMs only for now
+    total_cm_size_bytes = 0
     total_cr_size_bytes = 0
     total_pvc_capacity_bytes = 0
-    total_secret_size_bytes = 0  # Track secret data size separately
-
-    resource_getters = {
-        "Pods": lambda: v1.list_namespaced_pod(namespace, limit=1).items,  # Limit 1 just to count
-        "Services": lambda: v1.list_namespaced_service(namespace, limit=1).items,
-        "ConfigMaps": lambda: v1.list_namespaced_config_map(
-            namespace, limit=500
-        ).items,  # Need items for size
-        # Secrets and PVCs handled by specific functions below
-        "ServiceAccounts": lambda: v1.list_namespaced_service_account(namespace, limit=1).items,
-        "Endpoints": lambda: v1.list_namespaced_endpoints(namespace, limit=1).items,
-        "Deployments": lambda: apps_v1.list_namespaced_deployment(namespace, limit=1).items,
-        "ReplicaSets": lambda: apps_v1.list_namespaced_replica_set(namespace, limit=1).items,
-        "StatefulSets": lambda: apps_v1.list_namespaced_stateful_set(namespace, limit=1).items,
-        "DaemonSets": lambda: apps_v1.list_namespaced_daemon_set(namespace, limit=1).items,
-        "Jobs": lambda: batch_v1.list_namespaced_job(namespace, limit=1).items,
-        "CronJobs": lambda: batch_v1.list_namespaced_cron_job(namespace, limit=1).items,
-        # Add other resource types here
-        # "Ingresses": lambda: net_v1.list_namespaced_ingress(namespace, limit=1).items,
-        # "NetworkPolicies": lambda: net_v1.list_namespaced_network_policy(namespace, limit=1).items,
-    }
+    total_secret_size_bytes = 0
 
     try:
+        # --- Count Standard Resources --- #
         logger.debug(f"Counting standard resources in namespace: {namespace}")
-        for name, getter in resource_getters.items():
-            try:
-                # For counting, a simple list call is okay. For sizing, more logic is needed.
-                # Exception: CMs need items for sizing below.
-                if name == "ConfigMaps":
-                    cm_items = getter()
-                    namespace_resources[name] = len(cm_items)
-                    # Calculate CM size
-                    for cm in cm_items:
-                        try:
-                            # Fetch full CM for accurate JSON size
-                            # Note: This can be slow for many large CMs. Consider alternative sizing if needed.
-                            full_cm = v1.read_namespaced_config_map(
-                                name=cm.metadata.name, namespace=namespace
-                            )
-                            total_core_resources_size_bytes += get_object_size(full_cm)
-                        except ApiException as e_read:
-                            if e_read.status == 404:
-                                logger.warning(
-                                    f"ConfigMap {cm.metadata.name} not found in {namespace} during size calc."
-                                )
-                            else:
-                                logger.error(
-                                    f"Could not read ConfigMap {cm.metadata.name} in {namespace} for size: {e_read.status} - {e_read.reason}"
-                                )
-                        except Exception as e_size:
-                            logger.error(
-                                f"Error calculating size for ConfigMap {cm.metadata.name} in {namespace}: {e_size}"
-                            )
 
-                else:
-                    # Perform list operation to get count (items might be empty if limit=1 used effectively)
-                    # A more robust way is to use list with limit=1 and check metadata.remainingItemCount if available,
-                    # but a simple len() works for basic counting if list returns items.
-                    # Using limit=1 might be inefficient if the API doesn't optimize it well.
-                    # A HEAD request might be better if the API supports it for counts.
-                    # Sticking to list for now for broad compatibility.
-                    # Update: Let's just call list() without limit=1 for accurate counts, relying on pagination if needed.
-                    items = []
-                    list_func = None
-                    if name == "Pods":
-                        list_func = v1.list_namespaced_pod
-                    elif name == "Services":
-                        list_func = v1.list_namespaced_service
-                    elif name == "ServiceAccounts":
-                        list_func = v1.list_namespaced_service_account
-                    elif name == "Endpoints":
-                        list_func = v1.list_namespaced_endpoints
-                    elif name == "Deployments":
-                        list_func = apps_v1.list_namespaced_deployment
-                    elif name == "ReplicaSets":
-                        list_func = apps_v1.list_namespaced_replica_set
-                    elif name == "StatefulSets":
-                        list_func = apps_v1.list_namespaced_stateful_set
-                    elif name == "DaemonSets":
-                        list_func = apps_v1.list_namespaced_daemon_set
-                    elif name == "Jobs":
-                        list_func = batch_v1.list_namespaced_job
-                    elif name == "CronJobs":
-                        list_func = batch_v1.list_namespaced_cron_job
-                    # Add others...
+        core_counts, total_cm_size_bytes = _count_core_v1_standard_resources(v1, namespace)
+        namespace_resources.update(core_counts)
 
-                    if list_func:
-                        try:
-                            listed_objects = list_func(namespace, limit=500)
-                            items = listed_objects.items
-                            count = len(items)
-                            continue_token = listed_objects.metadata._continue
-                            while continue_token:
-                                logger.debug(f"Paginating {name} list in {namespace}...")
-                                listed_objects = list_func(
-                                    namespace, limit=500, _continue=continue_token
-                                )
-                                more_items = listed_objects.items
-                                items.extend(
-                                    more_items
-                                )  # Collect all items if needed later? Not currently.
-                                count += len(more_items)
-                                continue_token = listed_objects.metadata._continue
-                            namespace_resources[name] = count
-                        except ApiException as e_list:
-                            logger.error(
-                                f"Could not list {name} in {namespace}: {e_list.status} - {e_list.reason}"
-                            )
-                            namespace_resources[name] = 0  # Set count to 0 on error
-                    else:
-                        # Should not happen if resource_getters is defined correctly
-                        logger.error(f"No list function found for resource type {name}")
+        apps_counts = _count_apps_v1_resources(apps_v1, namespace)
+        namespace_resources.update(apps_counts)
 
-            except ApiException as e:
-                logger.error(f"Error listing {name} in {namespace}: {e.status} - {e.reason}")
-                namespace_resources[name] = 0  # Set count to 0 on error
-            except Exception as e:
-                logger.error(f"Unexpected error listing {name} in {namespace}: {e}")
-                namespace_resources[name] = 0
+        batch_counts = _count_batch_v1_resources(batch_v1, namespace)
+        namespace_resources.update(batch_counts)
 
-        # Process Secrets separately for count and size
+        # Add other API group counts here if needed (e.g., networking)
+        # net_counts = _count_networking_v1_resources(net_v1, namespace)
+        # namespace_resources.update(net_counts)
+
+        # --- Process Secrets --- #
         secret_count, total_secret_size_bytes = _process_secrets(v1, namespace)
         namespace_resources["Secrets"] = secret_count
-        # Add secret size to results
-        namespace_resources["TotalSecretDataSizeKiB"] = round(total_secret_size_bytes / 1024, 2)
+        namespace_resources["TotalSecretObjectSizeKiB"] = round(total_secret_size_bytes / 1024, 2)
 
-        # Process PVCs separately for count and capacity size
+        # --- Process PVCs --- #
         pvc_count, total_pvc_capacity_bytes = _process_pvcs(v1, namespace)
         namespace_resources["PersistentVolumeClaims"] = pvc_count
-        # Add PVC capacity to results
         namespace_resources["TotalPVCCapacityGiB"] = round(total_pvc_capacity_bytes / (1024**3), 2)
 
-        # Process Custom Resources if requested
+        # --- Process Custom Resources (Optional) --- #
         if include_crds:
             if cluster_crd_list is not None:
                 logger.debug(f"Processing CRDs in namespace: {namespace}")
@@ -598,12 +646,12 @@ def count_resources(
                 logger.warning(
                     f"CRD list not available for namespace {namespace} when include_crds=True. Skipping CRDs."
                 )
-                namespace_resources["TotalCustomResourceSizeKiB"] = 0  # Explicitly set to 0
+                namespace_resources["TotalCustomResourceSizeKiB"] = 0
 
-        # Add calculated sizes to the results
-        namespace_resources["TotalConfigMapSizeKiB"] = round(
-            total_core_resources_size_bytes / 1024, 2
-        )
+        # --- Final Size Aggregation --- #
+        # Note: TotalCoreResourcesSizeKiB is currently only CM size.
+        # Secrets size is reported separately as TotalSecretObjectSizeKiB.
+        namespace_resources["TotalConfigMapSizeKiB"] = round(total_cm_size_bytes / 1024, 2)
 
     except ApiException as e:
         # Handle potential 403 Forbidden for the entire namespace
@@ -628,32 +676,36 @@ def count_resources(
 # --- Namespace Filtering and Processing ---
 
 
-def _determine_namespaces_to_scan_by_selector(
+def _determine_namespaces_to_scan(
     api_client: ApiClient,
+    target_namespace: Optional[str],
     label_selector: str,
 ) -> Optional[List[str]]:
-    """Determines the list of namespaces to scan based *only* on label selector."""
+    """Determines the list of namespaces to scan based on label selector or target namespace."""
     v1_core_for_ns = client.CoreV1Api(api_client)
     namespaces_to_scan: List[str] = []
 
-    logger.info(f"Attempting to list namespaces with label selector: '{label_selector}'")
-    try:
-        selected_ns_list = v1_core_for_ns.list_namespace(label_selector=label_selector)
-        namespaces_to_scan = [ns.metadata.name for ns in selected_ns_list.items]
-        if not namespaces_to_scan:
-            logger.warning(f"No namespaces found matching label selector: '{label_selector}'")
+    if target_namespace:
+        namespaces_to_scan.append(target_namespace)
+    else:
+        logger.info(f"Attempting to list namespaces with label selector: '{label_selector}'")
+        try:
+            selected_ns_list = v1_core_for_ns.list_namespace(label_selector=label_selector)
+            namespaces_to_scan = [ns.metadata.name for ns in selected_ns_list.items]
+            if not namespaces_to_scan:
+                logger.warning(f"No namespaces found matching label selector: '{label_selector}'")
+                return None
+            logger.info(
+                f"Found {len(namespaces_to_scan)} namespaces matching selector: {', '.join(namespaces_to_scan)}"
+            )
+        except ApiException as e:
+            logger.error(
+                f"Error listing namespaces with selector '{label_selector}': {e.status} - {e.reason}"
+            )
             return None
-        logger.info(
-            f"Found {len(namespaces_to_scan)} namespaces matching selector: {', '.join(namespaces_to_scan)}"
-        )
-    except ApiException as e:
-        logger.error(
-            f"Error listing namespaces with selector '{label_selector}': {e.status} - {e.reason}"
-        )
-        return None
-    except Exception as e:
-        logger.error(f"Unexpected error listing namespaces with selector: {e}")
-        return None
+        except Exception as e:
+            logger.error(f"Unexpected error listing namespaces with selector: {e}")
+            return None
 
     return namespaces_to_scan
 
@@ -670,9 +722,6 @@ def _filter_namespaces_by_storage(
     for ns in target_namespaces:
         storage_info = namespace_storage_map.get(ns, {"nfs": False, "non_nfs": False})
         is_nfs_only = storage_info["nfs"] and not storage_info["non_nfs"]
-        is_non_nfs_or_mixed = storage_info["non_nfs"] or (
-            storage_info["nfs"] and storage_info["non_nfs"]
-        )  # Include mixed here
 
         if filter_mode == "exclude-nfs":
             if is_nfs_only:
@@ -905,6 +954,19 @@ def _determine_csv_headers(all_field_names: set[str], sizes_only: bool) -> List[
     return ordered_fieldnames
 
 
+# --- Validate mutually exclusive options --- #
+def _validate_mutually_exclusive_options(
+    target_namespace: Optional[str],
+    label_selector: Optional[str],
+) -> bool:
+    """Validates that only one of target_namespace or label_selector is provided."""
+    if target_namespace and label_selector:
+        logging.error("Cannot use --namespace and --label-selector simultaneously.")
+        click.echo("Error: Cannot use --namespace and --label-selector simultaneously.", err=True)
+        return True
+    return False
+
+
 def _write_main_output_csv(
     all_resources_data: List[Dict[str, Any]],
     all_field_names: set[str],
@@ -1028,6 +1090,13 @@ def _write_filtered_namespaces(
     help="Path to the kubeconfig file to use.",
 )
 @click.option(
+    "--namespace",
+    "target_namespace",  # Explicit variable name
+    type=str,
+    default=None,
+    help="Filter namespaces by name. Cannot be used with --label-selector.",
+)
+@click.option(
     "--label-selector",
     required=True,  # Make label selector required for this script's purpose
     help="Filter namespaces using a Kubernetes label selector (e.g., 'env=prod,team=alpha').",
@@ -1083,6 +1152,7 @@ def _write_filtered_namespaces(
 @click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
 def main(
     kubeconfig: str,
+    target_namespace: Optional[str],
     label_selector: str,
     filter_mode: str,
     include_crds: bool,
@@ -1093,8 +1163,7 @@ def main(
     output_dir: str,
     debug: bool,
 ):
-    """Counts Kubernetes resources and sizes within namespaces selected by a label,
-    filtering based on whether the namespaces use NFS-only storage.
+    """Counts Kubernetes resources and sizes within namespaces selected by a label, filtering based on whether the namespaces use NFS-only storage.
 
     Args:
         kubeconfig: Path to the kubeconfig file.
@@ -1107,6 +1176,8 @@ def main(
         max_workers: Max concurrent threads for namespace processing.
         output_dir: Directory to save output files.
         debug: Flag to enable debug logging.
+        target_namespace: Optional namespace to filter. Cannot be used with label_selector.
+
     """
     # --- Setup Timestamp & Logging ---
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1143,8 +1214,12 @@ def main(
     # This needs to happen *before* filtering namespaces
     namespace_storage_map = perform_cluster_storage_analysis(api_client)
 
+    # --- Validate mutually exclusive options --- #
+    if _validate_mutually_exclusive_options(target_namespace, label_selector):
+        return
+
     # --- Determine Target Namespaces ---
-    target_namespaces = _determine_namespaces_to_scan_by_selector(api_client, label_selector)
+    target_namespaces = _determine_namespaces_to_scan(api_client, target_namespace, label_selector)
     if target_namespaces is None:
         logger.error(
             f"Could not find any namespaces matching selector '{label_selector}' or failed to list them. Exiting."

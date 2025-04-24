@@ -11,7 +11,7 @@ import os
 import re
 import time
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import click
 from filelock import FileLock
@@ -21,12 +21,8 @@ from kubernetes.client.rest import ApiException
 
 # Import utilities
 from utils.k8s_utils import (
-    list_all_namespaces,  # Keep for potential future use, but main logic uses label selector
-)
-from utils.k8s_utils import (
     format_duration,
     load_kube_config_auto,
-    namespace_exists,
     parse_storage_string,
 )
 from utils.logging_utils import get_logger, setup_logging
@@ -71,8 +67,12 @@ def get_object_size(obj: Any) -> int:
 def sanitize_filename(name: str) -> str:
     """Removes or replaces characters invalid for typical filenames."""
     name = name.strip().replace(" ", "_")
-    name = re.sub(r'[<>:"/\|?*-]', "", name)  # Added backslash for windows compatibility
+    # Remove characters that are generally problematic in filenames across OSes
+    # Escape the hyphen to treat it literally
+    name = re.sub(r'[<>:"/\\|?*\-]', "", name)
+    # Replace sequences of underscores or invalid replacements with a single underscore
     name = re.sub(r"_+", "_", name)
+    # Handle potential empty string after sanitization
     return name if name else "invalid_name"
 
 
@@ -771,7 +771,7 @@ def _process_namespaces_concurrently(
         # Process futures, using the progress bar as context manager if shown
         if show_progress:
             with iterable_futures as bar:
-                for future in bar: # Iterate using the context manager's variable
+                for future in bar:  # Iterate using the context manager's variable
                     ns = future_to_ns[future]
                     try:
                         resources = future.result()  # Get result from future
@@ -792,10 +792,11 @@ def _process_namespaces_concurrently(
                     except Exception as exc:
                         # Catch exceptions raised during future execution
                         logger.error(
-                            f"Namespace {ns} generated an exception during processing: {exc}", exc_info=True
+                            f"Namespace {ns} generated an exception during processing: {exc}",
+                            exc_info=True,
                         )
                         failed_namespaces.append(ns)
-        else: # No progress bar, just iterate directly
+        else:  # No progress bar, just iterate directly
             for future in iterable_futures:
                 ns = future_to_ns[future]
                 try:
@@ -817,7 +818,8 @@ def _process_namespaces_concurrently(
                 except Exception as exc:
                     # Catch exceptions raised during future execution
                     logger.error(
-                        f"Namespace {ns} generated an exception during processing: {exc}", exc_info=True
+                        f"Namespace {ns} generated an exception during processing: {exc}",
+                        exc_info=True,
                     )
                     failed_namespaces.append(ns)
             # No need for bar.update() when using click.progressbar as iterator wrapper
@@ -1091,9 +1093,20 @@ def main(
     output_dir: str,
     debug: bool,
 ):
-    """
-    Counts Kubernetes resources and sizes within namespaces selected by a label,
+    """Counts Kubernetes resources and sizes within namespaces selected by a label,
     filtering based on whether the namespaces use NFS-only storage.
+
+    Args:
+        kubeconfig: Path to the kubeconfig file.
+        label_selector: Kubernetes label selector for namespaces.
+        filter_mode: 'exclude-nfs' or 'only-nfs'.
+        include_crds: Flag to include CRD counts/sizes.
+        main_output_file: Optional path for the main CSV output.
+        filtered_output_file: Optional path for the filtered namespace list.
+        sizes_only: Flag to output only size columns in the main CSV.
+        max_workers: Max concurrent threads for namespace processing.
+        output_dir: Directory to save output files.
+        debug: Flag to enable debug logging.
     """
     # --- Setup Timestamp & Logging ---
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1101,10 +1114,13 @@ def main(
     log_level = logging.DEBUG if debug else logging.INFO
     # Use setup_logging from utils, ensuring logs go to output_dir/logs if possible
     # For simplicity, keeping default log dir logic within setup_logging for now.
-    log_output_dir = os.path.join(output_dir, "logs")  # Suggest logs within output dir
-    setup_logging(level=log_level, script_name=script_base_name, log_dir=log_output_dir)
+
+    setup_logging(level=log_level, script_name=script_base_name)
     # Re-assign logger now that setup is complete
     logger = get_logger(__name__)  # Use utils get_logger
+
+    # Add an early debug message
+    logger.debug("Logger setup complete. Script starting main execution.")
 
     logger.info(f"Starting filtered resource count. Mode: {filter_mode}, Label: '{label_selector}'")
     start_time = time.monotonic()

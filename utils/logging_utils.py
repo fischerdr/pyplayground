@@ -22,8 +22,7 @@ def setup_logging(
     date_format: str = "%Y-%m-%d %H:%M:%S",
     handlers: Optional[List[logging.Handler]] = None,
 ) -> None:
-    """
-    Set up logging configuration with console (errors only) and a single file output.
+    """Set up logging configuration with console (errors only) and a single file output.
 
     Args:
         level: Logging level for the file handler (default: INFO). Console is fixed at WARNING.
@@ -118,8 +117,7 @@ def setup_logging(
 
 
 def get_logger(name: str) -> logging.Logger:
-    """
-    Get a logger instance.
+    """Get a logger instance.
 
     Args:
         name: Logger name

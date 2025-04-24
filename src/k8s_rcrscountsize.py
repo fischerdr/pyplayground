@@ -1,3 +1,6 @@
+#! /usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Counts Kubernetes resources and calculates sizes for ConfigMaps, Secrets,PVC capacity, and optionally Custom Resources within specified namespaces."""
 import csv
 import datetime
 import json
@@ -28,7 +31,7 @@ from utils.k8s_utils import (
 
 
 def handle_datetime(obj):
-    """JSON serializer for objects not serializable by default json code"""
+    """JSON serializer for objects not serializable by default json code."""
     if isinstance(obj, datetime.datetime):
         return obj.isoformat()
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
@@ -60,6 +63,7 @@ def count_resources(
     api_client: Optional[ApiClient] = None,
     crd_list: Optional[List[Any]] = None,
 ) -> Optional[Dict[str, Any]]:
+    """Counts Kubernetes resources and calculates sizes for ConfigMaps, Secrets, PVC capacity, and optionally Custom Resources within specified namespaces."""
     # API Clients - Initialize using the passed client or default
     v1 = client.CoreV1Api(api_client)
     apps_v1 = client.AppsV1Api(api_client)
@@ -312,8 +316,7 @@ def main(
     sizes_only: bool,
     label_selector: Optional[str],
 ):
-    """Counts Kubernetes resources and calculates sizes for ConfigMaps, Secrets,
-    PVC capacity, and optionally Custom Resources within specified namespaces."""
+    """Counts Kubernetes resources and calculates sizes for ConfigMaps, Secrets, PVC capacity, and optionally Custom Resources within specified namespaces."""
     # --- Logging Setup --- #
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     log_dir = "logs"

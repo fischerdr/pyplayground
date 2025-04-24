@@ -32,6 +32,7 @@ load_dotenv()
 
 # --- Helper Functions for Main Logic ---
 
+
 def _handle_authentication(
     token: Optional[str],
     auth_url: Optional[str],
@@ -67,9 +68,7 @@ def _handle_authentication(
             f"Error: Token not provided, and missing required options for token generation: {', '.join(missing_auth)}"
         )
     try:
-        generated_token = generate_token(
-            auth_url, client_id, username, password, validate_certs
-        )
+        generated_token = generate_token(auth_url, client_id, username, password, validate_certs)
         click.echo("Successfully generated authentication token.")
         return generated_token
     except (requests.exceptions.RequestException, ValueError) as auth_err:
@@ -94,9 +93,7 @@ def _run_list_operation(
     all_clusters_raw = fetch_clusters(client, org_id)
 
     # 2. Filter clusters
-    matched_clusters = filter_clusters(
-        all_clusters_raw, cluster_name_filter, cluster_uid_filter
-    )
+    matched_clusters = filter_clusters(all_clusters_raw, cluster_name_filter, cluster_uid_filter)
 
     if not matched_clusters:
         console.print(
@@ -172,9 +169,7 @@ def _display_backup_list(backups: List[Dict[str, Any]]) -> None:
 
     # Sort backups by creation time (descending) if possible
     try:
-        backups.sort(
-            key=lambda b: b.get("metadata", {}).get("create_time", ""), reverse=True
-        )
+        backups.sort(key=lambda b: b.get("metadata", {}).get("create_time", ""), reverse=True)
     except Exception:
         logger.warning("Could not sort backups by creation time.", exc_info=False)
 
@@ -188,13 +183,9 @@ def _display_backup_list(backups: List[Dict[str, Any]]) -> None:
         status_info = backup_info.get("status", {})
 
         backup_type_str = (
-            backup_type_info.get("type", "N/A")
-            if isinstance(backup_type_info, dict)
-            else "N/A"
+            backup_type_info.get("type", "N/A") if isinstance(backup_type_info, dict) else "N/A"
         )
-        status_str = (
-            status_info.get("status", "N/A") if isinstance(status_info, dict) else "N/A"
-        )
+        status_str = status_info.get("status", "N/A") if isinstance(status_info, dict) else "N/A"
 
         table.add_row(
             metadata.get("name", "N/A"),
@@ -254,13 +245,9 @@ def _run_inspect_operation(
         volumes = backup_info.get("volumes", [])
 
         backup_type_str = (
-            backup_type_info.get("type", "N/A")
-            if isinstance(backup_type_info, dict)
-            else "N/A"
+            backup_type_info.get("type", "N/A") if isinstance(backup_type_info, dict) else "N/A"
         )
-        status_str = (
-            status_info.get("status", "N/A") if isinstance(status_info, dict) else "N/A"
-        )
+        status_str = status_info.get("status", "N/A") if isinstance(status_info, dict) else "N/A"
 
         # Populate main details table
         table.add_row("Name:", metadata.get("name", "N/A"))
@@ -348,6 +335,7 @@ def _run_inspect_operation(
 
 # --- API Client Functions (Moved from original main logic, can be further refactored) ---
 # These interact directly with the client object
+
 
 def fetch_clusters(client: PXBackupClient, org_id: str) -> List[Dict[str, Any]]:
     """Fetches the list of all clusters for the given organization.

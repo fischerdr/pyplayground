@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""Finds running PX-Backup backups.
 
-"""Finds running PX-Backup backups, locates the corresponding Kubernetes Jobs, and fetches recent logs from the 'kopiaexecutor' container in the job's pods."""
+This script locates the corresponding Kubernetes Jobs, and fetches recent logs from the 'kopiaexecutor' container in the job's pods.
+"""
 
 import logging
 import os

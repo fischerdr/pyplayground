@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -780,7 +781,8 @@ def _handle_scan_all_namespaces(api_client: ApiClient) -> Optional[List[str]]:
         except KeyboardInterrupt:
             logger.warning("Scan cancelled by user during pause.")
             click.echo("Scan cancelled.", err=True)
-            return None  # Indicate cancellation
+            # Explicitly exit the script
+            sys.exit(1)  # Use exit code 1 for cancellation
     logger.info(f"Targeting all {num_ns} namespaces for scan.")
     return all_ns
 

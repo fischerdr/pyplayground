@@ -768,30 +768,58 @@ def _process_namespaces_concurrently(
         else:
             logger.info(f"Processing {len(namespaces_to_scan)} namespace(s)...")
 
-        for future in iterable_futures:
-            ns = future_to_ns[future]
-            try:
-                resources = future.result()  # Get result from future
-                if resources is not None:
-                    # Successfully processed, add Namespace key
-                    ns_data = {"Namespace": ns, **resources}
-                    all_resources_data.append(ns_data)
-                    all_field_names.update(ns_data.keys())
-                    # Log success minimally unless debugging is high
-                    logger.debug(
-                        f"Successfully processed namespace: {ns}. Resources found: {len(resources)}"
+        # Process futures, using the progress bar as context manager if shown
+        if show_progress:
+            with iterable_futures as bar:
+                for future in bar: # Iterate using the context manager's variable
+                    ns = future_to_ns[future]
+                    try:
+                        resources = future.result()  # Get result from future
+                        if resources is not None:
+                            # Successfully processed, add Namespace key
+                            ns_data = {"Namespace": ns, **resources}
+                            all_resources_data.append(ns_data)
+                            all_field_names.update(ns_data.keys())
+                            # Log success minimally unless debugging is high
+                            logger.debug(
+                                f"Successfully processed namespace: {ns}. Resources found: {len(resources)}"
+                            )
+                            processed_count += 1
+                        else:
+                            # count_resources returned None, indicating failure
+                            logger.warning(f"Namespace {ns} failed processing (returned None).")
+                            failed_namespaces.append(ns)
+                    except Exception as exc:
+                        # Catch exceptions raised during future execution
+                        logger.error(
+                            f"Namespace {ns} generated an exception during processing: {exc}", exc_info=True
+                        )
+                        failed_namespaces.append(ns)
+        else: # No progress bar, just iterate directly
+            for future in iterable_futures:
+                ns = future_to_ns[future]
+                try:
+                    resources = future.result()  # Get result from future
+                    if resources is not None:
+                        # Successfully processed, add Namespace key
+                        ns_data = {"Namespace": ns, **resources}
+                        all_resources_data.append(ns_data)
+                        all_field_names.update(ns_data.keys())
+                        # Log success minimally unless debugging is high
+                        logger.debug(
+                            f"Successfully processed namespace: {ns}. Resources found: {len(resources)}"
+                        )
+                        processed_count += 1
+                    else:
+                        # count_resources returned None, indicating failure
+                        logger.warning(f"Namespace {ns} failed processing (returned None).")
+                        failed_namespaces.append(ns)
+                except Exception as exc:
+                    # Catch exceptions raised during future execution
+                    logger.error(
+                        f"Namespace {ns} generated an exception during processing: {exc}", exc_info=True
                     )
-                    processed_count += 1
-                else:
-                    # count_resources returned None, indicating failure
-                    logger.warning(f"Namespace {ns} failed processing (returned None).")
                     failed_namespaces.append(ns)
-            except Exception as exc:
-                # Catch exceptions raised during future execution
-                logger.error(
-                    f"Namespace {ns} generated an exception during processing: {exc}", exc_info=True
-                )
-                failed_namespaces.append(ns)
             # No need for bar.update() when using click.progressbar as iterator wrapper
 
     logging.info(
@@ -1076,7 +1104,6 @@ def main(
     log_output_dir = os.path.join(output_dir, "logs")  # Suggest logs within output dir
     setup_logging(level=log_level, script_name=script_base_name, log_dir=log_output_dir)
     # Re-assign logger now that setup is complete
-    global logger
     logger = get_logger(__name__)  # Use utils get_logger
 
     logger.info(f"Starting filtered resource count. Mode: {filter_mode}, Label: '{label_selector}'")

@@ -334,164 +334,242 @@ def _process_custom_resources(
     return dict(cr_counts), total_cr_size_bytes
 
 
+def _get_single_secret_size(v1: client.CoreV1Api, name: str, namespace: str) -> int:
+    """Reads a single secret and returns its object size, handling errors."""
+    try:
+        full_secret = v1.read_namespaced_secret(name=name, namespace=namespace)
+        return get_object_size(full_secret)
+    except ApiException as e_read:
+        if e_read.status == 404:
+            logger.warning(
+                f"Secret {name} not found during size calculation in {namespace} (deleted?)."
+            )
+        else:
+            logger.error(
+                f"Could not read Secret {name} in {namespace} for size: {e_read.status} - {e_read.reason}"
+            )
+        return 0  # Return 0 size on read error
+    except Exception as e_size:
+        logger.error(f"Error calculating size for Secret {name} in {namespace}: {e_size}")
+        return 0  # Return 0 size on calculation error
+
+
 def _process_secrets(v1: client.CoreV1Api, namespace: str) -> Tuple[int, int]:
     """Processes Secrets for counting and full object sizing."""
-    secret_count = 0
     total_secret_object_size_bytes = 0
-    secret_names: List[str] = []
 
-    try:
-        # List secrets with pagination to get all names
-        continue_token = None
-        while True:
-            logger.debug(
-                f"Listing secrets in {namespace} (continue={continue_token is not None})..."
-            )
-            secrets = v1.list_namespaced_secret(namespace, limit=500, _continue=continue_token)
-            current_items = secrets.items
-            secret_names.extend(
-                [s.metadata.name for s in current_items if s.metadata and s.metadata.name]
-            )
+    # Use helper to get count and names, handles listing errors/pagination
+    list_result = _list_and_count_resource(
+        v1.list_namespaced_secret, "Secrets", namespace, return_names=True
+    )
 
-            # Safely get the next continue token
-            continue_token = getattr(getattr(secrets, "metadata", None), "_continue", None)
-            if not continue_token:
-                break  # Exit loop if no more pages
+    # Check the type returned by the helper
+    if isinstance(list_result, tuple):
+        secret_count, secret_names = list_result
+    else:
+        # Should not happen if return_names=True, but handle defensively
+        logger.error(f"_list_and_count_resource did not return names for Secrets in {namespace}")
+        secret_count = list_result
+        secret_names = []
 
-        secret_count = len(secret_names)
-        logger.debug(f"Found {secret_count} secret names in {namespace}.")
-
-        # Now read each secret individually to calculate its object size
+    if secret_count > 0 and secret_names:
+        logger.debug(f"Calculating size for {secret_count} Secrets in {namespace}")
+        # Read each secret individually using names to calculate its object size
         for secret_name in secret_names:
-            try:
-                full_secret = v1.read_namespaced_secret(name=secret_name, namespace=namespace)
-                total_secret_object_size_bytes += get_object_size(full_secret)
-            except ApiException as e_read:
-                if e_read.status == 404:
-                    logger.warning(
-                        f"Secret {secret_name} not found during size calculation in {namespace} (deleted?)."
-                    )
-                else:
-                    logger.error(
-                        f"Could not read Secret {secret_name} in {namespace} for size: {e_read.status} - {e_read.reason}"
-                    )
-            except Exception as e_size:
-                logger.error(
-                    f"Error calculating size for Secret {secret_name} in {namespace}: {e_size}"
-                )
-
-    except ApiException as e_list:
-        logger.error(f"Could not list secrets in {namespace}: {e_list.status} - {e_list.reason}")
-        # Return 0 count and size if listing fails
-        return 0, 0
-    except Exception as e_list_unexpected:
-        logger.error(f"Unexpected error listing secrets in {namespace}: {e_list_unexpected}")
-        return 0, 0
+            total_secret_object_size_bytes += _get_single_secret_size(v1, secret_name, namespace)
+    elif secret_count > 0:
+        logger.warning(
+            f"Secret count is {secret_count} but no names were retrieved for sizing in {namespace}. Size will be 0."
+        )
 
     # Note: The size reported is the full object definition size (JSON), not just the data size.
     return secret_count, total_secret_object_size_bytes
 
 
-def _process_pvcs(v1: client.CoreV1Api, namespace: str) -> Tuple[int, int]:
-    """Processes PersistentVolumeClaims (PVCs) for counting and capacity sizing."""
-    pvc_count = 0
-    total_pvc_capacity_bytes = 0
+def _process_resource_page(
+    list_func,
+    resource_name: str,
+    namespace: str,
+    continue_token: Optional[str],
+) -> Tuple[
+    Optional[List[Any]], Optional[str], bool
+]:  # Returns: (items, next_token, error_occurred)
+    """Processes a single page of resources from a list function."""
     try:
-        pvcs = v1.list_namespaced_persistent_volume_claim(namespace, limit=500)  # Add limit
-        items = pvcs.items
-        pvc_count = len(items)
-
-        continue_token = pvcs.metadata._continue
-        while continue_token:
-            logger.debug(f"Paginating PVC list in {namespace}...")
-            pvcs = v1.list_namespaced_persistent_volume_claim(
-                namespace, limit=500, _continue=continue_token
+        logger.debug(
+            f"Listing page of {resource_name} in {namespace} (continue={continue_token is not None})..."
+        )
+        listed_objects = list_func(namespace, limit=500, _continue=continue_token)
+        items = listed_objects.items
+        next_token = getattr(getattr(listed_objects, "metadata", None), "_continue", None)
+        return items, next_token, False  # No error
+    except ApiException as e_list:
+        if e_list.status != 404:
+            logger.error(
+                f"API error listing {resource_name} page in {namespace}: {e_list.status} - {e_list.reason}"
             )
-            more_items = pvcs.items
-            items.extend(more_items)
-            pvc_count += len(more_items)
-            continue_token = pvcs.metadata._continue
-
-        for pvc in items:
-            try:
-                # Use spec.resources.requests for requested size, status.capacity for actual provisioned size
-                storage_size_str = None
-                if pvc.status and pvc.status.capacity:
-                    storage_size_str = pvc.status.capacity.get("storage")
-                elif pvc.spec and pvc.spec.resources and pvc.spec.resources.requests:
-                    # Fallback to requested size if capacity not available (e.g., pending PVC)
-                    storage_size_str = pvc.spec.resources.requests.get("storage")
-
-                if storage_size_str:
-                    pvc_bytes = parse_storage_string(storage_size_str)
-                    if pvc_bytes is not None:
-                        total_pvc_capacity_bytes += pvc_bytes
-                    else:
-                        logger.warning(
-                            f"Could not parse PVC size for {pvc.metadata.name} in {namespace}: '{storage_size_str}'"
-                        )
-                # else: # Don't log if no storage request/capacity unless debugging
-                #     logger.debug(f"PVC {pvc.metadata.name} in {namespace} has no storage size specified/provisioned.")
-            except Exception as e:
-                logger.error(f"Error processing PVC {pvc.metadata.name} size in {namespace}: {e}")
-    except ApiException as e:
-        logger.error(f"Could not list PVCs in {namespace}: {e.status} - {e.reason}")
+        # Treat 404 as non-fatal for a single page, but signal error for others
+        return None, None, e_list.status != 404
     except Exception as e:
-        logger.error(f"Unexpected error processing PVCs in {namespace}: {e}")
+        logger.error(f"Unexpected error listing {resource_name} page in {namespace}: {e}")
+        return None, None, True  # Signal error
 
-    return pvc_count, total_pvc_capacity_bytes
+
+def _process_items_page(
+    current_items: List[Any],
+    return_names: bool,
+    return_items: bool,
+    all_item_names: List[str],
+    all_items: List[Dict[str, Any]],
+) -> int:
+    """Processes a page of items, updating names/items lists and returning count."""
+    count = len(current_items)
+    if return_names:
+        all_item_names.extend(
+            [
+                item.metadata.name
+                for item in current_items
+                if hasattr(item, "metadata") and hasattr(item.metadata, "name")
+            ]
+        )
+    elif return_items:
+        all_items.extend([item.to_dict() for item in current_items if hasattr(item, "to_dict")])
+    return count
 
 
 def _list_and_count_resource(
     list_func,
     resource_name: str,
     namespace: str,
-    return_names: bool = False,  # New parameter
-) -> Union[int, Tuple[int, List[str]]]:  # Updated return type
+    return_names: bool = False,
+    return_items: bool = False,
+) -> Union[int, Tuple[int, List[str]], Tuple[int, List[Dict[str, Any]]]]:
     """Lists a specific resource type, handling pagination.
 
-    Returns the count and optionally the names of the resources found.
+    Returns count, count & names, or count & full items based on flags.
     """
-    count = 0
-    items = []
-    item_names: List[str] = []  # To store names if requested
-    continue_token = None
-    try:
-        while True:
-            logger.debug(
-                f"Listing {resource_name} in {namespace} (continue={continue_token is not None})..."
-            )
-            listed_objects = list_func(namespace, limit=500, _continue=continue_token)
-            items = listed_objects.items
-            count += len(items)
-            if return_names:
-                # Extract names safely
-                item_names.extend(  # Use extend for lists
-                    [
-                        item.metadata.name
-                        for item in items
-                        if hasattr(item, "metadata") and hasattr(item.metadata, "name")
-                    ]  # Added safe access
-                )
+    total_count = 0
+    all_items: List[Dict[str, Any]] = []  # Store dict representation if return_items
+    all_item_names: List[str] = []  # Store names if return_names
+    continue_token: Optional[str] = ""  # Use empty string to start the first iteration
+    error_occurred = False
 
-            # Safely get continue token
-            continue_token = getattr(getattr(listed_objects, "metadata", None), "_continue", None)
-            if not continue_token:
-                break
-        logger.debug(f"Found {count} {resource_name} in {namespace}.")
-        # Return count and names if requested, otherwise just count
-        return (count, item_names) if return_names else count
-    except ApiException as e_list:
-        if e_list.status != 404:
-            logger.error(
-                f"Could not list {resource_name} in {namespace}: {e_list.status} - {e_list.reason}"
+    if return_names and return_items:
+        raise ValueError("Cannot set both return_names and return_items to True.")
+
+    while continue_token is not None:
+        current_items, next_token, page_error = _process_resource_page(
+            list_func,
+            resource_name,
+            namespace,
+            continue_token if continue_token else None,  # Pass None for first call
+        )
+
+        if page_error:
+            error_occurred = True
+            break  # Stop processing if a page fails critically
+
+        if current_items is not None:
+            # Process the items from the current page using the helper
+            page_count = _process_items_page(
+                current_items, return_names, return_items, all_item_names, all_items
             )
-        # Return appropriate type on error
-        return (0, []) if return_names else 0
+            total_count += page_count
+
+        continue_token = next_token  # Move to next page or stop if None
+
+    logger.debug(
+        f"Finished listing {resource_name} in {namespace}. Total found: {total_count}. Error status: {error_occurred}"
+    )
+
+    # Simplified return logic
+    if error_occurred:
+        # Return default error values based on requested type
+        if return_items:
+            return 0, []
+        elif return_names:
+            return 0, []
+        else:
+            return 0
+    else:
+        # Return successfully collected data
+        if return_items:
+            return total_count, all_items
+        elif return_names:
+            return total_count, all_item_names
+        else:
+            return total_count
+
+
+def _get_pvc_capacity(pvc_item: Dict[str, Any]) -> int:
+    """Parses the storage capacity from a single PVC item dictionary.
+
+    Args:
+        pvc_item: A dictionary representing a PVC object.
+
+    Returns:
+        The capacity in bytes, or 0 if not found or unparsable.
+    """
+    pvc_name = pvc_item.get("metadata", {}).get("name", "Unknown")
+    namespace = pvc_item.get("metadata", {}).get("namespace", "Unknown")
+    try:
+        storage_size_str = None
+        # Prefer status.capacity if available (actual provisioned size)
+        if pvc_item.get("status") and pvc_item["status"].get("capacity"):
+            storage_size_str = pvc_item["status"]["capacity"].get("storage")
+        # Fallback to spec.resources.requests if status/capacity not present
+        elif (
+            pvc_item.get("spec")
+            and pvc_item["spec"].get("resources")
+            and pvc_item["spec"]["resources"].get("requests")
+        ):
+            storage_size_str = pvc_item["spec"]["resources"]["requests"].get("storage")
+
+        if storage_size_str:
+            pvc_bytes = parse_storage_string(storage_size_str)
+            if pvc_bytes is not None:
+                return pvc_bytes
+            else:
+                logger.warning(
+                    f"Could not parse PVC size for {pvc_name} in {namespace}: '{storage_size_str}'"
+                )
+                return 0
+        else:
+            # logger.debug(f"PVC {pvc_name} in {namespace} has no storage size specified/provisioned.")
+            return 0
     except Exception as e:
-        logger.error(f"Unexpected error listing {resource_name} in {namespace}: {e}")
-        # Return appropriate type on error
-        return (0, []) if return_names else 0
+        logger.error(f"Error processing PVC {pvc_name} size in {namespace}: {e}")
+        return 0
+
+
+def _process_pvcs(v1: client.CoreV1Api, namespace: str) -> Tuple[int, int]:
+    """Processes PersistentVolumeClaims (PVCs) for counting and capacity sizing."""
+    total_pvc_capacity_bytes = 0
+
+    # Use helper to get count and items
+    list_result = _list_and_count_resource(
+        v1.list_namespaced_persistent_volume_claim, "PVCs", namespace, return_items=True
+    )
+
+    # Check the type returned by the helper
+    if isinstance(list_result, tuple) and len(list_result) == 2:
+        pvc_count, pvc_items = list_result
+    else:
+        # Should not happen if return_items=True, but handle defensively
+        logger.error(f"_list_and_count_resource did not return items for PVCs in {namespace}")
+        pvc_count = list_result if isinstance(list_result, int) else 0
+        pvc_items = []
+
+    if pvc_count > 0 and pvc_items:
+        logger.debug(f"Calculating capacity for {pvc_count} PVCs in {namespace}")
+        for pvc_item in pvc_items:
+            total_pvc_capacity_bytes += _get_pvc_capacity(pvc_item)
+    elif pvc_count > 0:
+        logger.warning(
+            f"PVC count is {pvc_count} but no items were retrieved for sizing in {namespace}. Capacity will be 0."
+        )
+
+    return pvc_count, total_pvc_capacity_bytes
 
 
 def _count_core_v1_standard_resources(
@@ -769,6 +847,44 @@ def _pre_fetch_crd_list(api_client: ApiClient) -> Optional[List[Any]]:
     return cluster_crd_list
 
 
+def _process_future_result(
+    future: concurrent.futures.Future,
+    future_to_ns: Dict[concurrent.futures.Future, str],
+    all_resources_data: List[Dict[str, Any]],
+    all_field_names: set[str],
+    failed_namespaces: List[str],
+) -> int:
+    """Processes the result of a single future, updating result lists.
+
+    Returns:
+        1 if processed successfully, 0 otherwise.
+    """
+    ns = future_to_ns[future]
+    try:
+        resources = future.result()  # Get result from future
+        if resources is not None:
+            # Successfully processed, add Namespace key
+            ns_data = {"Namespace": ns, **resources}
+            all_resources_data.append(ns_data)
+            all_field_names.update(ns_data.keys())
+            logger.debug(
+                f"Successfully processed namespace: {ns}. Resources found: {len(resources)}"
+            )
+            return 1  # Indicate success
+        else:
+            # count_resources returned None, indicating failure
+            logger.warning(f"Namespace {ns} failed processing (returned None).")
+            failed_namespaces.append(ns)
+            return 0  # Indicate failure
+    except Exception as exc:
+        # Catch exceptions raised during future execution
+        logger.error(
+            f"Namespace {ns} generated an exception during processing: {exc}", exc_info=True
+        )
+        failed_namespaces.append(ns)
+        return 0  # Indicate failure
+
+
 def _process_namespaces_concurrently(
     namespaces_to_scan: List[str],
     include_crds: bool,
@@ -790,11 +906,9 @@ def _process_namespaces_concurrently(
         f"Starting processing for {len(namespaces_to_scan)} namespaces with up to {max_workers} worker threads..."
     )
 
-    # Use click progressbar if more than one namespace
     show_progress = len(namespaces_to_scan) > 1
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Create futures
         future_to_ns = {
             executor.submit(count_resources, ns, include_crds, api_client, cluster_crd_list): ns
             for ns in namespaces_to_scan
@@ -804,74 +918,24 @@ def _process_namespaces_concurrently(
         progress_label = "Processing namespaces"
 
         if show_progress:
-            # Setup progress bar
-            iterable_futures = click.progressbar(
+            logger.info(f"Processing {len(namespaces_to_scan)} namespaces with progress bar.")
+            # Use click progressbar as context manager
+            with click.progressbar(
                 iterable=iterable_futures,
                 length=len(namespaces_to_scan),
                 label=progress_label,
-                item_show_func=lambda p: (
-                    f"Processed {p.metadata.name}" if p and hasattr(p, "metadata") else ""
-                ),  # Show namespace name if possible
-            )
-            logger.info(f"Processing {len(namespaces_to_scan)} namespaces with progress bar.")
+                item_show_func=lambda p: f"Processed {future_to_ns.get(p, '...')}" if p else "",
+            ) as bar:
+                for future in bar:
+                    processed_count += _process_future_result(
+                        future, future_to_ns, all_resources_data, all_field_names, failed_namespaces
+                    )
         else:
             logger.info(f"Processing {len(namespaces_to_scan)} namespace(s)...")
-
-        # Process futures, using the progress bar as context manager if shown
-        if show_progress:
-            with iterable_futures as bar:
-                for future in bar:  # Iterate using the context manager's variable
-                    ns = future_to_ns[future]
-                    try:
-                        resources = future.result()  # Get result from future
-                        if resources is not None:
-                            # Successfully processed, add Namespace key
-                            ns_data = {"Namespace": ns, **resources}
-                            all_resources_data.append(ns_data)
-                            all_field_names.update(ns_data.keys())
-                            # Log success minimally unless debugging is high
-                            logger.debug(
-                                f"Successfully processed namespace: {ns}. Resources found: {len(resources)}"
-                            )
-                            processed_count += 1
-                        else:
-                            # count_resources returned None, indicating failure
-                            logger.warning(f"Namespace {ns} failed processing (returned None).")
-                            failed_namespaces.append(ns)
-                    except Exception as exc:
-                        # Catch exceptions raised during future execution
-                        logger.error(
-                            f"Namespace {ns} generated an exception during processing: {exc}",
-                            exc_info=True,
-                        )
-                        failed_namespaces.append(ns)
-        else:  # No progress bar, just iterate directly
             for future in iterable_futures:
-                ns = future_to_ns[future]
-                try:
-                    resources = future.result()  # Get result from future
-                    if resources is not None:
-                        # Successfully processed, add Namespace key
-                        ns_data = {"Namespace": ns, **resources}
-                        all_resources_data.append(ns_data)
-                        all_field_names.update(ns_data.keys())
-                        # Log success minimally unless debugging is high
-                        logger.debug(
-                            f"Successfully processed namespace: {ns}. Resources found: {len(resources)}"
-                        )
-                        processed_count += 1
-                    else:
-                        # count_resources returned None, indicating failure
-                        logger.warning(f"Namespace {ns} failed processing (returned None).")
-                        failed_namespaces.append(ns)
-                except Exception as exc:
-                    # Catch exceptions raised during future execution
-                    logger.error(
-                        f"Namespace {ns} generated an exception during processing: {exc}",
-                        exc_info=True,
-                    )
-                    failed_namespaces.append(ns)
-            # No need for bar.update() when using click.progressbar as iterator wrapper
+                processed_count += _process_future_result(
+                    future, future_to_ns, all_resources_data, all_field_names, failed_namespaces
+                )
 
     logging.info(
         f"Finished processing namespaces. Successful: {processed_count}, Failed: {len(failed_namespaces)}."

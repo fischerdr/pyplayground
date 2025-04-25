@@ -5,6 +5,7 @@ It connects to the vCenter server, retrieves the list of VMs, and checks their p
 
 
 """
+
 import logging
 import ssl
 

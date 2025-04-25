@@ -178,10 +178,11 @@ def get_schedules(
         # Log raw response at debug level
         logger.debug(f"Raw API response for schedules: {json.dumps(response, indent=2)}")
 
-        schedules = response.get("schedules", [])
+        # Corrected key based on user feedback
+        schedules = response.get("backup_schedules", [])
         if not isinstance(schedules, list):
             logger.error(
-                f"Unexpected response format when fetching schedules. Expected list under 'schedules' key, got {type(schedules)}. Response: {response}"
+                f"Unexpected response format when fetching schedules. Expected list under 'backup_schedules' key, got {type(schedules)}. Response: {response}"
             )
             raise ValueError("Unexpected API response format for schedules.")
         logger.info(f"Successfully fetched {len(schedules)} schedules for {target_info}.")
@@ -195,6 +196,99 @@ def get_schedules(
     except Exception as e:
         logger.error(f"Unexpected error during schedule fetch or processing: {e}", exc_info=True)
         raise ValueError("Failed to process schedule response.")
+
+
+# --- Helper for Policy Parsing ---
+def _parse_policy_info(
+    policy_info: Dict[str, Any], schedule_policy_ref: Dict[str, Any]
+) -> Tuple[str, str, str]:
+    """Parses policy info to determine schedule type, frequency, and retention."""
+    schedule_type = "N/A"
+    frequency = "N/A"
+    retention = "N/A"
+
+    if policy_info.get("daily"):
+        schedule_type = "Daily"
+        daily_policy = policy_info["daily"]
+        frequency = f"Daily at {daily_policy.get('time', '?')}"
+        retention = f"{daily_policy.get('retain', '?')} days"
+    elif policy_info.get("weekly"):
+        schedule_type = "Weekly"
+        weekly_policy = policy_info["weekly"]
+        frequency = f"Weekly on {weekly_policy.get('day', '?')} at {weekly_policy.get('time', '?')}"
+        retention = f"{weekly_policy.get('retain', '?')} weeks"
+    elif policy_info.get("monthly"):
+        schedule_type = "Monthly"
+        monthly_policy = policy_info["monthly"]
+        frequency = (
+            f"Monthly on day {monthly_policy.get('day', '?')} at {monthly_policy.get('time', '?')}"
+        )
+        retention = f"{monthly_policy.get('retain', '?')} months"
+    elif policy_info.get("interval"):
+        schedule_type = "Interval"
+        interval_policy = policy_info["interval"]
+        frequency = f"Every {interval_policy.get('intervalMinutes', '?')} mins"
+        retention = f"{interval_policy.get('retain', '?')} backups"
+    else:
+        schedule_type = schedule_policy_ref.get("type", "N/A")  # Fallback
+
+    return schedule_type, frequency, retention
+
+
+# --- Helper for Resource Selector Formatting ---
+def _format_resource_selectors(
+    backup_schedule_info: Dict[str, Any],
+) -> Tuple[str, str, str, str, str, str]:
+    """Formats resource selector fields for display."""
+    namespaces = backup_schedule_info.get("namespaces", [])
+    resource_types = backup_schedule_info.get("resource_types", [])
+    exclude_resource_types = backup_schedule_info.get("exclude_resource_types", [])
+    label_selectors = backup_schedule_info.get("label_selectors", {})
+    ns_label_selectors = backup_schedule_info.get("ns_label_selectors", {})
+    include_resources = backup_schedule_info.get("include_resources", [])
+
+    namespaces_str = ", ".join(namespaces) if namespaces else "All"
+    resource_types_str = ", ".join(resource_types) if resource_types else "All"
+    exclude_resource_types_str = (
+        ", ".join(exclude_resource_types) if exclude_resource_types else "None"
+    )
+
+    if isinstance(label_selectors, dict):
+        label_selectors_str = (
+            ", ".join([f"{k}={v}" for k, v in label_selectors.items()])
+            if label_selectors
+            else "None"
+        )
+    else:
+        label_selectors_str = str(label_selectors) if label_selectors else "Invalid Type/Empty"
+        logger.debug(
+            f"label_selectors was not a dict: {label_selectors_str}"
+        )  # Assuming logger is accessible
+
+    if isinstance(ns_label_selectors, dict):
+        ns_label_selectors_str = (
+            ", ".join([f"{k}={v}" for k, v in ns_label_selectors.items()])
+            if ns_label_selectors
+            else "None"
+        )
+    else:
+        ns_label_selectors_str = (
+            str(ns_label_selectors) if ns_label_selectors else "Invalid Type/Empty"
+        )
+        logger.debug(
+            f"ns_label_selectors was not a dict: {ns_label_selectors_str}"
+        )  # Assuming logger is accessible
+
+    include_resources_count = str(len(include_resources)) if include_resources else "0"
+
+    return (
+        namespaces_str,
+        resource_types_str,
+        exclude_resource_types_str,
+        label_selectors_str,
+        ns_label_selectors_str,
+        include_resources_count,
+    )
 
 
 # --- Display Function ---
@@ -233,77 +327,24 @@ def _display_schedules(schedules: List[Dict[str, Any]], console: Console) -> Non
 
     for schedule in schedules:
         metadata = schedule.get("metadata", {})
-        # Change: Extract from backup_schedule_info instead of spec
         backup_schedule_info = schedule.get("backup_schedule_info", {})
-        # Change: Use backup_schedule_info as base for refs
         schedule_policy_ref = backup_schedule_info.get("schedule_policy_ref", {})
         cluster_ref = backup_schedule_info.get("cluster_ref", {})
         backup_location_ref = backup_schedule_info.get("backup_location_ref", {})
-
-        # Change: Get policy details from dsMeta
         ds_meta = schedule.get("dsMeta", {})
         policy_details = ds_meta.get("policies", {})
         policy_info = policy_details.get("schedule_policy_info", {})
 
-        # Determine schedule type from policy details if possible, fallback to ref
-        schedule_type = "N/A"
-        frequency = "N/A"
-        retention = "N/A"
-
-        if policy_info.get("daily"):
-            schedule_type = "Daily"
-            daily_policy = policy_info["daily"]
-            frequency = f"Daily at {daily_policy.get('time', '?')}"
-            retention = f"{daily_policy.get('retain', '?')} days"
-        elif policy_info.get("weekly"):
-            schedule_type = "Weekly"
-            weekly_policy = policy_info["weekly"]
-            frequency = (
-                f"Weekly on {weekly_policy.get('day', '?')} at {weekly_policy.get('time', '?')}"
-            )
-            retention = f"{weekly_policy.get('retain', '?')} weeks"
-        elif policy_info.get("monthly"):
-            schedule_type = "Monthly"
-            monthly_policy = policy_info["monthly"]
-            frequency = f"Monthly on day {monthly_policy.get('day', '?')} at {monthly_policy.get('time', '?')}"
-            retention = f"{monthly_policy.get('retain', '?')} months"
-        elif policy_info.get("interval"):
-            schedule_type = "Interval"
-            interval_policy = policy_info["interval"]
-            frequency = f"Every {interval_policy.get('intervalMinutes', '?')} mins"
-            retention = f"{interval_policy.get('retain', '?')} backups"
-        else:
-            # Fallback if structure is different or missing
-            schedule_type = schedule_policy_ref.get("type", "N/A")  # Get type from ref as fallback
-
-        # --- Resource Selector Details ---
-        namespaces = backup_schedule_info.get("namespaces", [])
-        resource_types = backup_schedule_info.get("resource_types", [])
-        exclude_resource_types = backup_schedule_info.get("exclude_resource_types", [])
-        label_selectors = backup_schedule_info.get("label_selectors", {})  # Expecting dict
-        ns_label_selectors = backup_schedule_info.get(
-            "ns_label_selectors", {}
-        )  # Expecting dict based on sample
-        include_resources = backup_schedule_info.get("include_resources", [])  # Expecting list
-
-        # Formatting for display
-        namespaces_str = ", ".join(namespaces) if namespaces else "All"
-        resource_types_str = ", ".join(resource_types) if resource_types else "All"
-        exclude_resource_types_str = (
-            ", ".join(exclude_resource_types) if exclude_resource_types else "None"
-        )
-        # Format dicts like k1=v1, k2=v2
-        label_selectors_str = (
-            ", ".join([f"{k}={v}" for k, v in label_selectors.items()])
-            if label_selectors
-            else "None"
-        )
-        ns_label_selectors_str = (
-            ", ".join([f"{k}={v}" for k, v in ns_label_selectors.items()])
-            if ns_label_selectors
-            else "None"
-        )
-        include_resources_count = str(len(include_resources)) if include_resources else "0"
+        # Call helper functions
+        schedule_type, frequency, retention = _parse_policy_info(policy_info, schedule_policy_ref)
+        (
+            namespaces_str,
+            resource_types_str,
+            exclude_resource_types_str,
+            label_selectors_str,
+            ns_label_selectors_str,
+            include_resources_count,
+        ) = _format_resource_selectors(backup_schedule_info)
 
         table.add_row(
             metadata.get("name", "N/A"),

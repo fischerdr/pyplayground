@@ -6,6 +6,7 @@ This script manages PX-Backup schedules by updating their suspend status.
 It allows for bulk suspension or resumption of schedules based on command-line arguments.
 
 """
+import json
 import logging
 import os
 import re
@@ -255,127 +256,235 @@ def _handle_authentication(
         )
 
 
-def get_schedules(client: PXBackupClient, org_id: str) -> List[Dict[str, Any]]:
-    """Retrieve all backup schedules from PX-Backup.
+def _parse_schedules_response(response: Any, endpoint: str) -> List[Dict[str, Any]]:
+    """Parses the API response to extract the list of schedules."""
+    schedules = []
+    if isinstance(response, dict):
+        if "backup_schedules" in response:
+            schedules = response.get("backup_schedules", [])
+            if not isinstance(schedules, list):
+                logger.warning("'backup_schedules' key found but value is not a list.")
+                schedules = []
+        elif "schedules" in response:
+            schedules = response.get("schedules", [])
+            if not isinstance(schedules, list):
+                logger.warning("'schedules' key found but value is not a list.")
+                schedules = []
+    elif isinstance(response, list):
+        schedules = response
 
-    Args:
-        client: The initialized PXBackupClient.
-        org_id: The organization ID.
+    if not schedules and response:  # Check if response wasn't empty but parsing failed
+        logger.error(
+            f"Unexpected response format from {endpoint}. Expected list under 'backup_schedules' or 'schedules', or a direct list. Got type {type(response)}."
+        )
+        raise ValueError(f"Unexpected API response format for schedules from {endpoint}.")
 
-    Returns:
-        List of schedule dictionaries.
+    return schedules
 
-    Raises:
-        requests.exceptions.RequestException: If the API call fails.
-        ValueError: If the response format is unexpected.
-    """
-    logger.info(f"Fetching schedules for organization ID: {org_id}")
-    # Endpoint derived from original script context
-    endpoint = "api/schedules"  # Use relative path for PXBackupClient - removed pointless f-string
+
+def get_schedules(
+    client: PXBackupClient, org_id: str, cluster_uid: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Retrieve backup schedules, optionally filtered by cluster UID via API."""
+    target_info = f"cluster UID {cluster_uid}" if cluster_uid else "all clusters"
+    logger.info(f"Fetching schedules for organization ID: {org_id} ({target_info}).")
+    # Use the v1 endpoint
+    endpoint = f"v1/backupschedule/{org_id}"
+    # Re-add server-side filtering parameter if cluster_uid is provided
+    params = {}
+    if cluster_uid:
+        params["enumerate_options.cluster_uid_filter"] = cluster_uid
+
     try:
-        response = client.make_request("GET", endpoint)
-        # Assuming the response *is* the list of schedules based on original code
-        if isinstance(response, list):
-            logger.info(f"Successfully fetched {len(response)} schedules.")
-            return response
-        else:
-            # Handle potential nesting or unexpected format
-            schedules = response.get("schedules") if isinstance(response, dict) else None
-            if isinstance(schedules, list):
-                logger.info(f"Successfully fetched {len(schedules)} schedules.")
-                return schedules
-            else:
-                logger.error(
-                    f"Unexpected response format when fetching schedules. Expected list, got {type(response)}. Response: {response}"
-                )
-                raise ValueError("Unexpected API response format for schedules.")
+        # Pass params to make_request
+        response = client.make_request("GET", endpoint, params=params)
+        logger.debug(
+            f"Raw API response for schedules ({endpoint}): {json.dumps(response, indent=2)}"
+        )
+
+        # Use the parsing helper which expects backup_schedules key
+        schedules = _parse_schedules_response(response, endpoint)
+
+        logger.info(f"Successfully fetched {len(schedules)} schedules for {target_info}.")
+        return schedules
+
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to retrieve schedules: {e}")
+        logger.error(f"Failed to retrieve schedules for {target_info}: {e}")
         raise
     except ValueError as e:
-        logger.error(f"Error processing schedule response: {e}")
+        logger.error(f"Error processing schedule response for {target_info}: {e}")
         raise
 
 
-def update_schedule_suspend_status(client: PXBackupClient, schedule_id: str, suspend: bool) -> bool:
-    """Update the suspend status of a specific schedule.
+def update_schedule_suspend_status(
+    client: PXBackupClient, schedule: Dict[str, Any], suspend: bool
+) -> bool:
+    """Update the suspend status of a specific schedule using the v1 PUT endpoint.
 
     Args:
         client: The initialized PXBackupClient.
-        schedule_id: ID of the schedule to update
-        suspend (bool): True to suspend the schedule, False to resume
+        schedule: The full schedule dictionary object to update.
+        suspend (bool): True to suspend the schedule, False to resume.
 
     Returns:
         bool: True if the update was successful, False otherwise.
-
-    Raises:
-        requests.exceptions.RequestException: If the API call fails.
     """
-    logger.info(f"Updating schedule {schedule_id} suspend status to: {suspend}")
-    # Endpoint derived from original script context
-    endpoint = f"api/schedules/{schedule_id}/suspend"  # Use relative path
-    data = {"suspended": suspend}
+    schedule_name = schedule.get("metadata", {}).get("name", "[UNKNOWN]")
+    schedule_uid = schedule.get("metadata", {}).get("uid", "[UNKNOWN]")
+    logger.info(f"Updating schedule {schedule_name} ({schedule_uid}) suspend status to: {suspend}")
+
+    # Modify the schedule object directly
+    # Assuming 'suspended' is a top-level key or within backup_schedule_info
+    # Check both possibilities - adapt based on actual object structure if needed
+    if "suspended" in schedule:
+        schedule["suspended"] = suspend
+        logger.debug(f"Set top-level 'suspended' to {suspend}")
+    elif "backup_schedule_info" in schedule and isinstance(schedule["backup_schedule_info"], dict):
+        schedule["backup_schedule_info"]["suspended"] = suspend
+        logger.debug(f"Set backup_schedule_info.suspended to {suspend}")
+    else:
+        # Attempt to add it to backup_schedule_info if missing
+        if "backup_schedule_info" not in schedule:
+            schedule["backup_schedule_info"] = {}
+        if isinstance(schedule["backup_schedule_info"], dict):
+            schedule["backup_schedule_info"]["suspended"] = suspend
+            logger.warning("Added 'suspended' key to backup_schedule_info.")
+        else:
+            logger.error(
+                f"Could not set suspended status for schedule {schedule_name}: Neither top-level key nor backup_schedule_info dict found."
+            )
+            return False
+
+    # Use the v1 general update endpoint
+    endpoint = "v1/backupschedule"
 
     try:
-        # PXBackupClient handles JSON conversion and headers
-        client.make_request("PUT", endpoint, data=data)
-        logger.info(f"Successfully updated suspend status for schedule {schedule_id}.")
+        # Send the entire modified schedule object as the payload
+        client.make_request("PUT", endpoint, data=schedule)
+        logger.info(f"Successfully updated suspend status for schedule {schedule_name}.")
         return True
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to update schedule {schedule_id}: {e}")
-        # Optionally, re-raise or just return False based on desired behavior
-        # raise # Re-raise if caller should handle API errors explicitly
-        return False  # Return False to indicate failure
+        logger.error(f"Failed to update schedule {schedule_name} ({schedule_uid}): {e}")
+        return False
 
 
 def manage_schedules(
     client: PXBackupClient, org_id: str, suspend: bool, schedules: List[Dict[str, Any]]
 ) -> Tuple[int, int, int, int]:
-    """Manage all backup schedules by updating their suspend status.
-
-    Args:
-        client: The initialized PXBackupClient.
-        org_id: The organization ID.
-        suspend (bool): True to suspend schedules, False to resume them
-        schedules: The list of schedules to manage
-
-    Returns:
-        Tuple[int, int, int, int]: (total_schedules, successful_updates, already_in_state, failed_updates)
-    """
+    """Manage backup schedules by updating their suspend status using the v1 API."""
     total_schedules = len(schedules)
     successful_updates = 0
     already_in_state = 0
     failed_updates = 0
 
     for schedule in schedules:
-        schedule_id = schedule.get("id")
-        if not schedule_id:
-            logger.warning(f"Skipping schedule due to missing ID: {schedule}")
-            failed_updates += 1  # Count as failed if ID is missing
-            continue
+        # Metadata needed for logging/identification if update fails
+        metadata = schedule.get("metadata", {})
+        schedule_name = metadata.get("name", "[UNKNOWN_NAME]")
+        schedule_uid = metadata.get("uid", "[UNKNOWN_UID]")
 
-        # Check current state - assume False if 'suspended' key is missing
-        current_state = schedule.get("suspended", False)
+        # Check current state - check top-level first, then backup_schedule_info
+        current_state = schedule.get("suspended")  # Check top level
+        if (
+            current_state is None
+            and "backup_schedule_info" in schedule
+            and isinstance(schedule.get("backup_schedule_info"), dict)
+        ):
+            current_state = schedule["backup_schedule_info"].get("suspended", False)  # Check nested
+        else:
+            current_state = (
+                current_state if current_state is not None else False
+            )  # Default to False if not found anywhere
 
         if current_state == suspend:
             already_in_state += 1
-            logger.debug(f"Schedule {schedule_id} already in desired state (suspended={suspend}).")
+            logger.debug(
+                f"Schedule {schedule_name} ({schedule_uid}) already in desired state (suspended={suspend})."
+            )
             continue
 
-        # Attempt update
+        # Attempt update by passing the full schedule object
         try:
-            # update_schedule_suspend_status now returns bool
-            if update_schedule_suspend_status(client, schedule_id, suspend):
+            if update_schedule_suspend_status(client, schedule, suspend):
                 successful_updates += 1
             else:
-                # Logged within update_schedule_suspend_status
                 failed_updates += 1
         except Exception as e:
-            # Catch any unexpected errors during the update call itself
-            logger.error(f"Unexpected error updating schedule {schedule_id}: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error updating schedule {schedule_name} ({schedule_uid}): {e}",
+                exc_info=True,
+            )
             failed_updates += 1
 
     return total_schedules, successful_updates, already_in_state, failed_updates
+
+
+def _filter_schedules_locally(
+    schedules: List[Dict[str, Any]],
+    target_cluster_uid: Optional[str],
+    backup_schedule_name_pattern: Optional[str],
+    target_cluster_display_name: str,
+    console: Console,
+) -> List[Dict[str, Any]]:
+    """Applies local filtering based on cluster UID and schedule name pattern."""
+    schedules_to_process = schedules
+    original_count = len(schedules_to_process)
+    cluster_filter_applied = False
+
+    # --- Filter by Cluster UID (Optional local check/redundant if API filter works) ---
+    if target_cluster_uid:
+        cluster_filter_applied = True
+        schedules_to_process_cluster = [
+            s
+            for s in schedules_to_process
+            if s.get("backup_schedule_info", {}).get("cluster_ref", {}).get("uid")
+            == target_cluster_uid
+        ]
+        if len(schedules_to_process_cluster) < len(schedules_to_process):
+            logger.warning(
+                "Local cluster filter removed schedules missed by API filter. This might indicate an issue."
+            )
+        schedules_to_process = schedules_to_process_cluster
+
+        filtered_count = len(schedules_to_process)
+        # Only log if local filter actually changed the list size from original API fetch
+        if filtered_count < original_count:
+            logger.info(
+                f"Locally filtered {original_count} schedules down to {filtered_count} for {target_cluster_display_name}."
+            )
+        if not schedules_to_process:
+            console.print(
+                f"[yellow]No schedules found specifically for {target_cluster_display_name} after local filter.[/yellow]"
+            )
+            sys.exit(0)
+        original_count = filtered_count  # Reset count for potential name filtering log
+
+    # --- Filter by Name Pattern ---
+    if backup_schedule_name_pattern:
+        try:
+            filtered_schedules = [
+                s
+                for s in schedules_to_process
+                if re.match(backup_schedule_name_pattern, s.get("metadata", {}).get("name", ""))
+            ]
+            filtered_count = len(filtered_schedules)
+            log_suffix = " (after cluster filtering)" if cluster_filter_applied else ""
+            logger.info(
+                f"Filtered {original_count} schedules down to {filtered_count} matching name pattern '{backup_schedule_name_pattern}'{log_suffix}."
+            )
+            if not filtered_schedules:
+                console.print(
+                    f"[yellow]No schedules found matching name pattern '{backup_schedule_name_pattern}'{log_suffix}.[/yellow]"
+                )
+                sys.exit(0)
+            schedules_to_process = filtered_schedules
+        except re.error as e:
+            logger.error(
+                f"Invalid regex pattern for schedule name '{backup_schedule_name_pattern}': {e}. Skipping name filtering."
+            )
+            # Proceed without name filtering if regex is invalid
+
+    return schedules_to_process
 
 
 # --- Click Command ---
@@ -443,6 +552,12 @@ def manage_schedules(
     help="Filter schedules by cluster name (regex pattern).",
 )
 @click.option("--cluster-uid", required=False, help="Filter schedules by exact cluster UID.")
+# Schedule Name Filtering Option
+@click.option(
+    "--backup-schedule-name",
+    required=False,
+    help="Filter schedules by name (regex pattern). Applies after cluster filtering.",
+)
 # Control Options
 @click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
 def main(
@@ -458,10 +573,11 @@ def main(
     debug: bool,
     cluster_name: Optional[str],
     cluster_uid: Optional[str],
+    backup_schedule_name: Optional[str],
 ):
     """Manages PX-Backup schedules by suspending or resuming them.
 
-    Optionally filters schedules based on cluster name or UID.
+    Optionally filters schedules based on cluster name/UID and/or schedule name.
     """
     # --- Setup Logging ---
     script_base_name = os.path.basename(__file__).replace(".py", "")
@@ -491,47 +607,43 @@ def main(
         # --- Initialize Client ---
         client = PXBackupClient(api_url, current_token, validate_certs)
 
-        # --- Cluster Filtering Logic ---
+        # --- Cluster Filtering Logic (Resolve target UID) ---
         target_cluster_uid, target_cluster_display_name = _get_target_cluster(
             client, org_id, cluster_name, cluster_uid
         )
 
-        # --- Fetch Schedules ---
-        logger.info(f"Fetching schedules for organization ID: {org_id}...")
-        # Always fetch all schedules, filtering happens next
-        all_schedules = get_schedules(client, org_id)
+        # --- Fetch Schedules (using API filter if target_cluster_uid is set) ---
+        logger.info(
+            f"Fetching schedules for organization ID: {org_id} (API filter: {target_cluster_display_name})..."
+        )
+        all_schedules = get_schedules(client, org_id, target_cluster_uid)
         if not all_schedules:
-            console.print("[yellow]No schedules found for the organization.[/yellow]")
+            console.print(f"[yellow]No schedules found for {target_cluster_display_name}.[/yellow]")
             sys.exit(0)
 
-        # --- Filter Schedules Locally if Cluster was Specified ---
-        schedules_to_process = all_schedules
-        if target_cluster_uid:
-            original_count = len(all_schedules)
-            schedules_to_process = [
-                s for s in all_schedules if s.get("clusterRef", {}).get("uid") == target_cluster_uid
-            ]
-            filtered_count = len(schedules_to_process)
-            logger.info(
-                f"Filtered {original_count} total schedules down to {filtered_count} for cluster UID {target_cluster_uid}."
-            )
-            if not schedules_to_process:
-                console.print(
-                    f"[yellow]No schedules found specifically for {target_cluster_display_name}.[/yellow]"
-                )
-                sys.exit(0)
+        # --- Apply Local Filters (primarily for schedule name) ---
+        schedules_to_process = _filter_schedules_locally(
+            all_schedules,  # Start with API-filtered list
+            None,  # Don't re-apply cluster UID filter locally
+            backup_schedule_name,  # Apply name filter locally
+            target_cluster_display_name,
+            console,
+        )
 
-        # --- Perform Operation on (filtered) schedules ---
+        # --- Perform Operation on filtered schedules ---
         logger.info(
-            f"Starting schedule management for {target_cluster_display_name}. Target state: suspended={suspend}"
+            f"Starting schedule management for {len(schedules_to_process)} schedules. Target state: suspended={suspend}"
         )
         total, successful, already_done, failed = manage_schedules(
-            client, org_id, suspend, schedules_to_process
+            client,
+            org_id,
+            suspend,
+            schedules_to_process,  # Use the finally filtered list
         )
 
         # --- Output Summary ---
         console.print(
-            f"\n[bold green]Operation Summary ({target_cluster_display_name}):[/bold green]"
+            f"\n[bold green]Operation Summary ({target_cluster_display_name} / Name Filter: '{backup_schedule_name if backup_schedule_name else 'None'}'):[/bold green]"
         )
         console.print(f"  Schedules considered: {total}")
         console.print(f"  Successfully {'suspended' if suspend else 'resumed'}: {successful}")

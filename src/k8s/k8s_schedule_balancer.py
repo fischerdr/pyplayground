@@ -1,3 +1,11 @@
+#! /usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Balances namespaces from an input CSV into a specified number of groups.
+
+This script balances namespaces from an input CSV into a specified number of groups
+based on calculated weights derived from resource sizes, outputting a JSON
+file and a summary text file/console output.
+"""
 import csv
 import datetime  # Add datetime import
 import json
@@ -98,7 +106,9 @@ def main(
     output_json: str,
     output_summary: str,
 ):
-    """Balances namespaces from an input CSV into a specified number of groups
+    """Balances namespaces from an input CSV into a specified number of groups.
+
+    This script balances namespaces from an input CSV into a specified number of groups
     based on calculated weights derived from resource sizes, outputting a JSON
     file and a summary text file/console output.
     """

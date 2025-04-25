@@ -17,7 +17,6 @@ from kubernetes import client
 from kubernetes.client.rest import ApiException
 from rich.console import Console
 from rich.panel import Panel
-from rich.text import Text
 
 # Import utilities
 from utils.k8s_utils import load_kube_config_auto
@@ -28,7 +27,7 @@ from utils.logging_utils import get_logger, setup_logging
 logger = get_logger(__name__)
 
 # --- Global Console --- #
-console = Console()
+console = Console(force_terminal=True, color_system="truecolor")  # Force terminal and truecolor
 
 
 def load_json_data(file_path: str) -> Optional[Dict[str, Any]]:
@@ -212,8 +211,9 @@ def _log_summary(
     panel_title = "Dry Run Summary" if dry_run else "Labeling Summary"
     panel_color = "yellow" if dry_run else "blue"
 
-    summary_text = Text("\n".join(summary_lines), justify="left")
-    console.print(Panel(summary_text, title=panel_title, border_style=panel_color, expand=False))
+    # summary_text = Text("\n".join(summary_lines), justify="left") # Removed explicit Text object
+    summary_string = "\n".join(summary_lines)
+    console.print(Panel(summary_string, title=panel_title, border_style=panel_color, expand=False))
 
     # Keep detailed warnings in the log file
     logger.info("Namespace labeling process finished.")  # Log completion

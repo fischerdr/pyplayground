@@ -9,6 +9,7 @@ and displays detailed information about each schedule, including:
 
 """
 
+import json
 import logging
 import os
 import re
@@ -170,9 +171,13 @@ def get_schedules(
         # Potentially add name filter too if desired and supported by API
         # params["enumerate_options.cluster_name_filter"] = cluster_name
 
+    logger.debug(f"Requesting schedules from endpoint: {endpoint} with params: {params}")
+
     try:
         response = client.make_request("GET", endpoint, params=params)
-        # Assuming the response structure from swagger/other scripts
+        # Log raw response at debug level
+        logger.debug(f"Raw API response for schedules: {json.dumps(response, indent=2)}")
+
         schedules = response.get("schedules", [])
         if not isinstance(schedules, list):
             logger.error(
@@ -187,6 +192,9 @@ def get_schedules(
     except ValueError as e:
         logger.error(f"Error processing schedule response for {target_info}: {e}")
         raise
+    except Exception as e:
+        logger.error(f"Unexpected error during schedule fetch or processing: {e}", exc_info=True)
+        raise ValueError("Failed to process schedule response.")
 
 
 # --- Display Function ---
@@ -455,7 +463,10 @@ def main(
     script_base_name = os.path.basename(__file__).replace(".py", "")
     log_level = logging.DEBUG if debug else logging.INFO
     setup_logging(level=log_level, script_name=script_base_name)
-    logger.debug("Logging setup complete.")
+    logger.debug(f"Starting {script_base_name}...")
+    logger.debug(
+        f"Provided options: api_url={api_url}, org_id={org_id}, token={'*' * 4 if token else None}, no_validate_certs={no_validate_certs}, auth_url={auth_url}, client_id={client_id}, username={username}, password={'*' * 4 if password else None}, cluster_name={cluster_name}, cluster_uid={cluster_uid}, debug={debug}"
+    )
 
     validate_certs = not no_validate_certs
     console = Console()
@@ -466,6 +477,7 @@ def main(
 
     try:
         # --- Authentication ---
+        logger.debug("Attempting authentication...")
         current_token = _handle_authentication(
             token=token,
             auth_url=auth_url,
@@ -474,27 +486,40 @@ def main(
             password=password,
             validate_certs=validate_certs,
         )
+        logger.debug("Authentication successful.")
 
         # --- Initialize Client ---
+        logger.debug("Initializing PXBackupClient...")
         client = PXBackupClient(api_url, current_token, validate_certs)
+        logger.debug("Client initialized.")
 
         # --- Cluster Filtering Logic ---
+        logger.debug("Checking for cluster filters...")
         target_cluster_uid, target_cluster_display_name = _get_target_cluster(
             client, org_id, cluster_name, cluster_uid
         )
+        logger.debug(
+            f"Target cluster identified as: {target_cluster_display_name} (UID: {target_cluster_uid})"
+        )
 
         # --- Fetch Schedules (using API filter if target_cluster_uid is set) ---
-        logger.info(f"Fetching schedules for {target_cluster_display_name}...")
+        logger.debug(f"Attempting to fetch schedules for {target_cluster_display_name}...")
         schedules = get_schedules(client, org_id, target_cluster_uid)
+        logger.debug(f"Schedule fetch call completed. Found {len(schedules)} schedules.")
 
         # --- Display Results ---
+        logger.debug("Preparing to display schedules...")
         _display_schedules(schedules, console)
+        logger.debug("Display complete.")
 
     except requests.exceptions.RequestException as e:
+        logger.error(f"API Request Error: {e}", exc_info=debug)
         raise click.ClickException(f"[bold red]API Request Error:[/bold red] {e}")
     except click.ClickException:
+        logger.debug("ClickException raised, exiting.")
         raise  # Re-raise Click exceptions
     except ValueError as e:
+        logger.error(f"Data Error: {e}", exc_info=debug)
         raise click.ClickException(f"[bold red]Data Error:[/bold red] {e}")
     except Exception as e:
         logger.exception("An unexpected error occurred.")

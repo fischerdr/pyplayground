@@ -48,7 +48,8 @@ def print_vm_info(vm, depth=1, max_depth=10):
     print("")
 
 
-def wait_for_tasks(si, tasks):
+# TODO: Refactor wait_for_tasks to reduce complexity (currently McCabe complexity 11)
+def wait_for_tasks(si, tasks):  # noqa: C901
     """Given the service instance and tasks, it returns after all the tasks are complete."""
     property_collector = si.content.propertyCollector
     task_list = [str(task) for task in tasks]

@@ -10,7 +10,8 @@ import base64
 import logging
 import os
 from dataclasses import dataclass
-from typing import Dict, Optional
+from types import SimpleNamespace
+from typing import Optional
 
 import click
 from kubernetes import client
@@ -41,7 +42,7 @@ class VSphereConfig:
 
     def to_args(self) -> object:
         """Convert config to args for vmware_utils.connect()."""
-        args = object()
+        args = SimpleNamespace()
         args.host = self.host
         args.user = self.username
         args.password = self.password
@@ -52,7 +53,7 @@ class VSphereConfig:
 
 # TODO: Reduce complexity (currently McCabe complexity 15) - Consider refactoring K8s calls
 def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConfig]:
-    """Get vSphere configuration from Kubernetes secrets. (Copied from parse_clouddrive_map.py)"""
+    """Get vSphere configuration from Kubernetes secrets. (Copied from parse_clouddrive_map.py)."""
     logger.debug("Attempting to get vSphere config from namespace: %s", namespace)
     vcenter = None
     username = None
@@ -66,9 +67,9 @@ def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConf
             secret_name = "px-vsphere-secret"
             logger.debug("Reading secret '%s'...", secret_name)
             secret = v1.read_namespaced_secret(secret_name, namespace)
-            username = base64.b64decode(secret.data["VSPHERE_USER"]).decode()
-            password = base64.b64decode(secret.data["VSPHERE_PASSWORD"]).decode()
-            logger.debug("Successfully decoded vSphere username from secret.")
+            username = base64.b64decode(secret.data["VSPHERE_USER"]).decode().strip()
+            password = base64.b64decode(secret.data["VSPHERE_PASSWORD"]).decode().strip()
+            logger.debug("Successfully decoded and stripped vSphere username from secret.")
         except client.ApiException as e:
             logger.error("K8s API error reading secret '%s': %s", secret_name, str(e))
             return None
@@ -140,10 +141,11 @@ def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConf
             disable_ssl_verification=disable_verification,
         )
         logger.debug(
-            "Created VSphereConfig: host=%s, user=%s, port=%d, disable_ssl=%s",
+            "Created VSphereConfig: host=%s, user=%s, port=%d, password=%s, disable_ssl=%s",
             config.host,
             config.username,
             config.port,
+            config.password,
             config.disable_ssl_verification,
         )
         return config

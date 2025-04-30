@@ -17,6 +17,7 @@ import base64
 import logging
 import os
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Dict, Optional
 
 import click
@@ -48,7 +49,7 @@ class VSphereConfig:
 
     def to_args(self) -> object:
         """Convert config to args for vmware_utils.connect()."""
-        args = object()
+        args = SimpleNamespace()
         args.host = self.host
         args.user = self.username
         args.password = self.password
@@ -80,9 +81,9 @@ def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConf
             secret_name = "px-vsphere-secret"
             logger.debug("Reading secret '%s'...", secret_name)
             secret = v1.read_namespaced_secret(secret_name, namespace)
-            username = base64.b64decode(secret.data["VSPHERE_USER"]).decode()
-            password = base64.b64decode(secret.data["VSPHERE_PASSWORD"]).decode()
-            logger.debug("Successfully decoded vSphere username from secret.")
+            username = base64.b64decode(secret.data["VSPHERE_USER"]).decode().strip()
+            password = base64.b64decode(secret.data["VSPHERE_PASSWORD"]).decode().strip()
+            logger.debug("Successfully decoded and stripped vSphere username from secret.")
         except client.ApiException as e:
             logger.error("K8s API error reading secret '%s': %s", secret_name, str(e))
             return None

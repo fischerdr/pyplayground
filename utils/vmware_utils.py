@@ -7,6 +7,7 @@ These functions are shared across the vmdk_manager and related scripts.
 """
 
 import atexit
+from typing import Optional
 
 import pyVmomi
 from pyVim.connect import Disconnect, SmartConnect
@@ -89,40 +90,78 @@ def wait_for_tasks(si, tasks):
             pcfilter.Destroy()
 
 
-def connect(args):
-    """Determine the most preferred API version supported by the specified server, then connect to the specified server using that API version, login and return the service instance object.
+def connect(args) -> Optional[vim.ServiceInstance]:
+    """Connect to vSphere using SmartConnect and return the ServiceInstance.
 
     Args:
-        args: Command line arguments
+        args: An object with attributes: host, user, password, port, disable_ssl_verification.
 
     Returns:
-        Service instance object
+        vim.ServiceInstance object upon successful connection, None otherwise.
     """
     service_instance = None
-    # form a connection...
     try:
+        ssl_context = None
         if args.disable_ssl_verification:
+            # Attempt to import ssl module for context creation
+            try:
+                import ssl
+
+                context = ssl._create_unverified_context()
+            except ImportError:
+                logger.warning(
+                    "Could not import ssl module. Proceeding without specific SSL context."
+                )
+                context = None  # Fallback or handle as error if required
+            except AttributeError:
+                logger.warning(
+                    "ssl._create_unverified_context not available. Proceeding without specific SSL context."
+                )
+                context = None
             service_instance = SmartConnect(
                 host=args.host,
                 user=args.user,
                 pwd=args.password,
                 port=args.port,
-                disableSslCertValidation=True,
+                # disableSslCertValidation=True, # Deprecated, use sslContext
+                sslContext=context,
             )
         else:
+            # Connect with default SSL verification
             service_instance = SmartConnect(
                 host=args.host, user=args.user, pwd=args.password, port=args.port
             )
 
-        # doing this means you don't need to remember to disconnect your script/objects
-        atexit.register(Disconnect, service_instance)
-    except IOError as io_error:
-        print(io_error)
+        # Ensure connection was successful before registering disconnect
+        if service_instance:
+            atexit.register(Disconnect, service_instance)
+            logger.info("Successfully connected to vSphere host: %s", args.host)
+            return service_instance  # Return on success
+        else:
+            # This case might occur if SmartConnect returns None without raising an exception
+            logger.error(
+                "SmartConnect returned None without raising an exception for host %s", args.host
+            )
+            return None
 
-    if not service_instance:
-        raise SystemExit("Unable to connect to host with supplied credentials.")
+    except vim.fault.InvalidLogin as e:
+        logger.error("vSphere login failed for host %s: %s", args.host, e.msg)
+        return None
+    except IOError as e:  # Catches socket errors, connection refused etc.
+        logger.error("vSphere connection error for host %s: %s", args.host, str(e))
+        return None
+    except Exception as e:  # Catch other potential exceptions during connect
+        logger.error(
+            "Unexpected error connecting to vSphere host %s: %s", args.host, str(e), exc_info=True
+        )
+        return None
 
-    return service_instance
+    # This part should ideally not be reached if logic above is correct
+    # if not service_instance:
+    #     logger.error("Unable to connect to host %s with supplied credentials.", args.host)
+    #     # raise SystemExit("Unable to connect to host with supplied credentials.")
+    #     return None
+    # return service_instance # Already returned or None returned in except blocks
 
 
 def extract_path_from_datastore_path(datastore_path: str) -> str:

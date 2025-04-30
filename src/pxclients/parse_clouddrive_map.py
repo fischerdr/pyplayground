@@ -113,12 +113,20 @@ def get_vm_info(vsphere_config: VSphereConfig, vm_uuid: str) -> Optional[Dict[st
     Returns:
         Dictionary mapping disk paths to sizes in GB, or None if error occurs
     """
+    logger.debug("Fetching VM info for UUID: %s", vm_uuid)
     vmdk_info: Dict[str, float] = {}
     si = None
 
     try:
         # Connect to vSphere using utility function
         si = connect(vsphere_config.to_args())
+
+        # Check if connection was successful
+        if not si:
+            logger.error(
+                "Failed to connect to vSphere host: %s. Cannot get VM info.", vsphere_config.host
+            )
+            return None
 
         # Search for VM by UUID
         vm = si.content.searchIndex.FindByUuid(None, vm_uuid, True)
@@ -127,8 +135,13 @@ def get_vm_info(vsphere_config: VSphereConfig, vm_uuid: str) -> Optional[Dict[st
             return None
 
         # Get disk information
+        logger.debug("Processing devices for VM: %s", vm.name)
+        device_count = 0
+        virtual_disk_count = 0
         for device in vm.config.hardware.device:
+            device_count += 1
             if isinstance(device, vim.vm.device.VirtualDisk):
+                virtual_disk_count += 1
                 backing = device.backing
                 if backing and hasattr(backing, "fileName"):
                     filename = backing.fileName
@@ -137,7 +150,15 @@ def get_vm_info(vsphere_config: VSphereConfig, vm_uuid: str) -> Optional[Dict[st
                     key = f"[{ds}] {file_path}"
                     value = device.capacityInKB / (1024 * 1024)  # Convert to GB
                     vmdk_info[key] = value
+                    logger.debug("Found disk: %s -> %.2f GB", key, value)
 
+        logger.debug(
+            "Processed %d devices, found %d virtual disks for VM %s.",
+            device_count,
+            virtual_disk_count,
+            vm.name,
+        )
+        logger.debug("Returning VMDK info: %s", vmdk_info)
         return vmdk_info
 
     except Exception as e:
@@ -147,11 +168,14 @@ def get_vm_info(vsphere_config: VSphereConfig, vm_uuid: str) -> Optional[Dict[st
 
 def _initialize_resources(portworx_namespace: str) -> Optional[VSphereConfig]:
     """Load kubeconfig and get vSphere configuration."""
+    logger.debug("Initializing Kubernetes and vSphere resources...")
     try:
         # Load Kubernetes configuration (tries file, then in-cluster)
         if not load_kube_config_auto():
             logger.error("Failed to load Kubernetes configuration. Cannot proceed.")
             return None
+        logger.debug("Kubernetes configuration loaded successfully.")
+
         vsphere_config = get_vsphere_config(portworx_namespace)
         if not vsphere_config:
             logger.error(
@@ -275,6 +299,13 @@ def _process_expected_configs(
             else:
                 exp_size_map[size_gb] = config_key
 
+    logger.debug(
+        "Processed expected configs for node %s. Mismatch found: %s. Expected sizes unique: %s",
+        node_scheduler_name,
+        mismatch_found,
+        expected_sizes_good,
+    )
+    logger.debug("Expected size map (for mismatched/mapping): %s", exp_size_map)
     return exp_size_map, expected_details, mismatch_found, expected_sizes_good
 
 
@@ -392,12 +423,15 @@ def _compare_drives(
     Returns:
         Dictionary mapping expected paths to actual paths for replacement
     """
+    logger.debug("Comparing drives for node %s (%s)", node_scheduler_name, node_instance_id)
     # 1. Build map of actual drives and check for unique sizes
     actual_size_map, actual_sizes_good = _build_actual_drive_map(
         actual_drives, node_scheduler_name, node_instance_id
     )
+    logger.debug("Actual size map: %s (Unique: %s)", actual_size_map, actual_sizes_good)
     if not actual_sizes_good:
-        return {}  # Cannot proceed if actual sizes aren't unique
+        logger.warning("Cannot proceed with comparison due to duplicate actual drive sizes.")
+        return {}
 
     # 2. Process expected configs, find mismatches, check expected sizes
     (
@@ -471,6 +505,9 @@ def _process_single_node(
 
     # Get expected configurations
     expected_configs = node_data.get("Configs", {})
+    logger.debug("Node %s - Expected Configs: %s", node_scheduler_name, expected_configs)
+    logger.debug("Node %s - Actual Drives: %s", node_scheduler_name, actual_drives)
+
     if not expected_configs:
         logger.info(
             "No 'Configs' section found for node %s (%s). Assuming no drives expected.",
@@ -625,7 +662,7 @@ def main(
                 raise click.Abort()  # Error logged in _find_cloud_drive_configmap
 
         # Now we have a configmap_name, proceed with getting vSphere config
-        # TODO: Pass k8s_v1_client to _initialize_resources if needed?
+        logger.debug("Using ConfigMap: %s", configmap_name)
         vsphere_config = _initialize_resources(portworx_namespace)
         if not vsphere_config:
             raise click.Abort()
@@ -661,6 +698,7 @@ def main(
             all_replaces.update(node_replaces)
 
         # Output final mapping
+        logger.debug("Final suggested replacements map: %s", all_replaces)
         _output_drive_mapping(all_replaces)
 
     except Exception as e:

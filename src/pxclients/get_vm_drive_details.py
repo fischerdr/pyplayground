@@ -461,6 +461,13 @@ def show_vm_drives(  # noqa: C901
     logger.info(f"Successfully fetched data for {len(cloud_drive_data)} nodes.")
 
     click.echo("--- VM Drive Details ---")
+    # Create the consolidated table BEFORE the loop
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Node Name", style="cyan", no_wrap=True)
+    table.add_column("Instance ID", style="green", no_wrap=True)
+    table.add_column("Disk Path", style="dim", width=60)
+    table.add_column("Provisioned Size (GB)", justify="right")
+
     # Process each node
     for node_name, node_data in cloud_drive_data.items():
         # Check if the node entry has a non-null 'Configs' key
@@ -477,10 +484,11 @@ def show_vm_drives(  # noqa: C901
         if not instance_id:
             warn_msg = f"Skipping node entry '{node_name}' due to missing InstanceID."
             logger.warning(warn_msg)
-            click.echo(click.style(f"WARN: {warn_msg}", fg="yellow"))
+            # click.echo(click.style(f"WARN: {warn_msg}", fg="yellow"))
+            # No direct table add here, error is logged for the node below
             continue
 
-        click.echo(f"\nNode: {scheduler_name} (InstanceID: {instance_id})")
+        # click.echo(f"\nNode: {scheduler_name} (InstanceID: {instance_id})") # Removed per-node header
         logger.info(f"Processing node: {scheduler_name} (InstanceID: {instance_id})")
 
         # Get actual drive info for this VM
@@ -489,43 +497,35 @@ def show_vm_drives(  # noqa: C901
         if vm_info_result is None:
             err_msg = f"Failed to get drive information for VM {instance_id}. Check logs."
             logger.error(err_msg)
-            # click.echo(click.style(f"  ERROR: {err_msg}", fg="red"))
-            console.print(f"  [bold red]ERROR:[/bold red] {err_msg}")
+            # Add a row indicating failure for this node
+            table.add_row(scheduler_name, instance_id, f"[bold red]ERROR:[/bold red] {err_msg}", "-")
         else:
             actual_drives, total_committed_gb = vm_info_result
-            # Display total committed storage
-            commit_msg = f"Total Committed Storage: {total_committed_gb:.2f} GB"
-            logger.info(f"Node {scheduler_name}: {commit_msg}")
-            console.print(f"  {commit_msg}")
+            # Display total committed storage - REMOVED - Cannot show per disk
+            # commit_msg = f"Total Committed Storage: {total_committed_gb:.2f} GB"
+            # logger.info(f"Node {scheduler_name}: {commit_msg}")
+            # console.print(f"  {commit_msg}")
 
             if not actual_drives:
                 ok_msg = "No virtual disks found attached to this VM."
                 logger.info(f"Node {scheduler_name}: {ok_msg}")
-                # click.echo(f"  {ok_msg}")
-                console.print(f"  {ok_msg}")
+                # Add a row indicating no disks for this node
+                table.add_row(scheduler_name, instance_id, f"[dim]{ok_msg}[/dim]", "-")
             else:
                 logger.info(f"Found {len(actual_drives)} drives for node {scheduler_name}.")
-
-                # Create and print table
-                table = Table(
-                    show_header=True,
-                    header_style="bold magenta",
-                    title=None,
-                    caption=f"Drives for {scheduler_name}",
-                )
-                table.add_column("Node Name", style="cyan", no_wrap=True)
-                table.add_column("Instance ID", style="green", no_wrap=True)
-                table.add_column("Disk Path", style="dim", width=60)
-                table.add_column("Provisioned Size (GB)", justify="right")
-
+                # Add rows for each disk to the single table
                 for drive_path, drive_size_gb in actual_drives.items():
-                    table.add_row(scheduler_name, instance_id, drive_path, f"{drive_size_gb:.2f}")
-
-                console.print(table)
-                # for drive_path, drive_size_gb in actual_drives.items():
-                #     click.echo(f"  - {drive_path}: {drive_size_gb:.2f} GB (Provisioned Capacity)")
+                    table.add_row(
+                        scheduler_name,
+                        instance_id,
+                        drive_path,
+                        f"{drive_size_gb:.2f}"
+                    )
 
     logger.info("Finished processing all nodes.")
+
+    # Print the consolidated table AFTER the loop
+    console.print(table)
 
 
 if __name__ == "__main__":

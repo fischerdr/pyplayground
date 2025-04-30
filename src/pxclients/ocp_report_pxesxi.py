@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-OpenShift and VMware ESXi Host Report Generator
+"""OpenShift and VMware ESXi Host Report Generator.
 
 This script generates a report of OpenShift MachineSets and their corresponding VMware ESXi hosts.
 It can process a single OpenShift cluster using the --kubeconfig option or multiple clusters
@@ -25,6 +24,7 @@ Example usage:
 """
 import base64
 import json
+import logging
 import os
 import socket
 import ssl
@@ -43,16 +43,11 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fi
 from utils.k8s_utils import get_custom_objects_api
 from utils.logging_utils import get_logger, setup_logging
 
-# Get the project root directory
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
-
 # SSL Certs location
 cert_path = "/path/to/your/cert.pem"  # Path to trusted certificate file
 
 # Set up logging
 logger = get_logger(__name__)
-setup_logging(log_dir=DEFAULT_LOG_DIR)
 
 # Initialize rich console for output
 console = Console()
@@ -61,8 +56,7 @@ console = Console()
 def get_vmware_credentials_from_secret(
     namespace: str, secret_name: str
 ) -> Optional[Dict[str, str]]:
-    """
-    Retrieve VMware credentials from a Kubernetes Secrets.
+    """Retrieve VMware credentials from a Kubernetes Secrets.
 
     Args:
         namespace: Kubernetes namespace containing the Secrets
@@ -112,8 +106,7 @@ def get_vmware_credentials_from_secret(
 def connect_to_vsphere(
     host: str, username: str, password: str, disable_ssl: bool = False
 ) -> Optional[Any]:
-    """
-    Establish connection to VMware vSphere.
+    """Establish connection to VMware vSphere.
 
     Args:
         host: vSphere host address
@@ -160,8 +153,7 @@ def get_machinesets(
     crd_client: Optional[client.CustomObjectsApi] = None,
     namespace: str = "openshift-machine-api",
 ) -> List[Dict[str, Any]]:
-    """
-    Retrieve all MachineSets from OpenShift.
+    """Retrieve all MachineSets from OpenShift.
 
     Args:
         crd_client: Optional CustomObjectsApi client
@@ -190,8 +182,7 @@ def get_machinesets(
 def extract_vsphere_info_from_machinesets(
     machinesets: List[Dict[str, Any]],
 ) -> Dict[str, Dict[str, Any]]:
-    """
-    Extract VMware vSphere information from MachineSets.
+    """Extract VMware vSphere information from MachineSets.
 
     Args:
         machinesets: List of MachineSet objects
@@ -233,8 +224,7 @@ def extract_vsphere_info_from_machinesets(
 def extract_vmware_clusters_from_machinesets(
     machinesets_vsphere_info: Dict[str, Dict[str, Any]],
 ) -> List[str]:
-    """
-    Extract unique VMware cluster names from MachineSets vSphere information.
+    """Extract unique VMware cluster names from MachineSets vSphere information.
 
     Args:
         machinesets_vsphere_info: Dictionary of MachineSet vSphere information
@@ -261,8 +251,7 @@ def extract_vmware_clusters_from_machinesets(
 
 
 def get_filtered_clusters(si: Any, cluster_names: List[str]) -> List[Any]:
-    """
-    Get filtered VMware clusters by name using PropertyCollector for efficiency.
+    """Get filtered VMware clusters by name using PropertyCollector for efficiency.
 
     Args:
         si: vSphere service instance
@@ -332,8 +321,7 @@ def get_filtered_clusters(si: Any, cluster_names: List[str]) -> List[Any]:
 def get_esxi_hosts_per_cluster(
     si: Any, cluster_names: List[str]
 ) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Get all ESXi hosts per VMware cluster.
+    """Get all ESXi hosts per VMware cluster.
 
     Args:
         si: vSphere service instance
@@ -370,12 +358,87 @@ def get_esxi_hosts_per_cluster(
         return {}
 
 
+def _get_cluster_name_from_resource_pool(resource_pool: str) -> Optional[str]:
+    """Extract the cluster name from a vSphere resource pool path.
+
+    Expected format: /DATACENTER/host/CLUSTER/Resources/optional_sub_pool
+
+    Args:
+        resource_pool: The full path of the resource pool.
+
+    Returns:
+        The extracted cluster name, or None if parsing fails.
+    """
+    if not resource_pool:
+        return None
+    try:
+        parts = resource_pool.split('/')
+        # Find the index of 'host'
+        host_index = parts.index('host')
+        # The cluster name should be the part immediately after 'host'
+        if host_index + 1 < len(parts):
+            cluster_name = parts[host_index + 1]
+            logger.debug(f"Parsed cluster name '{cluster_name}' from resource pool '{resource_pool}'")
+            return cluster_name
+    except (ValueError, IndexError):
+        # Handle cases where 'host' is not found or the structure is unexpected
+        logger.debug(f"Could not parse cluster name from resource pool path: {resource_pool}")
+    return None
+
+
+def _find_cluster_match(
+    candidate_name: Optional[str], server_name: str, known_clusters: List[str]
+) -> Optional[str]:
+    """Find the best matching known cluster name based on candidate and server names.
+
+    Tries direct match on candidate, then server, then partial match on candidate.
+
+    Args:
+        candidate_name: Cluster name potentially derived from resource pool.
+        server_name: Server name (vCenter FQDN/IP) from the machineset.
+        known_clusters: List of actual VMware cluster names from vSphere.
+
+    Returns:
+        The matched cluster name, or None if no suitable match found.
+    """
+    # 1. Direct match on candidate name from resource pool
+    if candidate_name and candidate_name in known_clusters:
+        logger.debug(f"Direct match found for candidate '{candidate_name}'")
+        return candidate_name
+
+    # 2. Direct match on server name (less common but possible)
+    if server_name and server_name in known_clusters:
+        logger.debug(f"Direct match found for server name '{server_name}'")
+        return server_name
+
+    # 3. Partial match based on candidate name
+    if candidate_name:
+        for known_cluster in known_clusters:
+            if candidate_name in known_cluster:
+                logger.debug(
+                    f"Partial match found for candidate '{candidate_name}' -> '{known_cluster}'"
+                )
+                return known_cluster
+
+    # 4. Partial match based on server name (might be too broad, use cautiously)
+    # Consider if this is needed - matching vCenter FQDN to cluster name seems unlikely
+    # if server_name:
+    #     for known_cluster in known_clusters:
+    #         if server_name in known_cluster:
+    #              logger.debug(f"Partial match found for server '{server_name}' -> '{known_cluster}'")
+    #              return known_cluster
+
+    logger.debug(
+        f"No match found for candidate='{candidate_name}', server='{server_name}' in known clusters."
+    )
+    return None
+
+
 def map_machinesets_to_clusters(
     machinesets_vsphere_info: Dict[str, Dict[str, Any]],
     clusters_hosts: Dict[str, List[Dict[str, Any]]],
 ) -> Dict[str, Dict[str, Any]]:
-    """
-    Map OpenShift MachineSets to VMware clusters and their ESXi hosts.
+    """Map OpenShift MachineSets to VMware clusters and their ESXi hosts.
 
     Args:
         machinesets_vsphere_info: Dictionary of MachineSet vSphere information
@@ -385,67 +448,44 @@ def map_machinesets_to_clusters(
         Mapping between MachineSets and VMware clusters with host counts
     """
     mapping = {}
+    known_cluster_names = list(clusters_hosts.keys())
+
     for machineset_name, vsphere_info in machinesets_vsphere_info.items():
         resource_pool = vsphere_info.get("resourcePool", "")
-        # Extract cluster name from resource pool path
-        # Format is typically: /DATACENTER/host/CLUSTER/Resources/optional_resource_pool
-        cluster_name = None
-        if resource_pool:
-            parts = resource_pool.split("/")
-            # Find the part after 'host' which should be the cluster name
-            for i, part in enumerate(parts):
-                if part == "host" and i + 1 < len(parts):
-                    cluster_name = parts[i + 1]
-                    break
-        # If cluster name not found in resource pool, try other methods
-        if not cluster_name:
-            # Try to match based on server information
-            server = vsphere_info.get("server", "")
-            for cluster in clusters_hosts:
-                if server and server in cluster:
-                    cluster_name = cluster
-                    break
-        if cluster_name and cluster_name in clusters_hosts:
-            hosts = clusters_hosts[cluster_name]
+        server_name = vsphere_info.get("server", "")
+
+        # Attempt to find the cluster name
+        candidate_name = _get_cluster_name_from_resource_pool(resource_pool)
+        matched_cluster_name = _find_cluster_match(
+            candidate_name, server_name, known_cluster_names
+        )
+
+        # Populate the mapping based on the match result
+        if matched_cluster_name:
+            hosts = clusters_hosts[matched_cluster_name]
             mapping[machineset_name] = {
-                "cluster_name": cluster_name,
+                "cluster_name": matched_cluster_name,
                 "host_count": len(hosts),
                 "hosts": hosts,
                 "datacenter": vsphere_info.get("datacenter", ""),
                 "datastore": vsphere_info.get("datastore", ""),
             }
         else:
-            # If we couldn't find a direct match, look for partial matches in cluster names
-            matched_cluster = None
-            if cluster_name:
-                for c_name in clusters_hosts:
-                    if cluster_name in c_name:
-                        matched_cluster = c_name
-                        break
-            if matched_cluster:
-                hosts = clusters_hosts[matched_cluster]
-                mapping[machineset_name] = {
-                    "cluster_name": matched_cluster,
-                    "host_count": len(hosts),
-                    "hosts": hosts,
-                    "datacenter": vsphere_info.get("datacenter", ""),
-                    "datastore": vsphere_info.get("datastore", ""),
-                }
-            else:
-                mapping[machineset_name] = {
-                    "cluster_name": "Unknown",
-                    "host_count": 0,
-                    "hosts": [],
-                    "datacenter": vsphere_info.get("datacenter", ""),
-                    "datastore": vsphere_info.get("datastore", ""),
-                }
+            # Handle cases where no match was found
+            mapping[machineset_name] = {
+                "cluster_name": "Unknown",
+                "host_count": 0,
+                "hosts": [],
+                "datacenter": vsphere_info.get("datacenter", ""),
+                "datastore": vsphere_info.get("datastore", ""),
+            }
+
     logger.info(f"Mapped {len(mapping)} MachineSets to VMware clusters")
     return mapping
 
 
 def generate_cluster_summary(mapping: Dict[str, Dict[str, Any]]) -> Dict[str, int]:
-    """
-    Generate a summary of clusters and their ESXi host counts.
+    """Generate a summary of clusters and their ESXi host counts.
 
     Args:
         mapping: Mapping between MachineSets and VMware clusters
@@ -465,8 +505,7 @@ def generate_cluster_summary(mapping: Dict[str, Dict[str, Any]]) -> Dict[str, in
 
 
 def count_portworx_pods(namespace: str = "portworx") -> int:
-    """
-    Count the number of pods with label name=portworx in the specified namespace.
+    """Count the number of pods with label name=portworx in the specified namespace.
 
     Args:
         namespace: Namespace to search for Portworx pods (default: "portworx")
@@ -489,8 +528,7 @@ def count_portworx_pods(namespace: str = "portworx") -> int:
 
 
 def extract_cluster_name_from_api_url(api_url: str) -> str:
-    """
-    Extract the cluster name from the Kubernetes API URL.
+    """Extract the cluster name from the Kubernetes API URL.
 
     Args:
         api_url: The Kubernetes API URL (e.g., https://api.hostname.fqdn)
@@ -515,6 +553,145 @@ def extract_cluster_name_from_api_url(api_url: str) -> str:
     except Exception as e:
         logger.warning(f"Failed to extract cluster name from API URL '{api_url}': {e}")
         return "unknown-cluster"
+
+
+def _generate_brief_json_data(all_clusters_data: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Generate the data structure for the brief JSON report.
+
+    Args:
+        all_clusters_data: Dictionary containing the processed data for all clusters.
+
+    Returns:
+        Dictionary representing the brief JSON report data.
+    """
+    # Generate a summary of clusters and their ESXi host counts
+    all_clusters_summary = {}
+    total_px_pods = 0
+    total_esxi_hosts = 0
+
+    # Collect summary data from all clusters
+    for cluster_name, cluster_data in all_clusters_data.items():
+        mapping = cluster_data["mapping"]
+        px_pod_count = cluster_data["portworx_pods_count"]
+        total_px_pods += px_pod_count
+
+        # Generate cluster summary (cluster name -> host count)
+        cluster_summary = generate_cluster_summary(mapping)
+
+        # Add to all clusters summary
+        for vmware_cluster, host_count in cluster_summary.items():
+            key = f"{cluster_name}/{vmware_cluster}"
+            all_clusters_summary[key] = {
+                "host_count": host_count,
+                "px_pod_count": px_pod_count,
+            }
+            total_esxi_hosts += host_count
+
+    # Create brief JSON output
+    output_data = {
+        "portworx_pods_count": total_px_pods,
+        "total_esxi_hosts": total_esxi_hosts,
+        "clusters": {},
+    }
+
+    # Group by OpenShift cluster
+    for full_cluster_name, data in all_clusters_summary.items():
+        ocp_cluster, vmware_cluster = full_cluster_name.split("/", 1)
+
+        if ocp_cluster not in output_data["clusters"]:
+            output_data["clusters"][ocp_cluster] = {
+                "px_pod_count": data["px_pod_count"],
+                "vmware_clusters": {},
+            }
+
+        output_data["clusters"][ocp_cluster]["vmware_clusters"][vmware_cluster] = {
+            "hosts_count": data["host_count"]
+        }
+    return output_data
+
+
+def _generate_detailed_json_data(all_clusters_data: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Generate the data structure for the detailed JSON report.
+
+    Args:
+        all_clusters_data: Dictionary containing the processed data for all clusters.
+
+    Returns:
+        Dictionary representing the detailed JSON report data.
+    """
+    # Create a new JSON structure organized by cluster, datacenter, and VMware cluster
+    report_data = {}
+
+    # Process each OpenShift cluster
+    for cluster_name, cluster_data in all_clusters_data.items():
+        mapping = cluster_data["mapping"]
+        px_pod_count = cluster_data["portworx_pods_count"]
+
+        # Track unique hosts for this cluster
+        cluster_hosts = set()
+
+        # First pass: collect all datacenter, cluster, and host information for this cluster
+        datacenter_clusters = {}
+        for machineset_name, cluster_info in mapping.items():
+            datacenter = cluster_info.get("datacenter", "Unknown")
+            vmware_cluster_name = cluster_info["cluster_name"]
+
+            # Initialize datacenter if not seen before
+            if datacenter not in datacenter_clusters:
+                datacenter_clusters[datacenter] = {}
+
+            # Initialize VMware cluster if not seen before
+            if vmware_cluster_name not in datacenter_clusters[datacenter]:
+                datacenter_clusters[datacenter][vmware_cluster_name] = {
+                    "hosts": set(),
+                    "hosts_count": 0,
+                }
+
+            # Add unique hosts to this VMware cluster
+            for host in cluster_info["hosts"]:
+                host_name = host["name"]
+                datacenter_clusters[datacenter][vmware_cluster_name]["hosts"].add(host_name)
+                cluster_hosts.add(host_name)
+
+        # Add this OpenShift cluster's data to the report
+        report_data[cluster_name] = {
+            "portworx_pods_count": px_pod_count,
+            "total_esxi_hosts": len(cluster_hosts),
+        }
+
+        # Add datacenter and VMware cluster information
+        for datacenter, vmware_clusters in datacenter_clusters.items():
+            if "datacenters" not in report_data[cluster_name]:
+                report_data[cluster_name]["datacenters"] = {}
+
+            report_data[cluster_name]["datacenters"][datacenter] = {}
+            for vmware_cluster_name, vmware_cluster_data in vmware_clusters.items():
+                # Convert set to sorted list for JSON serialization
+                host_list = sorted(list(vmware_cluster_data["hosts"]))
+                hosts_count = len(host_list)
+
+                report_data[cluster_name]["datacenters"][datacenter][vmware_cluster_name] = {
+                    "hosts": host_list,
+                    "hosts_count": hosts_count,
+                }
+
+    return report_data
+
+
+def generate_json_report(all_clusters_data: Dict[str, Dict[str, Any]], brief: bool) -> None:
+    """Generate the report in JSON format.
+
+    Args:
+        all_clusters_data: Dictionary containing the processed data for all clusters.
+        brief: Whether to generate a brief summary report.
+    """
+    if brief:
+        report_output = _generate_brief_json_data(all_clusters_data)
+    else:
+        report_output = _generate_detailed_json_data(all_clusters_data)
+
+    # Output the JSON
+    console.print(json.dumps(report_output, indent=2))
 
 
 @click.command()
@@ -557,6 +734,7 @@ def extract_cluster_name_from_api_url(api_url: str) -> str:
 @click.option(
     "--px-namespace", default="portworx", help="Namespace where Portworx pods are running"
 )
+@click.option("--debug", is_flag=True, help="Enable debug logging")
 def main(
     kubeconfig: str,
     clusterlist: str,
@@ -571,14 +749,20 @@ def main(
     credentials_namespace: str,
     timeout: int,
     px_namespace: str,
+    debug: bool,
 ) -> None:
-    """
-    Generate a report on ESXi hosts per VMware cluster for OpenShift MachineSets.
+    """Generate a report on ESXi hosts per VMware cluster for OpenShift MachineSets.
 
     This script connects to both OpenShift and VMware vSphere to map OpenShift
     MachineSets to their respective ESXi host clusters and count the number of
     ESXi hosts in each cluster.
     """
+    # --- Setup Logging --- #
+    script_base_name = os.path.basename(__file__).replace(".py", "")
+    log_level = logging.DEBUG if debug else logging.INFO
+    setup_logging(level=log_level, script_name=script_base_name)  # Pass script_name
+    logger.debug("Logging setup complete.")
+
     # Set timeout for API calls
     socket.setdefaulttimeout(timeout)
 
@@ -826,28 +1010,8 @@ def main(
                     }
                     total_esxi_hosts += host_count
             if output_format.lower() == "json":
-                # Create brief JSON output
-                output_data = {
-                    "portworx_pods_count": total_px_pods,
-                    "total_esxi_hosts": total_esxi_hosts,
-                    "clusters": {},
-                }
-
-                # Group by OpenShift cluster
-                for full_cluster_name, data in all_clusters_summary.items():
-                    ocp_cluster, vmware_cluster = full_cluster_name.split("/", 1)
-
-                    if ocp_cluster not in output_data["clusters"]:
-                        output_data["clusters"][ocp_cluster] = {
-                            "px_pod_count": data["px_pod_count"],
-                            "vmware_clusters": {},
-                        }
-
-                    output_data["clusters"][ocp_cluster]["vmware_clusters"][vmware_cluster] = {
-                        "hosts_count": data["host_count"]
-                    }
-                console.print(json.dumps(output_data, indent=2))
-
+                # Generate brief JSON report
+                generate_json_report(all_clusters_data, True)
             else:  # Default to table format
                 # Show summary information
                 console.print(
@@ -887,63 +1051,8 @@ def main(
 
         # Handle detailed output formats (non-brief)
         if output_format.lower() == "json":
-            # Create a new JSON structure organized by cluster, datacenter, and VMware cluster
-            report_data = {}
-
-            # Process each OpenShift cluster
-            for cluster_name, cluster_data in all_clusters_data.items():
-                mapping = cluster_data["mapping"]
-                px_pod_count = cluster_data["portworx_pods_count"]
-
-                # Track unique hosts for this cluster
-                cluster_hosts = set()
-
-                # First pass: collect all datacenter, cluster, and host information for this cluster
-                datacenter_clusters = {}
-                for machineset_name, cluster_info in mapping.items():
-                    datacenter = cluster_info.get("datacenter", "Unknown")
-                    vmware_cluster_name = cluster_info["cluster_name"]
-
-                    # Initialize datacenter if not seen before
-                    if datacenter not in datacenter_clusters:
-                        datacenter_clusters[datacenter] = {}
-
-                    # Initialize VMware cluster if not seen before
-                    if vmware_cluster_name not in datacenter_clusters[datacenter]:
-                        datacenter_clusters[datacenter][vmware_cluster_name] = {
-                            "hosts": set(),
-                            "hosts_count": 0,
-                        }
-
-                    # Add unique hosts to this VMware cluster
-                    for host in cluster_info["hosts"]:
-                        host_name = host["name"]
-                        datacenter_clusters[datacenter][vmware_cluster_name]["hosts"].add(host_name)
-                        cluster_hosts.add(host_name)
-
-                # Add this OpenShift cluster's data to the report
-                report_data[cluster_name] = {
-                    "portworx_pods_count": px_pod_count,
-                    "total_esxi_hosts": len(cluster_hosts),
-                }
-
-                # Add datacenter and VMware cluster information
-                for datacenter, vmware_clusters in datacenter_clusters.items():
-                    if "datacenters" not in report_data[cluster_name]:
-                        report_data[cluster_name]["datacenters"] = {}
-
-                    report_data[cluster_name]["datacenters"][datacenter] = {}
-                    for vmware_cluster_name, vmware_cluster_data in vmware_clusters.items():
-                        # Convert set to sorted list for JSON serialization
-                        host_list = sorted(list(vmware_cluster_data["hosts"]))
-                        hosts_count = len(host_list)
-
-                        report_data[cluster_name]["datacenters"][datacenter][
-                            vmware_cluster_name
-                        ] = {"hosts": host_list, "hosts_count": hosts_count}
-
-            # Output the JSON
-            console.print(json.dumps(report_data, indent=2))
+            # Generate detailed JSON report
+            generate_json_report(all_clusters_data, False)
         else:  # Default to table format
             # Create a table for each cluster
             for cluster_name, cluster_data in all_clusters_data.items():

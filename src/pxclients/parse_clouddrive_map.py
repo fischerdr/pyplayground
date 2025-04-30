@@ -67,37 +67,83 @@ def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConf
     Returns:
         VSphereConfig object if successful, None otherwise
     """
+    logger.debug("Attempting to get vSphere config from namespace: %s", namespace)
+    vcenter = None
+    username = None
+    password = None
+
     try:
         v1 = get_k8s_client()
 
-        # Get vSphere credentials
-        secret = v1.read_namespaced_secret("px-vsphere-secret", namespace)
-        username = base64.b64decode(secret.data["VSPHERE_USER"]).decode()
-        password = base64.b64decode(secret.data["VSPHERE_PASSWORD"]).decode()
-
-        # Get vCenter URL from StorageCluster
-        custom_api = get_custom_objects_api()
-        storage_clusters = custom_api.list_namespaced_custom_object(
-            group="core.libopenstorage.org",
-            version="v1",
-            namespace=namespace,
-            plural="storageclusters",
-        )
-
-        vcenter = None
-        for cluster in storage_clusters.get("items", []):
-            env = cluster.get("spec", {}).get("env", [])
-            for param in env:
-                if param.get("name") == "VSPHERE_VCENTER":
-                    vcenter = param.get("value")
-                    break
-            if vcenter:
-                break
-
-        if not vcenter:
-            logger.error("Could not find VSPHERE_VCENTER in StorageCluster")
+        # Step 2.1: Get vSphere credentials from Secret
+        try:
+            secret_name = "px-vsphere-secret"
+            logger.debug("Reading secret '%s'...", secret_name)
+            secret = v1.read_namespaced_secret(secret_name, namespace)
+            username = base64.b64decode(secret.data["VSPHERE_USER"]).decode()
+            password = base64.b64decode(secret.data["VSPHERE_PASSWORD"]).decode()
+            logger.debug("Successfully decoded vSphere username from secret.")
+        except client.ApiException as e:
+            logger.error("K8s API error reading secret '%s': %s", secret_name, str(e))
+            return None
+        except KeyError as e:
+            logger.error("Secret '%s' is missing expected key: %s", secret_name, str(e))
+            return None
+        except Exception as e:
+            logger.error("Failed processing secret '%s': %s", secret_name, str(e), exc_info=True)
             return None
 
+        # Step 2.2: Get vCenter URL from StorageCluster CRD
+        try:
+            custom_api = get_custom_objects_api()
+            storage_cluster_group = "core.libopenstorage.org"
+            storage_cluster_version = "v1"
+            storage_cluster_plural = "storageclusters"
+            logger.debug(
+                "Listing StorageClusters (group=%s, version=%s, plural=%s)...",
+                storage_cluster_group,
+                storage_cluster_version,
+                storage_cluster_plural,
+            )
+            storage_clusters = custom_api.list_namespaced_custom_object(
+                group=storage_cluster_group,
+                version=storage_cluster_version,
+                namespace=namespace,
+                plural=storage_cluster_plural,
+            )
+
+            vcenter = None
+            logger.debug("Searching for VSPHERE_VCENTER env var in StorageClusters...")
+            for cluster in storage_clusters.get("items", []):
+                cluster_name_debug = cluster.get("metadata", {}).get("name", "Unknown")
+                logger.debug("Checking StorageCluster: %s", cluster_name_debug)
+                env = cluster.get("spec", {}).get("env", [])
+                for param in env:
+                    if param.get("name") == "VSPHERE_VCENTER":
+                        vcenter = param.get("value")
+                        logger.debug(
+                            "Found VSPHERE_VCENTER=%s in StorageCluster %s",
+                            vcenter,
+                            cluster_name_debug,
+                        )
+                        break
+                if vcenter:
+                    break
+
+            if not vcenter:
+                logger.error(
+                    "Could not find VSPHERE_VCENTER in any StorageCluster in namespace '%s'",
+                    namespace,
+                )
+                return None
+        except client.ApiException as e:
+            logger.error("K8s API error listing StorageClusters: %s", str(e))
+            return None
+        except Exception as e:
+            logger.error("Failed processing StorageClusters: %s", str(e), exc_info=True)
+            return None
+
+        # Step 2.3: Create and return VSphereConfig object
         # Set disable_ssl_verification based on the verify_ssl flag
         disable_verification = not verify_ssl
         logger.debug("vSphere SSL verification %s", "enabled" if verify_ssl else "disabled")
@@ -105,7 +151,7 @@ def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConf
         config = VSphereConfig(
             host=vcenter,
             username=username,
-            password=password,
+            password=password,  # Note: Password will not be logged
             disable_ssl_verification=disable_verification,
         )
         logger.debug(
@@ -115,9 +161,16 @@ def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConf
             config.port,
             config.disable_ssl_verification,
         )
+        # logger.debug("vSphere config retrieved successfully.") # Redundant, part of _initialize_resources log
         return config
-    except Exception as e:
-        logger.error("Failed to get vSphere configuration: %s", str(e))
+
+    except Exception as e:  # General fallback catcher (less likely to be hit now)
+        logger.error(
+            "Unexpected outer error in get_vsphere_config for namespace '%s': %s",
+            namespace,
+            str(e),
+            exc_info=True,
+        )
         return None
 
 
@@ -156,10 +209,24 @@ def get_vm_info(vsphere_config: VSphereConfig, vm_uuid: str) -> Optional[Dict[st
             )
             return None
 
+        # Test the service instance connection by getting current time
+        try:
+            current_time = si.CurrentTime()
+            logger.debug("vSphere connection test successful. Server time: %s", current_time)
+        except Exception as service_test_e:
+            logger.error(
+                "vSphere connection test failed for host %s (unable to get server time): %s",
+                vsphere_config.host,
+                str(service_test_e),
+                exc_info=True,  # Include traceback for debugging
+            )
+            return None
+
         # Search for VM by UUID
+        logger.debug("Searching for VM by UUID: %s", vm_uuid)
         vm = si.content.searchIndex.FindByUuid(None, vm_uuid, True)
         if not vm:
-            logger.error("VM with UUID %s not found", vm_uuid)
+            logger.error("FindByUuid search failed: VM with UUID %s not found", vm_uuid)
             return None
 
         # Get disk information

@@ -13,10 +13,10 @@ import pyVmomi
 from pyVim.connect import Disconnect, SmartConnect
 from pyVmomi import vim, vmodl
 
-from utils.logging_utils import get_logger, setup_logging
+from utils.logging_utils import get_logger
 
 logger = get_logger(__name__)
-setup_logging()
+# setup_logging() # Remove: Logging should be configured by the calling script's entry point
 
 
 def print_vm_info(vm, depth=1, max_depth=10):
@@ -101,9 +101,10 @@ def connect(args) -> Optional[vim.ServiceInstance]:
     """
     service_instance = None
     try:
-        ssl_context = None
+        # ssl_context = None # Removed as context is used directly
         if args.disable_ssl_verification:
             # Attempt to import ssl module for context creation
+            context = None  # Initialize context
             try:
                 import ssl
 
@@ -112,12 +113,12 @@ def connect(args) -> Optional[vim.ServiceInstance]:
                 logger.warning(
                     "Could not import ssl module. Proceeding without specific SSL context."
                 )
-                context = None  # Fallback or handle as error if required
+                # context remains None
             except AttributeError:
                 logger.warning(
                     "ssl._create_unverified_context not available. Proceeding without specific SSL context."
                 )
-                context = None
+                # context remains None
 
             logger.debug(
                 "Calling SmartConnect: host=%s, user=%s, port=%d, sslContext=%s",

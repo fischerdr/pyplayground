@@ -123,8 +123,7 @@ def connect(args) -> Optional[vim.ServiceInstance]:
                 user=args.user,
                 pwd=args.password,
                 port=args.port,
-                # disableSslCertValidation=True, # Deprecated, use sslContext
-                sslContext=context,
+                sslContext=context,  # Use the generated context to disable verification
             )
         else:
             # Connect with default SSL verification

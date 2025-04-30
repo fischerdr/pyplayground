@@ -57,11 +57,12 @@ class VSphereConfig:
         return args
 
 
-def get_vsphere_config(namespace: str) -> Optional[VSphereConfig]:
+def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConfig]:
     """Get vSphere configuration from Kubernetes secrets.
 
     Args:
         namespace: Kubernetes namespace containing the secrets
+        verify_ssl: If True, SSL verification will be enabled.
 
     Returns:
         VSphereConfig object if successful, None otherwise
@@ -97,7 +98,16 @@ def get_vsphere_config(namespace: str) -> Optional[VSphereConfig]:
             logger.error("Could not find VSPHERE_VCENTER in StorageCluster")
             return None
 
-        return VSphereConfig(host=vcenter, username=username, password=password)
+        # Set disable_ssl_verification based on the verify_ssl flag
+        disable_verification = not verify_ssl
+        logger.debug("vSphere SSL verification %s", "enabled" if verify_ssl else "disabled")
+
+        return VSphereConfig(
+            host=vcenter,
+            username=username,
+            password=password,
+            disable_ssl_verification=disable_verification,
+        )
     except Exception as e:
         logger.error("Failed to get vSphere configuration: %s", str(e))
         return None
@@ -166,7 +176,9 @@ def get_vm_info(vsphere_config: VSphereConfig, vm_uuid: str) -> Optional[Dict[st
         return None
 
 
-def _initialize_resources(portworx_namespace: str) -> Optional[VSphereConfig]:
+def _initialize_resources(
+    portworx_namespace: str, verify_vsphere_ssl: bool
+) -> Optional[VSphereConfig]:
     """Load kubeconfig and get vSphere configuration."""
     logger.debug("Initializing Kubernetes and vSphere resources...")
     try:
@@ -176,7 +188,7 @@ def _initialize_resources(portworx_namespace: str) -> Optional[VSphereConfig]:
             return None
         logger.debug("Kubernetes configuration loaded successfully.")
 
-        vsphere_config = get_vsphere_config(portworx_namespace)
+        vsphere_config = get_vsphere_config(portworx_namespace, verify_vsphere_ssl)
         if not vsphere_config:
             logger.error(
                 "Failed to get vSphere configuration for namespace '%s'.",
@@ -627,6 +639,12 @@ def _find_cloud_drive_configmap(namespace: str, v1_client: client.CoreV1Api) -> 
     help="Path to the kubeconfig file to use.",
     type=click.Path(exists=True, dir_okay=False, readable=True),
 )
+@click.option(
+    "--vsphere-ssl-verify",
+    is_flag=True,
+    default=False,  # Default is NOT to verify (disable_ssl_verification=True)
+    help="Enable SSL verification for vSphere connection.",
+)
 def main(
     # cluster_name: str,
     namespace: str,
@@ -634,6 +652,7 @@ def main(
     debug: bool,
     configmap_name: Optional[str],
     kubeconfig: Optional[str],
+    vsphere_ssl_verify: bool,
 ) -> None:
     """Parse cloud drive configuration from Kubernetes configmaps and provide disk mapping information.
 
@@ -663,7 +682,7 @@ def main(
 
         # Now we have a configmap_name, proceed with getting vSphere config
         logger.debug("Using ConfigMap: %s", configmap_name)
-        vsphere_config = _initialize_resources(portworx_namespace)
+        vsphere_config = _initialize_resources(portworx_namespace, vsphere_ssl_verify)
         if not vsphere_config:
             raise click.Abort()
 

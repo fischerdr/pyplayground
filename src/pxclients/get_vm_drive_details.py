@@ -508,13 +508,18 @@ def show_vm_drives(  # noqa: C901
 
                 # Create and print table
                 table = Table(
-                    title="Attached Virtual Disks", show_header=True, header_style="bold magenta"
+                    show_header=True,
+                    header_style="bold magenta",
+                    title=None,
+                    caption=f"Drives for {scheduler_name}",
                 )
+                table.add_column("Node Name", style="cyan", no_wrap=True)
+                table.add_column("Instance ID", style="green", no_wrap=True)
                 table.add_column("Disk Path", style="dim", width=60)
                 table.add_column("Provisioned Size (GB)", justify="right")
 
                 for drive_path, drive_size_gb in actual_drives.items():
-                    table.add_row(drive_path, f"{drive_size_gb:.2f}")
+                    table.add_row(scheduler_name, instance_id, drive_path, f"{drive_size_gb:.2f}")
 
                 console.print(table)
                 # for drive_path, drive_size_gb in actual_drives.items():

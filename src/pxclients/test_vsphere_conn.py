@@ -141,11 +141,10 @@ def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConf
             disable_ssl_verification=disable_verification,
         )
         logger.debug(
-            "Created VSphereConfig: host=%s, user=%s, port=%d, password=%s, disable_ssl=%s",
+            "Created VSphereConfig: host=%s, user=%s, port=%d, disable_ssl=%s",
             config.host,
             config.username,
             config.port,
-            config.password,
             config.disable_ssl_verification,
         )
         return config

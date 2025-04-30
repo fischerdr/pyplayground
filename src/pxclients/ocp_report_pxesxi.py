@@ -372,13 +372,15 @@ def _get_cluster_name_from_resource_pool(resource_pool: str) -> Optional[str]:
     if not resource_pool:
         return None
     try:
-        parts = resource_pool.split('/')
+        parts = resource_pool.split("/")
         # Find the index of 'host'
-        host_index = parts.index('host')
+        host_index = parts.index("host")
         # The cluster name should be the part immediately after 'host'
         if host_index + 1 < len(parts):
             cluster_name = parts[host_index + 1]
-            logger.debug(f"Parsed cluster name '{cluster_name}' from resource pool '{resource_pool}'")
+            logger.debug(
+                f"Parsed cluster name '{cluster_name}' from resource pool '{resource_pool}'"
+            )
             return cluster_name
     except (ValueError, IndexError):
         # Handle cases where 'host' is not found or the structure is unexpected
@@ -456,9 +458,7 @@ def map_machinesets_to_clusters(
 
         # Attempt to find the cluster name
         candidate_name = _get_cluster_name_from_resource_pool(resource_pool)
-        matched_cluster_name = _find_cluster_match(
-            candidate_name, server_name, known_cluster_names
-        )
+        matched_cluster_name = _find_cluster_match(candidate_name, server_name, known_cluster_names)
 
         # Populate the mapping based on the match result
         if matched_cluster_name:

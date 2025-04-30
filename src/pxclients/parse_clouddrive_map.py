@@ -14,12 +14,13 @@ Dependencies:
 """
 
 import base64
-import os
 import logging
+import os
 from dataclasses import dataclass
 from typing import Dict, Optional
 
 import click
+from kubernetes import client
 from pyVmomi import vim
 
 from utils.k8s_utils import (
@@ -509,14 +510,57 @@ def _output_drive_mapping(all_replaces: Dict[str, str]) -> None:
         logger.info("\nNo drive path replacements suggested based on size mapping.")
 
 
+def _find_cloud_drive_configmap(namespace: str, v1_client: client.CoreV1Api) -> Optional[str]:
+    """Find a unique configmap starting with 'px-cloud-drive-' in the namespace."""
+    prefix = "px-cloud-drive-"
+    try:
+        logger.debug(
+            "Searching for ConfigMaps with prefix '%s' in namespace '%s'...", prefix, namespace
+        )
+        configmaps = v1_client.list_namespaced_config_map(namespace)
+        matching_cms = [
+            cm.metadata.name for cm in configmaps.items if cm.metadata.name.startswith(prefix)
+        ]
+
+        if len(matching_cms) == 1:
+            found_name = matching_cms[0]
+            logger.info("Found unique ConfigMap: '%s'", found_name)
+            return found_name
+        elif len(matching_cms) == 0:
+            logger.error(
+                "No ConfigMap found with prefix '%s' in namespace '%s'. Please specify using --configmap-name.",
+                prefix,
+                namespace,
+            )
+            return None
+        else:
+            logger.error(
+                "Multiple ConfigMaps found with prefix '%s' in namespace '%s': %s. Please specify using --configmap-name.",
+                prefix,
+                namespace,
+                ", ".join(matching_cms),
+            )
+            return None
+    except client.ApiException as e:
+        logger.error("API error listing ConfigMaps in namespace '%s': %s", namespace, str(e))
+        return None
+    except Exception as e:
+        logger.error(
+            "Unexpected error searching for ConfigMaps in namespace '%s': %s", namespace, str(e)
+        )
+        return None
+
+
 @click.command(
     name="parse-clouddrive-map",  # Kebab-case is conventional for click command names
     help="Parse cloud drive configuration from Kubernetes configmaps and provide disk mapping information.",
 )
-@click.argument(
-    "cluster_name",
+@click.option(
+    "--configmap-name",
+    "-c",
+    default=None,
+    help="Name of the ConfigMap. If omitted, searches for 'px-cloud-drive-*'.",
     type=str,
-    # No equivalent for show_default=False in click.Argument, handled by help text
 )
 @click.option(
     "--namespace",
@@ -539,11 +583,20 @@ def _output_drive_mapping(all_replaces: Dict[str, str]) -> None:
     default=False,
     help="Enable debug logging (DEBUG level).",
 )
+@click.option(
+    "--kubeconfig",
+    "-k",
+    default=None,
+    help="Path to the kubeconfig file to use.",
+    type=click.Path(exists=True, dir_okay=False, readable=True),
+)
 def main(
-    cluster_name: str,
+    # cluster_name: str,
     namespace: str,
     portworx_namespace: str,
     debug: bool,
+    configmap_name: Optional[str],
+    kubeconfig: Optional[str],
 ) -> None:
     """Parse cloud drive configuration from Kubernetes configmaps and provide disk mapping information.
 
@@ -559,17 +612,31 @@ def main(
     logger.debug("Logging setup complete.")
 
     try:
-        # Initialize Kubernetes client and get vSphere config
+        # Initialize Kubernetes client (needed early for discovery)
+        if not load_kube_config_auto(config_file=kubeconfig):
+            logger.error("Failed to load Kubernetes configuration. Cannot proceed.")
+            raise click.Abort()
+        k8s_v1_client = get_k8s_client("CoreV1Api")
+
+        # Determine the configmap name (discover if not provided)
+        if configmap_name is None:
+            configmap_name = _find_cloud_drive_configmap(namespace, k8s_v1_client)
+            if configmap_name is None:
+                raise click.Abort()  # Error logged in _find_cloud_drive_configmap
+
+        # Now we have a configmap_name, proceed with getting vSphere config
+        # TODO: Pass k8s_v1_client to _initialize_resources if needed?
         vsphere_config = _initialize_resources(portworx_namespace)
         if not vsphere_config:
             raise click.Abort()
 
-        # Get cloud drive configuration data
-        cloud_drive_data = _fetch_cluster_drive_data(namespace, cluster_name)
+        # Get cloud drive configuration data using the determined configmap_name
+        cloud_drive_data = _fetch_cluster_drive_data(namespace, configmap_name)
         if not cloud_drive_data:
             raise click.Abort()
 
-        logger.info("Processing storage nodes for cluster '%s'...", cluster_name)
+        # Use the determined configmap_name in log messages if relevant (example)
+        logger.info("Processing storage nodes defined in ConfigMap '%s'...", configmap_name)
         all_replaces: Dict[str, str] = {}
 
         # Process each node

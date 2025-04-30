@@ -11,11 +11,13 @@ import logging
 import os
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import click
 from kubernetes import client
 from pyVmomi import vim
+from rich.console import Console
+from rich.table import Table
 
 # Assume utils are in the python path or adjust import accordingly
 from utils.k8s_utils import get_cloud_drive_config  # Needed to read the configmap data
@@ -29,6 +31,7 @@ from utils.vmware_utils import connect, extract_path_from_datastore_path
 
 # Configure logging
 logger = get_logger(__name__)
+console = Console()
 
 
 # --- Components Copied/Adapted from parse_clouddrive_map.py ---
@@ -263,8 +266,10 @@ def _fetch_cluster_drive_data(namespace: str, configmap_name: str) -> Optional[D
         return None
 
 
-def get_vm_info(vsphere_config: VSphereConfig, vm_uuid: str) -> Optional[Dict[str, float]]:
-    """Get VM disk information using pyVmomi."""
+def get_vm_info(  # noqa: C901
+    vsphere_config: VSphereConfig, vm_uuid: str
+) -> Optional[Tuple[Dict[str, float], float]]:
+    """Get VM disk information and total committed storage using pyVmomi."""
     logger.debug("Fetching VM info for UUID: %s", vm_uuid)
     vmdk_info: Dict[str, float] = {}
     si = None
@@ -335,7 +340,17 @@ def get_vm_info(vsphere_config: VSphereConfig, vm_uuid: str) -> Optional[Dict[st
             vm.name,
         )
         logger.debug("Returning VMDK info: %s", vmdk_info)
-        return vmdk_info
+
+        # Get total committed storage
+        total_committed_gb = 0.0
+        if vm.summary.storage:
+            committed_bytes = vm.summary.storage.committed
+            total_committed_gb = committed_bytes / (1024 * 1024 * 1024)  # Bytes to GB
+            logger.debug("VM total committed storage: %.2f GB", total_committed_gb)
+        else:
+            logger.warning("Could not retrieve storage summary for VM %s", vm.name)
+
+        return vmdk_info, total_committed_gb
 
     except Exception as e:
         logger.error("Error getting VM info: %s", str(e))
@@ -448,10 +463,11 @@ def show_vm_drives(  # noqa: C901
     click.echo("--- VM Drive Details ---")
     # Process each node
     for node_name, node_data in cloud_drive_data.items():
-        # Check if the node entry has the expected 'Configs' key
-        if not isinstance(node_data, dict) or "Configs" not in node_data:
+        # Check if the node entry has a non-null 'Configs' key
+        if not isinstance(node_data, dict) or not node_data.get("Configs"):
             logger.debug(
-                "Skipping node entry '%s' as it does not contain a 'Configs' key.", node_name
+                "Skipping node entry '%s' as it does not contain a valid 'Configs' entry.",
+                node_name,
             )
             continue  # Skip to the next node entry
 
@@ -468,20 +484,41 @@ def show_vm_drives(  # noqa: C901
         logger.info(f"Processing node: {scheduler_name} (InstanceID: {instance_id})")
 
         # Get actual drive info for this VM
-        actual_drives = get_vm_info(vsphere_config, instance_id)
+        vm_info_result = get_vm_info(vsphere_config, instance_id)
 
-        if actual_drives is None:
+        if vm_info_result is None:
             err_msg = f"Failed to get drive information for VM {instance_id}. Check logs."
             logger.error(err_msg)
-            click.echo(click.style(f"  ERROR: {err_msg}", fg="red"))
-        elif not actual_drives:
-            ok_msg = "No virtual disks found attached to this VM."
-            logger.info(f"Node {scheduler_name}: {ok_msg}")
-            click.echo(f"  {ok_msg}")
+            # click.echo(click.style(f"  ERROR: {err_msg}", fg="red"))
+            console.print(f"  [bold red]ERROR:[/bold red] {err_msg}")
         else:
-            logger.info(f"Found {len(actual_drives)} drives for node {scheduler_name}.")
-            for drive_path, drive_size_gb in actual_drives.items():
-                click.echo(f"  - {drive_path}: {drive_size_gb:.2f} GB (Provisioned Capacity)")
+            actual_drives, total_committed_gb = vm_info_result
+            # Display total committed storage
+            commit_msg = f"Total Committed Storage: {total_committed_gb:.2f} GB"
+            logger.info(f"Node {scheduler_name}: {commit_msg}")
+            console.print(f"  {commit_msg}")
+
+            if not actual_drives:
+                ok_msg = "No virtual disks found attached to this VM."
+                logger.info(f"Node {scheduler_name}: {ok_msg}")
+                # click.echo(f"  {ok_msg}")
+                console.print(f"  {ok_msg}")
+            else:
+                logger.info(f"Found {len(actual_drives)} drives for node {scheduler_name}.")
+
+                # Create and print table
+                table = Table(
+                    title="Attached Virtual Disks", show_header=True, header_style="bold magenta"
+                )
+                table.add_column("Disk Path", style="dim", width=60)
+                table.add_column("Provisioned Size (GB)", justify="right")
+
+                for drive_path, drive_size_gb in actual_drives.items():
+                    table.add_row(drive_path, f"{drive_size_gb:.2f}")
+
+                console.print(table)
+                # for drive_path, drive_size_gb in actual_drives.items():
+                #     click.echo(f"  - {drive_path}: {drive_size_gb:.2f} GB (Provisioned Capacity)")
 
     logger.info("Finished processing all nodes.")
 

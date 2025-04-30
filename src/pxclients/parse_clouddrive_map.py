@@ -102,12 +102,20 @@ def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConf
         disable_verification = not verify_ssl
         logger.debug("vSphere SSL verification %s", "enabled" if verify_ssl else "disabled")
 
-        return VSphereConfig(
+        config = VSphereConfig(
             host=vcenter,
             username=username,
             password=password,
             disable_ssl_verification=disable_verification,
         )
+        logger.debug(
+            "Created VSphereConfig: host=%s, user=%s, port=%d, disable_ssl=%s",
+            config.host,
+            config.username,
+            config.port,
+            config.disable_ssl_verification,
+        )
+        return config
     except Exception as e:
         logger.error("Failed to get vSphere configuration: %s", str(e))
         return None
@@ -128,8 +136,18 @@ def get_vm_info(vsphere_config: VSphereConfig, vm_uuid: str) -> Optional[Dict[st
     si = None
 
     try:
+        # Convert config to args and log (excluding password)
+        connect_args = vsphere_config.to_args()
+        logger.debug(
+            "Attempting vSphere connection with args: host=%s, user=%s, port=%d, disable_ssl=%s",
+            connect_args.host,
+            connect_args.user,
+            connect_args.port,
+            connect_args.disable_ssl_verification,
+        )
+
         # Connect to vSphere using utility function
-        si = connect(vsphere_config.to_args())
+        si = connect(connect_args)
 
         # Check if connection was successful
         if not si:

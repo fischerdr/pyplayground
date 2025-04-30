@@ -118,6 +118,14 @@ def connect(args) -> Optional[vim.ServiceInstance]:
                     "ssl._create_unverified_context not available. Proceeding without specific SSL context."
                 )
                 context = None
+
+            logger.debug(
+                "Calling SmartConnect: host=%s, user=%s, port=%d, sslContext=%s",
+                args.host,
+                args.user,
+                args.port,
+                "Unverified" if context else "Default",
+            )
             service_instance = SmartConnect(
                 host=args.host,
                 user=args.user,
@@ -127,6 +135,12 @@ def connect(args) -> Optional[vim.ServiceInstance]:
             )
         else:
             # Connect with default SSL verification
+            logger.debug(
+                "Calling SmartConnect: host=%s, user=%s, port=%d, sslContext=Default",
+                args.host,
+                args.user,
+                args.port,
+            )
             service_instance = SmartConnect(
                 host=args.host, user=args.user, pwd=args.password, port=args.port
             )

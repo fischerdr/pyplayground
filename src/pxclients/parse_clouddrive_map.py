@@ -4,10 +4,6 @@
 This script parses cloud drive configuration from Kubernetes configmaps
 and provides disk mapping information.
 
-Author: Updated version
-Date Created: 2025-01-25
-Last Modified: 2025-01-25
-
 Dependencies:
     - kubernetes
     - pyVmomi
@@ -18,10 +14,12 @@ Dependencies:
 """
 
 import base64
+import os
+import logging
 from dataclasses import dataclass
 from typing import Dict, Optional
 
-import typer
+import click
 from pyVmomi import vim
 
 from utils.k8s_utils import (
@@ -34,15 +32,7 @@ from utils.logging_utils import get_logger, setup_logging
 from utils.vmware_utils import connect, extract_path_from_datastore_path
 
 # Configure logging
-setup_logging()
 logger = get_logger(__name__)
-
-# Create typer app
-app = typer.Typer(
-    name="parse_clouddrive_map",
-    help="Parse cloud drive configuration from Kubernetes configmaps",
-    add_completion=False,
-)
 
 
 @dataclass
@@ -220,7 +210,21 @@ def _process_expected_configs(
     node_scheduler_name: str,
     node_instance_id: str,
 ) -> tuple[Dict[float, str], list[str], bool, bool]:
-    """Processes expected configs, identifies mismatches, and checks for duplicate expected sizes."""
+    """Processes expected configs, identifies mismatches, and checks for duplicate expected sizes.
+
+    Args:
+        expected_configs: Dictionary of expected drive configurations
+        actual_drives: Dictionary of actual drive sizes
+        node_scheduler_name: Name of the node scheduler
+        node_instance_id: Instance ID of the node
+
+    Returns:
+        Tuple containing:
+            - exp_size_map: Dictionary of expected size -> expected key
+            - expected_details: List of expected drive details
+            - mismatch_found: Boolean indicating if mismatches were found
+            - expected_sizes_good: Boolean indicating if expected sizes are unique
+    """
     exp_size_map: Dict[float, str] = {}
     expected_details: list[str] = []
     mismatch_found = False
@@ -278,7 +282,19 @@ def _attempt_size_based_mapping(
     node_scheduler_name: str,
     node_instance_id: str,
 ) -> Dict[str, str]:
-    """Attempts 1:1 mapping based on unique sizes when mismatches are found."""
+    """Attempts 1:1 mapping based on unique sizes when mismatches are found.
+
+    Args:
+        exp_size_map: Dictionary of expected size -> expected key
+        actual_size_map: Dictionary of actual size -> actual key
+        expected_configs: Dictionary of expected drive configurations
+        actual_drives: Dictionary of actual drive sizes
+        node_scheduler_name: Name of the node scheduler
+        node_instance_id: Instance ID of the node
+
+    Returns:
+        Dictionary mapping expected paths to actual paths for replacement
+    """
     node_replaces: Dict[str, str] = {}
     logger.info(
         "Mismatch found for node %s (%s). Attempting size-based mapping.",
@@ -325,15 +341,26 @@ def _log_complex_mismatch(
     actual_drives: Dict[str, float],
     node_scheduler_name: str,
     node_instance_id: str,
-    verbose: bool,
+    debug: bool,
 ) -> None:
-    """Logs details when automatic mapping fails due to complexity or duplicates."""
+    """Logs details when automatic mapping fails due to complexity or duplicates.
+
+    Args:
+        expected_details: List of expected drive details
+        actual_drives: Dictionary of actual drive sizes
+        node_scheduler_name: Name of the node scheduler
+        node_instance_id: Instance ID of the node
+        debug: Boolean indicating if debug logging is enabled
+
+    Returns:
+        None
+    """
     logger.warning(
         "Complex mismatch or duplicate sizes found for node %s (%s). Cannot automatically map. Manual check needed.",
         node_scheduler_name,
         node_instance_id,
     )
-    if verbose:
+    if debug:
         logger.warning("Expected configurations (Missing/Mismatched):")
         for exp in expected_details:
             logger.warning("\t%s", exp)
@@ -347,9 +374,20 @@ def _compare_drives(
     actual_drives: Dict[str, float],
     node_scheduler_name: str,
     node_instance_id: str,
-    verbose: bool,
+    debug: bool,
 ) -> Dict[str, str]:
-    """Compare expected drive configurations with actual drives found on the VM."""
+    """Compare expected drive configurations with actual drives found on the VM.
+
+    Args:
+        expected_configs: Dictionary of expected drive configurations
+        actual_drives: Dictionary of actual drive sizes
+        node_scheduler_name: Name of the node scheduler
+        node_instance_id: Instance ID of the node
+        debug: Boolean indicating if debug logging is enabled
+
+    Returns:
+        Dictionary mapping expected paths to actual paths for replacement
+    """
     # 1. Build map of actual drives and check for unique sizes
     actual_size_map, actual_sizes_good = _build_actual_drive_map(
         actual_drives, node_scheduler_name, node_instance_id
@@ -391,7 +429,7 @@ def _compare_drives(
                 actual_drives,
                 node_scheduler_name,
                 node_instance_id,
-                verbose,
+                debug,
             )
             return {}  # Mapping unreliable
 
@@ -401,9 +439,20 @@ def _process_single_node(
     node_data: Dict,
     node_scheduler_name: str,
     node_instance_id: str,
-    verbose: bool,
+    debug: bool,
 ) -> Dict[str, str]:
-    """Process the configuration for a single storage node."""
+    """Process the configuration for a single storage node.
+
+    Args:
+        vsphere_config: VSphereConfig object with connection details
+        node_data: Dictionary containing node configuration data
+        node_scheduler_name: Name of the node scheduler
+        node_instance_id: Instance ID of the node
+        debug: Boolean indicating if debug logging is enabled
+
+    Returns:
+        Dictionary mapping expected paths to actual paths for replacement
+    """
     logger.debug("Processing node: %s (InstanceID: %s)", node_scheduler_name, node_instance_id)
 
     # Get VM information (actual drives)
@@ -430,7 +479,7 @@ def _process_single_node(
                 node_scheduler_name,
                 node_instance_id,
             )
-            if verbose:
+            if debug:
                 logger.warning("Actual drives found on VM:")
                 for key, value in actual_drives.items():
                     logger.warning("\t%s: %.2f GB", key, value)
@@ -442,7 +491,7 @@ def _process_single_node(
         actual_drives=actual_drives,
         node_scheduler_name=node_scheduler_name,
         node_instance_id=node_instance_id,
-        verbose=verbose,
+        debug=debug,
     )
     return node_replaces
 
@@ -457,31 +506,41 @@ def _output_drive_mapping(all_replaces: Dict[str, str]) -> None:
         logger.info("\nNo drive path replacements suggested based on size mapping.")
 
 
-@app.command()
+@click.command(
+    name="parse-clouddrive-map",  # Kebab-case is conventional for click command names
+    help="Parse cloud drive configuration from Kubernetes configmaps and provide disk mapping information.",
+)
+@click.argument(
+    "cluster_name",
+    type=str,
+    # No equivalent for show_default=False in click.Argument, handled by help text
+)
+@click.option(
+    "--namespace",
+    "-n",
+    default="kube-system",
+    help="Kubernetes namespace containing the secrets and StorageCluster.",
+    show_default=True,
+)
+@click.option(
+    "--portworx-namespace",
+    "-p",
+    default="portworx",
+    help="Kubernetes namespace containing the vSphere secret.",
+    show_default=True,
+)
+@click.option(
+    "--debug",
+    "-d",
+    is_flag=True,
+    default=False,
+    help="Enable debug logging (DEBUG level).",
+)
 def main(
-    cluster_name: str = typer.Argument(
-        ...,
-        help="Name of the cluster to process",
-        show_default=False,
-    ),
-    namespace: str = typer.Option(
-        "kube-system",
-        "--namespace",
-        "-n",
-        help="Kubernetes namespace containing the secrets and StorageCluster",
-    ),
-    portworx_namespace: str = typer.Option(
-        "portworx",
-        "--portworx-namespace",
-        "-p",
-        help="Kubernetes namespace containing the vSphere secret",
-    ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Enable verbose logging",
-    ),
+    cluster_name: str,
+    namespace: str,
+    portworx_namespace: str,
+    debug: bool,
 ) -> None:
     """Parse cloud drive configuration from Kubernetes configmaps and provide disk mapping information.
 
@@ -490,23 +549,24 @@ def main(
     2. Retrieving cloud drive configuration from configmaps
     3. Mapping drives between expected and actual configurations based on size
     """
-    # Set logging level
-    if verbose:
-        logger.setLevel("DEBUG")
-        logger.debug("Verbose logging enabled.")
-    else:
-        logger.setLevel("INFO")
+    # --- Setup Logging --- #
+    script_base_name = os.path.basename(__file__).replace(".py", "")
+    log_level = logging.DEBUG if debug else logging.INFO
+    setup_logging(level=log_level, script_name=script_base_name)  # Pass script_name
+    logger.debug("Logging setup complete.")
 
     try:
         # Initialize Kubernetes client and get vSphere config
         vsphere_config = _initialize_resources(portworx_namespace)
         if not vsphere_config:
-            raise typer.Exit(1)
+            # raise typer.Exit(1)
+            raise click.Abort()
 
         # Get cloud drive configuration data
         cloud_drive_data = _fetch_cluster_drive_data(namespace, cluster_name)
         if not cloud_drive_data:
-            raise typer.Exit(1)
+            # raise typer.Exit(1)
+            raise click.Abort()
 
         logger.info("Processing storage nodes for cluster '%s'...", cluster_name)
         all_replaces: Dict[str, str] = {}
@@ -528,7 +588,7 @@ def main(
                 node_data=node_data,
                 node_scheduler_name=scheduler_name,
                 node_instance_id=instance_id,
-                verbose=verbose,
+                debug=debug,
             )
             all_replaces.update(node_replaces)
 
@@ -536,9 +596,11 @@ def main(
         _output_drive_mapping(all_replaces)
 
     except Exception as e:
-        logger.error("An unexpected error occurred in main execution: %s", str(e), exc_info=verbose)
-        raise typer.Exit(1)
+        logger.error("An unexpected error occurred in main execution: %s", str(e), exc_info=debug)
+        # raise typer.Exit(1)
+        raise click.Abort()
 
 
 if __name__ == "__main__":
-    app()
+    # app()
+    main()  # Click commands are called directly

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-VMDK Utility Functions.
+"""VMDK Utility Functions.
 
 This module provides utility functions for VMDK operations
 These functions are shared across the vmdk_manager and related scripts.
@@ -91,11 +90,15 @@ def wait_for_tasks(si, tasks):
 
 
 def connect(args):
-    """
-    Determine the most preferred API version supported by the specified server, then connect to the specified server using that API version, login and return the service instance object.
+    """Determine the most preferred API version supported by the specified server, then connect to the specified server using that API version, login and return the service instance object.
+
+    Args:
+        args: Command line arguments
+
+    Returns:
+        Service instance object
     """
     service_instance = None
-
     # form a connection...
     try:
         if args.disable_ssl_verification:
@@ -123,8 +126,7 @@ def connect(args):
 
 
 def extract_path_from_datastore_path(datastore_path: str) -> str:
-    """
-    Extract the file path portion from a datastore path.
+    """Extract the file path portion from a datastore path.
 
     Args:
         datastore_path: Full datastore path (e.g., "[datastore] path/to/file.vmdk")
@@ -136,8 +138,7 @@ def extract_path_from_datastore_path(datastore_path: str) -> str:
 
 
 def collect_properties(si, view_ref, obj_type, path_set=None, include_mors=False):
-    """
-    Collect properties for managed objects from a view ref.
+    """Collect properties for managed objects from a view ref.
 
     Check the vSphere API documentation for example on retrieving
     object properties:
@@ -204,8 +205,7 @@ def collect_properties(si, view_ref, obj_type, path_set=None, include_mors=False
 
 
 def get_container_view(si, obj_type, container=None):
-    """
-    Get a vSphere Container View reference to all objects of type 'obj_type'.
+    """Get a vSphere Container View reference to all objects of type 'obj_type'.
 
     It is up to the caller to take care of destroying the View when no longer needed.
 
@@ -225,8 +225,7 @@ def get_container_view(si, obj_type, container=None):
 
 
 def search_for_obj(content, vim_type, name, folder=None, recurse=True):
-    """
-    Search the managed object for the name and type specified.
+    """Search the managed object for the name and type specified.
 
     Sample Usage:
 
@@ -247,8 +246,7 @@ def search_for_obj(content, vim_type, name, folder=None, recurse=True):
 
 
 def get_all_obj(content, vim_type, folder=None, recurse=True):
-    """
-    Search the managed object for the name and type specified.
+    """Search the managed object for the name and type specified.
 
     Sample Usage:
 
@@ -268,8 +266,7 @@ def get_all_obj(content, vim_type, folder=None, recurse=True):
 
 
 def get_obj(content, vim_type, name, folder=None, recurse=True):
-    """
-    Retrieves the managed object for the name and type specified.
+    """Retrieves the managed object for the name and type specified.
 
     Throws an exception if the managed object is not found.
 

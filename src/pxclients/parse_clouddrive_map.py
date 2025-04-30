@@ -26,7 +26,7 @@ from utils.k8s_utils import (
     get_cloud_drive_config,
     get_custom_objects_api,
     get_k8s_client,
-    load_kube_config,
+    load_kube_config_auto,
 )
 from utils.logging_utils import get_logger, setup_logging
 from utils.vmware_utils import connect, extract_path_from_datastore_path
@@ -147,7 +147,10 @@ def get_vm_info(vsphere_config: VSphereConfig, vm_uuid: str) -> Optional[Dict[st
 def _initialize_resources(portworx_namespace: str) -> Optional[VSphereConfig]:
     """Load kubeconfig and get vSphere configuration."""
     try:
-        load_kube_config()
+        # Load Kubernetes configuration (tries file, then in-cluster)
+        if not load_kube_config_auto():
+            logger.error("Failed to load Kubernetes configuration. Cannot proceed.")
+            return None
         vsphere_config = get_vsphere_config(portworx_namespace)
         if not vsphere_config:
             logger.error(
@@ -161,18 +164,18 @@ def _initialize_resources(portworx_namespace: str) -> Optional[VSphereConfig]:
         return None
 
 
-def _fetch_cluster_drive_data(namespace: str, cluster_name: str) -> Optional[Dict]:
+def _fetch_cluster_drive_data(namespace: str, configmap_name: str) -> Optional[Dict]:
     """Fetch cloud drive configuration data from Kubernetes configmap."""
     try:
-        cloud_drive_data = get_cloud_drive_config(namespace, cluster_name)
+        cloud_drive_data = get_cloud_drive_config(namespace, configmap_name)
         if not cloud_drive_data:
             logger.error(
-                "Failed to get cloud drive configuration for cluster '%s' in namespace '%s'.",
-                cluster_name,
+                "Failed to get cloud drive configuration from configmap '%s' in namespace '%s'.",
+                configmap_name,
                 namespace,
             )
             return None
-        logger.info("Successfully fetched cloud drive data for cluster '%s'.", cluster_name)
+        logger.info("Successfully fetched cloud drive data from configmap '%s'.", configmap_name)
         return cloud_drive_data
     except Exception as e:
         logger.error("Failed to fetch cloud drive data: %s", str(e))
@@ -559,13 +562,11 @@ def main(
         # Initialize Kubernetes client and get vSphere config
         vsphere_config = _initialize_resources(portworx_namespace)
         if not vsphere_config:
-            # raise typer.Exit(1)
             raise click.Abort()
 
         # Get cloud drive configuration data
         cloud_drive_data = _fetch_cluster_drive_data(namespace, cluster_name)
         if not cloud_drive_data:
-            # raise typer.Exit(1)
             raise click.Abort()
 
         logger.info("Processing storage nodes for cluster '%s'...", cluster_name)

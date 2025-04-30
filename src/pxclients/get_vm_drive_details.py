@@ -319,9 +319,16 @@ def get_vm_info(  # noqa: C901
         logger.debug("Processing devices for VM: %s", vm.name)
         device_count = 0
         virtual_disk_count = 0
+        skipped_disk_0 = False
         for device in vm.config.hardware.device:
             device_count += 1
             if isinstance(device, vim.vm.device.VirtualDisk):
+                # Skip Disk 0 (usually the OS disk)
+                if device.unitNumber == 0:
+                    logger.debug("Skipping Disk 0 (UnitNumber 0): Key %d", device.key)
+                    skipped_disk_0 = True
+                    continue  # Skip to the next device
+
                 virtual_disk_count += 1
                 backing = device.backing
                 if backing and hasattr(backing, "fileName"):
@@ -340,6 +347,8 @@ def get_vm_info(  # noqa: C901
             vm.name,
         )
         logger.debug("Returning VMDK info: %s", vmdk_info)
+        if skipped_disk_0:
+            logger.debug("Note: Disk 0 (unitNumber 0) was intentionally skipped.")
 
         # Get total committed storage
         total_committed_gb = 0.0
@@ -498,7 +507,9 @@ def show_vm_drives(  # noqa: C901
             err_msg = f"Failed to get drive information for VM {instance_id}. Check logs."
             logger.error(err_msg)
             # Add a row indicating failure for this node
-            table.add_row(scheduler_name, instance_id, f"[bold red]ERROR:[/bold red] {err_msg}", "-")
+            table.add_row(
+                scheduler_name, instance_id, f"[bold red]ERROR:[/bold red] {err_msg}", "-"
+            )
         else:
             actual_drives, total_committed_gb = vm_info_result
             # Display total committed storage - REMOVED - Cannot show per disk
@@ -515,12 +526,7 @@ def show_vm_drives(  # noqa: C901
                 logger.info(f"Found {len(actual_drives)} drives for node {scheduler_name}.")
                 # Add rows for each disk to the single table
                 for drive_path, drive_size_gb in actual_drives.items():
-                    table.add_row(
-                        scheduler_name,
-                        instance_id,
-                        drive_path,
-                        f"{drive_size_gb:.2f}"
-                    )
+                    table.add_row(scheduler_name, instance_id, drive_path, f"{drive_size_gb:.2f}")
 
     logger.info("Finished processing all nodes.")
 

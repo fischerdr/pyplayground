@@ -260,6 +260,10 @@ def _save_json_output(summary_data: Dict[str, int], node_details: List[Dict[str,
     output_dir = os.path.join(os.getcwd(), "tmp")
     output_filename = os.path.join(output_dir, "pxcd_provision_status.json")
 
+    # Calculate total used bytes for summary
+    total_used_bytes = sum(node.get("pool_used_bytes", 0) for node in node_details)
+    summary_data["total_pool_used_bytes"] = total_used_bytes  # Add to summary
+
     final_output = {"summary": summary_data, "storage_node_details": node_details}
 
     try:
@@ -287,18 +291,18 @@ def _save_json_output(summary_data: Dict[str, int], node_details: List[Dict[str,
 
 
 def _print_rich_table(summary_data: Dict[str, int], node_details: List[Dict[str, Any]]) -> None:
-    """Prints the processed data as a Rich table."""
-    console.print(
-        f"Total Nodes Found: {summary_data['total_nodes']}, "
-        f"Nodes Up: {summary_data['up_nodes']}, "
-        f"Storage Nodes Reporting Pools: {summary_data['storage_nodes_reporting_pools']}"
-    )
-
+    """Prints the processed data as a Rich table with a totals row."""
     if node_details:
+        # Calculate total used bytes
+        total_used_bytes = sum(node.get("pool_used_bytes", 0) for node in node_details)
+        total_used_formatted = _format_bytes(total_used_bytes)
+        storage_node_count = len(node_details)
+
         table = Table(
             title="Portworx Storage Node Provision Status",
             show_header=True,
             header_style="bold magenta",
+            caption=f"Total Nodes Found: {summary_data['total_nodes']}, Nodes Up: {summary_data['up_nodes']}",
         )
         table.add_column("PX Node ID", style="dim", width=36)
         table.add_column("K8s Hostname", style="cyan")
@@ -330,9 +334,27 @@ def _print_rich_table(summary_data: Dict[str, int], node_details: List[Dict[str,
                 used_size_formatted,
                 drive_count_str,
             )
+
+        # Add separator and totals row
+        table.add_section()
+        table.add_row(
+            f"[bold]Totals ({storage_node_count} storage nodes)[/bold]",
+            "",  # Span K8s Hostname
+            "",  # Span Node Status
+            "",  # Span Pool Status
+            "",  # Span Pool Size
+            f"[bold]{total_used_formatted}[/bold]",  # Total Used
+            "",  # Span Drives
+            style="on grey23",  # Style the totals row
+        )
+
         console.print(table)
     else:
-        console.print("No storage nodes with provisioned pools found in the output.")
+        # Print summary even if no storage nodes found
+        console.print(
+            f"Total Nodes Found: {summary_data['total_nodes']}, Nodes Up: {summary_data['up_nodes']}. "
+            f"No storage nodes with provisioned pools found in the output."
+        )
 
 
 def _display_provision_status(json_output: str, as_json: bool) -> bool:

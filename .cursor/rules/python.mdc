@@ -1,6 +1,7 @@
 ---
 description: Comprehensive guidelines for Python development, covering code organization, performance, security, testing, and more.  These rules promote maintainable, efficient, and secure Python codebases.
 globs: **/*.py
+alwaysApply: false
 ---
 # Python Best Practices and Coding Standards
 
@@ -203,7 +204,7 @@ Guidelines for using the tmp directory:
 - Testing: `pytest` for unit and integration tests. Utilize features like fixtures, parameterization, and mocking effectively.
 - Logging: Always use the standard `logging` module for tracking progress and errors. Configure handlers and formatters appropriately.
 - Documentation:
-  - Docstrings: Required for all public modules, classes, functions, and methods. Use Google style docstrings ([Example Format](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html)).
+  - Docstrings: Required for all public modules, classes, functions, and methods. Use Google style docstrings ([Example Format](mdc:https:/sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html)).
   - Type Hints: Required for all function signatures (arguments and return types) and variables where ambiguity exists.
     - Use types from the `typing` module (e.g., `List`, `Dict`, `Optional`, `Union`, `Callable`).
     - Use forward references (e.g., `def foo(bar: 'MyClass')`) only when necessary to avoid circular imports.
@@ -250,6 +251,16 @@ Guidelines for using the tmp directory:
 *   **Data Validation:** Use libraries like `pydantic` or `marshmallow` for data validation and serialization.
 *   **Configuration Management:** Use libraries like `python-decouple`, `dynaconf` or standard library's `configparser` to manage environment-specific settings. Consider using environment variables directly for simple cases, potentially validated with Pydantic's `BaseSettings`.
 *   **Logging:** Use the `logging` module for structured logging. Configure log levels and handlers appropriately.
+    * always check and use functions for utils/
+    * add to main function
+```python
+    # Setup Logging
+    script_base_name = os.path.basename(__file__).replace(".py", "")
+    log_level = logging.DEBUG if debug else logging.INFO
+    setup_logging(level=log_level, script_name=script_base_name)
+    logger.debug("Starting VM drive details script.")
+```
+
 *   **Command-Line Interfaces:** Use `argparse`, `click` or `typer` for creating command-line interfaces.
 *   **Asynchronous Programming:** Use `asyncio` for I/O-bound and concurrency problems.
     - Use `async def`, `await`, `async with` (for async context managers), and `async for` (for async iterators).
@@ -498,7 +509,7 @@ Guidelines for using the tmp directory:
 *   **PEP 8:** Adhere to PEP 8 style guidelines.
 *   **Linters:** Use linters to enforce code style and detect potential problems. Configure them in `pyproject.toml`.
 *   **Formatters:** Use formatters to automatically format code according to agreed-upon standards (e.g., `black`). Configure them in `pyproject.toml`.
-*   **Pre-commit Hooks:** Strongly recommend using the `pre-commit` framework ([https://pre-commit.com/](https://pre-commit.com/)). Configure it with a `.pre-commit-config.yaml` file to automatically run checks (e.g., `black`, `isort`, `flake8`, `mypy`, `bandit`, trailing-whitespace, end-of-file-fixer) before each commit. This helps maintain code quality and consistency proactively.
+*   **Pre-commit Hooks:** Strongly recommend using the `pre-commit` framework ([https://pre-commit.com/](mdc:https:/pre-commit.com)). Configure it with a `.pre-commit-config.yaml` file to automatically run checks (e.g., `black`, `isort`, `flake8`, `mypy`, `bandit`, trailing-whitespace, end-of-file-fixer) before each commit. This helps maintain code quality and consistency proactively.
 *   **Consistent Style:** Maintain a consistent code style throughout the project, primarily enforced by automated tools.
 
 ### 7.4. Deployment Best Practices

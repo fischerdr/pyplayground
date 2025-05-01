@@ -1,33 +1,34 @@
-from concurrent.futures import ThreadPoolExecutor
+#! /usr/bin/env python3
+"""Script to execute a command on each pod in the cluster and group results by pass/fail.
 
-import click
-from kubernetes import client, config
+This script is useful for verifying the output of a command on each pod in a Kubernetes cluster.
+It will execute a command on each pod in parallel and group the results by pass/fail based on the presence of a keyword in the output.
 
-"""
-Explanation of the Script:
+Usage:
+    pod_execverifyoutput.py --kubeconfig <path_to_kubeconfig> --namespace <namespace> --label-selector <label_selector> --command <command> --threads <number_of_threads> --pass-keyword <keyword>
 
-    Arguments:
-        --kubeconfig: Path to your kubeconfig file to connect to the Kubernetes cluster.
-        --namespace: Namespace to search for pods.
-        --label-selector: Label selector to filter the pods.
-        --command: Command to execute on each selected pod.
-        --threads: Number of threads to use for parallel execution (default is 5).
+Arguments:
+    --kubeconfig: Path to your kubeconfig file to connect to the Kubernetes cluster.
+    --namespace: Namespace to search for pods.
+    --label-selector: Label selector to filter the pods.
+    --command: Command to execute on each selected pod.
+    --threads: Number of threads to use for parallel execution (default is 5).
 
-    Execution Logic:
-        Loads the Kubernetes configuration from the specified kubeconfig.
-        Connects to the Kubernetes API and lists pods in the provided namespace with the specified label selector.
-        Uses a function to execute a shell command on each pod, utilizing Kubernetes API’s read_namespaced_pod_exec.
-        Utilizes a thread pool to run commands on multiple pods in parallel.
+Execution Logic:
+    Loads the Kubernetes configuration from the specified kubeconfig.
+    Connects to the Kubernetes API and lists pods in the provided namespace with the specified label selector.
+    Uses a function to execute a shell command on each pod, utilizing Kubernetes API’s read_namespaced_pod_exec.
+    Utilizes a thread pool to run commands on multiple pods in parallel.
 
-    Results Dictionary:
-        results dictionary is used to store the output from each pod, with pod names as keys and command outputs as values.
+Results Dictionary:
+    results dictionary is used to store the output from each pod, with pod names as keys and command outputs as values.
 
-    Pass/Fail Grouping:
-        pass_results stores pods where the output contains the specified pass_keyword.
-        fail_results stores pods where the output does not contain pass_keyword.
+Pass/Fail Grouping:
+    pass_results stores pods where the output contains the specified pass_keyword.
+    fail_results stores pods where the output does not contain pass_keyword.
 
-    Pass/Fail Keyword:
-        The --pass-keyword argument lets you define a keyword that indicates success. This keyword is used to determine if the command output should be marked as "pass" or "fail."
+Pass/Fail Keyword:
+    The --pass-keyword argument lets you define a keyword that indicates success. This keyword is used to determine if the command output should be marked as "pass" or "fail."
 
 Usage Example
 
@@ -38,6 +39,10 @@ python script.py --kubeconfig ~/.kube/config --namespace my-namespace --label-se
 This will run ls / on each pod and mark it as "pass" if the output contains "bin", grouping pods into passing and failing categories based on this condition. Adjust the command and pass/fail criteria as needed
 
 """
+from concurrent.futures import ThreadPoolExecutor
+
+import click
+from kubernetes import client, config
 
 
 # Define the command-line interface
@@ -58,8 +63,10 @@ This will run ls / on each pod and mark it as "pass" if the output contains "bin
     show_default=True,
 )
 def execute_on_pods(kubeconfig, namespace, label_selector, command, threads, pass_keyword):
-    """
-    Connect to the Kubernetes cluster, filter pods by namespace and label, run a command on each pod in parallel, and group results by pass/fail.
+    """Execute a command on each pod in the cluster and group results by pass/fail.
+
+    Connect to the Kubernetes cluster, filter pods by namespace and label,
+    run a command on each pod in parallel, and group results by pass/fail.
     """
     # Load kubeconfig
     config.load_kube_config(config_file=kubeconfig)

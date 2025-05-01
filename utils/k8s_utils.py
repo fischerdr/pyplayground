@@ -12,7 +12,7 @@ import requests
 import yaml
 from hvac.exceptions import VaultError
 from kubernetes import client, config, stream
-from kubernetes.client import ApiClient
+from kubernetes.client import ApiClient, V1Pod
 from kubernetes.client.rest import ApiException
 
 from utils.vault_utils import create_vault_client, get_secret
@@ -21,8 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 def load_kube_config(config_file: Optional[str] = None, context: Optional[str] = None) -> None:
-    """
-    Load Kubernetes configuration from a kubeconfig file.
+    """Load Kubernetes configuration from a kubeconfig file.
 
     Args:
         config_file: Optional path to kubeconfig file
@@ -39,8 +38,7 @@ def load_kube_config(config_file: Optional[str] = None, context: Optional[str] =
 
 
 def load_kubeconfig_from_string(kubeconfig_str: str) -> None:
-    """
-    Safely load kubeconfig from a YAML string.
+    """Safely load kubeconfig from a YAML string.
 
     Args:
         kubeconfig_str: String containing kubeconfig in YAML format
@@ -61,8 +59,7 @@ def load_kubeconfig_from_string(kubeconfig_str: str) -> None:
 
 
 def get_k8s_client(api_version: str = "CoreV1Api") -> Any:
-    """
-    Get a Kubernetes API client.
+    """Get a Kubernetes API client.
 
     Args:
         api_version: The API version to use (e.g., "CoreV1Api", "CustomObjectsApi")
@@ -79,8 +76,7 @@ def get_k8s_client(api_version: str = "CoreV1Api") -> Any:
 
 
 def get_custom_objects_api() -> client.CustomObjectsApi:
-    """
-    Get a Kubernetes CustomObjectsApi client.
+    """Get a Kubernetes CustomObjectsApi client.
 
     This function provides access to the CustomObjectsApi for working with Custom Resource
     Definitions (CRDs) in Kubernetes.
@@ -108,8 +104,7 @@ def exec_pod_command(
     stdin: bool = False,
     tty: bool = False,
 ) -> Dict[str, str]:
-    """
-    Execute a command in a pod.
+    """Execute a command in a pod.
 
     Args:
         namespace: Pod namespace
@@ -417,8 +412,7 @@ def get_configmap_data(
     key: Optional[str] = None,
     v1_client: Optional[client.CoreV1Api] = None,
 ) -> Dict[str, Any]:
-    """
-    Get data from a Kubernetes ConfigMap.
+    """Get data from a Kubernetes ConfigMap.
 
     Args:
         namespace: Kubernetes namespace
@@ -456,8 +450,7 @@ def update_configmap_data(
     data: Dict[str, str],
     v1_client: Optional[client.CoreV1Api] = None,
 ) -> None:
-    """
-    Update data in a Kubernetes ConfigMap.
+    """Update data in a Kubernetes ConfigMap.
 
     Args:
         namespace: Kubernetes namespace
@@ -489,8 +482,7 @@ def update_configmap_data(
 def get_cloud_drive_config(
     namespace: str, configmap_name: str, v1_client: Optional[client.CoreV1Api] = None
 ) -> Dict[str, Any]:
-    """
-    Get cloud-drive configuration from Kubernetes ConfigMap.
+    """Get cloud-drive configuration from Kubernetes ConfigMap.
 
     Args:
         namespace: Kubernetes namespace
@@ -514,8 +506,7 @@ def update_cloud_drive_config(
     new_config: Dict[str, Any],
     v1_client: Optional[client.CoreV1Api] = None,
 ) -> None:
-    """
-    Update cloud-drive configuration in Kubernetes ConfigMap.
+    """Update cloud-drive configuration in Kubernetes ConfigMap.
 
     Args:
         namespace: Kubernetes namespace
@@ -726,9 +717,7 @@ def parse_storage_string(storage_str: str) -> Optional[int]:
 
 
 def load_kube_config_auto(config_file: Optional[str] = None, context: Optional[str] = None) -> bool:
-    """
-    Attempts to load Kubernetes config from default/specified file,
-    falling back to in-cluster config.
+    """Attempts to load Kubernetes config from default/specified file,falling back to in-cluster config.
 
     Args:
         config_file: Optional path to kubeconfig file.
@@ -765,8 +754,7 @@ def load_kube_config_auto(config_file: Optional[str] = None, context: Optional[s
 
 
 def list_all_namespaces(api_client: Optional[ApiClient] = None) -> Optional[List[str]]:
-    """
-    Retrieves a list of all namespace names in the cluster.
+    """Retrieves a list of all namespace names in the cluster.
 
     Args:
         api_client: Optional initialized Kubernetes ApiClient.
@@ -787,8 +775,7 @@ def list_all_namespaces(api_client: Optional[ApiClient] = None) -> Optional[List
 
 
 def namespace_exists(namespace_name: str, api_client: Optional[ApiClient] = None) -> bool:
-    """
-    Checks if a specific namespace exists in the cluster.
+    """Checks if a specific namespace exists in the cluster.
 
     Args:
         namespace_name: The name of the namespace to check.
@@ -847,3 +834,55 @@ def format_duration(seconds: float) -> str:
         )
 
     return ", ".join(parts)
+
+
+# Add the determine_target_container function here
+def determine_target_container(pod: V1Pod, specified_container_name: Optional[str]) -> str:
+    """Determines the container to execute the command in, handling errors.
+
+    Args:
+        pod: The V1Pod object.
+        specified_container_name: The container name provided by the user, if any.
+
+    Returns:
+        The validated name of the target container.
+
+    Raises:
+        ValueError: If container logic fails (e.g., not found, ambiguous).
+    """
+    containers = pod.spec.containers
+    container_names = [c.name for c in containers]
+    pod_name = pod.metadata.name
+    logger_local = logging.getLogger(__name__)  # Use local logger
+
+    if len(containers) == 1:
+        actual_container_name = containers[0].name
+        if specified_container_name and specified_container_name != actual_container_name:
+            logger_local.warning(
+                f"Specified container '{specified_container_name}' ignored; pod '{pod_name}' has only one container: '{actual_container_name}'."
+            )
+        logger_local.debug(
+            f"Pod '{pod_name}' has one container: '{actual_container_name}'. Using it."
+        )
+        return actual_container_name
+    elif specified_container_name:
+        if specified_container_name in container_names:
+            logger_local.debug(
+                f"Using specified container: '{specified_container_name}' for pod '{pod_name}'."
+            )
+            return specified_container_name
+        else:
+            error_msg = (
+                f"Specified container '{specified_container_name}' not found in pod '{pod_name}'. "
+                f"Available containers: {', '.join(container_names)}"
+            )
+            logger_local.error(error_msg)
+            raise ValueError(error_msg)
+    else:
+        # Multiple containers, but none specified
+        error_msg = (
+            f"Pod '{pod_name}' has multiple containers ({', '.join(container_names)}). "
+            f"Please specify the target container."
+        )
+        logger_local.error(error_msg)
+        raise ValueError(error_msg)

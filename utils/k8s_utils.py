@@ -6,7 +6,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 import yaml
@@ -261,7 +261,28 @@ def get_machineset_for_machine(
         return None
 
 
-def get_nodes_from_machineset_specific(
+# Helper function for get_nodes_from_machineset_specific
+def _extract_node_info_from_machine(
+    machine: Dict[str, Any], machineset_name: str, machineset_labels: Dict[str, str]
+) -> Optional[Tuple[str, Dict[str, str]]]:
+    """Processes a single machine object to extract node info if it matches the machineset."""
+    machine_metadata = machine.get("metadata", {})
+    machine_name = machine_metadata.get("name", "")
+    machine_status = machine.get("status")
+
+    # Check if the machine belongs to the specified MachineSet and has status
+    if machineset_name in machine_name and machine_status:
+        node_name = machine_status.get("nodeRef", {}).get("name")
+        if node_name:
+            logger.info(
+                f"Associated node {node_name} with MachineSet {machineset_name} via Machine {machine_name}"
+            )
+            # Return node name and a copy of the machineset labels
+            return node_name, machineset_labels.copy()
+    return None
+
+
+def get_nodes_from_machineset_specific(  # noqa: C901
     machineset_name: str,
     label_key: Optional[str] = None,
     crd_client: Optional[client.CustomObjectsApi] = None,
@@ -293,54 +314,67 @@ def get_nodes_from_machineset_specific(
 
         # Find the specific MachineSet object by name
         machineset = next(
-            (ms for ms in machinesets["items"] if ms["metadata"]["name"] == machineset_name), None
+            (
+                ms
+                for ms in machinesets.get("items", [])
+                if ms.get("metadata", {}).get("name") == machineset_name
+            ),
+            None,
         )
 
         if not machineset:
-            logger.error(f"MachineSet {machineset_name} not found.")
+            logger.error(f"MachineSet '{machineset_name}' not found in namespace '{namespace}'.")
             return {}
 
         node_info: Dict[str, Dict[str, str]] = {}
 
         # Extract labels from the MachineSet
         ms_labels = machineset.get("metadata", {}).get("labels", {})
-        if label_key and label_key in ms_labels:
-            logger.info(
-                f"Found label {label_key}={ms_labels[label_key]} in MachineSet {machineset_name}"
-            )
-        else:
-            if label_key:
-                logger.warning(f"Label {label_key} not found in MachineSet {machineset_name}")
+        if label_key:
+            if label_key in ms_labels:
+                logger.info(
+                    f"Found label {label_key}={ms_labels[label_key]} in MachineSet {machineset_name}"
+                )
+            else:
+                logger.warning(f"Label '{label_key}' not found in MachineSet {machineset_name}")
 
         # Find associated machines for the MachineSet
         machines = crd_client.list_namespaced_custom_object(
             group="machine.openshift.io", version="v1beta1", namespace=namespace, plural="machines"
         )
 
-        for machine in machines["items"]:
-            # Check if the machine is part of the specified MachineSet
-            if machineset_name in machine["metadata"]["name"] and "status" in machine:
-                node_name = machine["status"].get("nodeRef", {}).get("name", None)
-                if node_name:
-                    # Store all labels and their values
-                    node_info[node_name] = ms_labels.copy()
-                    logger.info(f"Associated node {node_name} with MachineSet {machineset_name}")
+        for machine in machines.get("items", []):
+            # Use helper function to process each machine
+            node_data = _extract_node_info_from_machine(machine, machineset_name, ms_labels)
+            if node_data:
+                node_name, labels = node_data
+                node_info[node_name] = labels
 
         if node_info:
             logger.info(
-                f"Found {len(node_info)} node(s) associated with MachineSet {machineset_name}."
+                f"Found {len(node_info)} node(s) associated with MachineSet {machineset_name} in namespace {namespace}."
             )
         else:
-            logger.warning(f"No nodes found in MachineSet {machineset_name}.")
+            logger.warning(
+                f"No nodes found associated with MachineSet {machineset_name} in namespace {namespace}."
+            )
 
         return node_info
 
+    except ApiException as e:
+        logger.error(
+            f"Kubernetes API error retrieving nodes for MachineSet '{machineset_name}': {e}"
+        )
+        return {}
     except Exception as e:
-        logger.error(f"Error retrieving nodes from MachineSet {machineset_name}: {e}")
+        logger.error(
+            f"Unexpected error retrieving nodes for MachineSet '{machineset_name}': {e}",
+            exc_info=True,
+        )
         return {}
 
 
-def get_nodes_from_machinesets(
+def get_nodes_from_machinesets(  # noqa: C901
     label_key: Optional[str] = None,
     crd_client: Optional[client.CustomObjectsApi] = None,
     namespace: str = "openshift-machine-api",
@@ -546,7 +580,7 @@ def normalize_vault_path(path: str) -> tuple[str, str]:
     return mount_point, path
 
 
-def get_kubeconfig_from_vault(
+def get_kubeconfig_from_vault(  # noqa: C901
     cluster_name: str,
     inventory_url: str,
     vault_url: Optional[str] = None,

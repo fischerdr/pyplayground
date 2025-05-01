@@ -16,6 +16,7 @@ Arguments:
     container: Container name in the pod.
 
 """
+import json  # Import json
 import logging  # Add logging import
 import os
 import sys
@@ -134,9 +135,19 @@ def _execute_and_stream_output(
 
     logger.info("Command execution finished.")
     if stdout_output:
-        console.print("[bold green]--- STDOUT ---[/bold green]")
-        console.print(stdout_output.strip())
+        # Try to parse as JSON
+        stripped_stdout = stdout_output.strip()
+        try:
+            json.loads(stripped_stdout)  # Try parsing to validate it's JSON
+            # If successful, print raw JSON string directly to stdout
+            print(stripped_stdout)
+        except json.JSONDecodeError:
+            # If not JSON, print with header using Rich
+            console.print("[bold green]--- STDOUT ---[/bold green]")
+            console.print(stripped_stdout)
+
     if stderr_output:
+        # Always print stderr to the console's stderr stream
         console.print("[bold red]--- STDERR ---[/bold red]", style="bold red", stderr=True)
         console.print(stderr_output.strip(), style="bold red", stderr=True)
 
@@ -156,7 +167,7 @@ def _execute_and_stream_output(
     help="Container name in the pod (required if pod has multiple containers)",
 )  # Changed short flag
 @click.option("--debug", "-d", is_flag=True, default=False, help="Enable debug logging")
-def exec_in_pod(pod_name, namespace, env_var, command, kubeconfig, container_name, debug):
+def exec_in_pod(pod_name, namespace, env_var, command, kubeconfig, container, debug):
     """Connect to a Kubernetes pod, set environment variables, and run a command."""
     # Setup Logging
     script_base_name = os.path.basename(__file__).replace(".py", "")
@@ -185,7 +196,7 @@ def exec_in_pod(pod_name, namespace, env_var, command, kubeconfig, container_nam
         logger.debug(f"Successfully read details for pod '{pod_name}'.")
 
         # Determine container
-        actual_container_name = determine_target_container(pod, container_name)
+        actual_container_name = determine_target_container(pod, container)
 
         # Execute command and stream output
         exit_code = _execute_and_stream_output(

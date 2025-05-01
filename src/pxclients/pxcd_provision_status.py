@@ -27,7 +27,8 @@ from utils.logging_utils import get_logger, setup_logging
 script_base_name = os.path.basename(__file__).replace(".py", "")
 setup_logging(level=logging.INFO, script_name=script_base_name)
 logger = get_logger(__name__)
-console = Console()
+console = Console()  # For stdout
+stderr_console = Console(stderr=True)  # For stderr
 
 
 def _find_running_portworx_pod(v1_client: client.CoreV1Api, namespace: str) -> str:
@@ -180,11 +181,11 @@ def _execute_and_stream_output(
     exit_code = response.returncode
     logger.info(f"Command execution finished with exit code {exit_code}.")
 
-    # Always print stderr if it exists
+    # Always print stderr if it exists, using the dedicated stderr console
     if stderr_output:
         logger.warning("Command produced output on stderr:")
-        console.print("[bold red]--- STDERR ---[/bold red]", style="bold red", stderr=True)
-        console.print(stderr_output.strip(), style="bold red", stderr=True)
+        stderr_console.print("[bold red]--- STDERR ---[/bold red]", style="bold red")
+        stderr_console.print(stderr_output.strip(), style="bold red")
 
     # Return exit code and stdout data (or None if failed)
     if exit_code == 0:

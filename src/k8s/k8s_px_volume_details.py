@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import click
@@ -825,17 +826,27 @@ def main(  # noqa: C901
         final_results = _gather_volume_details(core_v1, storage_v1, px_namespace, list(env_var))
 
         # --- Output Results --- # Section clarified
-        if output_format == "console":
-            output_results_console(final_results)
-        else:
-            # Construct filename based on format
+        if output_format != "console":
+            # Generate timestamp for filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # Insert timestamp before the extension
+            base_name, ext = os.path.splitext(output_file)
+            # Handle cases where user might include extension in output_file accidentally
+            # If no extension in output_file, base_name is output_file, ext is empty
+            # If extension IS present, splitext correctly separates it
+            # We reconstruct with the base_name, timestamp, and the *intended* format extension
+
             if output_format == "json":
-                output_filename = f"{output_file}.json"
+                output_filename = f"{base_name}_{timestamp}.json"
+                logger.info(f"JSON output file will be: {output_filename}")  # Log the final name
                 output_results_json(final_results, output_filename)
             elif output_format == "csv":
-                output_filename = f"{output_file}.csv"
+                output_filename = f"{base_name}_{timestamp}.csv"
+                logger.info(f"CSV output file will be: {output_filename}")  # Log the final name
                 output_results_csv(final_results, output_filename)
-            # No need for else here as format is validated by Click
+        else:
+            # Console output doesn't need a filename
+            output_results_console(final_results)
 
         logger.info("Portworx Volume Detail script finished successfully.")
 
@@ -852,6 +863,11 @@ def main(  # noqa: C901
         # Catch sys.exit called for graceful exits (e.g., no SCs/PVs found)
         logger.info(f"Script exiting gracefully (code: {e.code}).")
         sys.exit(e.code)  # Propagate the exit code
+    # Add specific handler for KeyboardInterrupt (Ctrl+C)
+    except KeyboardInterrupt:
+        logger.warning("Script execution interrupted by user (Ctrl+C).")
+        console.print("[yellow]\nExecution interrupted by user.[/yellow]")
+        sys.exit(130)  # Standard exit code for Ctrl+C # Fixed linter error (added space)
     except Exception as e:
         # Catch any other unexpected errors
         logger.exception(f"An unexpected error occurred: {e}")

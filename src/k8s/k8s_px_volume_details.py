@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import click
 from kubernetes import client, stream
@@ -44,6 +44,29 @@ console = Console()
 
 
 # --- Helper Functions ---
+
+
+# NEW: Helper to format bytes into human-readable sizes
+def format_bytes(size_bytes: Optional[Union[int, str]]) -> str:
+    """Converts bytes to a human-readable string (KiB, MiB, GiB, TiB)."""
+    if size_bytes is None:
+        return "N/A"
+    try:
+        size_bytes = int(size_bytes)
+    except (ValueError, TypeError):
+        return str(size_bytes)  # Return original if not convertible to int
+
+    if size_bytes == 0:
+        return "0 B"
+    size_name = ("B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB")
+    i = 0
+    while size_bytes >= 1024 and i < len(size_name) - 1:
+        size_bytes /= 1024.0
+        i += 1
+    s = f"{size_bytes:.2f}"
+    # Remove unnecessary .00
+    s = s.rstrip("0").rstrip(".") if "." in s else s
+    return f"{s} {size_name[i]}"
 
 
 def find_portworx_pod(v1_client: client.CoreV1Api, namespace: str) -> Optional[Tuple[str, str]]:
@@ -400,12 +423,7 @@ def combine_data(
 ) -> Dict[str, Dict[str, Any]]:
     """Combines PV and PVC information into a dictionary keyed by PV name.
 
-    Args:
-        pvs: List of V1PersistentVolume objects.
-        pvcs: List of V1PersistentVolumeClaim objects.
-
-    Returns:
-        A dictionary where keys are PV names and values contain combined PV/PVC info.
+    Extracts only the necessary fields.
     """
     logger = get_logger(__name__)
     combined_info = {}
@@ -417,18 +435,12 @@ def combine_data(
         pv_name = pv.metadata.name
         pv_info = {
             "pv_name": pv_name,
-            "pv_uid": pv.metadata.uid,
-            "pv_labels": pv.metadata.labels if pv.metadata.labels else {},
-            "pv_annotations": pv.metadata.annotations if pv.metadata.annotations else {},
-            "capacity": pv.spec.capacity.get("storage") if pv.spec.capacity else None,
-            "access_modes": pv.spec.access_modes if pv.spec.access_modes else [],
-            "storage_class_name": pv.spec.storage_class_name,
-            "reclaim_policy": pv.spec.persistent_volume_reclaim_policy,
-            "status_phase": pv.status.phase if pv.status else "Unknown",
+            # Keep capacity raw here for potential filtering later, format on output
+            "capacity_bytes": pv.spec.capacity.get("storage") if pv.spec.capacity else None,
             "pvc_name": None,
             "pvc_namespace": None,
-            "pvc_labels": {},
-            "pvc_annotations": {},
+            # Add other potentially needed raw fields if required for filtering/logic
+            # e.g., "pv_uid": pv.metadata.uid,
         }
 
         # Find associated PVC
@@ -441,10 +453,6 @@ def combine_data(
                     {
                         "pvc_name": pvc.metadata.name,
                         "pvc_namespace": pvc.metadata.namespace,
-                        "pvc_labels": pvc.metadata.labels if pvc.metadata.labels else {},
-                        "pvc_annotations": (
-                            pvc.metadata.annotations if pvc.metadata.annotations else {}
-                        ),
                     }
                 )
             else:
@@ -456,19 +464,36 @@ def combine_data(
 
         combined_info[pv_name] = pv_info
 
-    logger.info(f"Combined data for {len(combined_info)} PVs.")
+    # logger.info(f"Combined data for {len(combined_info)} PVs.") # Logging moved to caller
     return combined_info
 
 
 def output_results_json(data: List[Dict[str, Any]], filename: Optional[str]):
-    """Outputs the combined data to a JSON file or stdout.
-
-    Args:
-        data: The list of combined volume information dictionaries.
-        filename: The path to the output JSON file. If None, prints to stdout.
-    """
+    """Outputs the filtered combined data to a JSON file or stdout."""
     logger = get_logger(__name__)
-    output_json = json.dumps(data, indent=2, ensure_ascii=False)
+
+    # Filter data to include only specified fields
+    filtered_data = []
+    for item in data:
+        px_details = item.get("pxctl_details") or {}
+        spec_details = px_details.get("spec") or {}
+
+        filtered_item = {
+            "pv_name": item.get("pv_name"),
+            "pvc_name": item.get("pvc_name"),
+            "namespace": item.get("pvc_namespace"),
+            # Format capacity for output
+            "pv_size": format_bytes(item.get("capacity_bytes")),
+            # Safely get usage and format
+            "pv_used": format_bytes(px_details.get("usage")),
+            # Safely get ha_level
+            "ha_level": spec_details.get("ha_level"),
+            # Optionally include error status for context
+            # "pxctl_error": item.get("pxctl_error", False)
+        }
+        filtered_data.append(filtered_item)
+
+    output_json = json.dumps(filtered_data, indent=2, ensure_ascii=False)
 
     if filename:
         try:
@@ -479,35 +504,33 @@ def output_results_json(data: List[Dict[str, Any]], filename: Optional[str]):
 
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(output_json)
-            logger.info(f"Successfully wrote JSON output to '{filename}'")
-            console.print(f"[green]JSON output saved to:[/green] {filename}")
+            logger.info(f"Successfully wrote filtered JSON output to '{filename}'")
+            console.print(f"[green]Filtered JSON output saved to:[/green] {filename}")
         except IOError as e:
             logger.error(f"Failed to write JSON output to '{filename}': {e}", exc_info=True)
             console.print(f"[bold red]Error writing JSON file '{filename}': {e}[/bold red]")
             # Fallback to stdout?
-            print("--- JSON Output (Fallback to STDOUT) ---")
+            print("--- Filtered JSON Output (Fallback to STDOUT) ---")
             print(output_json)
-            print("--- End JSON Output ---")
+            print("--- End Filtered JSON Output ---")
         except Exception as e:
             logger.exception(f"Unexpected error writing JSON file '{filename}': {e}")
             console.print(
                 f"[bold red]Unexpected error writing JSON file '{filename}': {e}[/bold red]"
             )
             # Fallback to stdout?
-            print("--- JSON Output (Fallback to STDOUT) ---")
+            print("--- Filtered JSON Output (Fallback to STDOUT) ---")
             print(output_json)
-            print("--- End JSON Output ---")
+            print("--- End Filtered JSON Output ---")
     else:
-        # Print JSON directly to stdout if no filename provided
+        # Print filtered JSON directly to stdout if no filename provided
+        print("--- Filtered JSON Output ---")
         print(output_json)
+        print("--- End Filtered JSON Output ---")
 
 
 def output_results_console(data: List[Dict[str, Any]]):
-    """Outputs a brief summary table to the console.
-
-    Args:
-        data: The list of combined volume information dictionaries.
-    """
+    """Outputs a brief summary table with specific fields to the console."""
     if not data:
         console.print("[yellow]No Portworx volumes found or processed.[/yellow]")
         return
@@ -518,26 +541,32 @@ def output_results_console(data: List[Dict[str, Any]]):
         show_lines=True,
         title_style="bold blue",
     )
+    # Update columns based on requirements
     table.add_column("PV Name", style="cyan", no_wrap=True)
     table.add_column("Namespace", style="magenta")
     table.add_column("PVC Name", style="green")
-    table.add_column("Capacity", style="yellow")
-    table.add_column("Status (PV)", style="blue")
-    table.add_column("PX Status", style="white")  # From pxctl
-    table.add_column("HA Level", style="white")  # From pxctl
+    table.add_column("PV Size", style="yellow")  # Renamed
+    table.add_column("PV Used", style="white")  # Added
+    table.add_column("HA Level", style="white")  # Kept
 
     for item in data:
-        px_details = item.get("pxctl_details", {})
-        px_status = px_details.get("status", "N/A") if px_details else "Error/Missing"
-        ha_level = str(px_details.get("spec", {}).get("ha_level", "N/A")) if px_details else "N/A"
+        px_details = item.get("pxctl_details") or {}
+        spec_details = px_details.get("spec") or {}
+
+        # Safely extract required fields
+        pv_name = item.get("pv_name", "N/A")
+        namespace = item.get("pvc_namespace", "[dim]N/A[/dim]")
+        pvc_name = item.get("pvc_name", "[dim]N/A[/dim]")
+        capacity_str = format_bytes(item.get("capacity_bytes"))  # Use helper
+        usage_str = format_bytes(px_details.get("usage"))  # Use helper, handle missing
+        ha_level = str(spec_details.get("ha_level", "N/A"))  # Handle missing
 
         table.add_row(
-            item.get("pv_name", "N/A"),
-            item.get("pvc_namespace", "[dim]N/A[/dim]"),
-            item.get("pvc_name", "[dim]N/A[/dim]"),
-            item.get("capacity", "N/A"),
-            item.get("status_phase", "N/A"),
-            px_status,
+            pv_name,
+            namespace,
+            pvc_name,
+            capacity_str,
+            usage_str,
             ha_level,
         )
 
@@ -601,12 +630,17 @@ def _gather_volume_details(
 
     # 4. Combine PV/PVC Data
     combined_k8s_data = combine_data(portworx_pvs, portworx_pvcs)
+    total_pvs = len(combined_k8s_data)
+    logger.info(f"Combined Kubernetes data for {total_pvs} Portworx PVs.")
 
     # 5. Execute pxctl and enrich data
     final_results = []
     processed_pv_count = 0
     for pv_name, pv_data in combined_k8s_data.items():
-        logger.info(f"Processing PV: {pv_name}")
+        # Log progress at INFO level before processing each PV
+        processed_pv_count += 1  # Increment counter first
+        logger.info(f"Processing PV {processed_pv_count}/{total_pvs}: {pv_name}")
+
         pxctl_json, pxctl_raw, pxctl_err = execute_pxctl_inspect(
             core_v1, px_namespace, px_pod_name, px_container_name, pv_name, env_vars
         )
@@ -620,9 +654,12 @@ def _gather_volume_details(
         )
 
         final_results.append(pv_data)
-        processed_pv_count += 1
+        # processed_pv_count += 1 # Removed from here as it's incremented before logging
 
-    logger.info(f"Finished processing {processed_pv_count} Portworx PVs.")
+    # logger.info(f"Finished processing {processed_pv_count} Portworx PVs.") # Can keep or remove this line as the loop provides counts
+    logger.info(
+        f"Finished processing all {total_pvs} identified Portworx PVs."
+    )  # More explicit final message
     return final_results
 
 
@@ -645,7 +682,9 @@ def _gather_volume_details(
 @click.option(
     "--output-json",
     type=click.Path(dir_okay=False, writable=True),
-    help="Optional path to save the detailed output in JSON format.",
+    default="tmp/px-volume-summary.json",  # Changed default name
+    show_default=True,
+    help="Optional path to save the filtered output in JSON format.",
 )
 @click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
 @click.option(

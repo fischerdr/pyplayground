@@ -6,6 +6,15 @@ This script connects to a Kubernetes cluster, identifies PersistentVolumes (PVs)
 provisioned by Portworx (pxd.portworx.com), executes 'pxctl volume inspect'
 for each PV within a Portworx pod, and combines the Kubernetes metadata
 with the pxctl output into a structured JSON format.
+
+Example usage:
+
+```
+    python src/k8s/k8s_px_volume_details.py --kubeconfig ...
+    python src/k8s/k8s_px_volume_details.py --kubeconfig ... --output-file px-volume-summary --format json
+    python src/k8s/k8s_px_volume_details.py --kubeconfig ... --output-file px-volume-summary --format csv
+    python src/k8s/k8s_px_volume_details.py --kubeconfig ... --output-file px-volume-summary --format console
+```
 """
 
 import json
@@ -576,6 +585,67 @@ def output_results_console(data: List[Dict[str, Any]]):
     console.print(table)
 
 
+# NEW: Function to output results as CSV
+def output_results_csv(data: List[Dict[str, Any]], filename: str):
+    """Outputs the filtered combined data to a CSV file.
+
+    Args:
+        data: The list of filtered combined volume information dictionaries.
+        filename: The path to the output CSV file.
+    """
+    import csv  # Import csv module locally
+
+    logger = get_logger(__name__)
+
+    # Define the exact order and names for CSV columns
+    fieldnames = ["pv_name", "namespace", "pvc_name", "pv_size", "pv_used", "ha_level"]
+
+    # Filter data to include only specified fields, ensuring order
+    filtered_data_for_csv = []
+    for item in data:
+        px_details = item.get("pxctl_details") or {}
+        spec_details = px_details.get("spec") or {}
+
+        filtered_item = {
+            "pv_name": item.get("pv_name", "N/A"),
+            "namespace": item.get("pvc_namespace", "N/A"),
+            "pvc_name": item.get("pvc_name", "N/A"),
+            "pv_size": format_bytes(item.get("capacity_bytes")),
+            "pv_used": format_bytes(px_details.get("usage")),
+            "ha_level": spec_details.get("ha_level", "N/A"),
+        }
+        # Ensure only defined fieldnames are included (optional, good practice)
+        filtered_data_for_csv.append({k: filtered_item.get(k, "N/A") for k in fieldnames})
+
+    # Determine the full path based on whether filename is absolute
+    if os.path.isabs(filename):
+        full_path = filename
+    else:
+        current_dir = os.getcwd()
+        full_path = os.path.join(current_dir, "tmp", filename)
+
+    try:
+        # Ensure output directory exists
+        output_dir = os.path.dirname(full_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        with open(full_path, "w", newline="", encoding="utf-8") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(filtered_data_for_csv)
+
+        logger.info(f"Successfully wrote filtered CSV output to '{full_path}'")
+        console.print(f"[green]Filtered CSV output saved to:[/green] {full_path}")
+
+    except IOError as e:
+        logger.error(f"Failed to write CSV output to '{full_path}': {e}", exc_info=True)
+        console.print(f"[bold red]Error writing CSV file '{full_path}': {e}[/bold red]")
+    except Exception as e:
+        logger.exception(f"Unexpected error writing CSV file '{full_path}': {e}")
+        console.print(f"[bold red]Unexpected error writing CSV file '{full_path}': {e}[/bold red]")
+
+
 # NEW: Helper function containing the core logic extracted from main
 def _gather_volume_details(
     core_v1: client.CoreV1Api,
@@ -683,11 +753,21 @@ def _gather_volume_details(
     help="Namespace where Portworx pods are running.",
 )
 @click.option(
-    "--output-json",
-    type=click.Path(dir_okay=False, writable=True),
-    default="px-volume-summary.json",  # Changed default: filename only
+    "-o",
+    "--output-file",
+    type=click.Path(dir_okay=False),
+    default="px-volume-summary",  # Base name without extension
     show_default=True,
-    help="Optional path to save the filtered output in JSON format. Relative paths are saved to ./tmp/",
+    help="Base path for the output file (without extension). Relative paths are saved to ./tmp/",
+)
+@click.option(
+    "-f",
+    "--format",
+    "output_format",  # Variable name for the option
+    type=click.Choice(["console", "json", "csv"], case_sensitive=False),
+    default="console",
+    show_default=True,
+    help="Output format.",
 )
 @click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
 @click.option(
@@ -699,7 +779,8 @@ def _gather_volume_details(
 def main(  # noqa: C901
     kubeconfig: Optional[str],
     px_namespace: str,
-    output_json: Optional[str],
+    output_file: str,  # Renamed from output_json
+    output_format: str,  # Added format
     debug: bool,
     env_var: Tuple[str],
 ):
@@ -717,8 +798,10 @@ def main(  # noqa: C901
     if kubeconfig:
         logger.info(f"Using kubeconfig: {kubeconfig}")
     logger.info(f"Portworx namespace: {px_namespace}")
-    if output_json:
-        logger.info(f"JSON output file: {output_json}")
+    logger.info(f"Output format: {output_format}")
+    # Log the base output file path if not console
+    if output_format != "console":
+        logger.info(f"Base output file path: {output_file}")
     if env_var:
         logger.info(f"Using environment variables: {env_var}")  # Log provided env vars
 
@@ -741,9 +824,18 @@ def main(  # noqa: C901
         # Call the helper function to get the results
         final_results = _gather_volume_details(core_v1, storage_v1, px_namespace, list(env_var))
 
-        # Output Results (moved out of the helper)
-        output_results_console(final_results)
-        output_results_json(final_results, output_json)  # Handles None filename
+        # --- Output Results --- # Section clarified
+        if output_format == "console":
+            output_results_console(final_results)
+        else:
+            # Construct filename based on format
+            if output_format == "json":
+                output_filename = f"{output_file}.json"
+                output_results_json(final_results, output_filename)
+            elif output_format == "csv":
+                output_filename = f"{output_file}.csv"
+                output_results_csv(final_results, output_filename)
+            # No need for else here as format is validated by Click
 
         logger.info("Portworx Volume Detail script finished successfully.")
 

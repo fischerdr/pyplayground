@@ -162,30 +162,46 @@ def get_portworx_storage_classes(storage_v1_client: client.StorageV1Api) -> List
 
 
 def filter_portworx_pvcs(
-    core_v1_client: client.CoreV1Api, portworx_sc_names: List[str]
+    core_v1_client: client.CoreV1Api,
+    portworx_sc_names: List[str],
+    skip_prefixes: List[str],
 ) -> List[client.V1PersistentVolumeClaim]:
-    """Fetches all PVCs and filters those using Portworx StorageClasses.
+    """Fetches all PVCs and filters those using Portworx StorageClasses,excluding those in namespaces matching skip_prefixes.
 
     Args:
         core_v1_client: Initialized CoreV1Api client.
         portworx_sc_names: List of Portworx StorageClass names.
+        skip_prefixes: List of namespace prefixes to exclude.
 
     Returns:
-        A list of V1PersistentVolumeClaim objects using Portworx storage.
+        A list of V1PersistentVolumeClaim objects using Portworx storage in allowed namespaces.
     """
     logger = get_logger(__name__)
     logger.debug("Fetching all PVCs across all namespaces...")
     portworx_pvcs = []
+    skipped_count = 0
     try:
         all_pvcs = core_v1_client.list_persistent_volume_claim_for_all_namespaces()
         for pvc in all_pvcs.items:
+            namespace = pvc.metadata.namespace
+            pvc_name = pvc.metadata.name
+
+            # Check if namespace should be skipped
+            if any(namespace.startswith(prefix) for prefix in skip_prefixes):
+                logger.debug(f"Skipping PVC '{namespace}/{pvc_name}' due to namespace prefix.")
+                skipped_count += 1
+                continue  # Skip this PVC
+
             sc_name = pvc.spec.storage_class_name
             # Check if the PVC's storage class is one of the Portworx SCs
             if sc_name in portworx_sc_names:
                 portworx_pvcs.append(pvc)
             # Also consider PVCs that don't specify SC but are bound to a Portworx PV (less common)
             # This requires cross-referencing with PVs later if needed. For now, rely on SC name.
-        logger.info(f"Found {len(portworx_pvcs)} PVCs using Portworx StorageClasses.")
+        log_msg = f"Found {len(portworx_pvcs)} PVCs using Portworx StorageClasses."
+        if skipped_count > 0:
+            log_msg += f" Skipped {skipped_count} PVCs due to namespace prefixes."
+        logger.info(log_msg)
         return portworx_pvcs
     except ApiException as e:
         logger.error(f"API error listing PVCs: {e.status} - {e.reason}", exc_info=True)
@@ -195,34 +211,65 @@ def filter_portworx_pvcs(
         return []
 
 
-def filter_portworx_pvs(
-    core_v1_client: client.CoreV1Api, portworx_sc_names: List[str]
+def filter_portworx_pvs(  # noqa: C901
+    core_v1_client: client.CoreV1Api,
+    portworx_sc_names: List[str],
+    skip_prefixes: List[str],
 ) -> List[client.V1PersistentVolume]:
-    """Fetches all PVs and filters those using Portworx StorageClasses.
+    """Fetches all PVs and filters those using Portworx StorageClasses,excluding those bound to PVCs in namespaces matching skip_prefixes.
 
     Args:
         core_v1_client: Initialized CoreV1Api client.
         portworx_sc_names: List of Portworx StorageClass names.
+        skip_prefixes: List of namespace prefixes to exclude claims from.
 
     Returns:
-        A list of V1PersistentVolume objects using Portworx storage.
+        A list of V1PersistentVolume objects using Portworx storage and not bound to skipped namespaces.
     """
     logger = get_logger(__name__)
     logger.debug("Fetching all PVs...")
     portworx_pvs = []
+    skipped_count = 0
     try:
         all_pvs = core_v1_client.list_persistent_volume()
         for pv in all_pvs.items:
-            # Check based on StorageClass name
-            if pv.spec.storage_class_name in portworx_sc_names:
-                portworx_pvs.append(pv)
-            # Optional: Check based on CSI driver if SC name is missing but CSI is known
-            elif pv.spec.csi and pv.spec.csi.driver == PORTWORX_PROVISIONER:
-                if pv not in portworx_pvs:  # Avoid duplicates
-                    portworx_pvs.append(pv)
-                    logger.debug(f"Identified PV {pv.metadata.name} via CSI driver, adding.")
+            is_portworx_pv = False
+            pv_name = pv.metadata.name
 
-        logger.info(f"Found {len(portworx_pvs)} PVs associated with Portworx StorageClasses.")
+            # Check if it's a Portworx PV based on SC or CSI driver
+            if pv.spec.storage_class_name in portworx_sc_names:
+                is_portworx_pv = True
+            elif pv.spec.csi and pv.spec.csi.driver == PORTWORX_PROVISIONER:
+                is_portworx_pv = True
+                # logger.debug(f"Identified PV {pv.metadata.name} via CSI driver.") # Debug logged later if added
+
+            if is_portworx_pv:
+                # Now check if it's bound to a skipped namespace
+                claim_namespace = None
+                if pv.spec.claim_ref:
+                    claim_namespace = pv.spec.claim_ref.namespace
+                    if any(claim_namespace.startswith(prefix) for prefix in skip_prefixes):
+                        logger.debug(
+                            f"Skipping PV '{pv_name}' because it is bound to skipped namespace '{claim_namespace}'."
+                        )
+                        skipped_count += 1
+                        continue  # Skip this PV
+
+                # If it is a Portworx PV and not bound to a skipped namespace, add it
+                if (
+                    pv not in portworx_pvs
+                ):  # Avoid potential duplicates if matched by both SC and CSI
+                    portworx_pvs.append(pv)
+                    if claim_namespace:  # Log reason if CSI driver was the match
+                        if pv.spec.storage_class_name not in portworx_sc_names and pv.spec.csi:
+                            logger.debug(f"Identified PV {pv_name} via CSI driver, adding.")
+                    elif pv.spec.csi:  # Also log if CSI driver match and unbound
+                        logger.debug(f"Identified unbound PV {pv_name} via CSI driver, adding.")
+
+        log_msg = f"Found {len(portworx_pvs)} PVs associated with Portworx StorageClasses and allowed namespaces."
+        if skipped_count > 0:
+            log_msg += f" Skipped {skipped_count} PVs bound to excluded namespaces."
+        logger.info(log_msg)
         return portworx_pvs
     except ApiException as e:
         logger.error(f"API error listing PVs: {e.status} - {e.reason}", exc_info=True)
@@ -662,6 +709,7 @@ def _gather_volume_details(
     storage_v1: client.StorageV1Api,
     px_namespace: str,
     env_vars: List[str],
+    skip_prefixes: List[str],
 ) -> List[Dict[str, Any]]:
     """Gathers Portworx volume details by querying K8s and executing pxctl.
 
@@ -670,6 +718,7 @@ def _gather_volume_details(
         storage_v1: Initialized StorageV1Api client.
         px_namespace: Namespace where Portworx pods run.
         env_vars: List of environment variables for pxctl command.
+        skip_prefixes: List of namespace prefixes to exclude.
 
     Returns:
         A list of dictionaries, each containing combined K8s and pxctl info for a PV.
@@ -700,21 +749,23 @@ def _gather_volume_details(
         )
         sys.exit(0)
 
-    # 3. Filter Portworx PVs and PVCs
-    portworx_pvs = filter_portworx_pvs(core_v1, px_sc_names)
-    portworx_pvcs = filter_portworx_pvcs(core_v1, px_sc_names)
+    # 3. Filter Portworx PVs and PVCs, passing skip_prefixes
+    portworx_pvs = filter_portworx_pvs(core_v1, px_sc_names, skip_prefixes)
+    portworx_pvcs = filter_portworx_pvcs(core_v1, px_sc_names, skip_prefixes)
 
     if not portworx_pvs:
-        logger.warning("No Portworx PVs found matching the identified StorageClasses.")
+        logger.warning(
+            "No Portworx PVs found matching the criteria (StorageClass, allowed namespaces)."
+        )
         console.print(
-            "[yellow]No Portworx PVs found matching the identified StorageClasses.[/yellow]"
+            "[yellow]No Portworx PVs found matching the criteria (StorageClass, allowed namespaces).[/yellow]"
         )
         sys.exit(0)
 
-    # 4. Combine PV/PVC Data
+    # 4. Combine PV/PVC Data (uses the already filtered lists)
     combined_k8s_data = combine_data(portworx_pvs, portworx_pvcs)
     total_pvs = len(combined_k8s_data)
-    logger.info(f"Combined Kubernetes data for {total_pvs} Portworx PVs.")
+    logger.info(f"Combined Kubernetes data for {total_pvs} Portworx PVs to process.")
 
     # 5. Execute pxctl and enrich data
     final_results = []
@@ -779,6 +830,11 @@ def _gather_volume_details(
     show_default=True,
     help="Output format.",
 )
+@click.option(
+    "--skip-namespace-prefix",
+    multiple=True,
+    help="Prefix of namespaces to skip (e.g., 'kube-'). Can be used multiple times.",
+)
 @click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
 @click.option(
     "--env-var",
@@ -793,6 +849,7 @@ def main(  # noqa: C901
     output_format: str,  # Added format
     debug: bool,
     env_var: Tuple[str],
+    skip_namespace_prefix: Tuple[str],
 ):
     """Query Portworx PVs/PVCs, enrich with pxctl details, and output results."""
     # Allow modification of the logger instance
@@ -809,9 +866,10 @@ def main(  # noqa: C901
         logger.info(f"Using kubeconfig: {kubeconfig}")
     logger.info(f"Portworx namespace: {px_namespace}")
     logger.info(f"Output format: {output_format}")
-    # Log the base output file path if not console
     if output_format != "console":
         logger.info(f"Base output file path: {output_file}")
+    if skip_namespace_prefix:
+        logger.info(f"Skipping namespaces starting with: {', '.join(skip_namespace_prefix)}")
     if env_var:
         logger.info(f"Using environment variables: {env_var}")  # Log provided env vars
 
@@ -831,8 +889,10 @@ def main(  # noqa: C901
 
     # --- Main Logic ---
     try:
-        # Call the helper function to get the results
-        final_results = _gather_volume_details(core_v1, storage_v1, px_namespace, list(env_var))
+        # Call the helper function to get the results, passing skip prefixes
+        final_results = _gather_volume_details(
+            core_v1, storage_v1, px_namespace, list(env_var), list(skip_namespace_prefix)
+        )
 
         # --- Output Results --- # Section clarified
         if output_format != "console":

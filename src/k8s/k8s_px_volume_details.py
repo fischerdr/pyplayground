@@ -418,11 +418,20 @@ def execute_pxctl_inspect(  # noqa: C901
             return None, stdout_data, stderr_data
 
     except ApiException as e:
-        logger.error(
-            f"API error executing command for PV '{pv_name}': {e.status} - {e.reason}",
-            exc_info=True,
-        )
-        return None, None, f"Kubernetes API Error: {e.reason}"
+        # Check specifically for the connection timeout error
+        if e.status == 0 and "[Errno 60] Operation timed out" in str(e.reason):
+            logger.warning(
+                f"Connection timed out while trying to execute command for PV '{pv_name}'. Skipping."
+            )
+            return None, None, "Connection Timeout"
+        else:
+            # Handle other API errors
+            logger.error(
+                f"API error executing command for PV '{pv_name}': {e.status} - {e.reason}",
+                exc_info=True,
+            )
+            # Return the generic error reason to be stored
+            return None, None, f"Kubernetes API Error: {e.reason}"
     except Exception as e:
         logger.exception(f"Unexpected error executing pxctl command for PV '{pv_name}': {e}")
         return None, None, f"Unexpected Error: {e}"

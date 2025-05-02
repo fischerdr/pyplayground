@@ -1,0 +1,729 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Script to query Portworx PVs/PVCs in Kubernetes and enrich with pxctl details.
+
+This script connects to a Kubernetes cluster, identifies PersistentVolumes (PVs)
+provisioned by Portworx (pxd.portworx.com), executes 'pxctl volume inspect'
+for each PV within a Portworx pod, and combines the Kubernetes metadata
+with the pxctl output into a structured JSON format.
+"""
+
+import json
+import logging
+import os
+import sys
+from typing import Any, Dict, List, Optional, Tuple
+
+import click
+from kubernetes import client, stream
+from kubernetes.client.rest import ApiException
+from rich import box
+from rich.console import Console
+from rich.table import Table
+
+# Assuming utils are in the python path or PYTHONPATH is set correctly
+# If running as a script, ensure the parent directory of 'utils' is in sys.path
+try:
+    from utils.k8s_utils import get_k8s_client, load_kube_config_auto
+    from utils.logging_utils import get_logger, setup_logging
+except ImportError:
+    # Basic fallback for path issues
+    sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+    from utils.k8s_utils import get_k8s_client, load_kube_config_auto
+    from utils.logging_utils import get_logger, setup_logging
+
+
+# --- Constants ---
+PORTWORX_PROVISIONER = "pxd.portworx.com"
+PORTWORX_POD_LABEL_SELECTOR = "name=portworx,storage=true"
+DEFAULT_PORTWORX_NAMESPACE = "kube-system"  # Default namespace for Portworx pods
+
+# Initialize Rich Console and Logger
+console = Console()
+# Logger will be configured in main()
+
+
+# --- Helper Functions ---
+
+
+def find_portworx_pod(v1_client: client.CoreV1Api, namespace: str) -> Optional[Tuple[str, str]]:
+    """Finds the first running Portworx pod based on labels in the specified namespace.
+
+    Args:
+        v1_client: Initialized CoreV1Api client.
+        namespace: The namespace to search for the Portworx pod.
+
+    Returns:
+        A tuple (pod_name, container_name) if found and running, None otherwise.
+    """
+    logger = get_logger(__name__)
+    logger.info(
+        f"Searching for Portworx pod with labels '{PORTWORX_POD_LABEL_SELECTOR}' in namespace '{namespace}'..."
+    )
+    try:
+        pods = v1_client.list_namespaced_pod(
+            namespace=namespace, label_selector=PORTWORX_POD_LABEL_SELECTOR
+        )
+        if not pods.items:
+            logger.warning(
+                f"No pods found with labels '{PORTWORX_POD_LABEL_SELECTOR}' in namespace '{namespace}'."
+            )
+            return None
+
+        for pod in pods.items:
+            pod_name = pod.metadata.name
+            if pod.status.phase == "Running":
+                # Assuming the main container is the one we need, usually named 'portworx'
+                # If multiple containers exist, might need refinement
+                if pod.spec.containers:
+                    container_name = pod.spec.containers[0].name  # Assume first container
+                    logger.info(
+                        f"Found running Portworx pod: '{pod_name}', container: '{container_name}'"
+                    )
+                    return pod_name, container_name
+                else:
+                    logger.warning(
+                        f"Portworx pod '{pod_name}' found but has no containers defined."
+                    )
+
+        logger.warning(f"No *running* Portworx pods found in namespace '{namespace}'.")
+        return None
+    except ApiException as e:
+        logger.error(
+            f"API error finding Portworx pod in namespace '{namespace}': {e.status} - {e.reason}",
+            exc_info=True,
+        )
+        return None
+    except Exception as e:
+        logger.exception(f"Unexpected error finding Portworx pod: {e}")
+        return None
+
+
+def get_portworx_storage_classes(storage_v1_client: client.StorageV1Api) -> List[str]:
+    """Gets the names of StorageClasses provisioned by Portworx.
+
+    Args:
+        storage_v1_client: Initialized StorageV1Api client.
+
+    Returns:
+        A list of Portworx StorageClass names.
+    """
+    logger = get_logger(__name__)
+    logger.debug("Fetching StorageClasses...")
+    portworx_sc_names = []
+    try:
+        storage_classes = storage_v1_client.list_storage_class()
+        for sc in storage_classes.items:
+            if sc.provisioner == PORTWORX_PROVISIONER:
+                portworx_sc_names.append(sc.metadata.name)
+        logger.info(
+            f"Found {len(portworx_sc_names)} Portworx StorageClasses: {', '.join(portworx_sc_names)}"
+        )
+        return portworx_sc_names
+    except ApiException as e:
+        logger.error(f"API error listing StorageClasses: {e.status} - {e.reason}", exc_info=True)
+        return []
+    except Exception as e:
+        logger.exception(f"Unexpected error listing StorageClasses: {e}")
+        return []
+
+
+def filter_portworx_pvcs(
+    core_v1_client: client.CoreV1Api, portworx_sc_names: List[str]
+) -> List[client.V1PersistentVolumeClaim]:
+    """Fetches all PVCs and filters those using Portworx StorageClasses.
+
+    Args:
+        core_v1_client: Initialized CoreV1Api client.
+        portworx_sc_names: List of Portworx StorageClass names.
+
+    Returns:
+        A list of V1PersistentVolumeClaim objects using Portworx storage.
+    """
+    logger = get_logger(__name__)
+    logger.debug("Fetching all PVCs across all namespaces...")
+    portworx_pvcs = []
+    try:
+        all_pvcs = core_v1_client.list_persistent_volume_claim_for_all_namespaces()
+        for pvc in all_pvcs.items:
+            sc_name = pvc.spec.storage_class_name
+            # Check if the PVC's storage class is one of the Portworx SCs
+            if sc_name in portworx_sc_names:
+                portworx_pvcs.append(pvc)
+            # Also consider PVCs that don't specify SC but are bound to a Portworx PV (less common)
+            # This requires cross-referencing with PVs later if needed. For now, rely on SC name.
+        logger.info(f"Found {len(portworx_pvcs)} PVCs using Portworx StorageClasses.")
+        return portworx_pvcs
+    except ApiException as e:
+        logger.error(f"API error listing PVCs: {e.status} - {e.reason}", exc_info=True)
+        return []
+    except Exception as e:
+        logger.exception(f"Unexpected error listing PVCs: {e}")
+        return []
+
+
+def filter_portworx_pvs(
+    core_v1_client: client.CoreV1Api, portworx_sc_names: List[str]
+) -> List[client.V1PersistentVolume]:
+    """Fetches all PVs and filters those using Portworx StorageClasses.
+
+    Args:
+        core_v1_client: Initialized CoreV1Api client.
+        portworx_sc_names: List of Portworx StorageClass names.
+
+    Returns:
+        A list of V1PersistentVolume objects using Portworx storage.
+    """
+    logger = get_logger(__name__)
+    logger.debug("Fetching all PVs...")
+    portworx_pvs = []
+    try:
+        all_pvs = core_v1_client.list_persistent_volume()
+        for pv in all_pvs.items:
+            # Check based on StorageClass name
+            if pv.spec.storage_class_name in portworx_sc_names:
+                portworx_pvs.append(pv)
+            # Optional: Check based on CSI driver if SC name is missing but CSI is known
+            elif pv.spec.csi and pv.spec.csi.driver == PORTWORX_PROVISIONER:
+                if pv not in portworx_pvs:  # Avoid duplicates
+                    portworx_pvs.append(pv)
+                    logger.debug(f"Identified PV {pv.metadata.name} via CSI driver, adding.")
+
+        logger.info(f"Found {len(portworx_pvs)} PVs associated with Portworx StorageClasses.")
+        return portworx_pvs
+    except ApiException as e:
+        logger.error(f"API error listing PVs: {e.status} - {e.reason}", exc_info=True)
+        return []
+    except Exception as e:
+        logger.exception(f"Unexpected error listing PVs: {e}")
+        return []
+
+
+# Add helper function to prepare command string with env vars
+def _prepare_execution_command(
+    env_var_list: List[str], base_command: str
+) -> Tuple[str, Dict[str, str]]:
+    """Parses environment variables and constructs the full command string.
+
+    Args:
+        env_var_list: List of environment variables in "VAR=VALUE" format.
+        base_command: The base command to execute after setting env vars.
+
+    Returns:
+        A tuple containing:
+            - The full command string (e.g., "export VAR=VAL && command").
+            - The parsed environment variables dictionary.
+
+    Raises:
+        ValueError: If an environment variable format is invalid.
+    """
+    logger = get_logger(__name__)
+    env_vars = {}
+    for var in env_var_list:
+        if "=" not in var:
+            error_msg = f"Invalid environment variable format: '{var}'. Use VAR=VALUE."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        key, value = var.split("=", 1)
+        # Basic quoting for safety, might need more robust shell escaping for complex values
+        # Using double quotes assuming standard sh behavior
+        env_vars[key] = value
+
+    if env_vars:
+        # Construct the export commands
+        env_exports = " && ".join([f'export {key}="{value}"' for key, value in env_vars.items()])
+        full_command_str = f"{env_exports} && {base_command}"
+    else:
+        full_command_str = base_command
+
+    logger.debug(f"Prepared full command (env vars included): {full_command_str}")
+    return full_command_str, env_vars
+
+
+# NEW: Helper function to run command and get output/error/code
+def _run_command_in_pod(
+    v1_client: client.CoreV1Api,
+    namespace: str,
+    pod_name: str,
+    container_name: str,
+    command: List[str],
+) -> Tuple[int, str, str]:
+    """Executes a command in a pod container and returns exit code, stdout, stderr.
+
+    Args:
+        v1_client: Initialized CoreV1Api client.
+        namespace: Namespace of the pod.
+        pod_name: Name of the pod.
+        container_name: Name of the target container.
+        command: The command list to execute.
+
+    Returns:
+        Tuple (exit_code, stdout_data, stderr_data).
+
+    Raises:
+        ApiException: If the Kubernetes API call fails during connection/streaming.
+        Exception: For other unexpected errors during streaming.
+    """
+    stdout_data = ""
+    stderr_data = ""
+    exit_code = -1
+    resp = None  # Initialize resp
+    try:
+        resp = stream.stream(
+            v1_client.connect_get_namespaced_pod_exec,
+            name=pod_name,
+            namespace=namespace,
+            container=container_name,
+            command=command,
+            stderr=True,
+            stdin=False,
+            stdout=True,
+            tty=False,
+            _preload_content=False,  # Important for reading streams
+        )
+
+        while resp.is_open():
+            resp.update(timeout=1)
+            if resp.peek_stdout():
+                stdout_data += resp.read_stdout()
+            if resp.peek_stderr():
+                stderr_data += resp.read_stderr()
+
+    finally:
+        if resp:
+            resp.close()
+            exit_code = (
+                resp.returncode if resp.returncode is not None else -1
+            )  # Ensure exit_code has a value
+
+    return exit_code, stdout_data, stderr_data
+
+
+# Refactored to reduce complexity
+def execute_pxctl_inspect(  # noqa: C901
+    v1_client: client.CoreV1Api,
+    px_namespace: str,
+    px_pod_name: str,
+    px_container_name: str,
+    pv_name: str,
+    env_vars: List[str],
+) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
+    """Executes 'pxctl volume inspect -j <pv_name>' in the Portworx pod with specified environment variables.
+
+    Args:
+        v1_client: Initialized CoreV1Api client.
+        px_namespace: Namespace of the Portworx pod.
+        px_pod_name: Name of the Portworx pod.
+        px_container_name: Name of the container within the Portworx pod.
+        pv_name: The name of the PV (volume) to inspect.
+        env_vars: List of environment variables ("VAR=VALUE") to set before execution.
+
+    Returns:
+        A tuple containing:
+            - Parsed JSON output (dict) if successful and valid JSON, None otherwise.
+            - Raw stdout string if JSON parsing fails or command returns error, None otherwise.
+            - Stderr string if the command produced stderr output, None otherwise.
+    """
+    logger = get_logger(__name__)
+    base_command = f"pxctl volume inspect {pv_name} -j"
+
+    # Prepare the full command including environment variable exports
+    try:
+        full_command_str, parsed_env_vars = _prepare_execution_command(env_vars, base_command)
+        if parsed_env_vars:
+            logger.debug(
+                f"Executing with environment variables: {parsed_env_vars}"
+            )  # Corrected indentation
+    except ValueError as e:
+        # Propagate error if env var format is invalid
+        logger.error(
+            f"Cannot execute command due to invalid environment variable: {e}"
+        )  # Corrected indentation
+        return None, None, f"Invalid Environment Variable: {e}"  # Corrected indentation
+
+    command_to_run = ["/bin/sh", "-c", full_command_str]
+    logger.debug(
+        f"Executing in pod '{px_pod_name}/{px_container_name}': {' '.join(command_to_run)}"
+    )
+
+    try:
+        # Use the helper to run the command
+        exit_code, stdout_data, stderr_data = _run_command_in_pod(
+            v1_client, px_namespace, px_pod_name, px_container_name, command_to_run
+        )
+
+        logger.debug(f"pxctl command for PV '{pv_name}' finished with exit code {exit_code}.")
+        # Log truncated output
+        if stdout_data:
+            logger.debug(f"pxctl stdout for PV '{pv_name}':{stdout_data[:500]}...")
+        if stderr_data:
+            logger.warning(f"pxctl stderr for PV '{pv_name}':{stderr_data[:500]}...")
+
+        # Process results
+        if exit_code == 0 and stdout_data:
+            try:
+                parsed_json = json.loads(stdout_data)
+                if isinstance(parsed_json, list) and len(parsed_json) == 1:
+                    return parsed_json[0], None, None  # Return the dict inside the list
+                elif isinstance(parsed_json, dict):
+                    return parsed_json, None, None
+                else:
+                    logger.warning(
+                        f"pxctl output for PV '{pv_name}' was JSON but not the expected format (list of one dict or single dict): {type(parsed_json)}"
+                    )
+                    return None, stdout_data, stderr_data
+            except json.JSONDecodeError as json_err:
+                logger.error(
+                    f"Failed to parse pxctl JSON output for PV '{pv_name}': {json_err}",
+                    exc_info=True,
+                )
+                return None, stdout_data, stderr_data
+        else:
+            logger.warning(
+                f"pxctl command for PV '{pv_name}' failed (code: {exit_code}) or produced no stdout."
+            )
+            return None, stdout_data, stderr_data
+
+    except ApiException as e:
+        logger.error(
+            f"API error executing command for PV '{pv_name}': {e.status} - {e.reason}",
+            exc_info=True,
+        )
+        return None, None, f"Kubernetes API Error: {e.reason}"
+    except Exception as e:
+        logger.exception(f"Unexpected error executing pxctl command for PV '{pv_name}': {e}")
+        return None, None, f"Unexpected Error: {e}"
+
+
+def combine_data(
+    pvs: List[client.V1PersistentVolume], pvcs: List[client.V1PersistentVolumeClaim]
+) -> Dict[str, Dict[str, Any]]:
+    """Combines PV and PVC information into a dictionary keyed by PV name.
+
+    Args:
+        pvs: List of V1PersistentVolume objects.
+        pvcs: List of V1PersistentVolumeClaim objects.
+
+    Returns:
+        A dictionary where keys are PV names and values contain combined PV/PVC info.
+    """
+    logger = get_logger(__name__)
+    combined_info = {}
+    pvc_map = {
+        (pvc.metadata.namespace, pvc.metadata.name): pvc for pvc in pvcs
+    }  # Map for quick PVC lookup by claimRef
+
+    for pv in pvs:
+        pv_name = pv.metadata.name
+        pv_info = {
+            "pv_name": pv_name,
+            "pv_uid": pv.metadata.uid,
+            "pv_labels": pv.metadata.labels if pv.metadata.labels else {},
+            "pv_annotations": pv.metadata.annotations if pv.metadata.annotations else {},
+            "capacity": pv.spec.capacity.get("storage") if pv.spec.capacity else None,
+            "access_modes": pv.spec.access_modes if pv.spec.access_modes else [],
+            "storage_class_name": pv.spec.storage_class_name,
+            "reclaim_policy": pv.spec.persistent_volume_reclaim_policy,
+            "status_phase": pv.status.phase if pv.status else "Unknown",
+            "pvc_name": None,
+            "pvc_namespace": None,
+            "pvc_labels": {},
+            "pvc_annotations": {},
+        }
+
+        # Find associated PVC
+        if pv.spec.claim_ref:
+            claim_ns = pv.spec.claim_ref.namespace
+            claim_name = pv.spec.claim_ref.name
+            pvc = pvc_map.get((claim_ns, claim_name))
+            if pvc:
+                pv_info.update(
+                    {
+                        "pvc_name": pvc.metadata.name,
+                        "pvc_namespace": pvc.metadata.namespace,
+                        "pvc_labels": pvc.metadata.labels if pvc.metadata.labels else {},
+                        "pvc_annotations": (
+                            pvc.metadata.annotations if pvc.metadata.annotations else {}
+                        ),
+                    }
+                )
+            else:
+                logger.warning(
+                    f"PV '{pv_name}' references PVC '{claim_ns}/{claim_name}', but PVC not found in provided list."
+                )
+        else:
+            logger.debug(f"PV '{pv_name}' has no claimRef.")
+
+        combined_info[pv_name] = pv_info
+
+    logger.info(f"Combined data for {len(combined_info)} PVs.")
+    return combined_info
+
+
+def output_results_json(data: List[Dict[str, Any]], filename: Optional[str]):
+    """Outputs the combined data to a JSON file or stdout.
+
+    Args:
+        data: The list of combined volume information dictionaries.
+        filename: The path to the output JSON file. If None, prints to stdout.
+    """
+    logger = get_logger(__name__)
+    output_json = json.dumps(data, indent=2, ensure_ascii=False)
+
+    if filename:
+        try:
+            # Ensure output directory exists
+            output_dir = os.path.dirname(filename)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(output_json)
+            logger.info(f"Successfully wrote JSON output to '{filename}'")
+            console.print(f"[green]JSON output saved to:[/green] {filename}")
+        except IOError as e:
+            logger.error(f"Failed to write JSON output to '{filename}': {e}", exc_info=True)
+            console.print(f"[bold red]Error writing JSON file '{filename}': {e}[/bold red]")
+            # Fallback to stdout?
+            print("--- JSON Output (Fallback to STDOUT) ---")
+            print(output_json)
+            print("--- End JSON Output ---")
+        except Exception as e:
+            logger.exception(f"Unexpected error writing JSON file '{filename}': {e}")
+            console.print(
+                f"[bold red]Unexpected error writing JSON file '{filename}': {e}[/bold red]"
+            )
+            # Fallback to stdout?
+            print("--- JSON Output (Fallback to STDOUT) ---")
+            print(output_json)
+            print("--- End JSON Output ---")
+    else:
+        # Print JSON directly to stdout if no filename provided
+        print(output_json)
+
+
+def output_results_console(data: List[Dict[str, Any]]):
+    """Outputs a brief summary table to the console.
+
+    Args:
+        data: The list of combined volume information dictionaries.
+    """
+    if not data:
+        console.print("[yellow]No Portworx volumes found or processed.[/yellow]")
+        return
+
+    table = Table(
+        title="Portworx Volume Summary",
+        box=box.ASCII,
+        show_lines=True,
+        title_style="bold blue",
+    )
+    table.add_column("PV Name", style="cyan", no_wrap=True)
+    table.add_column("Namespace", style="magenta")
+    table.add_column("PVC Name", style="green")
+    table.add_column("Capacity", style="yellow")
+    table.add_column("Status (PV)", style="blue")
+    table.add_column("PX Status", style="white")  # From pxctl
+    table.add_column("HA Level", style="white")  # From pxctl
+
+    for item in data:
+        px_details = item.get("pxctl_details", {})
+        px_status = px_details.get("status", "N/A") if px_details else "Error/Missing"
+        ha_level = str(px_details.get("spec", {}).get("ha_level", "N/A")) if px_details else "N/A"
+
+        table.add_row(
+            item.get("pv_name", "N/A"),
+            item.get("pvc_namespace", "[dim]N/A[/dim]"),
+            item.get("pvc_name", "[dim]N/A[/dim]"),
+            item.get("capacity", "N/A"),
+            item.get("status_phase", "N/A"),
+            px_status,
+            ha_level,
+        )
+
+    console.print(table)
+
+
+# NEW: Helper function containing the core logic extracted from main
+def _gather_volume_details(
+    core_v1: client.CoreV1Api,
+    storage_v1: client.StorageV1Api,
+    px_namespace: str,
+    env_vars: List[str],
+) -> List[Dict[str, Any]]:
+    """Gathers Portworx volume details by querying K8s and executing pxctl.
+
+    Args:
+        core_v1: Initialized CoreV1Api client.
+        storage_v1: Initialized StorageV1Api client.
+        px_namespace: Namespace where Portworx pods run.
+        env_vars: List of environment variables for pxctl command.
+
+    Returns:
+        A list of dictionaries, each containing combined K8s and pxctl info for a PV.
+
+    Raises:
+        RuntimeError: If the Portworx pod cannot be found or essential steps fail.
+        SystemExit: If no Portworx SCs or PVs are found (graceful exit).
+    """
+    logger = get_logger(__name__)
+
+    # 1. Find Portworx Pod
+    px_pod_info = find_portworx_pod(core_v1, px_namespace)
+    if not px_pod_info:
+        msg = f"Could not find a running Portworx pod in namespace '{px_namespace}'."
+        logger.error(msg)
+        raise RuntimeError(msg)
+    px_pod_name, px_container_name = px_pod_info
+
+    # 2. Get Portworx Storage Classes
+    px_sc_names = get_portworx_storage_classes(storage_v1)
+    if not px_sc_names:
+        logger.warning(
+            f"No StorageClasses found with provisioner '{PORTWORX_PROVISIONER}'. Cannot identify Portworx volumes."
+        )
+        # Use console for user-facing message before exiting
+        console.print(
+            f"[yellow]Warning: No StorageClasses found with provisioner '{PORTWORX_PROVISIONER}'. Cannot identify Portworx volumes.[/yellow]"
+        )
+        sys.exit(0)
+
+    # 3. Filter Portworx PVs and PVCs
+    portworx_pvs = filter_portworx_pvs(core_v1, px_sc_names)
+    portworx_pvcs = filter_portworx_pvcs(core_v1, px_sc_names)
+
+    if not portworx_pvs:
+        logger.warning("No Portworx PVs found matching the identified StorageClasses.")
+        console.print(
+            "[yellow]No Portworx PVs found matching the identified StorageClasses.[/yellow]"
+        )
+        sys.exit(0)
+
+    # 4. Combine PV/PVC Data
+    combined_k8s_data = combine_data(portworx_pvs, portworx_pvcs)
+
+    # 5. Execute pxctl and enrich data
+    final_results = []
+    processed_pv_count = 0
+    for pv_name, pv_data in combined_k8s_data.items():
+        logger.info(f"Processing PV: {pv_name}")
+        pxctl_json, pxctl_raw, pxctl_err = execute_pxctl_inspect(
+            core_v1, px_namespace, px_pod_name, px_container_name, pv_name, env_vars
+        )
+
+        # Add pxctl results to the combined data
+        pv_data["pxctl_details"] = pxctl_json  # Will be None if error or not JSON
+        pv_data["pxctl_raw_output"] = pxctl_raw if pxctl_raw else None
+        pv_data["pxctl_stderr"] = pxctl_err if pxctl_err else None
+        pv_data["pxctl_error"] = pxctl_json is None and (
+            pxctl_raw is not None or pxctl_err is not None
+        )
+
+        final_results.append(pv_data)
+        processed_pv_count += 1
+
+    logger.info(f"Finished processing {processed_pv_count} Portworx PVs.")
+    return final_results
+
+
+# --- Main Execution ---
+
+
+@click.command()
+@click.option(
+    "--kubeconfig",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to the kubeconfig file. If not provided, uses default lookup.",
+    envvar="KUBECONFIG",
+)
+@click.option(
+    "--px-namespace",
+    default=DEFAULT_PORTWORX_NAMESPACE,
+    show_default=True,
+    help="Namespace where Portworx pods are running.",
+)
+@click.option(
+    "--output-json",
+    type=click.Path(dir_okay=False, writable=True),
+    help="Optional path to save the detailed output in JSON format.",
+)
+@click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
+@click.option(
+    "--env-var",
+    "-e",
+    multiple=True,
+    help="Environment variable to set in the format VAR=VALUE. Can be used multiple times.",
+)
+def main(  # noqa: C901
+    kubeconfig: Optional[str],
+    px_namespace: str,
+    output_json: Optional[str],
+    debug: bool,
+    env_var: Tuple[str],
+):
+    """Query Portworx PVs/PVCs, enrich with pxctl details, and output results."""
+    # Allow modification of the logger instance
+    # logger = get_logger(__name__) # Define logger locally in main if needed, or rely on module-level if setup_logging configures root
+
+    # Setup Logging
+    script_base_name = os.path.basename(__file__).replace(".py", "")
+    log_level = logging.DEBUG if debug else logging.INFO
+    setup_logging(level=log_level, script_name=script_base_name)
+    logger = get_logger(__name__)  # Get logger instance after setup
+
+    logger.info("Starting Portworx Volume Detail script...")
+    if kubeconfig:
+        logger.info(f"Using kubeconfig: {kubeconfig}")
+    logger.info(f"Portworx namespace: {px_namespace}")
+    if output_json:
+        logger.info(f"JSON output file: {output_json}")
+    if env_var:
+        logger.info(f"Using environment variables: {env_var}")  # Log provided env vars
+
+    # Load K8s Config
+    if not load_kube_config_auto(config_file=kubeconfig):
+        console.print("[bold red]Error: Failed to load Kubernetes configuration.[/bold red]")
+        sys.exit(1)
+
+    # Initialize K8s Clients
+    try:
+        core_v1 = get_k8s_client("CoreV1Api")
+        storage_v1 = get_k8s_client("StorageV1Api")
+    except Exception as e:
+        logger.error(f"Failed to initialize Kubernetes API clients: {e}", exc_info=True)
+        console.print(f"[bold red]Error initializing Kubernetes clients: {e}[/bold red]")
+        sys.exit(1)
+
+    # --- Main Logic ---
+    try:
+        # Call the helper function to get the results
+        final_results = _gather_volume_details(core_v1, storage_v1, px_namespace, list(env_var))
+
+        # Output Results (moved out of the helper)
+        output_results_console(final_results)
+        output_results_json(final_results, output_json)  # Handles None filename
+
+        logger.info("Portworx Volume Detail script finished successfully.")
+
+    except RuntimeError as e:
+        # Catch errors specifically raised by _gather_volume_details (e.g., pod not found)
+        console.print(f"[bold red]Error: {e}[/bold red]")
+        sys.exit(1)
+    except ApiException as e:
+        # Catch K8s API errors that might occur during client operations within the helper
+        logger.error(f"Kubernetes API Error: {e.status} {e.reason} - {e.body}", exc_info=True)
+        console.print(f"[bold red]Kubernetes API Error: {e.reason}[/bold red]")
+        sys.exit(1)
+    except SystemExit as e:
+        # Catch sys.exit called for graceful exits (e.g., no SCs/PVs found)
+        logger.info(f"Script exiting gracefully (code: {e.code}).")
+        sys.exit(e.code)  # Propagate the exit code
+    except Exception as e:
+        # Catch any other unexpected errors
+        logger.exception(f"An unexpected error occurred: {e}")
+        console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

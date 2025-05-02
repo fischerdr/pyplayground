@@ -482,41 +482,44 @@ def output_results_json(data: List[Dict[str, Any]], filename: Optional[str]):
             "pv_name": item.get("pv_name"),
             "pvc_name": item.get("pvc_name"),
             "namespace": item.get("pvc_namespace"),
-            # Format capacity for output
             "pv_size": format_bytes(item.get("capacity_bytes")),
-            # Safely get usage and format
             "pv_used": format_bytes(px_details.get("usage")),
-            # Safely get ha_level
             "ha_level": spec_details.get("ha_level"),
-            # Optionally include error status for context
-            # "pxctl_error": item.get("pxctl_error", False)
         }
         filtered_data.append(filtered_item)
 
     output_json = json.dumps(filtered_data, indent=2, ensure_ascii=False)
 
     if filename:
+        # Determine the full path based on whether filename is absolute
+        if os.path.isabs(filename):
+            full_path = filename
+        else:
+            # Construct path relative to current working directory
+            current_dir = os.getcwd()
+            full_path = os.path.join(current_dir, "tmp", filename)
+
         try:
-            # Ensure output directory exists
-            output_dir = os.path.dirname(filename)
+            # Ensure output directory exists using the full path
+            output_dir = os.path.dirname(full_path)
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
 
-            with open(filename, "w", encoding="utf-8") as f:
+            with open(full_path, "w", encoding="utf-8") as f:
                 f.write(output_json)
-            logger.info(f"Successfully wrote filtered JSON output to '{filename}'")
-            console.print(f"[green]Filtered JSON output saved to:[/green] {filename}")
+            logger.info(f"Successfully wrote filtered JSON output to '{full_path}'")
+            console.print(f"[green]Filtered JSON output saved to:[/green] {full_path}")
         except IOError as e:
-            logger.error(f"Failed to write JSON output to '{filename}': {e}", exc_info=True)
-            console.print(f"[bold red]Error writing JSON file '{filename}': {e}[/bold red]")
+            logger.error(f"Failed to write JSON output to '{full_path}': {e}", exc_info=True)
+            console.print(f"[bold red]Error writing JSON file '{full_path}': {e}[/bold red]")
             # Fallback to stdout?
             print("--- Filtered JSON Output (Fallback to STDOUT) ---")
             print(output_json)
             print("--- End Filtered JSON Output ---")
         except Exception as e:
-            logger.exception(f"Unexpected error writing JSON file '{filename}': {e}")
+            logger.exception(f"Unexpected error writing JSON file '{full_path}': {e}")
             console.print(
-                f"[bold red]Unexpected error writing JSON file '{filename}': {e}[/bold red]"
+                f"[bold red]Unexpected error writing JSON file '{full_path}': {e}[/bold red]"
             )
             # Fallback to stdout?
             print("--- Filtered JSON Output (Fallback to STDOUT) ---")
@@ -682,9 +685,9 @@ def _gather_volume_details(
 @click.option(
     "--output-json",
     type=click.Path(dir_okay=False, writable=True),
-    default="tmp/px-volume-summary.json",  # Changed default name
+    default="px-volume-summary.json",  # Changed default: filename only
     show_default=True,
-    help="Optional path to save the filtered output in JSON format.",
+    help="Optional path to save the filtered output in JSON format. Relative paths are saved to ./tmp/",
 )
 @click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
 @click.option(

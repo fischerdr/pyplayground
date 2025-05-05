@@ -1,4 +1,21 @@
-"""Manage Kubernetes pods: find and inspect."""
+"""Manage Kubernetes pods: find and inspect.
+
+This is a CLI tool to find and inspect Kubernetes pods. It combines the functionality of
+k8s_find_pod.py, k8s_inspect_pod.py, and k8s_pod_manager.py.
+
+Usage:
+    k8s_pod_cli.py find <pod_name>
+    k8s_pod_cli.py inspect <pod_name>
+    k8s_pod_cli.py -h | --help
+    k8s_pod_cli.py --version
+
+Options:
+    --verbose, -v  Enable verbose logging
+    --pod-name, -p  The name of the pod to find or inspect
+    --namespace, -n  The namespace where the pod resides
+    --container, -c  The name of the container to fetch logs from
+    --tail, -t  The number of recent log lines to display
+"""
 
 import logging
 from typing import Any, Dict, List, Optional

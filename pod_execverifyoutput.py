@@ -1,7 +1,9 @@
-import click
 import threading
-from kubernetes import client, config
 from concurrent.futures import ThreadPoolExecutor
+
+import click
+from kubernetes import client, config
+
 """
 Explanation of the Script:
 
@@ -37,17 +39,28 @@ python script.py --kubeconfig ~/.kube/config --namespace my-namespace --label-se
 This will run ls / on each pod and mark it as "pass" if the output contains "bin", grouping pods into passing and failing categories based on this condition. Adjust the command and pass/fail criteria as needed
 
 """
+
+
 # Define the command-line interface
 @click.command()
-@click.option('--kubeconfig', type=click.Path(exists=True), help='Path to kubeconfig file', required=True)
-@click.option('--namespace', help='Kubernetes namespace', required=True)
-@click.option('--label-selector', help='Label selector to filter pods', required=True)
-@click.option('--command', help='Command to run on each pod', required=True)
-@click.option('--threads', default=5, help='Number of threads for parallel execution', show_default=True)
-@click.option('--pass-keyword', default="success", help="Keyword to consider command output as 'pass'", show_default=True)
+@click.option(
+    "--kubeconfig", type=click.Path(exists=True), help="Path to kubeconfig file", required=True
+)
+@click.option("--namespace", help="Kubernetes namespace", required=True)
+@click.option("--label-selector", help="Label selector to filter pods", required=True)
+@click.option("--command", help="Command to run on each pod", required=True)
+@click.option(
+    "--threads", default=5, help="Number of threads for parallel execution", show_default=True
+)
+@click.option(
+    "--pass-keyword",
+    default="success",
+    help="Keyword to consider command output as 'pass'",
+    show_default=True,
+)
 def execute_on_pods(kubeconfig, namespace, label_selector, command, threads, pass_keyword):
     """
-    Connect to the Kubernetes cluster, filter pods by namespace and label, 
+    Connect to the Kubernetes cluster, filter pods by namespace and label,
     run a command on each pod in parallel, and group results by pass/fail.
     """
     # Load kubeconfig
@@ -72,8 +85,11 @@ def execute_on_pods(kubeconfig, namespace, label_selector, command, threads, pas
             response = v1.read_namespaced_pod_exec(
                 pod_name,
                 namespace,
-                command=['/bin/sh', '-c', command],
-                stderr=True, stdin=False, stdout=True, tty=False
+                command=["/bin/sh", "-c", command],
+                stderr=True,
+                stdin=False,
+                stdout=True,
+                tty=False,
             )
             results[pod_name] = response
         except client.exceptions.ApiException as e:
@@ -98,5 +114,6 @@ def execute_on_pods(kubeconfig, namespace, label_selector, command, threads, pas
     for pod, output in fail_results.items():
         click.echo(f"{pod}:\n{output}")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     execute_on_pods()

@@ -12,6 +12,9 @@ import logging
 from typing import Any, Dict, Optional
 
 import requests
+from kubernetes import client
+
+from utils.k8s_utils import get_configmap_data
 
 logger = logging.getLogger(__name__)
 
@@ -243,4 +246,25 @@ def generate_token(
         raise e
     except Exception as e:  # Catch any other unexpected errors
         logger.exception(f"Unexpected error during token generation: {e}")
+        raise
+
+
+def get_cloud_drive_config(
+    namespace: str, configmap_name: str, v1_client: Optional[client.CoreV1Api] = None
+) -> Dict[str, Any]:
+    """Get cloud-drive configuration from Kubernetes ConfigMap.
+
+    Args:
+        namespace: Kubernetes namespace
+        configmap_name: Name of the ConfigMap
+        v1_client: Optional CoreV1Api client. If not provided, creates a new one.
+
+    Returns:
+        Dictionary containing the cloud-drive configuration
+    """
+    try:
+        data = get_configmap_data(namespace, configmap_name, "cloud-drive", v1_client)
+        return json.loads(data)
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse cloud-drive JSON: {str(e)}")
         raise

@@ -20,7 +20,7 @@ from rich.console import Console
 from rich.table import Table
 
 # Assume utils are in the python path or adjust import accordingly
-from utils.k8s_utils import get_cloud_drive_config  # Needed to read the configmap data
+from utils.px_api import get_cloud_drive_config  # Needed to read the configmap data
 from utils.k8s_utils import (
     get_custom_objects_api,
     get_k8s_client,

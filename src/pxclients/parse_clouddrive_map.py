@@ -24,8 +24,8 @@ import click
 from kubernetes import client
 from pyVmomi import vim
 
+from utils.px_api import get_cloud_drive_config
 from utils.k8s_utils import (
-    get_cloud_drive_config,
     get_custom_objects_api,
     get_k8s_client,
     load_kube_config_auto,
@@ -58,7 +58,7 @@ class VSphereConfig:
         return args
 
 
-def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConfig]:
+def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConfig]:  # noqa: C901
     """Get vSphere configuration from Kubernetes secrets.
 
     Args:

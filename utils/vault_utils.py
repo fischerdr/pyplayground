@@ -272,3 +272,27 @@ def collect_secrets(
                     secrets_list.append(full_path)
     except Exception as e:
         logging.error(f"Error collecting secrets at {path}: {str(e)}")
+
+
+def normalize_vault_path(path: str) -> tuple[str, str]:
+    """Normalize vault path by removing mount prefix and returning mount point.
+
+    Args:
+        path: Raw vault path that may include mount prefix
+
+    Returns:
+        tuple[str, str]: A tuple containing:
+            - mount_point: The vault mount point (e.g. 'static_secrets')
+            - normalized_path: The path without mount prefix and leading/trailing slashes
+    """
+    # Remove leading and trailing slashes
+    path = path.strip("/")
+
+    # Split on first slash to separate mount point and path
+    parts = path.split("/", 1)
+    if len(parts) == 2:
+        mount_point, path = parts
+    else:
+        mount_point = "secret"
+
+    return mount_point, path

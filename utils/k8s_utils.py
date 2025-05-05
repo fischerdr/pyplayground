@@ -1,6 +1,6 @@
 """Kubernetes utility functions."""
 
-import json
+
 import logging
 import os
 import re
@@ -15,7 +15,7 @@ from kubernetes import client, config, stream
 from kubernetes.client import ApiClient, V1Pod
 from kubernetes.client.rest import ApiException
 
-from utils.vault_utils import create_vault_client, get_secret
+from utils.vault_utils import create_vault_client, get_secret, normalize_vault_path
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,40 @@ def load_kubeconfig_from_string(kubeconfig_str: str) -> None:
         raise ValueError(f"Invalid YAML format in kubeconfig: {e}")
 
 
+def load_kube_config_auto(config_file: Optional[str] = None, context: Optional[str] = None) -> bool:
+    """Attempts to load Kubernetes config from default/specified file,falling back to in-cluster config.
+
+    Args:
+        config_file: Optional path to kubeconfig file.
+        context: Optional context to use if loading from file.
+
+    Returns:
+        True if configuration was loaded successfully, False otherwise.
+    """
+    try:
+        # Try loading from file first
+        config.load_kube_config(config_file=config_file, context=context)
+        logger.info(
+            f"Loaded kubeconfig from file/context (file='{config_file}', context='{context}')."
+        )
+        return True
+    except config.ConfigException:
+        logger.debug("Could not load kubeconfig from file, attempting in-cluster config.")
+        try:
+            # Fallback to in-cluster config
+            config.load_incluster_config()
+            logger.info("Loaded in-cluster kubeconfig.")
+            return True
+        except config.ConfigException:
+            logger.error(
+                "Could not load Kubernetes configuration (neither from file/context nor in-cluster)."
+            )
+            return False
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during kubeconfig loading: {e}")
+        return False
+
+
 def get_k8s_client(api_version: str = "CoreV1Api") -> Any:
     """Get a Kubernetes API client.
 
@@ -92,6 +126,71 @@ def get_custom_objects_api() -> client.CustomObjectsApi:
     except Exception as e:
         logger.error("Failed to create CustomObjectsApi client: %s", str(e))
         raise
+
+
+def get_machine_for_node(
+    node_name: str, crd_client: Optional[client.CustomObjectsApi] = None
+) -> Optional[Dict[str, Any]]:
+    """Query Kubernetes for the Machine object associated with a Node.
+
+    Args:
+        node_name: Name of the node to find the associated Machine for
+        crd_client: Optional CustomObjectsApi client. If not provided, creates a new one.
+
+    Returns:
+        Optional[Dict[str, Any]]: The Machine object if found, None otherwise
+    """
+    if not crd_client:
+        crd_client = client.CustomObjectsApi()
+
+    try:
+        machines = crd_client.list_cluster_custom_object(
+            group="machine.openshift.io", version="v1beta1", plural="machines"
+        )
+
+        for machine in machines["items"]:
+            if machine["status"]["nodeRef"]["name"] == node_name:
+                logger.info(f"Found Machine {machine['metadata']['name']} for Node {node_name}")
+                return machine
+        logger.warning(f"No Machine found for Node {node_name}. This might be UPI.")
+        return None
+    except Exception as e:
+        logger.error(f"Error fetching Machine for Node {node_name}: {e}")
+        return None
+
+
+def get_machineset_for_machine(
+    machine: Dict[str, Any], crd_client: Optional[client.CustomObjectsApi] = None
+) -> Optional[Dict[str, Any]]:
+    """Query Kubernetes for the MachineSet associated with a Machine.
+
+    Args:
+        machine: The Machine object to find the associated MachineSet for
+        crd_client: Optional CustomObjectsApi client. If not provided, creates a new one.
+
+    Returns:
+        Optional[Dict[str, Any]]: The MachineSet object if found, None otherwise
+    """
+    if not crd_client:
+        crd_client = client.CustomObjectsApi()
+
+    try:
+        machinesets = crd_client.list_cluster_custom_object(
+            group="machine.openshift.io", version="v1beta1", plural="machinesets"
+        )
+
+        machine_name = machine["metadata"]["name"]
+        for ms in machinesets["items"]:
+            if ms["metadata"]["name"] in machine_name:
+                logger.info(f"Found MachineSet {ms['metadata']['name']} for Machine {machine_name}")
+                return ms
+        logger.warning(f"No MachineSet found for Machine {machine_name}.")
+        return None
+    except Exception as e:
+        logger.error(
+            f"Error fetching MachineSet for Machine {machine['metadata'].get('name', 'unknown')}: {e}"
+        )
+        return None
 
 
 def exec_pod_command(
@@ -196,71 +295,6 @@ def wait_for_pod_readiness(
     return False
 
 
-def get_machine_for_node(
-    node_name: str, crd_client: Optional[client.CustomObjectsApi] = None
-) -> Optional[Dict[str, Any]]:
-    """Query Kubernetes for the Machine object associated with a Node.
-
-    Args:
-        node_name: Name of the node to find the associated Machine for
-        crd_client: Optional CustomObjectsApi client. If not provided, creates a new one.
-
-    Returns:
-        Optional[Dict[str, Any]]: The Machine object if found, None otherwise
-    """
-    if not crd_client:
-        crd_client = client.CustomObjectsApi()
-
-    try:
-        machines = crd_client.list_cluster_custom_object(
-            group="machine.openshift.io", version="v1beta1", plural="machines"
-        )
-
-        for machine in machines["items"]:
-            if machine["status"]["nodeRef"]["name"] == node_name:
-                logger.info(f"Found Machine {machine['metadata']['name']} for Node {node_name}")
-                return machine
-        logger.warning(f"No Machine found for Node {node_name}. This might be UPI.")
-        return None
-    except Exception as e:
-        logger.error(f"Error fetching Machine for Node {node_name}: {e}")
-        return None
-
-
-def get_machineset_for_machine(
-    machine: Dict[str, Any], crd_client: Optional[client.CustomObjectsApi] = None
-) -> Optional[Dict[str, Any]]:
-    """Query Kubernetes for the MachineSet associated with a Machine.
-
-    Args:
-        machine: The Machine object to find the associated MachineSet for
-        crd_client: Optional CustomObjectsApi client. If not provided, creates a new one.
-
-    Returns:
-        Optional[Dict[str, Any]]: The MachineSet object if found, None otherwise
-    """
-    if not crd_client:
-        crd_client = client.CustomObjectsApi()
-
-    try:
-        machinesets = crd_client.list_cluster_custom_object(
-            group="machine.openshift.io", version="v1beta1", plural="machinesets"
-        )
-
-        machine_name = machine["metadata"]["name"]
-        for ms in machinesets["items"]:
-            if ms["metadata"]["name"] in machine_name:
-                logger.info(f"Found MachineSet {ms['metadata']['name']} for Machine {machine_name}")
-                return ms
-        logger.warning(f"No MachineSet found for Machine {machine_name}.")
-        return None
-    except Exception as e:
-        logger.error(
-            f"Error fetching MachineSet for Machine {machine['metadata'].get('name', 'unknown')}: {e}"
-        )
-        return None
-
-
 # Helper function for get_nodes_from_machineset_specific
 def _extract_node_info_from_machine(
     machine: Dict[str, Any], machineset_name: str, machineset_labels: Dict[str, str]
@@ -280,6 +314,134 @@ def _extract_node_info_from_machine(
             # Return node name and a copy of the machineset labels
             return node_name, machineset_labels.copy()
     return None
+
+
+def get_kubeconfig_from_vault(  # noqa: C901
+    cluster_name: str,
+    inventory_url: str,
+    vault_url: Optional[str] = None,
+    vault_token: Optional[str] = None,
+    kubeconfig_dir: str = "tmp/k8s",
+) -> tuple[str, str]:
+    """Retrieve kubeconfig from inventory and vault sources for a given cluster.
+
+    This function fetches the kubeconfig for a specified cluster by:
+    1. Getting cluster configuration from inventory
+    2. Using that information to retrieve the kubeconfig from Vault
+    3. Storing the kubeconfig in a local file under tmp/k8s directory
+
+    Args:
+        cluster_name: Name of the cluster to get kubeconfig for
+        inventory_url: URL of the inventory service
+        vault_url: Optional Vault server URL. If None, uses VAULT_ADDR environment variable
+        vault_token: Optional Vault token. If None, uses VAULT_TOKEN environment variable
+        kubeconfig_dir: Directory to store kubeconfig files (default: "tmp/k8s")
+
+    Returns:
+        tuple[str, str]: A tuple containing:
+            - Path to the saved kubeconfig file
+            - Kubeconfig data as a string that can be used directly with load_kube_config
+
+    Raises:
+        ValueError: If cluster_name contains invalid characters
+        OSError: If kubeconfig directory is not writable
+        VaultError: If Vault operations fail
+        requests.RequestException: If inventory API request fails
+
+    Example:
+        cluster_name = "euse1c-4"
+        inventory_url = "http://inventory.example.com"
+        kubeconfig_dir = "tmp/k8s"
+        vault_url = "http://vault.example.com"
+        vault_token = "my-vault-token"
+
+        kubeconfig_path, kubeconfig_data = get_kubeconfig_from_vault(
+            cluster_name,
+            inventory_url,
+            vault_url,
+            vault_token,
+            kubeconfig_dir,
+        )
+
+        # Load kubeconfig data into KUBECONFIG
+        load_kube_config(kubeconfig_data)
+    """
+    logger.info(f"Retrieving kubeconfig for cluster: {cluster_name}")
+
+    # Get project root directory (where tmp/ should be located)
+    project_root = Path(__file__).resolve().parents[1]
+    kubeconfig_path = project_root / kubeconfig_dir
+
+    # Validate cluster name
+    if not re.match(r"^[a-zA-Z0-9_.-]+$", cluster_name):
+        msg = f"Invalid cluster name: {cluster_name}. Must contain only alphanumeric characters, dots, dashes, and underscores."
+        logger.error(msg)
+        raise ValueError(msg)
+
+    # Ensure kubeconfig directory exists and is writable
+    kubeconfig_path.mkdir(parents=True, exist_ok=True)
+    if not os.access(kubeconfig_path, os.W_OK):
+        msg = f"Directory not writable: {kubeconfig_path}"
+        logger.error(msg)
+        raise OSError(msg)
+
+    # Get inventory data
+    logger.debug(f"Fetching inventory data from: {inventory_url}")
+    try:
+        response = requests.get(f"{inventory_url}/clusters/{cluster_name}")
+        response.raise_for_status()
+        inventory_data = response.json()
+    except requests.RequestException as e:
+        logger.error(f"Failed to get inventory data: {e}")
+        raise
+
+    # Extract Vault path from inventory data
+    try:
+        vault_config = inventory_data["kubernetes_platform"]["secrets_management"][
+            "platform_vault"
+        ][0]
+        vault_url = vault_config["address"]
+        vault_namespace = vault_config["namespace"]
+        raw_path = vault_config["default_path"]
+
+        # Normalize the vault path
+        vault_mount, vault_path = normalize_vault_path(raw_path)
+        if not all([vault_url, vault_namespace, vault_path]):
+            msg = "Missing required vault configuration in inventory"
+            logger.error(msg)
+            raise ValueError(msg)
+
+    except (KeyError, IndexError) as e:
+        msg = f"Invalid inventory data structure: {e}"
+        logger.error(msg)
+        raise ValueError(msg)
+
+    # Create Vault client and get kubeconfig
+    logger.debug("Creating Vault client")
+    vault_client = create_vault_client(
+        url=vault_url if vault_url else None, token=vault_token, namespace=vault_namespace
+    )
+    try:
+        secret = get_secret(vault_client, vault_path, mount_point=vault_mount)
+        kubeconfig_data = secret.get("kubeconfig")
+        if not kubeconfig_data:
+            msg = f"No kubeconfig found in Vault at path: {vault_path}"
+            logger.error(msg)
+            raise ValueError(msg)
+    except VaultError as e:
+        logger.error(f"Failed to get kubeconfig from Vault: {e}")
+        raise
+
+    # Save kubeconfig to file
+    kubeconfig_file = kubeconfig_path / f"{cluster_name}.kubeconfig"
+    try:
+        kubeconfig_file.write_text(kubeconfig_data)
+        logger.info(f"Saved kubeconfig to: {kubeconfig_file}")
+    except OSError as e:
+        logger.error(f"Failed to write kubeconfig file: {e}")
+        raise
+
+    return str(kubeconfig_file), kubeconfig_data
 
 
 def get_nodes_from_machineset_specific(  # noqa: C901
@@ -478,236 +640,6 @@ def get_configmap_data(
         raise
 
 
-def update_configmap_data(
-    namespace: str,
-    configmap_name: str,
-    data: Dict[str, str],
-    v1_client: Optional[client.CoreV1Api] = None,
-) -> None:
-    """Update data in a Kubernetes ConfigMap.
-
-    Args:
-        namespace: Kubernetes namespace
-        configmap_name: Name of the ConfigMap
-        data: Dictionary of data to update in the ConfigMap
-        v1_client: Optional CoreV1Api client. If not provided, creates a new one.
-    """
-    try:
-        if not v1_client:
-            v1_client = get_k8s_client("CoreV1Api")
-
-        # Get the current ConfigMap
-        configmap = v1_client.read_namespaced_config_map(configmap_name, namespace)
-
-        # Update the data
-        configmap.data.update(data)
-
-        # Update the ConfigMap in Kubernetes
-        v1_client.replace_namespaced_config_map(configmap_name, namespace, configmap)
-        logger.info(f"Successfully updated ConfigMap {configmap_name} in namespace {namespace}")
-    except ApiException as e:
-        logger.error(f"Kubernetes API error: {str(e)}")
-        raise
-    except Exception as e:
-        logger.error(f"Failed to update ConfigMap data: {str(e)}")
-        raise
-
-
-def get_cloud_drive_config(
-    namespace: str, configmap_name: str, v1_client: Optional[client.CoreV1Api] = None
-) -> Dict[str, Any]:
-    """Get cloud-drive configuration from Kubernetes ConfigMap.
-
-    Args:
-        namespace: Kubernetes namespace
-        configmap_name: Name of the ConfigMap
-        v1_client: Optional CoreV1Api client. If not provided, creates a new one.
-
-    Returns:
-        Dictionary containing the cloud-drive configuration
-    """
-    try:
-        data = get_configmap_data(namespace, configmap_name, "cloud-drive", v1_client)
-        return json.loads(data)
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse cloud-drive JSON: {str(e)}")
-        raise
-
-
-def update_cloud_drive_config(
-    namespace: str,
-    configmap_name: str,
-    new_config: Dict[str, Any],
-    v1_client: Optional[client.CoreV1Api] = None,
-) -> None:
-    """Update cloud-drive configuration in Kubernetes ConfigMap.
-
-    Args:
-        namespace: Kubernetes namespace
-        configmap_name: Name of the ConfigMap
-        new_config: New configuration to apply
-        v1_client: Optional CoreV1Api client. If not provided, creates a new one.
-    """
-    try:
-        data = {"cloud-drive": json.dumps(new_config)}
-        update_configmap_data(namespace, configmap_name, data, v1_client)
-    except Exception as e:
-        logger.error(f"Failed to update cloud-drive config: {str(e)}")
-        raise
-
-
-def normalize_vault_path(path: str) -> tuple[str, str]:
-    """Normalize vault path by removing mount prefix and returning mount point.
-
-    Args:
-        path: Raw vault path that may include mount prefix
-
-    Returns:
-        tuple[str, str]: A tuple containing:
-            - mount_point: The vault mount point (e.g. 'static_secrets')
-            - normalized_path: The path without mount prefix and leading/trailing slashes
-    """
-    # Remove leading and trailing slashes
-    path = path.strip("/")
-
-    # Split on first slash to separate mount point and path
-    parts = path.split("/", 1)
-    if len(parts) == 2:
-        mount_point, path = parts
-    else:
-        mount_point = "secret"
-
-    return mount_point, path
-
-
-def get_kubeconfig_from_vault(  # noqa: C901
-    cluster_name: str,
-    inventory_url: str,
-    vault_url: Optional[str] = None,
-    vault_token: Optional[str] = None,
-    kubeconfig_dir: str = "tmp/k8s",
-) -> tuple[str, str]:
-    """Retrieve kubeconfig from inventory and vault sources for a given cluster.
-
-    This function fetches the kubeconfig for a specified cluster by:
-    1. Getting cluster configuration from inventory
-    2. Using that information to retrieve the kubeconfig from Vault
-    3. Storing the kubeconfig in a local file under tmp/k8s directory
-
-    Args:
-        cluster_name: Name of the cluster to get kubeconfig for
-        inventory_url: URL of the inventory service
-        vault_url: Optional Vault server URL. If None, uses VAULT_ADDR environment variable
-        vault_token: Optional Vault token. If None, uses VAULT_TOKEN environment variable
-        kubeconfig_dir: Directory to store kubeconfig files (default: "tmp/k8s")
-
-    Returns:
-        tuple[str, str]: A tuple containing:
-            - Path to the saved kubeconfig file
-            - Kubeconfig data as a string that can be used directly with load_kube_config
-
-    Raises:
-        ValueError: If cluster_name contains invalid characters
-        OSError: If kubeconfig directory is not writable
-        VaultError: If Vault operations fail
-        requests.RequestException: If inventory API request fails
-
-    Example:
-        cluster_name = "euse1c-4"
-        inventory_url = "http://inventory.example.com"
-        kubeconfig_dir = "tmp/k8s"
-        vault_url = "http://vault.example.com"
-        vault_token = "my-vault-token"
-
-        kubeconfig_path, kubeconfig_data = get_kubeconfig_from_vault(
-            cluster_name,
-            inventory_url,
-            vault_url,
-            vault_token,
-            kubeconfig_dir,
-        )
-
-        # Load kubeconfig data into KUBECONFIG
-        load_kube_config(kubeconfig_data)
-    """
-    logger.info(f"Retrieving kubeconfig for cluster: {cluster_name}")
-
-    # Get project root directory (where tmp/ should be located)
-    project_root = Path(__file__).resolve().parents[1]
-    kubeconfig_path = project_root / kubeconfig_dir
-
-    # Validate cluster name
-    if not re.match(r"^[a-zA-Z0-9_.-]+$", cluster_name):
-        msg = f"Invalid cluster name: {cluster_name}. Must contain only alphanumeric characters, dots, dashes, and underscores."
-        logger.error(msg)
-        raise ValueError(msg)
-
-    # Ensure kubeconfig directory exists and is writable
-    kubeconfig_path.mkdir(parents=True, exist_ok=True)
-    if not os.access(kubeconfig_path, os.W_OK):
-        msg = f"Directory not writable: {kubeconfig_path}"
-        logger.error(msg)
-        raise OSError(msg)
-
-    # Get inventory data
-    logger.debug(f"Fetching inventory data from: {inventory_url}")
-    try:
-        response = requests.get(f"{inventory_url}/clusters/{cluster_name}")
-        response.raise_for_status()
-        inventory_data = response.json()
-    except requests.RequestException as e:
-        logger.error(f"Failed to get inventory data: {e}")
-        raise
-
-    # Extract Vault path from inventory data
-    try:
-        vault_config = inventory_data["kubernetes_platform"]["secrets_management"][
-            "platform_vault"
-        ][0]
-        vault_url = vault_config["address"]
-        vault_namespace = vault_config["namespace"]
-        raw_path = vault_config["default_path"]
-
-        # Normalize the vault path
-        vault_mount, vault_path = normalize_vault_path(raw_path)
-        if not all([vault_url, vault_namespace, vault_path]):
-            msg = "Missing required vault configuration in inventory"
-            logger.error(msg)
-            raise ValueError(msg)
-
-    except (KeyError, IndexError) as e:
-        msg = f"Invalid inventory data structure: {e}"
-        logger.error(msg)
-        raise ValueError(msg)
-
-    # Create Vault client and get kubeconfig
-    logger.debug("Creating Vault client")
-    vault_client = create_vault_client(
-        url=vault_url if vault_url else None, token=vault_token, namespace=vault_namespace
-    )
-    try:
-        secret = get_secret(vault_client, vault_path, mount_point=vault_mount)
-        kubeconfig_data = secret.get("kubeconfig")
-        if not kubeconfig_data:
-            msg = f"No kubeconfig found in Vault at path: {vault_path}"
-            logger.error(msg)
-            raise ValueError(msg)
-    except VaultError as e:
-        logger.error(f"Failed to get kubeconfig from Vault: {e}")
-        raise
-
-    # Save kubeconfig to file
-    kubeconfig_file = kubeconfig_path / f"{cluster_name}.kubeconfig"
-    try:
-        kubeconfig_file.write_text(kubeconfig_data)
-        logger.info(f"Saved kubeconfig to: {kubeconfig_file}")
-    except OSError as e:
-        logger.error(f"Failed to write kubeconfig file: {e}")
-        raise
-
-    return str(kubeconfig_file), kubeconfig_data
-
-
 # Helper function to parse Kubernetes storage strings (e.g., "10Gi", "500Mi")
 def parse_storage_string(storage_str: str) -> Optional[int]:
     """Parses Kubernetes storage strings into bytes."""
@@ -750,50 +682,12 @@ def parse_storage_string(storage_str: str) -> Optional[int]:
         return None  # Indicate parsing failure
 
 
-def load_kube_config_auto(config_file: Optional[str] = None, context: Optional[str] = None) -> bool:
-    """Attempts to load Kubernetes config from default/specified file,falling back to in-cluster config.
-
-    Args:
-        config_file: Optional path to kubeconfig file.
-        context: Optional context to use if loading from file.
-
-    Returns:
-        True if configuration was loaded successfully, False otherwise.
-    """
-    try:
-        # Try loading from file first
-        config.load_kube_config(config_file=config_file, context=context)
-        logger.info(
-            f"Loaded kubeconfig from file/context (file='{config_file}', context='{context}')."
-        )
-        return True
-    except config.ConfigException:
-        logger.debug("Could not load kubeconfig from file, attempting in-cluster config.")
-        try:
-            # Fallback to in-cluster config
-            config.load_incluster_config()
-            logger.info("Loaded in-cluster kubeconfig.")
-            return True
-        except config.ConfigException:
-            logger.error(
-                "Could not load Kubernetes configuration (neither from file/context nor in-cluster)."
-            )
-            return False
-    except Exception as e:
-        logger.error(f"An unexpected error occurred during kubeconfig loading: {e}")
-        return False
-
-
 # Add list_all_namespaces and namespace_exists near other generic k8s functions
-
-
 def list_all_namespaces(api_client: Optional[ApiClient] = None) -> Optional[List[str]]:
     """Retrieves a list of all namespace names in the cluster.
 
     Args:
         api_client: Optional initialized Kubernetes ApiClient.
-
-    Returns:
         A list of namespace names, or None if an error occurs.
     """
     try:

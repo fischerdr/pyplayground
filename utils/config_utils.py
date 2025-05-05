@@ -16,8 +16,7 @@ DEFAULT_CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
 
 
 def load_env_file(env_file: Optional[Union[str, Path]] = None) -> None:
-    """
-    Load environment variables from a .env file.
+    """Load environment variables from a .env file.
 
     Args:
         env_file: Optional path to .env file (default: .env in project root)
@@ -40,8 +39,7 @@ def load_env_file(env_file: Optional[Union[str, Path]] = None) -> None:
 def get_env_var(
     key: str, default: Optional[str] = None, required: bool = False, as_type: type = str
 ) -> Optional[Any]:
-    """
-    Get an environment variable with optional default value and type conversion.
+    """Get an environment variable with optional default value and type conversion.
 
     Args:
         key: Environment variable name
@@ -63,7 +61,7 @@ def get_env_var(
 
     if value is not None:
         try:
-            if as_type == bool:
+            if as_type is bool:
                 return value.lower() in ("true", "1", "yes", "on")
             return as_type(value)
         except (ValueError, TypeError) as e:
@@ -76,8 +74,7 @@ def get_env_var(
 def load_json_config(
     config_name: str, config_dir: Optional[Union[str, Path]] = DEFAULT_CONFIG_DIR
 ) -> Dict[str, Any]:
-    """
-    Load configuration from a JSON file in the config directory.
+    """Load configuration from a JSON file in the config directory.
 
     Args:
         config_name: Name of the config file (with or without .json extension)
@@ -117,8 +114,7 @@ def save_json_config(
     config_name: str,
     config_dir: Optional[Union[str, Path]] = DEFAULT_CONFIG_DIR,
 ) -> None:
-    """
-    Save configuration to a JSON file in the config directory.
+    """Save configuration to a JSON file in the config directory.
 
     Args:
         config: Configuration dictionary to save
@@ -147,8 +143,8 @@ def save_json_config(
 
 
 def merge_configs(*configs: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Merge multiple configuration dictionaries.
+    """Merge multiple configuration dictionaries.
+
     Later configs override earlier ones.
 
     Args:

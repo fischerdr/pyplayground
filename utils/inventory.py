@@ -32,8 +32,7 @@ def search_inventory(
     cert_path: Optional[str] = None,
     debug_request: bool = False,
 ) -> Dict:
-    """
-    Search for inventory clusters with flexible filtering options.
+    """Search for inventory clusters with flexible filtering options.
 
     Args:
         base_url: Base URL for the inventory API

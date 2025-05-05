@@ -9,7 +9,7 @@ from requests.exceptions import RequestException
 logger = logging.getLogger(__name__)
 
 
-def search_inventory(
+def search_inventory(  # noqa: C901
     base_url: str,
     api_key: Optional[str] = None,
     offset: int = 0,

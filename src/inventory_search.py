@@ -1,9 +1,59 @@
 #!/usr/bin/env python
-"""
-Inventory Search Script.
+# -*- coding: utf-8 -*-
+"""Inventory Search Script.
 
 This script provides a command-line interface for searching inventory clusters
 with flexible filtering options.
+
+Usage:
+    inventory_search.py --base-url https://api.example.com --env prod
+    inventory_search.py --base-url https://api.example.com --feature feature1 --feature feature2 --tag tag1
+    inventory_search.py --base-url https://api.example.com --output json
+    inventory_search.py --base-url https://api.example.com --no-verify-ssl
+    inventory_search.py --base-url https://api.example.com --cert-path /path/to/certificate.pem
+
+Options:
+    --base-url URL     Base URL for the inventory API
+    --api-key API_KEY  API key for authentication
+    --offset OFFSET    Pagination offset
+    --limit LIMIT      Maximum number of results to return
+    --env ENV          Filter by environment (e.g., 'prod', 'dev', 'test')
+    --install-type INSTALL_TYPE Filter by installation type (e.g., 'upi')
+    --network NETWORK  Filter by network type (e.g., 'internet')
+    --region REGION    Filter by region (e.g., 'euswest1')
+    --zone ZONE        Filter by zone (e.g., 'a', 'b', 'c')
+    --tenancy TENANCY  Filter by tenancy type (e.g., 'single-tenancy')
+    --tier TIER        Filter by tier
+    --status STATUS    Filter by status (e.g., 'provisioned')
+    --is-under-maintenance IS_UNDER_MAINTENANCE Filter by maintenance status
+    --car-id CAR_ID    Filter by CAR ID (can be specified multiple times)
+    --feature FEATURE Filter by feature (can be specified multiple times)
+    --tag TAG          Filter by tag (can be specified multiple times or as comma-separated list: --tag tag1,tag2,tag3)
+    --workload WORKLOAD Filter by workload (can be specified multiple times)
+    --timeout TIMEOUT  Request timeout in seconds
+    --output OUTPUT    Output format (table, json, text, csv)
+    --debug            Enable debug logging
+    --no-verify-ssl    Disable SSL certificate verification
+    --cert-path PATH    Path to a custom SSL certificate file or CA bundle for verification
+    --use-certifi       Use certifi's default CA bundle for SSL verification
+    --show-ca-bundle-path Display the path to the CA bundle being used and exit
+    --fields FIELDS     Additional fields to display (comma-separated). Use '*' for all fields.
+    --display-fields-only Display only the specified fields (comma-separated). Overrides --fields and default fields.
+    --display-fields-config PATH Path to a JSON file containing field display configuration.
+
+Examples:
+    # Search for production clusters
+    inventory_search.py --base-url https://api.example.com --env prod
+
+    # Search for clusters with specific features and tags
+    inventory_search.py --base-url https://api.example.com --feature feature1 --feature feature2 --tag tag1
+
+    # Get results in JSON format
+    inventory_search.py --base-url https://api.example.com --output json
+
+    # Handle self-signed certificates
+    inventory_search.py --base-url https://api.example.com --no-verify-ssl
+    inventory_search.py --base-url https://api.example.com --cert-path /path/to/certificate.pem
 """
 
 import json
@@ -175,7 +225,7 @@ console = Console()
     type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
     help="Path to a JSON file containing field display configuration.",
 )
-def cli(
+def cli(  # noqa: C901
     base_url: str,
     api_key: Optional[str],
     offset: int,
@@ -204,8 +254,7 @@ def cli(
     display_fields_only: Optional[str],
     display_fields_config: Optional[str],
 ) -> None:
-    """
-    Search for inventory clusters with flexible filtering options.
+    """Search for inventory clusters with flexible filtering options.
 
     This command allows you to search for clusters in the inventory with
     various filter criteria. Results can be displayed as a table, JSON, text, or CSV.
@@ -373,11 +422,10 @@ def cli(
         sys.exit(1)
 
 
-def load_fields_configuration(
+def load_fields_configuration(  # noqa: C901
     display_fields_only: Optional[str], extra_fields: Optional[str], config_file: Optional[str]
 ) -> dict:
-    """
-    Load and process field display configuration from various sources.
+    """Load and process field display configuration from various sources.
 
     Priority order:
     1. --display-fields-only parameter or INVENTORY_DISPLAY_FIELDS_ONLY env var
@@ -443,9 +491,8 @@ def load_fields_configuration(
     return config
 
 
-def get_display_fields(clusters: list, fields_config: dict) -> tuple:
-    """
-    Determine which fields to display based on configuration.
+def get_display_fields(clusters: list, fields_config: dict) -> tuple:  # noqa: C901
+    """Determine which fields to display based on configuration.
 
     Args:
         clusters: The list of clusters from the results
@@ -513,8 +560,7 @@ def get_display_fields(clusters: list, fields_config: dict) -> tuple:
 
 
 def display_results_as_table(results: dict, fields_config: Optional[dict] = None) -> None:
-    """
-    Display inventory search results as a rich table.
+    """Display inventory search results as a rich table.
 
     Args:
         results: The inventory search results
@@ -577,8 +623,7 @@ def display_results_as_table(results: dict, fields_config: Optional[dict] = None
 
 
 def display_results_as_csv(results: dict, fields_config: Optional[dict] = None) -> None:
-    """
-    Display inventory search results as CSV.
+    """Display inventory search results as CSV.
 
     Args:
         results: The inventory search results
@@ -637,8 +682,7 @@ def display_results_as_csv(results: dict, fields_config: Optional[dict] = None) 
 
 
 def display_results_as_text(results: dict, fields_config: Optional[dict] = None) -> None:
-    """
-    Display inventory search results as plain text.
+    """Display inventory search results as plain text.
 
     Args:
         results: The inventory search results
@@ -685,8 +729,7 @@ def display_results_as_text(results: dict, fields_config: Optional[dict] = None)
 
 
 def extract_nested_field(data: dict, field_path: str) -> Any:
-    """
-    Extract a nested field from a dictionary using dot notation.
+    """Extract a nested field from a dictionary using dot notation.
 
     Args:
         data: The dictionary to extract from
@@ -711,8 +754,7 @@ def extract_nested_field(data: dict, field_path: str) -> Any:
 
 
 def process_extra_fields(clusters: list, extra_fields: Optional[str] = None) -> list:
-    """
-    Process extra fields specification and return a list of fields to display.
+    """Process extra fields specification and return a list of fields to display.
 
     Args:
         clusters: The list of clusters from the results

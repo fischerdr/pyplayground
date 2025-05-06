@@ -22,14 +22,15 @@ from pyVmomi import vim
 from rich.console import Console
 from rich.table import Table
 
-# Assume utils are in the python path or adjust import accordingly
-from utils.px_api import get_cloud_drive_config  # Needed to read the configmap data
 from utils.k8s_utils import (
     get_custom_objects_api,
     get_k8s_client,
     load_kube_config_auto,
 )
 from utils.logging_utils import get_logger, setup_logging
+
+# Assume utils are in the python path or adjust import accordingly
+from utils.px_api import get_cloud_drive_config  # Needed to read the configmap data
 from utils.vmware_utils import connect, extract_path_from_datastore_path
 
 # Configure logging

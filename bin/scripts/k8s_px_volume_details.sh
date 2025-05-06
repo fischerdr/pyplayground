@@ -168,8 +168,10 @@ execute_pxctl_inspect() {
     local env_exports_str=""
     if [[ ${#ENV_VARS_PXCTL[@]} -gt 0 ]]; then
         for var_assignment in "${ENV_VARS_PXCTL[@]}"; do
-            # Basic quoting for safety. VAR="VALUE"
-            env_exports_str+="export ${var_assignment%%=*}=\"${var_assignment#*=}\" && "
+            # Robust quoting for the value part, escaping existing double quotes
+            local key="${var_assignment%%=*}"
+            local value="${var_assignment#*=}"
+            env_exports_str+="export ${key}=\"${value//\"/\\\"}\" && "
         done
     fi
 

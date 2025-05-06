@@ -126,16 +126,21 @@ find_portworx_pod_and_container() {
 prepare_execution_command_string() {
     local base_command="$1"
     # Pass array by name
-    local -n env_vars_ref="$2"
+    local array_name="$2" # Accept the name of the array
+    local -a tmp_array=() # Temporary local array to hold elements
+    eval "tmp_array=(\"\${${array_name}[@]}\")"
     
     local env_exports_str=""
-    if [[ ${#env_vars_ref[@]} -gt 0 ]]; then
-        for var_assignment in "${env_vars_ref[@]}"; do
+    if [[ ${#tmp_array[@]} -gt 0 ]]; then
+        for var_assignment in "${tmp_array[@]}"; do # Iterate over the local copy
             if [[ ! "$var_assignment" == *"="* ]]; then
-                log_error "Invalid environment variable format: '${var_assignment}'. Use VAR=VALUE."
+                log_error "Invalid environment variable format: '$var_assignment'. Use VAR=VALUE."
                 return 1 # Indicate error
             fi
-            env_exports_str+="export ${var_assignment%%=*}=\"${var_assignment#*=}\" && "
+            # Quote the value part carefully, escaping existing quotes
+            local key="${var_assignment%%=*}"
+            local value="${var_assignment#*=}"
+            env_exports_str+="export ${key}=\"${value//\"/\\\"}\" && "
         done
     fi
     echo "${env_exports_str}${base_command}"

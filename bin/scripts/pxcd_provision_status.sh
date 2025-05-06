@@ -271,13 +271,13 @@ output_data_as_table() {
     total_pool_used_formatted=$(format_bytes_human "$total_pool_used_bytes_summary")
 
     # ANSI Colors
-    local color_bold="\033[1m"
-    local color_cyan="\033[36m"
-    local color_green="\033[32m"
-    local color_red="\033[31m"
-    local color_magenta="\033[35m"
-    local color_dim="\033[2m"
-    local color_reset="\033[0m"
+    local color_bold=$'\033[1m'
+    local color_cyan=$'\033[36m'
+    local color_green=$'\033[32m'
+    local color_red=$'\033[31m'
+    local color_magenta=$'\033[35m'
+    local color_dim=$'\033[2m'
+    local color_reset=$'\033[0m'
 
     printf '%s%sPortworx Storage Node Provision Status%s\n' "${color_bold}" "${color_magenta}" "${color_reset}"
     printf "%-38s | %-25s | %-12s | %-12s | %-10s | %-10s | %-6s\n" \

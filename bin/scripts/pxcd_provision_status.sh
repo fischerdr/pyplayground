@@ -95,8 +95,11 @@ find_portworx_pod_and_container() {
     log_info "Searching for Portworx pod with labels '${PORTWORX_POD_LABEL_SELECTOR}' in namespace '${ns}'..."
 
     local pod_json
-    pod_json=$(kubectl --kubeconfig "${KUBECONFIG_PATH:-}" get pods -n "${ns}" -l "${PORTWORX_POD_LABEL_SELECTOR}" -o json)
-    
+    if ! pod_json=$(kubectl --kubeconfig "${KUBECONFIG_PATH:-}" get pods -n "${ns}" -l "${PORTWORX_POD_LABEL_SELECTOR}" -o json); then
+        log_error "Failed to get pod information from Kubernetes for namespace '${ns}'."
+        return 1
+    fi
+        
     PX_POD_NAME=$(echo "$pod_json" | jq -e -r '.items[] | select(.status.phase=="Running") | .metadata.name' | head -n 1)
     if [[ -z "${PX_POD_NAME}" ]]; then
         log_error "No *running* Portworx pods found in namespace '${ns}' with labels '${PORTWORX_POD_LABEL_SELECTOR}'."
@@ -145,17 +148,20 @@ execute_pxctl_command() {
 
     local output_stderr_file
     output_stderr_file=$(mktemp)
-    local exit_code=0
+    local actual_exit_code=0
     local stdout_data=""
 
-    stdout_data=$(kubectl --kubeconfig "${KUBECONFIG_PATH:-}" exec -n "${PX_NAMESPACE}" "${PX_POD_NAME}" -c "${PX_CONTAINER_NAME}" \
-        -- /bin/sh -c "${full_cmd_str}" 2> "${output_stderr_file}") || exit_code=$?
-    
+    if stdout_data=$(kubectl --kubeconfig "${KUBECONFIG_PATH:-}" exec -n "${PX_NAMESPACE}" "${PX_POD_NAME}" -c "${PX_CONTAINER_NAME}" \
+        -- /bin/sh -c "${full_cmd_str}" 2> "${output_stderr_file}"); then
+        log_info "Command execution finished successfully." # Moved from after stderr processing
+    else
+        actual_exit_code=$?
+        log_error "pxctl command execution failed with exit code: ${actual_exit_code}."
+    fi
+        
     local stderr_data
     stderr_data=$(<"${output_stderr_file}")
     rm -f "${output_stderr_file}"
-
-    log_info "Command execution finished with exit code ${exit_code}."
 
     if [[ -n "$stderr_data" ]]; then
         log_info "Command produced output on stderr:"
@@ -163,12 +169,11 @@ execute_pxctl_command() {
         echo -e "\n--- PXCTL STDERR ---\n${stderr_data}\n--- END PXCTL STDERR ---" >&2
     fi
     
-    if [[ $exit_code -eq 0 ]]; then
+    if [[ $actual_exit_code -eq 0 ]]; then
         echo "$stdout_data"
         return 0
     else
-        log_error "pxctl command failed with exit code: ${exit_code}."
-        return "$exit_code" # Return actual exit code
+        return "$actual_exit_code" 
     fi
 }
 
@@ -269,7 +274,7 @@ output_data_as_table() {
     local color_dim="\033[2m"
     local color_reset="\033[0m"
 
-    printf "${color_bold}${color_magenta}Portworx Storage Node Provision Status${color_reset}\n"
+    printf '%s%sPortworx Storage Node Provision Status%s\n' "${color_bold}" "${color_magenta}" "${color_reset}"
     printf "%-38s | %-25s | %-12s | %-12s | %-10s | %-10s | %-6s\n" \
         "PX Node ID" "K8s Hostname" "Node Status" "Pool Status" "Pool Size" "Pool Used" "Drives"
     printf "%s\n" "---------------------------------------+---------------------------+--------------+--------------+------------+------------+--------"
@@ -312,7 +317,7 @@ output_data_as_table() {
         printf "%-38s | %-25s | %-12s | %-12s | %-10s | %10s | %-6s\n" \
           "${color_bold}Totals (${storage_nodes_reporting_pools} storage nodes)${color_reset}" "" "" "" "" "${color_bold}${total_pool_used_formatted}${color_reset}" ""
     fi
-    printf "\n${color_dim}Total Nodes Found: %s, Nodes Up: %s${color_reset}\n" "$total_nodes" "$up_nodes"
+    printf '\n%sTotal Nodes Found: %s, Nodes Up: %s%s\n' "${color_dim}" "$total_nodes" "$up_nodes" "${color_reset}"
 
 }
 
@@ -334,25 +339,27 @@ main() {
 
     local base_pxctl_cmd="/opt/pwx/bin/pxctl cluster provision-status -j"
     local full_pxctl_cmd
-    full_pxctl_cmd=$(prepare_execution_command_string "$base_pxctl_cmd" "ENV_VARS_PXCTL")
-    if [[ $? -ne 0 ]]; then # Error from prepare_execution_command_string
+    if ! full_pxctl_cmd=$(prepare_execution_command_string "$base_pxctl_cmd" "ENV_VARS_PXCTL"); then
         exit 1
     fi
     
     local pxctl_stdout
-    pxctl_stdout=$(execute_pxctl_command "$full_pxctl_cmd")
-    local pxctl_exit_code=$?
-
-    if [[ $pxctl_exit_code -ne 0 ]]; then
+    # Check the success of execute_pxctl_command itself
+    if ! pxctl_stdout=$(execute_pxctl_command "$full_pxctl_cmd"); then
+        local cmd_exit_code=$? 
+        # Error is already logged by execute_pxctl_command
         log_error "pxctl command execution failed. Cannot proceed."
-        exit "$pxctl_exit_code"
+        exit "$cmd_exit_code"
     fi
 
+    # If execute_pxctl_command returned 0, pxctl_stdout should contain the output.
+    # Check if stdout is empty, which is an error condition for this script's logic.
     if [[ -z "$pxctl_stdout" ]]; then
         log_error "pxctl command succeeded but returned no output. Cannot parse status."
         exit 1
     fi
     
+
     # Read parsed data into an array. First line is summary, rest are node details.
     declare -a parsed_data_lines=()
     while IFS= read -r line; do
@@ -412,7 +419,6 @@ while [[ $# -gt 0 ]]; do
         *)
             echo >&2 "Unknown option: $1"
             usage
-            exit 1
             ;;
     esac
 done

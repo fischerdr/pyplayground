@@ -77,9 +77,11 @@ find_portworx_pod() {
     log_info "Searching for Portworx pod with labels '${PORTWORX_POD_LABEL_SELECTOR}' in namespace '${namespace}'..."
 
     local pod_info
-    pod_info=$(kubectl --kubeconfig "${KUBECONFIG_PATH:-}" get pods -n "${namespace}" -l "${PORTWORX_POD_LABEL_SELECTOR}" -o json)
+    if ! pod_info=$(kubectl --kubeconfig "${KUBECONFIG_PATH:-}" get pods -n "${namespace}" -l "${PORTWORX_POD_LABEL_SELECTOR}" -o json); then
+        log_error "Failed to get pod information from Kubernetes for namespace '${namespace}'."
+        return 1
+    fi
     
-    # Important: jq -e will exit with non-zero if no item matches, which works with set -e
     PX_POD_NAME=$(echo "$pod_info" | jq -e -r '.items[] | select(.status.phase=="Running") | .metadata.name' | head -n 1)
     if [[ -z "${PX_POD_NAME}" ]]; then
         log_error "No *running* Portworx pods found in namespace '${namespace}' with labels '${PORTWORX_POD_LABEL_SELECTOR}'."
@@ -99,14 +101,19 @@ find_portworx_pod() {
 get_portworx_sc_names() {
     log_debug "Fetching StorageClasses..."
     local sc_json
-    sc_json=$(kubectl --kubeconfig "${KUBECONFIG_PATH:-}" get sc -o json)
+    if ! sc_json=$(kubectl --kubeconfig "${KUBECONFIG_PATH:-}" get sc -o json); then
+        log_error "Failed to get StorageClasses from Kubernetes."
+        # Depending on strictness, you might want to return 1 here or allow continuation
+        # Python script allowed continuation if no SCs, so we do too.
+        PORTWORX_SC_NAMES=()
+        return 0 
+    fi
 
     # Read sc names into the global array PORTWORX_SC_NAMES
     readarray -t PORTWORX_SC_NAMES < <(echo "$sc_json" | jq -r --arg PROV "$PORTWORX_PROVISIONER" '.items[] | select(.provisioner==$PROV) | .metadata.name')
 
     if [[ ${#PORTWORX_SC_NAMES[@]} -eq 0 ]]; then
-        log_info "No StorageClasses found with provisioner '${PORTWORX_PROVISIONER}'. Cannot identify Portworx volumes."
-        # This is a graceful exit condition as per Python script
+        log_info "No StorageClasses found with provisioner '${PORTWORX_PROVISIONER}'. Cannot identify Portworx volumes directly by SC."
         return 0 # Indicate success but no SCs
     fi
     log_info "Found ${#PORTWORX_SC_NAMES[@]} Portworx StorageClasses: ${PORTWORX_SC_NAMES[*]}"
@@ -116,15 +123,19 @@ get_portworx_sc_names() {
 get_portworx_pvs() {
     log_debug "Fetching all PVs and filtering for Portworx..."
     local pvs_json
-    pvs_json=$(kubectl --kubeconfig "${KUBECONFIG_PATH:-}" get pv -o json)
+    if ! pvs_json=$(kubectl --kubeconfig "${KUBECONFIG_PATH:-}" get pv -o json); then
+        log_error "Failed to get PersistentVolumes from Kubernetes."
+        # Return empty or handle error to prevent further processing
+        return 1 # Indicate failure
+    fi
 
     # Build a jq filter for SC names
     local sc_names_jq_array="["
-    for sc_name in "${PORTWORX_SC_NAMES[@]}"; do
-        sc_names_jq_array+=""${sc_name}","
-    done
-    if [[ "${sc_names_jq_array}" != "[" ]]; then
-        sc_names_jq_array="${sc_names_jq_array%,}]" # Remove trailing comma and close array
+    if [[ ${#PORTWORX_SC_NAMES[@]} -gt 0 ]]; then
+      for sc_name in "${PORTWORX_SC_NAMES[@]}"; do
+          sc_names_jq_array+="\"${sc_name}\","
+      done
+      sc_names_jq_array="${sc_names_jq_array%,}]" # Remove trailing comma and close array
     else
         sc_names_jq_array="[]" # Empty array if no SCs
     fi
@@ -158,30 +169,34 @@ execute_pxctl_inspect() {
     if [[ ${#ENV_VARS_PXCTL[@]} -gt 0 ]]; then
         for var_assignment in "${ENV_VARS_PXCTL[@]}"; do
             # Basic quoting for safety. VAR="VALUE"
-            env_exports_str+="export ${var_assignment%%=*}="${var_assignment#*=}" && "
+            env_exports_str+="export ${var_assignment%%=*}=\"${var_assignment#*=}\" && "
         done
     fi
 
-    local base_command="pxctl volume inspect "${pv_name}" -j"
+    local base_command="pxctl volume inspect \"${pv_name}\" -j"
     local full_command_str="${env_exports_str}${base_command}"
 
     log_debug "Executing in pod '${px_pod}/${px_container}': ${full_command_str}"
 
     local output_stderr_file
     output_stderr_file=$(mktemp)
-    local exit_code=0
+    local actual_exit_code=0
     local stdout_data=""
 
     # Capture stdout and stderr separately, and exit code
-    # Using process substitution and tee for stderr is complex with error codes.
     # Simpler: redirect stderr to a file.
-    stdout_data=$(kubectl --kubeconfig "${KUBECONFIG_PATH:-}" exec -n "${px_ns}" "${px_pod}" -c "${px_container}" -- /bin/sh -c "${full_command_str}" 2> "${output_stderr_file}") || exit_code=$?
+    if stdout_data=$(kubectl --kubeconfig "${KUBECONFIG_PATH:-}" exec -n "${px_ns}" "${px_pod}" -c "${px_container}" -- /bin/sh -c "${full_command_str}" 2> "${output_stderr_file}"); then
+        log_debug "pxctl command for PV '${pv_name}' finished successfully."
+    else
+        actual_exit_code=$?
+        # This log will be more generic; specific error details if any are in stderr_data
+        log_info "pxctl command execution for PV '${pv_name}' failed with exit code ${actual_exit_code}."
+    fi
     
     local stderr_data
     stderr_data=$(<"${output_stderr_file}")
     rm -f "${output_stderr_file}"
 
-    log_debug "pxctl command for PV '${pv_name}' finished with exit code ${exit_code}."
     if [[ -n "$stdout_data" ]]; then
         log_debug "pxctl stdout for PV '${pv_name}': ${stdout_data:0:500}..."
     fi
@@ -192,7 +207,7 @@ execute_pxctl_inspect() {
     local pv_used_bytes="N/A"
     local ha_level="N/A"
 
-    if [[ $exit_code -eq 0 && -n "$stdout_data" ]]; then
+    if [[ $actual_exit_code -eq 0 && -n "$stdout_data" ]]; then
         # Handle pxctl output possibly being a list with one item, or a direct object
         local first_char
         first_char=$(echo "$stdout_data" | head -c 1)
@@ -210,10 +225,13 @@ execute_pxctl_inspect() {
             log_info "pxctl output for PV '${pv_name}' was JSON but not the expected format or was empty after potential array extraction."
         fi
 
-    elif [[ $exit_code -ne 0 ]]; then
-        log_info "pxctl command for PV '${pv_name}' failed (code: ${exit_code}). Stderr: $stderr_data"
+    elif [[ $actual_exit_code -ne 0 ]]; then
+        # This case is now handled by the initial 'else' block of the 'if kubectl exec ...'
+        # but we can still log the stderr here if it's particularly relevant to parsing attempts.
+        log_debug "pxctl command for PV '${pv_name}' had non-zero exit code ${actual_exit_code}. Stderr: ${stderr_data}"
     else
-        log_info "pxctl command for PV '${pv_name}' produced no stdout."
+        # This case (actual_exit_code == 0 but no stdout_data) implies success but empty output from pxctl
+        log_info "pxctl command for PV '${pv_name}' succeeded but produced no stdout."
     fi
     
     # Return as a single string for easy parsing by caller, e.g., space separated
@@ -259,13 +277,14 @@ main() {
     fi
 
     # 2. Get Portworx Storage Classes
-    if ! get_portworx_sc_names; then
-        log_error "Failed to get Portworx StorageClasses. This might be okay if using CSI directly."
-        # Continue, as PVs might be found via CSI driver directly
+    if ! get_portworx_sc_names; then # This function now returns 0 even on "failure" to find SCs to match python logic
+        # This condition might not be strictly necessary if get_portworx_sc_names always returns 0
+        # but it's harmless. The critical part is if PORTWORX_SC_NAMES is empty.
+        log_info "Continuing without specific Portworx StorageClasses if any error occurred or none found."
     fi
-    if [[ ${#PORTWORX_SC_NAMES[@]} -eq 0 ]]; then
-         log_info "No Portworx StorageClasses found. Will rely solely on CSI driver for PV identification."
-    fi
+    # if [[ ${#PORTWORX_SC_NAMES[@]} -eq 0 ]]; then # This is logged within get_portworx_sc_names
+    #      log_info "No Portworx StorageClasses found. Will rely solely on CSI driver for PV identification."
+    # fi
 
     # 3. Prepare CSV Output
     local csv_output_target="/dev/stdout"
@@ -282,7 +301,10 @@ main() {
             csv_output_target="${output_dir}/${OUTPUT_FILE_BASE}_${timestamp}.csv"
         fi
         
-        mkdir -p "${output_dir}"
+        if ! mkdir -p "${output_dir}"; then 
+            log_error "Failed to create output directory: ${output_dir}"
+            exit 1
+        fi
         log_info "CSV output will be saved to: ${csv_output_target}"
     fi
 
@@ -294,17 +316,32 @@ main() {
     local processed_pv_count=0
     
     # Get all PVs first, then count for progress logging
-    local all_filtered_pvs=()
-    while IFS= read -r pv_json_line; do
-        all_filtered_pvs+=("$pv_json_line")
-    done < <(get_portworx_pvs)
+    local all_filtered_pvs_stream
+    if ! all_filtered_pvs_stream=$(get_portworx_pvs); then # Check exit status of get_portworx_pvs
+        log_error "Failed to retrieve Portworx PVs. Exiting."
+        # Ensure header is written if file output was intended, even if no data rows
+        if [[ "${OUTPUT_TO_STDOUT}" -eq 0 ]]; then 
+            echo "CSV output file created at: ${csv_output_target} but contains no data due to PV fetch error."
+        fi
+        exit 1
+    fi
+
+    declare -a all_filtered_pvs=()
+    if [[ -n "$all_filtered_pvs_stream" ]]; then # Check if stream is not empty
+        while IFS= read -r pv_json_line; do
+            all_filtered_pvs+=("$pv_json_line")
+        done <<< "$all_filtered_pvs_stream"
+    fi
 
     pv_count=${#all_filtered_pvs[@]}
     log_info "Found ${pv_count} potential Portworx PVs to process."
 
     if [[ $pv_count -eq 0 ]]; then
         log_info "No Portworx PVs found matching the criteria. Exiting."
-        # The Python script exits with 0 if no PVs found, CSV header might have been written
+        # The Python script exits with 0 if no PVs found, CSV header was written
+        if [[ "${OUTPUT_TO_STDOUT}" -eq 0 ]]; then 
+             echo "CSV output saved to: ${csv_output_target}" # User-facing confirmation for empty file
+        fi
         exit 0
     fi
 
@@ -327,7 +364,7 @@ main() {
         local pvc_namespace_out="${claim_ref_namespace:-N/A}" # Default to N/A if empty
         local pvc_name_out="${claim_ref_name:-N/A}"         # Default to N/A if empty
 
-        local pxctl_results
+        #  local pxctl_results --- unsure if this is needed
         read -r pv_used_bytes_res ha_level_res < <(execute_pxctl_inspect "${pv_name}" "${PX_NAMESPACE}" "${PX_POD_NAME}" "${PX_CONTAINER_NAME}")
         
         # Output CSV row
@@ -381,7 +418,6 @@ while [[ $# -gt 0 ]]; do
         *)
             echo >&2 "Unknown option: $1"
             usage
-            exit 1
             ;;
     esac
 done

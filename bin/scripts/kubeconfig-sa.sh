@@ -1,4 +1,9 @@
 #!/bin/bash
+# This script generates a kubeconfig file for a service account.
+# It takes the service account name, namespace, and server as arguments.
+# It then gets the token and certificate for the service account and creates a kubeconfig file.
+# The kubeconfig file is then saved to the current directory.
+
 SERVICE_ACCOUNT=pxbackup-sa
 NAMESPACE=px-backup
 SERVER=https://192.168.101.110:6443

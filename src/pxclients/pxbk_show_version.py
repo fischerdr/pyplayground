@@ -7,9 +7,7 @@ import requests
 
 
 def _prompt_for_password(args):
-    """
-    if no password is specified on the command line, prompt for it
-    """
+    """If no password is specified on the command line, prompt for it."""
     if not args.password:
         args.password = getpass.getpass(
             prompt='"Please enter password for host %s and user %s: ' % (args.host, args.user)

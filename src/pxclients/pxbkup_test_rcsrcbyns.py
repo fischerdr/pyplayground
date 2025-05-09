@@ -1,3 +1,17 @@
+#! /usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""This is a quick test script to balance the namespaces across the label values by resource count.
+
+This script is not intended for production use.
+
+Usage:
+    pxbkup_test_rcsrcbyns.py --kubeconfig <path_to_kubeconfig> --exclude <namespace1> <namespace2>
+
+Example:
+    pxbkup_test_rcsrcbyns.py --kubeconfig ~/.kube/config --exclude default
+
+"""
+
 import json
 import logging
 import os
@@ -24,6 +38,7 @@ LABEL_VALUES = ["4am", "8am", "12pm", "4pm", "8pm", "12am"]
 
 # Load Kubernetes configuration
 def load_kube_config(kubeconfig_path):
+    """Load Kubernetes configuration from a kubeconfig file."""
     try:
         if kubeconfig_path:
             config.load_kube_config(config_file=kubeconfig_path)
@@ -35,7 +50,8 @@ def load_kube_config(kubeconfig_path):
 
 
 # Get namespace data
-def get_namespace_data(excluded_namespaces):
+def get_namespace_data(excluded_namespaces):  # noqa: C901
+    """Get namespace data from the cluster."""
     try:
         api = client.CustomObjectsApi()
         core_v1 = client.CoreV1Api()
@@ -153,6 +169,7 @@ def get_namespace_data(excluded_namespaces):
     help="Namespaces to exclude from the analysis. Can be specified multiple times.",
 )
 def main(kubeconfig, exclude):
+    """Main function to execute the script."""
     try:
         # Load Kubernetes configuration
         kubeconfig_path = kubeconfig or os.getenv("KUBECONFIG")

@@ -6,7 +6,11 @@ This script provides a comprehensive view of PX-Backup schedules,
 allowing for filtering by cluster name or UID. It supports pagination
 and displays detailed information about each schedule, including:
 
+Usage:
+    pxbkup_list_schedules.py --api-url <api_url> --org-id <org_id> --cluster-name <cluster_name> --cluster-uid <cluster_uid>
 
+Example:
+    pxbkup_list_schedules.py --api-url https://px-backup.example.com --org-id 1234567890 --cluster-name my-cluster
 """
 
 import json
@@ -159,7 +163,21 @@ def _handle_authentication(
 def get_schedules(
     client: PXBackupClient, org_id: str, cluster_uid: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    """Retrieve backup schedules, optionally filtered by cluster UID via API."""
+    """Retrieve backup schedules, optionally filtered by cluster UID via API.
+
+    Args:
+        client: PXBackupClient instance.
+        org_id: Organization ID.
+        cluster_uid: Optional cluster UID filter.
+
+    Returns:
+        List[Dict[str, Any]]: List of backup schedules.
+
+    Raises:
+        ValueError: If the API response format is unexpected.
+        requests.exceptions.RequestException: If the API request fails.
+        Exception: If an unexpected error occurs during the schedule fetch or processing.
+    """
     target_info = f"cluster UID {cluster_uid}" if cluster_uid else "all clusters"
     logger.info(f"Fetching schedules for organization ID: {org_id} ({target_info}).")
 

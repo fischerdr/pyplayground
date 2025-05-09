@@ -6,44 +6,11 @@ This project consists of a collection of Python scripts for interacting with Kub
 
 ## Scripts Overview
 
-### Kubernetes Scripts
-
 All Kubernetes-related scripts are prefixed with `k8s_` and located in the `src/` directory.
 
-1. `k8s_find_pod.py`
-   - Purpose: Searches for a Kubernetes pod by name across all namespaces
-   - Features:
-     - Cross-namespace pod search
-     - Node and IP information display
-     - Rich console output formatting
-     - Comprehensive logging
-   - Main Functions:
-     - `get_pod_info()`: Core search functionality
-     - `_get_node_external_ip()`: Helper for node IP resolution
+All Portworx scripts are prefixed with `px` and located in the `src/pxclients/` directory.
 
-2. `k8s_inspect_pod.py`
-   - Purpose: Detailed inspection of a specific Kubernetes pod
-   - Features:
-     - Container status information
-     - Init container details
-     - Volume mount information
-     - Optional container log retrieval
-   - Main Functions:
-     - `get_pod_details()`: Fetches pod information
-     - `get_pod_logs()`: Retrieves container logs
-     - `display_pod_info()`: Formats and displays pod details
-
-3. `k8s_get_backup_job_logs.py`
-   - Purpose: Monitors PX-Backup jobs and retrieves logs
-   - Features:
-     - Integration with PX-Backup API
-     - Kubernetes job tracking
-     - Log retrieval from kopiaexecutor containers
-     - Cluster filtering capabilities
-   - Main Functions:
-     - `fetch_running_backups()`: Gets active backup jobs
-     - `find_jobs_for_backup()`: Locates associated K8s jobs
-     - `get_kopia_logs_from_pod()`: Retrieves container logs
+All PX-Backup scripts are prefixed with `pxbkup` and located in the `src/pxclients/` directory.
 
 ## Code Standards and Conventions
 
@@ -80,6 +47,15 @@ Located in the `utils/` directory:
 3. `px_api.py`:
    - PX-Backup API client
    - Authentication utilities
+
+4. `config_utils.py`:
+   - Configuration management
+   - Environment variable handling
+
+#### future utils
+
+- `pxbkup_utils.py`:
+  - PX-Backup utilities
 
 ### Output Formatting
 
@@ -161,3 +137,18 @@ Core dependencies include:
 - Linux-based development environment
 - Kubernetes cluster access required
 - PX-Backup system access required
+- Portworx storage cluster installed and configured
+- Portworx pod access required
+- PX-Backup API access required
+- PX-Backup API key required
+- PX-Backup API secret required
+- PX-Backup API token required
+
+## Future Development
+
+- Add more scripts
+- Add more tests
+- Add more documentation
+- Add more examples
+
+## Future Scripts

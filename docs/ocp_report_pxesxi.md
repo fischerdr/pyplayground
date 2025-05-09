@@ -75,7 +75,8 @@ The detailed table output includes:
    - Table of unique ESXi hosts with CPU cores, memory, and state information
 
 Example:
-```
+
+```text
 Cluster: cluster-name
 Portworx pods in namespace 'portworx': 146
 Total unique ESXi hosts in this cluster: 54
@@ -98,12 +99,14 @@ ESXi Hosts Details for cluster-name
 ### Brief Table Output
 
 The brief table output includes:
+
 - Total Portworx pods count across all clusters
 - Total ESXi hosts count across all clusters
 - Summary table showing OpenShift clusters, VMware clusters, ESXi host counts, and Portworx pod counts (shown only once per OpenShift cluster)
 
 Example:
-```
+
+```text
 Total Portworx pods across all clusters: 146
 Total ESXi hosts across all clusters: 54
 
@@ -121,6 +124,7 @@ Total ESXi hosts across all clusters: 54
 ### Detailed JSON Output
 
 The detailed JSON output organizes data hierarchically:
+
 - By OpenShift cluster
 - Within each cluster:
   - Portworx pods count
@@ -130,6 +134,7 @@ The detailed JSON output organizes data hierarchically:
   - ESXi hosts within each VMware cluster
 
 Example:
+
 ```json
 {
   "cluster-name": {
@@ -154,6 +159,7 @@ Example:
 ### Brief JSON Output
 
 The brief JSON output provides a condensed view:
+
 - Total Portworx pods count across all clusters
 - Total ESXi hosts count across all clusters
 - Summary of OpenShift clusters with:
@@ -161,6 +167,7 @@ The brief JSON output provides a condensed view:
   - VMware clusters with their host counts
 
 Example:
+
 ```json
 {
   "portworx_pods_count": 146,
@@ -196,6 +203,7 @@ python src/ocp_report_pxesxi.py --kubeconfig /path/to/kubeconfig
 ```
 
 This scenario is useful for:
+
 - Detailed analysis of a single OpenShift cluster
 - Understanding the relationship between MachineSets and VMware infrastructure
 - Identifying ESXi hosts running OpenShift nodes
@@ -208,6 +216,7 @@ python src/ocp_report_pxesxi.py --clusterlist /path/to/clusterlist.txt
 ```
 
 This scenario is useful for:
+
 - Comparing multiple OpenShift clusters
 - Understanding resource distribution across clusters
 - Identifying clusters with high or low ESXi host utilization
@@ -220,6 +229,7 @@ python src/ocp_report_pxesxi.py --clusterlist /path/to/clusterlist.txt --brief
 ```
 
 This scenario is useful for:
+
 - Quick overview of all clusters
 - High-level summary of ESXi host distribution
 - Total Portworx pod count across the environment
@@ -232,6 +242,7 @@ python src/ocp_report_pxesxi.py --clusterlist /path/to/clusterlist.txt --output-
 ```
 
 This scenario is useful for:
+
 - Integration with other tools or dashboards
 - Data processing and analysis
 - Custom reporting

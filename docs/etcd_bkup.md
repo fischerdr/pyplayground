@@ -1,10 +1,13 @@
-This Dockerfile includes etcdctl for interacting with etcd and the AWS CLI for uploading backups to S3.
+# This Dockerfile includes etcdctl for interacting with etcd and the AWS CLI for uploading backups to S3
+
 Dockerfile
 
-# Use a lightweight base image
+## Use a lightweight base image
+
 FROM alpine:3.18
 
-# Install necessary tools: etcdctl, aws-cli, and bash
+## Install necessary tools: etcdctl, aws-cli, and bash
+
 RUN apk add --no-cache \
     etcd \
     aws-cli \
@@ -14,31 +17,37 @@ RUN apk add --no-cache \
     mkdir -p /certs /scripts /data && \
     chmod +x /scripts
 
-# Set working directory
+## Set working directory
+
 WORKDIR /scripts
 
-# Copy the backup script into the container
+## Copy the backup script into the container
+
 COPY etcd-backup.sh /scripts/etcd-backup.sh
 
-# Make the backup script executable
+## Make the backup script executable
+
 RUN chmod +x /scripts/etcd-backup.sh
 
-# Set environment variables (these can be overridden at runtime)
-ENV ETCD_ENDPOINT=https://127.0.0.1:2379
+## Set environment variables (these can be overridden at runtime)
+
+ENV ETCD_ENDPOINT=<https://127.0.0.1:2379>
 ENV ETCD_CERT_FILE=/certs/etcd-client.crt
 ENV ETCD_KEY_FILE=/certs/etcd-client.key
 ENV ETCD_CA_FILE=/certs/etcd-ca.crt
 ENV S3_BUCKET=my-etcd-backups
-ENV S3_ENDPOINT=https://s3.amazonaws.com
+ENV S3_ENDPOINT=<https://s3.amazonaws.com>
 ENV BACKUP_INTERVAL=3600
 
-# Command to start the backup process
+## Command to start the backup process
+
 CMD ["/scripts/etcd-backup.sh"]
 
 etcd-backup.sh
 
 Here’s the backup script to include in the container (etcd-backup.sh):
 
+```bash
 #!/bin/bash
 
 set -e
@@ -66,36 +75,43 @@ while true; do
   rm -f "${BACKUP_FILE}"
   sleep "${BACKUP_INTERVAL}"
 done
+```
 
-Build and Use Instructions
+## Build and Use Instructions
 
     Save the Dockerfile and etcd-backup.sh in the same directory.
     Build the Docker image:
 
+```bash
 docker build -t my-etcd-backup:latest .
+```
 
 Run the container locally for testing:
 
-    docker run -d \
+```bash
+docker run -d \
       -e ETCD_ENDPOINT=https://<ETCD-ENDPOINT>:2379 \
       -e S3_BUCKET=my-etcd-backups \
       -e AWS_ACCESS_KEY_ID=<YOUR_AWS_ACCESS_KEY> \
       -e AWS_SECRET_ACCESS_KEY=<YOUR_AWS_SECRET_KEY> \
       -v /path/to/certs:/certs:ro \
       my-etcd-backup:latest
+```
 
-    Replace <ETCD-ENDPOINT> and other placeholders with actual values.
+## Replace <ETCD-ENDPOINT> and other placeholders with actual values
 
-Key Features:
+### Key Features
 
-    Base Image: Uses a lightweight Alpine Linux image for minimal size.
-    Certs Handling: Supports mounting certificates for secure etcd communication.
-    Environment Variables: Configurable at runtime to adapt to different environments.
-    AWS CLI: Enables uploading to S3-compatible object stores.
+- Base Image: Uses a lightweight Alpine Linux image for minimal size.
+- Certs Handling: Supports mounting certificates for secure etcd communication.
+- Environment Variables: Configurable at runtime to adapt to different environments.
+- AWS CLI: Enables uploading to S3-compatible object stores.
 
-Below is a Kubernetes deployment YAML configuration that uses the custom Docker image created in the previous step.
+### Below is a Kubernetes deployment YAML configuration that uses the custom Docker image created in the previous step
+
 Deployment YAML
 
+```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -129,7 +145,7 @@ spec:
         - name: S3_BUCKET
           value: my-etcd-backups # Replace with your S3 bucket name
         - name: S3_ENDPOINT
-          value: https://s3.amazonaws.com # Replace with your S3 endpoint
+          value: <https://s3.amazonaws.com> # Replace with your S3 endpoint
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:
@@ -162,6 +178,7 @@ spec:
       - name: etcd-data
         emptyDir: {} # Temporary storage for etcd snapshot files
 ---
+
 apiVersion: v1
 kind: Secret
 metadata:
@@ -172,6 +189,7 @@ data:
   access_key: <BASE64_ENCODED_ACCESS_KEY> # Replace with base64-encoded AWS Access Key
   secret_key: <BASE64_ENCODED_SECRET_KEY> # Replace with base64-encoded AWS Secret Key
 ---
+
 apiVersion: v1
 kind: Secret
 metadata:
@@ -182,27 +200,32 @@ data:
   etcd-client.crt: <BASE64_ENCODED_ETCD_CLIENT_CERT> # Replace with base64-encoded etcd client cert
   etcd-client.key: <BASE64_ENCODED_ETCD_CLIENT_KEY> # Replace with base64-encoded etcd client key
   etcd-ca.crt: <BASE64_ENCODED_ETCD_CA_CERT> # Replace with base64-encoded etcd CA cert
+```
 
-Key Configuration Details:
+### Key Configuration Details
 
-    Image: Uses my-etcd-backup:latest, the image created earlier. Replace with your registry if needed (e.g., your-registry/my-etcd-backup:latest).
-    Environment Variables: Configures etcd endpoint, S3 bucket, and credentials.
-    Secrets:
-        s3-credentials: Stores AWS credentials for accessing the S3 bucket.
-        etcd-client-certs: Stores etcd client certificates to connect securely to etcd.
-    Volumes:
-        Certs: Mounts etcd client certificates from the secret.
-        Data: Temporary in-container storage for backup files before uploading to S3.
+- Image: Uses my-etcd-backup:latest, the image created earlier. Replace with your registry if needed (e.g., your-registry/my-etcd-backup:latest).
+- Environment Variables: Configures etcd endpoint, S3 bucket, and credentials.
+- Secrets:
+  - s3-credentials: Stores AWS credentials for accessing the S3 bucket.
+  - etcd-client-certs: Stores etcd client certificates to connect securely to etcd.
+- Volumes:
+  - Certs: Mounts etcd client certificates from the secret.
+  - Data: Temporary in-container storage for backup files before uploading to S3.
 
-Steps to Apply
+### Steps to Apply
 
-    Replace <ETCD-ENDPOINT> and <BASE64_ENCODED_...> placeholders with your actual values.
-    Apply the YAML to the cluster:
+Replace <ETCD-ENDPOINT> and <BASE64_ENCODED_...> placeholders with your actual values.
 
+Apply the YAML to the cluster:
+
+```bash
 kubectl apply -f etcd-backup-deployment.yaml
+```
 
 Verify the deployment:
 
-    kubectl get pods -n kube-system
-    kubectl logs -n kube-system <etcd-backup-pod-name>
-
+```bash
+kubectl get pods -n kube-system
+kubectl logs -n kube-system <etcd-backup-pod-name>
+```

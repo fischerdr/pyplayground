@@ -2,9 +2,7 @@
 # Convert Markdown to Confluence Storage Format
 # Author: dfischer
 # Date: 2025-03-10
-
-"""
-This script converts markdown content to Confluence storage format and uploads it to a Confluence page.
+"""This script converts markdown content to Confluence storage format and uploads it to a Confluence page.
 
 Example Usage:
     python convert-mdtoconfluence.py --markdown-file="path/to/markdown/file.md" \
@@ -33,8 +31,7 @@ app = typer.Typer()
 
 
 def convert_markdown_to_storage_format(markdown_content: str) -> str:
-    """
-    Convert markdown content to Confluence storage format.
+    """Convert markdown content to Confluence storage format.
 
     This function takes in markdown content and converts it to the Confluence storage
     format. The Confluence storage format is a subset of XML that is used to store
@@ -65,8 +62,7 @@ def update_confluence_page(
     content: str,
     parent_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Create or update a Confluence page.
+    """Create or update a Confluence page.
 
     Args:
         base_url: The base URL of your Confluence instance
@@ -142,8 +138,7 @@ def upload_markdown(
     space_key: str = typer.Option(..., help="Confluence space key"),
     parent_id: Optional[str] = typer.Option(None, help="Parent page ID"),
 ):
-    """
-    Upload a markdown file to Confluence.
+    """Upload a markdown file to Confluence.
 
     This command reads a markdown file, converts it to Confluence storage format,
     and uploads it to a specified Confluence space. The Confluence credentials

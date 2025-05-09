@@ -735,7 +735,7 @@ def generate_json_report(all_clusters_data: Dict[str, Dict[str, Any]], brief: bo
     "--px-namespace", default="portworx", help="Namespace where Portworx pods are running"
 )
 @click.option("--debug", is_flag=True, help="Enable debug logging")
-def main(
+def main(   # noqa: C901
     kubeconfig: str,
     clusterlist: str,
     vsphere_host: Optional[str],

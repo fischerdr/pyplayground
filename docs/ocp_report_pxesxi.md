@@ -22,6 +22,7 @@ The `ocp_report_pxesxi.py` script generates comprehensive reports about OpenShif
   - pyVmomi
   - click
   - rich
+  - tenacity
 - Access to OpenShift clusters (kubeconfig files)
 - Access to VMware vSphere environment
 
@@ -56,10 +57,11 @@ python src/ocp_report_pxesxi.py --kubeconfig /path/to/kubeconfig --output-format
 | `--output-format` | Output format: table or json (default: table) |
 | `--disable-ssl` | Disable SSL verification for vSphere connection |
 | `--brief` | Generate a brief summary report instead of detailed report |
-| `--credentials-secret` | Kubernetes Secret containing vSphere credentials |
-| `--credentials-namespace` | Namespace containing the credentials Secret (default: kube-system) |
+| `--credentials-secret` | Kubernetes Secret containing vSphere credentials (default: px-vsphere-secret) |
+| `--credentials-namespace` | Namespace containing the credentials Secret (default: portworx) |
 | `--timeout` | Connection timeout in seconds (default: 30) |
 | `--px-namespace` | Namespace where Portworx pods are located (default: portworx) |
+| `--debug` | Enable debug logging |
 
 ## Output Formats
 
@@ -101,7 +103,7 @@ ESXi Hosts Details for cluster-name
 The brief table output includes:
 
 - Total Portworx pods count across all clusters
-- Total ESXi hosts count across all clusters
+- Total ESXi hosts count across all clusters (sum of host counts for each reported VMware cluster, not necessarily globally unique ESXi hosts across all OpenShift clusters)
 - Summary table showing OpenShift clusters, VMware clusters, ESXi host counts, and Portworx pod counts (shown only once per OpenShift cluster)
 
 Example:
@@ -277,3 +279,4 @@ The script uses Python's logging module to provide detailed information about it
   - Kubernetes Secrets (recommended)
 - The script uses HTTPS for communication with external services
 - SSL verification can be disabled if needed, but this is not recommended for production environments
+- The script attempts to load a custom CA certificate from the hardcoded path \`/path/to/your/cert.pem\` if it exists and SSL verification is not disabled. If using custom CAs for vSphere, ensure your CA bundle is placed at this location, modify the script, or ensure SSL is disabled if this path is not intended for use.

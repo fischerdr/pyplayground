@@ -52,7 +52,7 @@ class VSphereConfig:
 
 
 # TODO: Reduce complexity (currently McCabe complexity 15) - Consider refactoring K8s calls
-def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConfig]:
+def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConfig]:  # noqa: C901
     """Get vSphere configuration from Kubernetes secrets. (Copied from parse_clouddrive_map.py)."""
     logger.debug("Attempting to get vSphere config from namespace: %s", namespace)
     vcenter = None

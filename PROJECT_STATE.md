@@ -122,7 +122,7 @@ All scripts use Click for CLI implementation with:
 
 ## Dependencies
 
-Core dependencies include:
+Core dependencies include (please refer to `pyproject.toml` for the complete and authoritative list of dependencies and their versions):
 
 - kubernetes-client
 - click
@@ -133,7 +133,7 @@ Core dependencies include:
 
 ## Development Environment
 
-- Python 3.x
+- Python 3.9-3.14
 - Linux-based development environment
 - Kubernetes cluster access required
 - PX-Backup system access required

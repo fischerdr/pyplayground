@@ -1,11 +1,27 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Author: PX Team
+# Date: 2025-05-09
+"""Analyzes and summarizes the API logs.
+
+It will determine how many times each ConfigMap was accessed by which pods and from which source IPs.
+
+"""
 import json
 from collections import defaultdict
 
 
 def summarize_configmap_requests(log_file_path):
-    """
-    Analyzes and summarizes the API logs to determine how many times each ConfigMap
-    was accessed by which pods and from which source IPs. Also verifies total logs processed.
+    """Analyzes and summarizes the API logs.
+
+    It will determine how many times each ConfigMap was accessed by which pods and from which source IPs.
+    Also verifies total logs processed.
+
+    Args:
+        log_file_path (str): The path to the log file to analyze.
+
+    Returns:
+        None
     """
     # Dictionary to store summarized information on ConfigMap requests
     configmap_summary = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
@@ -43,6 +59,7 @@ def summarize_configmap_requests(log_file_path):
                     valid_entries += 1  # Count each valid log entry processed
             except (json.JSONDecodeError, KeyError, TypeError) as e:
                 # Handle any parsing or data issues and continue processing
+                print(f"Error parsing line: {line} {e}")
                 continue
 
     # Output the summarized findings

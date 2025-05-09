@@ -56,6 +56,7 @@ python src/ocp_report_pxesxi.py --kubeconfig /path/to/kubeconfig --output-format
 | `--namespace` | Namespace where MachineSets reside (default: openshift-machine-api) |
 | `--output-format` | Output format: table or json (default: table) |
 | `--disable-ssl` | Disable SSL verification for vSphere connection |
+| `--vsphere-cert-path` | Path to a custom SSL certificate file for vSphere connection. Overrides VSPHERE_SSL_CERT_PATH env var and default fallback. |
 | `--brief` | Generate a brief summary report instead of detailed report |
 | `--credentials-secret` | Kubernetes Secret containing vSphere credentials (default: px-vsphere-secret) |
 | `--credentials-namespace` | Namespace containing the credentials Secret (default: portworx) |
@@ -103,14 +104,14 @@ ESXi Hosts Details for cluster-name
 The brief table output includes:
 
 - Total Portworx pods count across all clusters
-- Total ESXi hosts count across all clusters (sum of host counts for each reported VMware cluster, not necessarily globally unique ESXi hosts across all OpenShift clusters)
+- Total unique ESXi hosts count across all clusters (globally unique ESXi hosts based on their names)
 - Summary table showing OpenShift clusters, VMware clusters, ESXi host counts, and Portworx pod counts (shown only once per OpenShift cluster)
 
 Example:
 
 ```text
 Total Portworx pods across all clusters: 146
-Total ESXi hosts across all clusters: 54
+Total unique ESXi hosts across all clusters: 54
 
                        OpenShift and VMware Clusters Summary                        
 ┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
@@ -163,7 +164,7 @@ Example:
 The brief JSON output provides a condensed view:
 
 - Total Portworx pods count across all clusters
-- Total ESXi hosts count across all clusters
+- Total unique ESXi hosts count across all clusters (globally unique ESXi hosts based on their names)
 - Summary of OpenShift clusters with:
   - Portworx pod count per cluster (shown only once per OpenShift cluster)
   - VMware clusters with their host counts
@@ -279,4 +280,22 @@ The script uses Python's logging module to provide detailed information about it
   - Kubernetes Secrets (recommended)
 - The script uses HTTPS for communication with external services
 - SSL verification can be disabled if needed, but this is not recommended for production environments
-- The script attempts to load a custom CA certificate from the hardcoded path \`/path/to/your/cert.pem\` if it exists and SSL verification is not disabled. If using custom CAs for vSphere, ensure your CA bundle is placed at this location, modify the script, or ensure SSL is disabled if this path is not intended for use.
+- The script attempts to load a custom CA certificate from the hardcoded path `/path/to/your/cert.pem` if it exists and SSL verification is not disabled. If using custom CAs for vSphere, ensure your CA bundle is placed at this location, modify the script, or ensure SSL is disabled if this path is not intended for use.
+
+### VMware Credential Sourcing Order
+
+1. **Command-Line Options**: Explicitly provided `--vsphere-host`, `--vsphere-user`, and `--vsphere-password` are used first.
+2. **Kubernetes Secret**: If `--credentials-secret` (and optionally `--credentials-namespace`) is provided:
+    - Username and password are fetched from the Secret.
+    - If `--vsphere-host` was not given via CLI, the script attempts to derive the vSphere host/server name from the `providerSpec.value.workspace.server` field of the first MachineSet.
+3. **Environment Variable**: If the password is not supplied by CLI or a Secret, the script checks the `VSPHERE_PASSWORD` environment variable.
+
+### vSphere SSL Certificate Handling
+
+The script determines the SSL certificate to use for vSphere connections with the following precedence:
+
+1. **`--disable-ssl` CLI Flag**: If present, SSL verification is disabled entirely.
+2. **`--vsphere-cert-path` CLI Option**: If provided, this path to a custom SSL certificate file is used.
+3. **`VSPHERE_SSL_CERT_PATH` Environment Variable**: If the CLI option is not used, this environment variable is checked for a certificate path.
+4. **Default Fallback Path**: If neither the CLI option nor the environment variable is set, the script checks for a certificate at the hardcoded path `DEFAULT_FALLBACK_CERT_PATH` (currently `"/path/to/your/cert.pem"`). *Note: This path is hardcoded in the script; for production use, ensure your certificate is at this location, modify the script to point to the correct path, or use one of the higher-precedence methods.*
+5. **System Default CAs**: If none of the above specific paths are provided or valid (and SSL is not disabled), the system's default CA trust store is used for SSL verification.

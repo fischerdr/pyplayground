@@ -1,0 +1,45 @@
+{
+    "journalctl": {
+        "command": "journalctl -flu portworx*",
+        "follow": true,
+        "unit": "portworx*"
+    },
+    "log_patterns": {
+        "error": ["error", "err", "failed", "fail", "fatal", "critical"],
+        "warning": ["warning", "warn", "wrn"],
+        "info": ["info", "inf"],
+        "debug": ["debug", "dbg"],
+        "timestamp": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    },
+    "display": {
+        "table": {
+            "default_wrap": false,
+            "columns": {
+                "name": {
+                    "style": "cyan",
+                    "no_wrap": true
+                },
+                "namespace": {
+                    "style": "magenta",
+                    "no_wrap": true
+                },
+                "node": {
+                    "style": "green",
+                    "no_wrap": true
+                },
+                "status": {
+                    "style": "yellow",
+                    "no_wrap": true
+                },
+                "pod_ip": {
+                    "style": "blue",
+                    "no_wrap": true
+                }
+            }
+        }
+    },
+    "defaults": {
+        "namespace": "portworx",
+        "pod_label": "name=portworx"
+    }
+} 

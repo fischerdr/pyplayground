@@ -615,9 +615,9 @@ def extract_cluster_name_from_api_url(api_url: str) -> str:
         return "unknown-cluster"
 
 
-def _generate_brief_json_data(
+def _generate_brief_json_data(  # noqa: C901
     all_clusters_data: Dict[str, Dict[str, Any]],
-) -> Dict[str, Any]:  # noqa: C901
+) -> Dict[str, Any]:
     """Generate the data structure for the brief JSON report.
 
     Args:

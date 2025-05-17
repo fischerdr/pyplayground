@@ -6,7 +6,7 @@ Selecting appropriate storage for on-premises Kubernetes or OpenShift environmen
 
 ### Infrastructure Context
 
-Our environment consists of a mix of bare metal and VMware ESXi clusters, with storage provided by Pure Storage and NetApp arrays. Kubernetes and OpenShift clusters are broken into zones each in its own row. For ESXi, each cluster is mapped to a shelf in a rack, and all clusters are managed under a single vCenter. Bare metal clusters are similarly distributed across rows to maximize fault isolation and high availability.
+Our environment consists of a mix of bare metal and VMware ESXi clusters, with backend storage provided by Pure Storage and NetApp arrays that the PV/PVCs are connected to. Kubernetes and OpenShift clusters are broken into zones each in its own row. For ESXi, each cluster is mapped to a shelf in a rack, and all clusters are managed under a single vCenter. Bare metal clusters are similarly distributed across rows to maximize fault isolation and high availability.
 
 - Each datacenter row is mapped to a Kubernetes/OpenShift zone (e.g., `zone-a`, `zone-b`, `zone-c`).
 - Each ESXi cluster corresponds to a shelf in a rack and is mapped to a zone. Each zone is a distinct failure domain.
@@ -31,11 +31,23 @@ Most of out customer that are using portworx as there PV storage are mostly usin
 
 We have a few customers that are using NFS as their storage backend. Most are using this to share data across zones, datacenters, and regions.
 
+However, as outlined above, both NFS and Portworx are often used in ways that do not align with best practices for efficiency, cost, or resilience. These patterns can lead to suboptimal performance, increased operational overhead, and potential risks to data availability.
+
 ### Storage Strategy
 
-We need to help customers to use the storage more efficiently or to rethink there storage strategy.
+On-Boarding team should assess each customer's storage requirements by reviewing their workload types, data persistence needs, and access patterns. Recommend the most efficient storage solution—whether NFS, Portworx, or another backend—based on these factors.
 
-We shoud be able to walk through what their needs are and be able to provide a storage strategy that meets their needs.
+Guide customers through a structured decision process:
+
+- Identify whether their workloads require ephemeral, persistent, shared, or local storage.
+- Match each workload to the most appropriate storage class and backend.
+- Advise on best practices for data protection, cost optimization, and high availability.
+
+Enforce adherence to recommended architectures by:
+
+- Ensuring customers provision storage in alignment with physical zones and failure domains.
+- Requiring the use of topology-aware StorageClasses for multi-zone deployments.
+- Regularly reviewing customer deployments to verify compliance with storage best practices.
 
 Example of PV storage types:
 
@@ -74,21 +86,23 @@ To address the limitations of NFS storage, we should leverage  solutions that le
 
 We should also consider the following:
 
+*Software-Defined Storage (SDS):*
+
 - Software-Defined Storage (SDS) - Ceph, Portworx, Longhorn, OpenEBS
+- *Description:* These solutions typically operate as applications within the Kubernetes cluster or on dedicated commodity hardware, pooling local/networked storage resources. They provide features such as data replication, snapshots, encryption, and dynamic provisioning, managed via Kubernetes APIs.
+- *Pros:* Offers high scalability, a rich feature set (including HA, snapshots, tiering), potential hardware-agnosticism, and strong Kubernetes integration.
+- *Cons:* May present a steeper learning curve. Performance is dependent on the underlying hardware and network configuration. Dedicated operational expertise for the SDS platform itself may be required.
+
+or
+
+*Enterprise SAN/NAS with CSI Drivers:*
+
 - Enterprise SAN/NAS with CSI Drivers - Dell EMC (PowerStore, PowerFlex, Unity), NetApp (ONTAP), Pure Storage (FlashArray, FlashBlade), IBM (Spectrum Scale, FlashSystem), HPE (Primera, Alletra, 3PAR)
+- *Description:* Existing or new enterprise storage arrays (Fibre Channel SAN, iSCSI SAN, high-performance NAS filers) are integrated with Kubernetes/OpenShift clusters via vendor-provided CSI drivers.
+- *Pros:* Leverages existing investments in robust enterprise storage and associated operational expertise. Benefits from mature data services (e.g., advanced replication, snapshots, DR capabilities) provided by the array.
+- *Cons:* The quality and feature-completeness of dynamic provisioning and other Kubernetes-native features depend heavily on the vendor's CSI driver implementation. Management of external arrays can add complexity. May not be as agile or potentially cost-effective for rapidly changing cloud-native workloads compared to some SDS alternatives.
 
-- *Software-Defined Storage (SDS):*
-  - *Examples:* Ceph (often deployed via Rook-Ceph), Portworx, Longhorn, OpenEBS.
-  - *Description:* These solutions typically operate as applications within the Kubernetes cluster or on dedicated commodity hardware, pooling local/networked storage resources. They provide features such as data replication, snapshots, encryption, and dynamic provisioning, managed via Kubernetes APIs.
-  - *Pros:* Offers high scalability, a rich feature set (including HA, snapshots, tiering), potential hardware-agnosticism, and strong Kubernetes integration.
-  - *Cons:* May present a steeper learning curve. Performance is dependent on the underlying hardware and network configuration. Dedicated operational expertise for the SDS platform itself may be required.
-- *Enterprise SAN/NAS with CSI Drivers:*
-  - *Examples:* CSI drivers from Dell EMC (PowerStore, PowerFlex, Unity), NetApp (ONTAP), Pure Storage (FlashArray, FlashBlade), IBM (Spectrum Scale, FlashSystem), HPE (Primera, Alletra, 3PAR).
-  - *Description:* Existing or new enterprise storage arrays (Fibre Channel SAN, iSCSI SAN, high-performance NAS filers) are integrated with Kubernetes/OpenShift clusters via vendor-provided CSI drivers.
-  - *Pros:* Leverages existing investments in robust enterprise storage and associated operational expertise. Benefits from mature data services (e.g., advanced replication, snapshots, DR capabilities) provided by the array.
-  - *Cons:* The quality and feature-completeness of dynamic provisioning and other Kubernetes-native features depend heavily on the vendor's CSI driver implementation. Management of external arrays can add complexity. May not be as agile or potentially cost-effective for rapidly changing cloud-native workloads compared to some SDS alternatives.
-
-### On-Premises Storage Comparison: NFS vs. CSI Solutions
+*Brief comparison of NFS and CSI solutions:*
 
 | Feature Area                           | NFS (Traditional On-Premises)                                       | CSI Solutions (SDS, SAN/NAS + CSI) |
 |----------------------------------------|---------------------------------------------------------------------|-----------------------------------------------------------------------|
@@ -107,7 +121,7 @@ We should also consider the following:
 | **Upgrade/Maintenance Impact**         | Often disruptive for NFS server maintenance.                        | Supports non-disruptive upgrades and maintenance for storage plane. |
 | **Cost Model (On-Prem TCO)**           | Lower initial hardware (if repurposing), high long-term ops cost.   | Higher initial (for SDS/HCI licenses/nodes or modern arrays), lower long-term ops cost due to automation & efficiency. |
 
-Since we are running at a large scale we need to consider the following:
+Also since we are running at a large scale we need to consider the following:
 
 - **Scalability:**
   - **Control Plane:** The storage solution's control plane, and the Kubernetes/OpenShift control plane (notably etcd), must efficiently handle a high rate of PV/PVC operations (create, delete, update), volume attachments, mounts, and unmounts. For etcd, this necessitates considerations such as dedicated instances, optimized hardware, and regular performance tuning, as high PV and namespace counts directly impact etcd and API server load.
@@ -130,30 +144,32 @@ Since we are running at a large scale we need to consider the following:
   - Storage systems should ideally support thin provisioning for optimal space utilization and efficient reclamation of freed space upon PVC deletion.
   - Establish automated alerts for low capacity thresholds at both global storage pool and per-namespace quota levels.
 
-## Zonal Architectures & Data Replication
+### Zonal Architectures
 
 We also need to make sure customers are following our zonal architecture. This is a must for data replication and are critical for HA and DR. In our environment, each datacenter row is mapped to a Kubernetes/OpenShift zone, and storage is provisioned to match the physical location of compute resources, But we have customers that are not following this architecture. They are using NFS for their storage backend and use it across regions and zones in a mixed fashion which breaks fault isolation and high availability.
 
-We need to make sure customers are following this architecture and are using the correct storage for the correct use case.
+On-Boarding team should enforce adherence to the recommended zonal architecture and ensure that customers select storage appropriate to their specific use cases. Regularly review deployments to confirm that storage usage and being used in the correct manner, and that shared storage is not used in ways that compromise fault isolation or high availability.
 
-- **Defining Availability Zones:**
-  - Map each physical datacenter row to a Kubernetes/OpenShift zone using node labels (e.g., `topology.kubernetes.io/zone`).
-  - Ensure each zone is a distinct failure domain.
-  - Each datacenter row is managed by a single vCenter and contains 10–15 racks.
-  - Each rack contains multiple shelves; each shelf is an ESXi host cluster (typically 10–15 hosts).
-  - A Kubernetes/OpenShift cluster is deployed on one or more ESXi host clusters (shelves), and these host clusters collectively define a single zone.
-  - Zones are mapped at the vCenter/row level, with each zone spanning the ESXi host clusters within that row.
+*Defining Availability Zones:*
 
-- **Data Replication Strategies:**
-  - **Synchronous Replication:** Use for critical workloads requiring zero data loss. Pure Storage and NetApp support synchronous replication between arrays in different zones (rows).
-  - **Asynchronous Replication:** Use for less critical workloads or when zones are separated by higher latency. Configure replication policies to match RPO/RTO requirements.
-  - **Disaster Recovery:** Regularly test failover and failback procedures. Automate backup and restore workflows where possible.
+- Map each physical datacenter row to a Kubernetes/OpenShift zone using node labels (e.g., `topology.kubernetes.io/zone`).
+- Ensure each zone is a distinct failure domain.
+- Each datacenter row is managed by a single vCenter and contains 10–15 racks.
+- Each rack contains multiple shelves; each shelf is an ESXi host cluster (typically 10–15 hosts).
+- A Kubernetes/OpenShift cluster is deployed on one or more ESXi host clusters (shelves), and these host clusters collectively define a single zone.
+- Zones are mapped at the vCenter/row level, with each zone spanning the ESXi host clusters within that row.
 
-- **Best Practices:**
+*Data Replication Strategies:*
+
+- **Synchronous Replication:** Use for critical workloads requiring zero data loss. Pure Storage and NetApp support synchronous replication between arrays in different zones (rows).
+- **Asynchronous Replication:** Use for less critical workloads or when zones are separated by higher latency. Configure replication policies to match RPO/RTO requirements.
+- **Disaster Recovery:** Regularly test failover and failback procedures. Automate backup and restore workflows where possible.
+
+*Best Practices:*
 
 For multi-zone deployments, different storage types and solutions have distinct advantages:
 
-1. **Block Storage:**
+1. *Block Storage:*
    - Best suited for high-performance, latency-sensitive workloads
    - Excellent for synchronous replication between zones
    - Supports ReadWriteOnce (RWO) access mode
@@ -163,8 +179,9 @@ For multi-zone deployments, different storage types and solutions have distinct 
      - **Longhorn:** Lightweight distributed block storage system by Rancher
      - Traditional arrays: Pure Storage FlashArray, NetApp ONTAP SAN
    - Recommended for: PostgreSQL, MySQL, MongoDB, message queues
+   - Applications using this type tend to have there own replications that handle zone and region replication.
 
-2. **File Storage:**
+2. *File Storage:*
    - Supports ReadWriteMany (RWX) for shared access across pods
    - Good for moderate performance requirements
    - Can span zones but may introduce latency
@@ -173,8 +190,9 @@ For multi-zone deployments, different storage types and solutions have distinct 
      - **OpenEBS:** Supports NFS provisioner
      - Traditional NAS: NetApp ONTAP NAS, Pure FlashBlade
    - Recommended for: Web content, shared application data, development tools
+   - Most applcations using this type do not need to be shared across zones, if they do they should be using a shared storage solution that is zone aware.
 
-3. **Object Storage:**
+3. *Object Storage:*
    - Highly scalable across zones
    - Built-in replication and data protection
    - Accessed via S3-compatible API
@@ -182,7 +200,8 @@ For multi-zone deployments, different storage types and solutions have distinct 
      - **Rook-Ceph:** Provides Ceph RADOS Gateway (RGW) for S3-compatible storage
      - **MinIO:** Distributed object storage designed for high performance
      - **OpenEBS:** Can be used with MinIO for persistent storage
-   - Best for: Backups, archives, static assets, ML training data
+   - Best for: Backups, archives, static assets, ML training data, Batch processing, and other workloads.
+   - Region and zone replication is handled by the object storage solution.
 
 Software-defined storage solutions like Portworx, Rook-Ceph, and Longhorn are particularly well-suited for Kubernetes environments as they:
 
@@ -200,14 +219,14 @@ We need to make sure customers are following these best practices:
 - Document and regularly review the mapping between physical infrastructure and logical zones.
 - Integrate storage monitoring with cluster monitoring (e.g., Prometheus, Grafana) for unified visibility.
 
-## Cost, Compliance, and Operational Considerations
+### Cost, Compliance, and Operational Considerations
 
-- **Total Cost of Ownership (TCO):** Consider both initial hardware/software investments and long-term operational costs, including maintenance, power, cooling, and staff expertise. Automation and efficient management can reduce long-term TCO.
-- **Compliance:** Ensure storage solutions meet regulatory requirements (e.g., GDPR, HIPAA, PCI DSS) for data protection, retention, and auditability. On-premises deployments may offer more direct control over compliance but require diligent management.
-- **Operational Overhead:** On-premises solutions require ongoing maintenance, upgrades, and monitoring. Evaluate the impact on IT staff and the need for specialized skills.
-- **Scalability:** Plan for future growth in storage needs, considering the scalability limitations of on-premises hardware and the potential need for hardware refresh cycles.
+- *Total Cost of Ownership (TCO):* Consider both initial hardware/software investments and long-term operational costs, including maintenance, power, cooling, and staff expertise. Automation and efficient management can reduce long-term TCO.
+- *Compliance:* Ensure storage solutions meet regulatory requirements (e.g., GDPR, HIPAA, PCI DSS) for data protection, retention, and auditability. On-premises deployments may offer more direct control over compliance but require diligent management.
+- *Operational Overhead:* On-premises solutions require ongoing maintenance, upgrades, and monitoring. Evaluate the impact on IT staff and the need for specialized skills.
+- *Scalability:* Plan for future growth in storage needs, considering the scalability limitations of on-premises hardware and the potential need for hardware refresh cycles.
 
-## See Also
+### See Also
 
 For cloud-native storage strategies, see [CloudStorageStrategy.md](CloudStorageStrategy.md).
 

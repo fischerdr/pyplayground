@@ -1,5 +1,4 @@
-"""
-Utility functions for searching secrets and passwords in various file types.
+"""Utility functions for searching secrets and passwords in various file types.
 
 This module provides functionality to search for sensitive information patterns
 in different file formats including JSON, YAML, and text files.
@@ -39,8 +38,7 @@ class CustomSafeConstructor(SafeConstructor):
 
     @classmethod
     def remove_implicit_resolver(cls, tag_to_remove: str) -> None:
-        """
-        Remove implicit resolvers for a particular tag.
+        """Remove implicit resolvers for a particular tag.
 
         Args:
             tag_to_remove: Tag to remove from implicit resolvers
@@ -55,8 +53,7 @@ class CustomSafeConstructor(SafeConstructor):
 
 
 def create_custom_yaml_loader() -> type:
-    """
-    Create a custom YAML loader that safely handles unknown tags.
+    """Create a custom YAML loader that safely handles unknown tags.
 
     Returns:
         A custom YAML loader class
@@ -125,8 +122,7 @@ SECRET_PATTERNS = {
 
 
 def should_ignore_line(line: str) -> bool:
-    """
-    Check if a line should be ignored for secret scanning.
+    """Check if a line should be ignored for secret scanning.
 
     Args:
         line: The line to check
@@ -163,8 +159,7 @@ def should_ignore_line(line: str) -> bool:
 
 
 def should_ignore_file(file_path: Path) -> bool:
-    """
-    Check if a file should be ignored based on its path.
+    """Check if a file should be ignored based on its path.
 
     Args:
         file_path: Path to the file
@@ -191,8 +186,7 @@ def should_ignore_file(file_path: Path) -> bool:
 
 
 def is_sensitive_key(key: str) -> Optional[str]:
-    """
-    Check if a dictionary key indicates sensitive information.
+    """Check if a dictionary key indicates sensitive information.
 
     Args:
         key: The key to check
@@ -220,46 +214,54 @@ def is_sensitive_key(key: str) -> Optional[str]:
     return None
 
 
-def extract_from_dict(
-    data: Union[Dict, List], key_filter: str = "password"
-) -> List[tuple[str, str]]:
-    """
-    Recursively extract sensitive values from dictionary or list.
+def _extract_from_dict_items(current_dict: Dict[Any, Any], results: List[tuple[str, str]]) -> None:
+    """Helper to recursively extract sensitive values from dictionary items."""
+    for k, v in current_dict.items():
+        secret_type = is_sensitive_key(k)
+        if secret_type:
+            if isinstance(v, str):
+                results.append((secret_type, v))
+            elif isinstance(v, dict):
+                # Check nested dictionary values for sensitive data (one level deep)
+                for sub_k, sub_v in v.items():
+                    if isinstance(sub_v, str):
+                        results.append((f"{secret_type} ({sub_k})", sub_v))
+        elif isinstance(v, dict):
+            _extract_from_dict_items(v, results)
+        elif isinstance(v, list):
+            _extract_from_list_items(v, results)
+
+
+def _extract_from_list_items(current_list: List[Any], results: List[tuple[str, str]]) -> None:
+    """Helper to recursively extract sensitive values from list items."""
+    for item in current_list:
+        if isinstance(item, dict):
+            _extract_from_dict_items(item, results)
+        elif isinstance(item, list):
+            _extract_from_list_items(item, results)
+
+
+def extract_from_dict(data: Union[Dict, List]) -> List[tuple[str, str]]:
+    """Recursively extract sensitive values from dictionary or list.
 
     Args:
         data: The dictionary or list to search through
-        key_filter: The key to filter by (default is 'password')
 
     Returns:
         List of tuples containing (secret_type, value)
     """
     results: List[tuple[str, str]] = []
 
-    def recurse(obj: Union[Dict, List]) -> None:
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                if secret_type := is_sensitive_key(k):
-                    if isinstance(v, str):
-                        results.append((secret_type, v))
-                    elif isinstance(v, dict):
-                        # Check nested dictionary values for sensitive data
-                        for sub_k, sub_v in v.items():
-                            if isinstance(sub_v, str):
-                                results.append((f"{secret_type} ({sub_k})", sub_v))
-                elif isinstance(v, (dict, list)):
-                    recurse(v)
-        elif isinstance(obj, list):
-            for item in obj:
-                if isinstance(item, (dict, list)):
-                    recurse(item)
+    if isinstance(data, dict):
+        _extract_from_dict_items(data, results)
+    elif isinstance(data, list):
+        _extract_from_list_items(data, results)
 
-    recurse(data)
     return results
 
 
 def extract_from_text_with_line_numbers(content: str) -> List[PasswordInfo]:
-    """
-    Extract secrets using regex patterns from text content.
+    """Extract secrets using regex patterns from text content.
 
     Args:
         content: The text content to search
@@ -305,9 +307,54 @@ def extract_from_text_with_line_numbers(content: str) -> List[PasswordInfo]:
     return results
 
 
+def _process_json_file(content: str) -> List[PasswordInfo]:
+    """Process JSON content for secrets."""
+    try:
+        data = json.loads(content)
+        secrets = extract_from_dict(data)
+        passwords = [
+            {"line": None, "password": secret[1], "text": None, "type": secret[0]}
+            for secret in secrets
+        ]
+        # Also check for patterns in the raw content
+        passwords.extend(extract_from_text_with_line_numbers(content))
+    except json.JSONDecodeError:
+        # If JSON parsing fails, treat as text
+        passwords = extract_from_text_with_line_numbers(content)
+    return passwords
+
+
+def _process_yaml_file(content: str, file_path: Path) -> List[PasswordInfo]:
+    """Process YAML content for secrets."""
+    logger = logging.getLogger(__name__)
+    try:
+        CustomLoader = create_custom_yaml_loader()
+        data = yaml.load(content, Loader=CustomLoader)
+        if data:  # Only process if YAML parsing succeeded
+            secrets = extract_from_dict(data)
+            passwords = [
+                {"line": None, "password": secret[1], "text": None, "type": secret[0]}
+                for secret in secrets
+            ]
+            # Also check for patterns in the raw content
+            passwords.extend(extract_from_text_with_line_numbers(content))
+        else:
+            passwords = extract_from_text_with_line_numbers(content)
+    except yaml.YAMLError as e:
+        logger.warning(
+            f"YAML parsing error in {file_path}, falling back to text scanning: {str(e)}"
+        )
+        passwords = extract_from_text_with_line_numbers(content)
+    return passwords
+
+
+def _process_text_file(content: str) -> List[PasswordInfo]:
+    """Process text content for secrets."""
+    return extract_from_text_with_line_numbers(content)
+
+
 def process_file(file_path: Path, ignore_tests: bool = True) -> Optional[FileResult]:
-    """
-    Process a single file for secret patterns.
+    """Process a single file for secret patterns.
 
     Args:
         file_path: Path to the file to process
@@ -315,6 +362,11 @@ def process_file(file_path: Path, ignore_tests: bool = True) -> Optional[FileRes
 
     Returns:
         Dictionary containing file information and found secrets, or None if processing fails
+
+    Raises:
+        json.JSONDecodeError: If the JSON parsing fails
+        yaml.YAMLError: If the YAML parsing fails
+        Exception: If an unexpected error occurs
     """
     logger = logging.getLogger(__name__)
 
@@ -325,45 +377,15 @@ def process_file(file_path: Path, ignore_tests: bool = True) -> Optional[FileRes
 
     try:
         content = file_path.read_text(encoding="utf-8")
+        passwords: List[PasswordInfo] = []
 
         # Handle different file types
         if file_path.suffix == ".json":
-            try:
-                data = json.loads(content)
-                secrets = extract_from_dict(data)
-                passwords = [
-                    {"line": None, "password": secret[1], "text": None, "type": secret[0]}
-                    for secret in secrets
-                ]
-                # Also check for patterns in the raw content
-                passwords.extend(extract_from_text_with_line_numbers(content))
-            except json.JSONDecodeError:
-                # If JSON parsing fails, treat as text
-                passwords = extract_from_text_with_line_numbers(content)
-
+            passwords = _process_json_file(content)
         elif file_path.suffix in (".yaml", ".yml"):
-            try:
-                # Use custom loader for YAML files
-                CustomLoader = create_custom_yaml_loader()
-                data = yaml.load(content, Loader=CustomLoader)
-                if data:  # Only process if YAML parsing succeeded
-                    secrets = extract_from_dict(data)
-                    passwords = [
-                        {"line": None, "password": secret[1], "text": None, "type": secret[0]}
-                        for secret in secrets
-                    ]
-                    # Also check for patterns in the raw content
-                    passwords.extend(extract_from_text_with_line_numbers(content))
-                else:
-                    passwords = extract_from_text_with_line_numbers(content)
-            except yaml.YAMLError as e:
-                logger.warning(
-                    f"YAML parsing error in {file_path}, falling back to text scanning: {str(e)}"
-                )
-                passwords = extract_from_text_with_line_numbers(content)
-
+            passwords = _process_yaml_file(content, file_path)
         else:  # Handle as text file
-            passwords = extract_from_text_with_line_numbers(content)
+            passwords = _process_text_file(content)
 
         if passwords:
             return {"file": str(file_path), "passwords": passwords}

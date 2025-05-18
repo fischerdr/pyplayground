@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-SSL Certificate Inspector
+"""SSL Certificate Inspector.
 
 This script displays all configured SSL CA certificates on the system and
 attempts to connect to an HTTPS endpoint, showing the SSL certificates and chains.
@@ -125,8 +124,7 @@ def print_cert_info_verbose(
 
 
 def use_custom_ca_bundle(custom_bundle_path: str) -> Optional[str]:
-    """
-    Configure the system to use a custom CA bundle.
+    """Configure the system to use a custom CA bundle.
 
     Args:
         custom_bundle_path: Path to the custom CA bundle file
@@ -150,8 +148,7 @@ def use_custom_ca_bundle(custom_bundle_path: str) -> Optional[str]:
 
 
 def create_custom_ca_bundle(custom_cert_path: str, output_path: str) -> Optional[str]:
-    """
-    Create a custom CA bundle by combining the certifi bundle with a custom certificate.
+    """Create a custom CA bundle by combining the certifi bundle with a custom certificate.
 
     Args:
         custom_cert_path: Path to the custom certificate file
@@ -314,6 +311,107 @@ def get_server_certificate_chain(hostname: str, port: int = 443) -> List[OpenSSL
     return certificates
 
 
+def _parse_and_validate_endpoint(url: str) -> Tuple[Optional[str], Optional[int], bool]:
+    """Parse URL and validate the certificate chain."""
+    if not url.startswith("https://"):
+        url = f"https://{url}"
+
+    from urllib.parse import urlparse
+
+    parsed_url = urlparse(url)
+    hostname = parsed_url.hostname
+    port = parsed_url.port or 443
+
+    if not hostname:
+        console.print("[red]Invalid URL format. Could not extract hostname.[/red]")
+        return None, None, False
+
+    console.print(Panel(f"[bold]Connecting to {url}[/bold]", style="blue"))
+    is_valid = verify_certificate_chain(hostname, port)
+    if is_valid:
+        console.print("[green]✓ Certificate chain validates successfully[/green]")
+    else:
+        console.print("[red]✗ Certificate chain validation failed[/red]")
+    return hostname, port, is_valid
+
+
+def _display_site_information(response: requests.Response, url: str) -> None:
+    """Display detailed site information from the HTTP response."""
+    console.print(Panel("[bold]Site Information[/bold]", style="blue"))
+
+    site_table = Table(title="Website Details")
+    site_table.add_column("Property", style="cyan")
+    site_table.add_column("Value", style="green")
+
+    site_table.add_row("URL", url)
+    site_table.add_row("Status Code", str(response.status_code))
+    site_table.add_row("Content Type", response.headers.get("Content-Type", "Not specified"))
+    site_table.add_row("Server", response.headers.get("Server", "Not specified"))
+
+    security_headers = {
+        "Strict-Transport-Security": "HSTS",
+        "Content-Security-Policy": "CSP",
+        "X-Content-Type-Options": "X-Content-Type-Options",
+        "X-Frame-Options": "X-Frame-Options",
+        "X-XSS-Protection": "XSS Protection",
+    }
+    for header, description in security_headers.items():
+        value = response.headers.get(header, "Not set")
+        site_table.add_row(f"{description}", value)
+
+    if hasattr(response.raw.connection, "sock") and hasattr(
+        response.raw.connection.sock, "version"
+    ):
+        tls_version = response.raw.connection.sock.version()
+        site_table.add_row("TLS Version", tls_version)
+
+    if hasattr(response.raw.connection, "sock") and hasattr(response.raw.connection.sock, "cipher"):
+        cipher = response.raw.connection.sock.cipher()
+        if cipher:
+            cipher_name, _, bits = cipher  # tls_version is already captured
+            site_table.add_row("Cipher", f"{cipher_name} ({bits} bits)")
+
+    console.print(site_table)
+
+
+def _display_server_certificate(response: requests.Response, hostname: str, verbose: bool) -> None:
+    """Get and display the server's certificate from the response."""
+    cert = OpenSSL.crypto.load_certificate(
+        OpenSSL.crypto.FILETYPE_ASN1, response.raw.connection.sock.getpeercert(binary_form=True)
+    )
+    cert_info = get_cert_info(cert)
+    if verbose:
+        print_cert_info_verbose(cert_info, f"Server Certificate for {hostname}")
+    else:
+        print_cert_info(cert_info, f"Server Certificate for {hostname}")
+
+
+def _display_certificate_chain(hostname: str, port: int, verbose: bool) -> None:
+    """Display the certificate chain from the server."""
+    console.print("\n[bold]Certificate Chain:[/bold]")
+    certs = get_server_certificate_chain(hostname, port)
+
+    if len(certs) > 1:
+        # The first cert in the list from get_server_certificate_chain is the server cert itself,
+        # which is already displayed by _display_server_certificate.
+        # So, we iterate from the second certificate onwards for the chain.
+        for i, chain_cert in enumerate(certs[1:], 1):
+            chain_cert_info = get_cert_info(chain_cert)
+            if verbose:
+                print_cert_info_verbose(chain_cert_info, f"Chain Certificate {i}")
+            else:
+                print_cert_info(chain_cert_info, f"Chain Certificate {i}")
+    elif certs:  # Only server cert was found, no additional chain certs
+        console.print(
+            "[yellow]Only the server certificate was retrieved. No additional chain certificates found.[/yellow]"
+        )
+    else:  # No certs found at all
+        console.print("[yellow]Could not retrieve the certificate chain.[/yellow]")
+        console.print(
+            "This might be due to limitations in the SSL library or server configuration."
+        )
+
+
 def verify_certificate_chain(hostname: str, port: int = 443) -> bool:
     """Verify the certificate chain of a server."""
     context = ssl.create_default_context()
@@ -334,30 +432,11 @@ def verify_certificate_chain(hostname: str, port: int = 443) -> bool:
 
 def inspect_https_endpoint(url: str, verbose: bool = False) -> None:
     """Connect to an HTTPS endpoint and display its certificates."""
-    if not url.startswith("https://"):
-        url = f"https://{url}"
+    hostname, port, is_valid = _parse_and_validate_endpoint(url)
+    if not hostname or not port:
+        return
 
     try:
-        # Parse the URL to get hostname and port
-        from urllib.parse import urlparse
-
-        parsed_url = urlparse(url)
-        hostname = parsed_url.hostname
-        port = parsed_url.port or 443
-
-        if not hostname:
-            console.print("[red]Invalid URL format. Could not extract hostname.[/red]")
-            return
-
-        console.print(Panel(f"[bold]Connecting to {url}[/bold]", style="blue"))
-
-        # First, check if the certificate validates
-        is_valid = verify_certificate_chain(hostname, port)
-        if is_valid:
-            console.print("[green]✓ Certificate chain validates successfully[/green]")
-        else:
-            console.print("[red]✗ Certificate chain validation failed[/red]")
-
         # Get detailed information using requests
         console.print("\n[bold]Fetching certificate information...[/bold]")
 
@@ -371,84 +450,13 @@ def inspect_https_endpoint(url: str, verbose: bool = False) -> None:
 
         console.print(f"[green]✓ Connected successfully (Status: {response.status_code})[/green]")
 
-        # Display site information
-        console.print(Panel("[bold]Site Information[/bold]", style="blue"))
-
-        # Create a table for site information
-        site_table = Table(title="Website Details")
-        site_table.add_column("Property", style="cyan")
-        site_table.add_column("Value", style="green")
-
-        # Add basic site information
-        site_table.add_row("URL", url)
-        site_table.add_row("Status Code", str(response.status_code))
-        site_table.add_row("Content Type", response.headers.get("Content-Type", "Not specified"))
-
-        # Add server information if available
-        server = response.headers.get("Server", "Not specified")
-        site_table.add_row("Server", server)
-
-        # Add security headers
-        security_headers = {
-            "Strict-Transport-Security": "HSTS",
-            "Content-Security-Policy": "CSP",
-            "X-Content-Type-Options": "X-Content-Type-Options",
-            "X-Frame-Options": "X-Frame-Options",
-            "X-XSS-Protection": "XSS Protection",
-        }
-
-        for header, description in security_headers.items():
-            value = response.headers.get(header, "Not set")
-            site_table.add_row(f"{description}", value)
-
-        # Add TLS version information if available
-        if hasattr(response.raw.connection, "sock") and hasattr(
-            response.raw.connection.sock, "version"
-        ):
-            tls_version = response.raw.connection.sock.version()
-            site_table.add_row("TLS Version", tls_version)
-
-        # Add cipher information if available
-        if hasattr(response.raw.connection, "sock") and hasattr(
-            response.raw.connection.sock, "cipher"
-        ):
-            cipher = response.raw.connection.sock.cipher()
-            if cipher:
-                cipher_name, tls_version, bits = cipher
-                site_table.add_row("Cipher", f"{cipher_name} ({bits} bits)")
-
-        console.print(site_table)
+        _display_site_information(response, url)
 
         # Get certificate from the connection
-        cert = OpenSSL.crypto.load_certificate(
-            OpenSSL.crypto.FILETYPE_ASN1, response.raw.connection.sock.getpeercert(binary_form=True)
-        )
-
-        # Display certificate information
-        cert_info = get_cert_info(cert)
-        if verbose:
-            print_cert_info_verbose(cert_info, f"Server Certificate for {hostname}")
-        else:
-            print_cert_info(cert_info, f"Server Certificate for {hostname}")
+        _display_server_certificate(response, hostname, verbose)
 
         # Try to get the certificate chain
-        console.print("\n[bold]Certificate Chain:[/bold]")
-
-        # Get certificate chain using a direct SSL connection
-        certs = get_server_certificate_chain(hostname, port)
-
-        if len(certs) > 1:
-            for i, chain_cert in enumerate(certs[1:], 1):
-                chain_cert_info = get_cert_info(chain_cert)
-                if verbose:
-                    print_cert_info_verbose(chain_cert_info, f"Chain Certificate {i}")
-                else:
-                    print_cert_info(chain_cert_info, f"Chain Certificate {i}")
-        else:
-            console.print("[yellow]Could not retrieve the full certificate chain.[/yellow]")
-            console.print(
-                "This might be due to limitations in the SSL library or server configuration."
-            )
+        _display_certificate_chain(hostname, port, verbose)
 
     except requests.exceptions.SSLError as e:
         console.print(f"[red]SSL Error: {e}[/red]")

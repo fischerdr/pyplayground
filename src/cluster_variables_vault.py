@@ -29,8 +29,7 @@ class ClusterConfig:
         validate_certs: bool = True,
         ca_cert_path: Optional[str] = None,
     ) -> None:
-        """
-        Initialize cluster configuration with environment variables.
+        """Initialize cluster configuration with environment variables.
 
         Args:
             cluster_name: Optional[str] = None
@@ -77,8 +76,7 @@ class ClusterConfig:
 
 
 def validate_cluster_name(cluster_name: Optional[str]) -> None:
-    """
-    Validate cluster name format.
+    """Validate cluster name format.
 
     Args:
         cluster_name: The cluster name to validate
@@ -104,8 +102,7 @@ def validate_cluster_name(cluster_name: Optional[str]) -> None:
 
 
 def parse_cluster_name(cluster_name: str) -> Tuple[str, str, str, str, str, str]:
-    """
-    Parse cluster name into its component parts.
+    """Parse cluster name into its component parts.
 
     Args:
         cluster_name: The cluster name to parse
@@ -133,8 +130,7 @@ def parse_cluster_name(cluster_name: str) -> Tuple[str, str, str, str, str, str]
 
 
 def get_inventory(config: ClusterConfig) -> Dict[str, Any]:
-    """
-    Retrieve inventory data for a cluster.
+    """Retrieve inventory data for a cluster.
 
     Args:
         config: ClusterConfig object containing all necessary configuration
@@ -160,8 +156,7 @@ def get_inventory(config: ClusterConfig) -> Dict[str, Any]:
 
 
 def set_vault_info_from_inventory(response: Dict[str, Any]) -> Optional[Tuple[str, str, str, str]]:
-    """
-    Extract Vault information from inventory response.
+    """Extract Vault information from inventory response.
 
     Args:
         response: Inventory API response data
@@ -193,8 +188,7 @@ def set_vault_info_from_inventory(response: Dict[str, Any]) -> Optional[Tuple[st
 
 
 def set_vault_info_from_defaults(config: ClusterConfig) -> Tuple[str, str, str, str]:
-    """
-    Set Vault information based on default values when inventory data is unavailable.
+    """Set Vault information based on default values when inventory data is unavailable.
 
     Args:
         config: ClusterConfig object containing all necessary configuration
@@ -235,8 +229,7 @@ def set_vault_info_from_defaults(config: ClusterConfig) -> Tuple[str, str, str, 
 
 
 def process_cluster_variables(cluster_name: Optional[str] = None) -> None:
-    """
-    Process cluster variables and set up Vault configuration.
+    """Process cluster variables and set up Vault configuration.
 
     Args:
         cluster_name: Optional cluster name to override environment variable
@@ -307,8 +300,7 @@ def process_cluster_variables(cluster_name: Optional[str] = None) -> None:
     envvar="CA_CERT_PATH",
 )
 def main(cluster_name: Optional[str] = None) -> None:
-    """
-    Process cluster variables and set up Vault configuration.
+    """Process cluster variables and set up Vault configuration.
 
     This utility validates a cluster name, parses it into components, and configures
     Vault access information based on inventory data or default settings.

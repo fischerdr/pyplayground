@@ -6,7 +6,7 @@ This project consists of a collection of Python scripts for interacting with Kub
 
 ## Scripts Overview
 
-All Kubernetes-related scripts are prefixed with `k8s_` and located in the `src/` directory.
+All Kubernetes-related scripts are prefixed with `k8s_` and located in the `src/k8s` directory.
 
 All Portworx scripts are prefixed with `px` and located in the `src/pxclients/` directory.
 

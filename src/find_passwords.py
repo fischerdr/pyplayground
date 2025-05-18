@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Secret Scanner Tool.
+"""Secret Scanner Tool.
 
 This script searches for potential sensitive information exposures in various file types
 including JSON, YAML, Python, and Markdown files. It can detect:
@@ -30,8 +29,7 @@ console = Console()
 
 
 def setup_logging(log_level: str = "INFO") -> None:
-    """
-    Set up logging configuration.
+    """Set up logging configuration.
 
     Args:
         log_level: Desired logging level (default: INFO)
@@ -49,8 +47,7 @@ def scan_directory(
     ignore_tests: bool = True,
     file_patterns: List[str] = ["*.json", "*.yaml", "*.yml", "*.py", "*.md", "*.env", "*.conf"],
 ) -> List[FileResult]:
-    """
-    Scan directory for files containing potential secret exposures.
+    """Scan directory for files containing potential secret exposures.
 
     Args:
         directory: Directory path to scan
@@ -88,8 +85,7 @@ def get_secret_style(secret_type: str) -> str:
 
 
 def display_results(results: List[FileResult], base_dir: Path) -> None:
-    """
-    Display scan results in a formatted table.
+    """Display scan results in a formatted table.
 
     Args:
         results: List of FileResult to display
@@ -158,8 +154,19 @@ def main(
         help="Whether to ignore test files and directories",
     ),
 ) -> None:
-    """
-    Scan directory for potential secret exposures in code and config files.
+    """Scan directory for potential secret exposures in code and config files.
+
+    Args:
+        directory: Directory to scan for secrets
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
+        ignore_tests: Whether to ignore test files and directories
+
+    Returns:
+        None
+
+    Raises:
+        typer.BadParameter: If the directory does not exist
+        typer.BadParameter: If the directory is not a directory
     """
     setup_logging(log_level)
     logger = logging.getLogger(__name__)

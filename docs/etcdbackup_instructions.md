@@ -1,10 +1,10 @@
-# Dockerfile to create an image that can handle the etcd backup operation described earlier. 
+# Dockerfile to create an image that can handle the etcd backup operation described earlier
 
 This Dockerfile includes etcdctl for interacting with etcd and the AWS CLI for uploading backups to S3
 
 ## Dockerfile
 
-```text
+```dockerfile
 # Use a lightweight base image
 FROM alpine:3.18
 # Install necessary tools: etcdctl, aws-cli, and bash

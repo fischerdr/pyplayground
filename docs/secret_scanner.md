@@ -61,13 +61,16 @@ The Secret Scanner Tool is a Python-based utility designed to detect potential s
 
 1. Clone the repository
 2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+
+```bash
+pip install -r requirements.txt
+```
+
 3. Make the script executable:
-   ```bash
-   chmod +x find_passwords.py
-   ```
+
+```bash
+chmod +x find_passwords.py
+```
 
 ## Usage
 
@@ -80,6 +83,7 @@ The Secret Scanner Tool is a Python-based utility designed to detect potential s
 ### Options
 
 - `--log-level, -l`: Set logging level (DEBUG, INFO, WARNING, ERROR)
+
   ```bash
   ./find_passwords.py /path/to/scan --log-level DEBUG
   ```
@@ -87,6 +91,7 @@ The Secret Scanner Tool is a Python-based utility designed to detect potential s
 ### Output
 
 The tool provides color-coded output with:
+
 - File path where secret was found
 - Type of secret detected
 - Line number (when available)
@@ -141,7 +146,7 @@ secret = environ.get("API_SECRET")
 
 ## Project Structure
 
-```
+```text
 .
 ├── find_passwords.py          # Main script
 ├── utils/

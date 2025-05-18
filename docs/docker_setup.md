@@ -5,11 +5,13 @@ This document describes the Docker configuration for the Python playground proje
 ## Base Image
 
 The project uses Fedora as its base image to maintain consistency with the development environment. We chose Fedora because:
+
 - It matches our build system OS
 - Provides up-to-date system packages
 - Has good support for Python development
 
 Alternative base images that are supported:
+
 - CentOS 8
 - Alpine Linux
 
@@ -18,19 +20,23 @@ Alternative base images that are supported:
 The container includes the following system packages:
 
 ### Development Tools
+
 - Python 3.9 and development tools
 - gcc for compiling Python packages with C extensions
 - git for version control
 
 ### Utilities
+
 - curl for making HTTP requests
 - wget for downloading files
 
 ### HashiCorp Tools
+
 - vault-agent for Vault integration and secrets management
 - HashiCorp repository configured for updates
 
 ### Kubernetes Tools
+
 - kubectl for managing Kubernetes clusters
 - Helm 3 for Kubernetes package management
 - Kubernetes repository configured for updates
@@ -38,6 +44,7 @@ The container includes the following system packages:
 ## Package Repositories
 
 The container is configured with the following package repositories:
+
 1. Fedora default repositories
 2. HashiCorp repository for Vault tools
 3. Kubernetes repository for kubectl
@@ -45,6 +52,7 @@ The container is configured with the following package repositories:
 ## Using Kubernetes Tools
 
 ### kubectl
+
 ```bash
 # Set your kubeconfig
 export KUBECONFIG=/path/to/your/kubeconfig
@@ -57,6 +65,7 @@ kubectl get nodes
 ```
 
 ### Helm
+
 ```bash
 # Add a repository
 helm repo add stable https://charts.helm.sh/stable
@@ -76,6 +85,7 @@ helm install my-release stable/chart-name
 ### Kubernetes Tools (kubectl and Helm)
 
 #### kubectl Configuration
+
 ```bash
 # Copy your kubeconfig into the container
 docker cp ~/.kube/config pyplayground:/root/.kube/config
@@ -106,6 +116,7 @@ kubectl port-forward svc/service-name 8080:80 -n your-namespace
 ```
 
 #### Helm Usage
+
 ```bash
 # Repository Management
 helm repo add bitnami https://charts.bitnami.com/bitnami
@@ -140,6 +151,7 @@ helm uninstall my-postgres -n database
 ### Vault Tools
 
 #### Vault Agent Configuration
+
 ```bash
 # Create a basic Vault Agent config
 cat <<EOF > vault-agent-config.hcl
@@ -203,6 +215,7 @@ git merge feature/branch
 ### Network Utilities
 
 #### curl Examples
+
 ```bash
 # Basic GET request
 curl https://api.example.com/endpoint
@@ -223,6 +236,7 @@ curl -u username:password https://api.example.com
 ```
 
 #### wget Examples
+
 ```bash
 # Download file
 wget https://example.com/file.tar.gz
@@ -289,6 +303,7 @@ docker run -it \
 ## Python Environment
 
 The Dockerfile sets up Python 3.9 (our minimum required version) with the following configuration:
+
 - Python 3.9 and development tools installation
 - pip for package management
 - gcc for compiling Python packages with C extensions
@@ -297,7 +312,7 @@ The Dockerfile sets up Python 3.9 (our minimum required version) with the follow
 
 The Docker container maintains the following directory structure:
 
-```
+```text
 /app/
 ├── config/         # Configuration files
 ├── docs/          # Documentation
@@ -309,6 +324,7 @@ The Docker container maintains the following directory structure:
 ### Volume Mounts
 
 Two directories are configured as Docker volumes:
+
 - `/app/logs`: For persistent storage of log files
 - `/app/config`: For persistent configuration files
 
@@ -317,12 +333,14 @@ This ensures that logs and configuration data persist between container restarts
 ## Dependencies
 
 The container installs dependencies from two files:
+
 1. `requirements.txt`: Core dependencies
 2. `requirements-dev.txt`: Development dependencies (if present)
 
 ## Environment Variables
 
 Default environment variables set in the container:
+
 - `PYTHONPATH=/app`: Ensures Python can find our modules
 - `PYTHONUNBUFFERED=1`: Prevents Python from buffering stdout/stderr
 
@@ -337,11 +355,13 @@ docker build -t pyplayground .
 ## Running the Container
 
 ### Basic Run
+
 ```bash
 docker run -it pyplayground
 ```
 
 ### With Volume Mounts
+
 ```bash
 docker run -it \
   -v $(pwd)/logs:/app/logs \
@@ -350,6 +370,7 @@ docker run -it \
 ```
 
 ### For Development
+
 ```bash
 docker run -it \
   -v $(pwd):/app \
@@ -361,11 +382,13 @@ docker run -it \
 ## Testing
 
 The default command runs pytest:
+
 ```bash
 docker run pyplayground
 ```
 
 To run specific tests:
+
 ```bash
 docker run pyplayground python -m pytest tests/specific_test.py
 ```
@@ -391,12 +414,14 @@ docker run pyplayground python -m pytest tests/specific_test.py
 Common issues and solutions:
 
 1. **Permission Issues**:
+
    ```bash
    # Fix permissions on log directory
    chmod 777 logs
    ```
 
 2. **Python Path Issues**:
+
    ```bash
    # Run with explicit PYTHONPATH
    docker run -e PYTHONPATH=/app pyplayground

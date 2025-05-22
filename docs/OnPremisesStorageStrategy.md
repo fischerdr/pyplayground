@@ -1,4 +1,4 @@
-# On-Premises Storage Strategy for Kubernetes & OpenShift
+# On-Premises Persistent Volume Strategy for Kubernetes & OpenShift
 
 ## Overview
 
@@ -88,7 +88,7 @@ We should also consider the following:
 
 *Software-Defined Storage (SDS):*
 
-- Software-Defined Storage (SDS) - Ceph, Portworx, Longhorn, OpenEBS
+- Software-Defined Storage (SDS) - Portworx, Longhorn, Rook-Ceph, Redhat OpenShift Data Foundation (ODF)
 - *Description:* These solutions typically operate as applications within the Kubernetes cluster or on dedicated commodity hardware, pooling local/networked storage resources. They provide features such as data replication, snapshots, encryption, and dynamic provisioning, managed via Kubernetes APIs.
 - *Pros:* Offers high scalability, a rich feature set (including HA, snapshots, tiering), potential hardware-agnosticism, and strong Kubernetes integration.
 - *Cons:* May present a steeper learning curve. Performance is dependent on the underlying hardware and network configuration. Dedicated operational expertise for the SDS platform itself may be required.
@@ -174,21 +174,24 @@ For multi-zone deployments, different storage types and solutions have distinct 
    - Excellent for synchronous replication between zones
    - Supports ReadWriteOnce (RWO) access mode
    - Solutions:
-     - **Portworx:** Enterprise-grade block storage with built-in replication, snapshots, and encryption
-     - **OpenEBS:** Open-source storage for Kubernetes with multiple storage engines
-     - **Longhorn:** Lightweight distributed block storage system by Rancher
-     - Traditional arrays: Pure Storage FlashArray, NetApp ONTAP SAN
+     - **Portworx:** Enterprise-grade block storage with built-in replication, snapshots, and encryption.
+     - **Longhorn:** CNCF incubating project; lightweight, distributed block storage system by Rancher. Offers replication, snapshots, backup to S3/NFS, and non-disruptive upgrades.
+     - **Rook:** CNCF graduated project; orchestrates Ceph (among others) to provide Ceph Block Device (RBD) for block storage. (Note: Red Hat OpenShift Data Foundation (ODF) is built on Ceph and Rook, providing enterprise-grade block storage).
+     - **vSphere CSI Driver (`csi.vsphere.vmware.com`):** Thin provisioned block storage.
+     - Traditional arrays: Pure Storage FlashArray, NetApp ONTAP SAN (integrated via vendor-specific CSI drivers).
    - Recommended for: PostgreSQL, MySQL, MongoDB, message queues
-   - Applications using this type tend to have there own replications that handle zone and region replication.
+   - Applications using this type tend to have their own replications that handle zone and region replication.
 
 2. *File Storage:*
    - Supports ReadWriteMany (RWX) for shared access across pods
    - Good for moderate performance requirements
    - Can span zones but may introduce latency
    - Solutions:
-     - **Rook-Ceph:** Provides CephFS for distributed file storage
-     - **OpenEBS:** Supports NFS provisioner
-     - Traditional NAS: NetApp ONTAP NAS, Pure FlashBlade
+     - **Rook-Ceph:** Provides CephFS for distributed, POSIX-compliant file storage, managed by Rook. (Note: Red Hat OpenShift Data Foundation (ODF) utilizes Rook-Ceph for its file storage capabilities).
+     - **GlusterFS:** Distributed network filesystem. Can be integrated with Kubernetes, often using Heketi for dynamic volume provisioning.
+     - **vSphere CSI Driver (`csi.vsphere.vmware.com`):** For vSphere with Tanzu environments (vSphere 7.0 Update 3 and later), this driver can provision ReadWriteMany (RWX) file volumes by leveraging vSAN File Services.
+     - **CSI Driver for NFS:** NFS CSI driver is a Kubernetes CSI driver that allows Kubernetes to use NFS as a storage backend.(ONTAP trident)
+     - Traditional NAS: NetApp ONTAP NAS, Pure FlashBlade (integrated via vendor-specific CSI drivers).
    - Recommended for: Web content, shared application data, development tools
    - Most applcations using this type do not need to be shared across zones, if they do they should be using a shared storage solution that is zone aware.
 
@@ -197,13 +200,14 @@ For multi-zone deployments, different storage types and solutions have distinct 
    - Built-in replication and data protection
    - Accessed via S3-compatible API
    - Solutions:
-     - **Rook-Ceph:** Provides Ceph RADOS Gateway (RGW) for S3-compatible storage
-     - **MinIO:** Distributed object storage designed for high performance
-     - **OpenEBS:** Can be used with MinIO for persistent storage
+     - **Rook-Ceph:** Provides Ceph RADOS Gateway (RGW) for S3-compatible object storage, managed by Rook. (Note: Red Hat OpenShift Data Foundation (ODF) leverages Rook-Ceph for its S3-compatible object storage).
+     - **MinIO:** High-performance, Kubernetes-native distributed object storage, S3-compatible.
+     - **Cloudian HyperStore:** S3-compatible object storage, can be provisioned in Kubernetes using the Cloudian Kubernetes S3 Operator for dynamic or static provisioning.
+     - **Pure FlashBlade:** S3-compatible object storage, can be provisioned in Kubernetes using the Pure Storage CSI driver for dynamic or static provisioning.
    - Best for: Backups, archives, static assets, ML training data, Batch processing, and other workloads.
    - Region and zone replication is handled by the object storage solution.
 
-Software-defined storage solutions like Portworx, Rook-Ceph, and Longhorn are particularly well-suited for Kubernetes environments as they:
+Software-defined storage solutions like Portworx, Rook-Ceph, Longhorn, and MinIO are particularly well-suited for Kubernetes environments as they:
 
 - Provide native integration with Kubernetes
 - Support multi-zone deployments out of the box

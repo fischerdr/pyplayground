@@ -1,4 +1,14 @@
-"""A simple X.509 Certificate Viewer with security analysis capabilities."""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""A simple X.509 Certificate Viewer with security analysis capabilities.
+
+Usage:
+    python cert_viewer.py
+
+    or
+
+    python cert_viewer.py <hostname> <port>
+"""
 
 import datetime
 import json
@@ -22,13 +32,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, pkcs12
 from cryptography.x509.extensions import ExtensionNotFound
 from cryptography.x509.oid import ExtensionOID
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger(__name__)
+from utils.logging_utils import get_logger, setup_logging
 
 
 class CertificateSecurityAnalyzer:
@@ -36,7 +40,7 @@ class CertificateSecurityAnalyzer:
 
     def __init__(self):
         """Initialize the CertificateSecurityAnalyzer."""
-        self.logger = logging.getLogger(__name__ + ".CertificateSecurityAnalyzer")
+        self.logger = get_logger(__name__ + ".CertificateSecurityAnalyzer")
         self.weak_key_sizes = {
             "RSA": 2048,  # Minimum recommended RSA key size
             "EC": 256,  # Minimum recommended EC key size
@@ -118,7 +122,7 @@ class X509CertViewer:
 
     def __init__(self, root):
         """Initialize the X509CertViewer application."""
-        self.logger = logging.getLogger(__name__ + ".X509CertViewer")
+        self.logger = get_logger(__name__ + ".X509CertViewer")
         self.root = root
         self.root.title("X.509 Certificate Viewer")
 
@@ -233,9 +237,7 @@ class X509CertViewer:
         self.validate_button.grid(row=0, column=2, padx=5)
 
         # Add Quit button
-        self.quit_button = ttk.Button(
-            self.button_frame, text="Quit", command=self.quit_app
-        )
+        self.quit_button = ttk.Button(self.button_frame, text="Quit", command=self.quit_app)
         self.quit_button.grid(row=0, column=3, padx=5)
 
         # Bind events
@@ -911,6 +913,8 @@ class X509CertViewer:
 
 
 if __name__ == "__main__":
+    setup_logging(level=logging.INFO, script_name="cert_viewer")
+    logger = get_logger(__name__)
     try:
         logger.info("Starting X.509 Certificate Viewer")
         root = tk.Tk()

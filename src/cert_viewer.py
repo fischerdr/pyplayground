@@ -1,3 +1,5 @@
+"""A simple X.509 Certificate Viewer with security analysis capabilities."""
+
 import datetime
 import json
 import logging
@@ -11,15 +13,14 @@ import tkinter as tk
 from datetime import timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.hazmat.primitives.serialization import Encoding, pkcs12
 from cryptography.x509.extensions import ExtensionNotFound
-from cryptography.x509.oid import ExtensionOID, NameOID
+from cryptography.x509.oid import ExtensionOID
 
 # Configure logging
 logging.basicConfig(
@@ -31,7 +32,10 @@ logger = logging.getLogger(__name__)
 
 
 class CertificateSecurityAnalyzer:
+    """Analyzes X.509 certificates for security vulnerabilities."""
+
     def __init__(self):
+        """Initialize the CertificateSecurityAnalyzer."""
         self.logger = logging.getLogger(__name__ + ".CertificateSecurityAnalyzer")
         self.weak_key_sizes = {
             "RSA": 2048,  # Minimum recommended RSA key size
@@ -44,8 +48,8 @@ class CertificateSecurityAnalyzer:
         self.min_tls_version = ssl.TLSVersion.TLSv1_2
 
     def analyze_key_strength(self, cert: x509.Certificate) -> Dict[str, bool]:
+        """Analyzes the strength of the certificate's public key."""
         public_key = cert.public_key()
-        key_type = type(public_key).__name__
         result = {"status": True, "message": "Strong key"}
 
         if isinstance(public_key, rsa.RSAPublicKey):
@@ -66,6 +70,7 @@ class CertificateSecurityAnalyzer:
         return result
 
     def analyze_signature_algorithm(self, cert: x509.Certificate) -> Dict[str, bool]:
+        """Analyzes the strength of the certificate's signature algorithm."""
         sig_alg = cert.signature_algorithm_oid._name.lower()
         result = {"status": True, "message": "Strong signature algorithm"}
 
@@ -77,6 +82,7 @@ class CertificateSecurityAnalyzer:
         return result
 
     def check_expiration(self, cert: x509.Certificate) -> Dict[str, bool]:
+        """Checks the validity period of the certificate."""
         now = datetime.datetime.now(timezone.utc)
         result = {"status": True, "message": "Certificate is valid"}
 
@@ -99,6 +105,7 @@ class CertificateSecurityAnalyzer:
         return result
 
     def analyze_certificate(self, cert: x509.Certificate) -> Dict[str, Dict[str, bool]]:
+        """Performs a comprehensive security analysis of the certificate."""
         return {
             "key_strength": self.analyze_key_strength(cert),
             "signature": self.analyze_signature_algorithm(cert),
@@ -107,7 +114,10 @@ class CertificateSecurityAnalyzer:
 
 
 class X509CertViewer:
+    """Main class for the X.509 Certificate Viewer application."""
+
     def __init__(self, root):
+        """Initialize the X509CertViewer application."""
         self.logger = logging.getLogger(__name__ + ".X509CertViewer")
         self.root = root
         self.root.title("X.509 Certificate Viewer")
@@ -222,6 +232,12 @@ class X509CertViewer:
         )
         self.validate_button.grid(row=0, column=2, padx=5)
 
+        # Add Quit button
+        self.quit_button = ttk.Button(
+            self.button_frame, text="Quit", command=self.quit_app
+        )
+        self.quit_button.grid(row=0, column=3, padx=5)
+
         # Bind events
         self.cert_list.bind("<<ListboxSelect>>", self.display_certificate_details)
         self.root.bind("<Control-o>", lambda e: self.load_certificates())
@@ -238,6 +254,7 @@ class X509CertViewer:
         self.trust_chain = []
 
     def load_settings(self):
+        """Load application settings from a JSON file."""
         try:
             if os.path.exists(self.settings_file):
                 with open(self.settings_file, "r") as f:
@@ -247,6 +264,7 @@ class X509CertViewer:
         return {"last_directory": str(Path.home()), "window_geometry": "800x600"}
 
     def save_settings(self):
+        """Save application settings to a JSON file."""
         try:
             settings = {
                 "last_directory": self.settings.get("last_directory", str(Path.home())),
@@ -258,12 +276,12 @@ class X509CertViewer:
             self.logger.error(f"Failed to save settings: {e}")
 
     def signal_handler(self, signum, frame):
-        """Handle Ctrl+C signal"""
+        """Handle Ctrl+C signal."""
         self.logger.info("Received Ctrl+C. Cleaning up...")
         self.quit_app()
 
     def quit_app(self):
-        """Clean up and quit the application"""
+        """Clean up and quit the application."""
         try:
             self.logger.info("Shutting down application...")
             # Save settings before exit
@@ -282,6 +300,7 @@ class X509CertViewer:
             self.root.destroy()
 
     def load_certificates(self):
+        """Load certificates from a user-selected file."""
         self.logger.info("Loading certificates...")
         initial_dir = self.settings.get("last_directory", str(Path.home()))
         file_path = filedialog.askopenfilename(
@@ -330,7 +349,160 @@ class X509CertViewer:
             self.logger.error(error_msg, exc_info=True)
             messagebox.showerror("Error", error_msg)
 
-    def validate_trust_chain(self):
+    def _load_pem(self, file_path: str):
+        """Load certificates from a PEM-encoded file."""
+        self.logger.info(f"Loading PEM file: {file_path}")
+        try:
+            with open(file_path, "rb") as f:
+                pem_data = f.read()
+            certs = x509.load_pem_x509_certificates(pem_data)
+            for cert in certs:
+                self.certificates.append(cert)
+                self.cert_list.insert(tk.END, cert.subject.rfc4514_string())
+            self.logger.info(f"Loaded {len(certs)} certificates from PEM file.")
+        except ValueError as e:
+            # Handle cases where the file is not a valid PEM or contains no certs
+            self.logger.error(
+                f"Could not decode PEM file or no certificates found: {e}", exc_info=True
+            )
+            messagebox.showerror(
+                "Error", f"Could not decode PEM file or no certificates found: {e}"
+            )
+        except Exception as e:
+            self.logger.error(f"Error loading PEM file: {e}", exc_info=True)
+            messagebox.showerror("Error", f"Error loading PEM file: {e}")
+
+    def _load_der(self, file_path: str):
+        """Load a certificate from a DER-encoded file."""
+        self.logger.info(f"Loading DER file: {file_path}")
+        try:
+            with open(file_path, "rb") as f:
+                der_data = f.read()
+            cert = x509.load_der_x509_certificate(der_data)
+            self.certificates.append(cert)
+            self.cert_list.insert(tk.END, cert.subject.rfc4514_string())
+            self.logger.info("Loaded 1 certificate from DER file.")
+        except ValueError as e:
+            self.logger.error(f"Could not decode DER file: {e}", exc_info=True)
+            messagebox.showerror("Error", f"Could not decode DER file: {e}")
+        except Exception as e:
+            self.logger.error(f"Error loading DER file: {e}", exc_info=True)
+            messagebox.showerror("Error", f"Error loading DER file: {e}")
+
+    def _load_pkcs12(self, file_path: str):
+        """Load certificates from a PKCS#12 file."""
+        self.logger.info(f"Loading PKCS#12 file: {file_path}")
+        password = simpledialog.askstring("Password", "Enter PKCS#12 password (if any):", show="*")
+        password_bytes = password.encode() if password else None
+
+        try:
+            with open(file_path, "rb") as f:
+                pkcs12_data = f.read()
+
+            # Load the PKCS#12 data
+            # The cryptography library's pkcs12.load_key_and_certificates
+            # returns a tuple: (private_key, certificate, additional_certificates)
+            key, cert, cas = pkcs12.load_key_and_certificates(
+                pkcs12_data, password_bytes, default_backend()
+            )
+
+            if cert:
+                self.certificates.append(cert)
+                self.cert_list.insert(tk.END, cert.subject.rfc4514_string())
+                self.logger.info("Loaded main certificate from PKCS#12 file.")
+
+            if cas:
+                for ca_cert in cas:
+                    self.certificates.append(ca_cert)
+                    self.cert_list.insert(tk.END, ca_cert.subject.rfc4514_string())
+                self.logger.info(f"Loaded {len(cas)} CA certificates from PKCS#12 file.")
+
+            if not cert and not cas:
+                self.logger.warning("No certificates found in the PKCS#12 file.")
+                messagebox.showwarning("Warning", "No certificates found in the PKCS#12 file.")
+
+        except ValueError as e:
+            # This can happen if the password is incorrect or the file is corrupted
+            self.logger.error(
+                f"Could not decode PKCS#12 file (check password or file integrity): {e}",
+                exc_info=True,
+            )
+            messagebox.showerror(
+                "Error",
+                f"Could not decode PKCS#12 file. Ensure the password is correct and the file is not corrupted. Details: {e}",
+            )
+        except Exception as e:
+            self.logger.error(f"Error loading PKCS#12 file: {e}", exc_info=True)
+            messagebox.showerror("Error", f"Error loading PKCS#12 file: {e}")
+
+    def _validate_chain_against_system_store(self, cert: x509.Certificate, temp_cert_path: str):
+        """Helper to validate a certificate against the system trust store using OpenSSL."""
+        try:
+            result = subprocess.run(
+                ["openssl", "verify", temp_cert_path],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.logger.info("Certificate validates against system trust store")
+            self.trust_text.insert(tk.END, "  Certificate validates against system trust store\\n")
+            self.trust_text.insert(tk.END, f"  Result: {result.stdout.strip()}\\n")
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Certificate validation failed: {e.stderr.strip()}")
+            self.trust_text.insert(tk.END, "  Certificate validation failed\\n")
+            self.trust_text.insert(tk.END, f"  Error: {e.stderr.strip()}\\n")
+        except FileNotFoundError:
+            self.logger.error(
+                "OpenSSL command not found. Please ensure OpenSSL is installed and in your PATH."
+            )
+            self.trust_text.insert(
+                tk.END, "  Error: OpenSSL command not found. Cannot perform system validation.\\n"
+            )
+
+    def _perform_additional_chain_checks(self, chain: List[x509.Certificate]):  # noqa: C901
+        """Helper to perform additional checks on the certificate chain."""
+        all_valid = True
+        for chain_cert in chain:
+            exp_check = self.security_analyzer.check_expiration(chain_cert)
+            if not exp_check["status"]:
+                all_valid = False
+                msg = f"  {exp_check['message']}"
+                self.logger.warning(msg)
+                self.trust_text.insert(tk.END, f"  {msg}\\n")
+
+        if all_valid:
+            self.logger.info("All certificates in chain are within validity period")
+            self.trust_text.insert(
+                tk.END, "  All certificates in chain are within validity period\\n"
+            )
+
+        for i, chain_cert in enumerate(chain[1:], 1):  # Skip end-entity cert
+            try:
+                key_usage = chain_cert.extensions.get_extension_for_oid(ExtensionOID.KEY_USAGE)
+                if not key_usage.value.key_cert_sign:
+                    msg = f"Certificate at level {i} doesn't have keyCertSign usage"
+                    self.logger.warning(msg)
+                    self.trust_text.insert(tk.END, f"  Warning: {msg}\\n")
+            except ExtensionNotFound:
+                msg = f"Certificate at level {i} has no Key Usage extension"
+                self.logger.warning(msg)
+                self.trust_text.insert(tk.END, f"  Warning: {msg}\\n")
+
+        weak_sig = False
+        for i, chain_cert in enumerate(chain):
+            sig_alg = chain_cert.signature_algorithm_oid._name.lower()
+            if "sha1" in sig_alg or "md5" in sig_alg:
+                weak_sig = True
+                msg = f"Certificate at level {i} uses weak signature algorithm: {sig_alg}"
+                self.logger.warning(msg)
+                self.trust_text.insert(tk.END, f"  Warning: {msg}\\n")
+
+        if not weak_sig:
+            self.logger.info("All certificates use strong signature algorithms")
+            self.trust_text.insert(tk.END, "  All certificates use strong signature algorithms\\n")
+
+    def validate_trust_chain(self):  # noqa: C901
+        """Validate the trust chain of the selected certificate."""
         selection = self.cert_list.curselection()
         if not selection:
             self.logger.warning("No certificate selected for validation")
@@ -366,9 +538,8 @@ class X509CertViewer:
                         basic_constraints = chain_cert.extensions.get_extension_for_oid(
                             ExtensionOID.BASIC_CONSTRAINTS
                         )
-                        is_ca = basic_constraints.value.ca
                         path_length = basic_constraints.value.path_length
-                        self.trust_text.insert(tk.END, f"  CA: Yes\n")
+                        self.trust_text.insert(tk.END, "  CA: Yes\n")
                         if path_length is not None:
                             self.trust_text.insert(
                                 tk.END, f"  Path Length Constraint: {path_length}\n"
@@ -384,30 +555,15 @@ class X509CertViewer:
         try:
             self.logger.info("Attempting system trust store validation")
             # Create a temporary PEM file with the certificate
-            with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as temp_cert:
-                temp_cert.write(cert.public_bytes(Encoding.PEM))
-                temp_cert_path = temp_cert.name
+            with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as temp_cert_file:
+                temp_cert_file.write(cert.public_bytes(Encoding.PEM))
+                temp_cert_path = temp_cert_file.name
 
-            # Use OpenSSL to verify against system trust store
-            try:
-                result = subprocess.run(
-                    ["openssl", "verify", temp_cert_path],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                self.logger.info("Certificate validates against system trust store")
-                self.trust_text.insert(
-                    tk.END, "  Certificate validates against system trust store\n"
-                )
-                self.trust_text.insert(tk.END, f"  Result: {result.stdout.strip()}\n")
-            except subprocess.CalledProcessError as e:
-                self.logger.error(f"Certificate validation failed: {e.stderr.strip()}")
-                self.trust_text.insert(tk.END, "  Certificate validation failed\n")
-                self.trust_text.insert(tk.END, f"  Error: {e.stderr.strip()}\n")
+            self._validate_chain_against_system_store(cert, temp_cert_path)
 
             # Clean up temporary file
-            os.unlink(temp_cert_path)
+            if os.path.exists(temp_cert_path):
+                os.unlink(temp_cert_path)
 
         except Exception as e:
             error_msg = f"Error during system validation: {str(e)}"
@@ -417,53 +573,12 @@ class X509CertViewer:
         # Additional chain checks
         self.trust_text.insert(tk.END, "\nChain Analysis:\n")
         self.logger.info("Performing additional chain analysis")
-
-        # Check expiration for all certificates in chain
-        all_valid = True
-        for chain_cert in chain:
-            exp_check = self.security_analyzer.check_expiration(chain_cert)
-            if not exp_check["status"]:
-                all_valid = False
-                msg = f"  {exp_check['message']}"
-                self.logger.warning(msg)
-                self.trust_text.insert(tk.END, f"  {msg}\n")
-
-        if all_valid:
-            self.logger.info("All certificates in chain are within validity period")
-            self.trust_text.insert(
-                tk.END, "  All certificates in chain are within validity period\n"
-            )
-
-        # Check key usage for intermediate certificates
-        for i, chain_cert in enumerate(chain[1:], 1):  # Skip end-entity cert
-            try:
-                key_usage = chain_cert.extensions.get_extension_for_oid(ExtensionOID.KEY_USAGE)
-                if not key_usage.value.key_cert_sign:
-                    msg = f"Certificate at level {i} doesn't have keyCertSign usage"
-                    self.logger.warning(msg)
-                    self.trust_text.insert(tk.END, f"  Warning: {msg}\n")
-            except ExtensionNotFound:
-                msg = f"Certificate at level {i} has no Key Usage extension"
-                self.logger.warning(msg)
-                self.trust_text.insert(tk.END, f"  Warning: {msg}\n")
-
-        # Check signature algorithms
-        weak_sig = False
-        for i, chain_cert in enumerate(chain):
-            sig_alg = chain_cert.signature_algorithm_oid._name.lower()
-            if "sha1" in sig_alg or "md5" in sig_alg:
-                weak_sig = True
-                msg = f"Certificate at level {i} uses weak signature algorithm: {sig_alg}"
-                self.logger.warning(msg)
-                self.trust_text.insert(tk.END, f"  Warning: {msg}\n")
-
-        if not weak_sig:
-            self.logger.info("All certificates use strong signature algorithms")
-            self.trust_text.insert(tk.END, "  All certificates use strong signature algorithms\n")
+        self._perform_additional_chain_checks(chain)
 
         self.trust_text.config(state=tk.DISABLED)
 
     def build_trust_chain(self, cert: x509.Certificate) -> List[x509.Certificate]:
+        """Build the trust chain for a given certificate from loaded certificates."""
         chain = [cert]
         current_cert = cert
 
@@ -486,6 +601,7 @@ class X509CertViewer:
         return chain
 
     def check_tls_compatibility(self, cert: x509.Certificate):
+        """Check TLS compatibility for the certificate (Placeholder)."""
         # Check signature algorithm compatibility
         sig_alg = cert.signature_algorithm_oid._name.lower()
 
@@ -578,52 +694,62 @@ class X509CertViewer:
         exp_result = analysis["expiration"]
         if not exp_result["status"]:
             self.logger.warning(f"Certificate expiration issue: {exp_result['message']}")
-        self.security_text.insert(tk.END, f"  {exp_result['message']}\n\n")
+        self.security_text.insert(tk.END, f"  {exp_result['message']}\\n\\n")
 
-    def display_usage_restrictions(self, cert: x509.Certificate):
-        """Display certificate usage restrictions."""
-        self.logger.info("Analyzing certificate usage restrictions")
-        self.usage_text.insert(tk.END, "=== Certificate Usage Restrictions ===\n\n")
-
+    def _display_key_usage(self, cert: x509.Certificate):
+        """Helper to display Key Usage extension."""
         try:
             key_usage = cert.extensions.get_extension_for_oid(ExtensionOID.KEY_USAGE)
-            self.usage_text.insert(tk.END, "Key Usage:\n")
+            self.usage_text.insert(tk.END, "Key Usage:\\n")
             for usage, value in key_usage.value.__dict__.items():
                 if value:
-                    self.usage_text.insert(tk.END, f"  - {usage}\n")
+                    self.usage_text.insert(tk.END, f"  - {usage}\\n")
             self.logger.debug(
                 f"Found {sum(1 for _, v in key_usage.value.__dict__.items() if v)} key usage restrictions"
             )
         except ExtensionNotFound:
             self.logger.warning("No Key Usage restrictions specified")
-            self.usage_text.insert(tk.END, "No Key Usage restrictions specified\n")
+            self.usage_text.insert(tk.END, "No Key Usage restrictions specified\\n")
 
+    def _display_extended_key_usage(self, cert: x509.Certificate):
+        """Helper to display Extended Key Usage extension."""
         try:
             ext_key_usage = cert.extensions.get_extension_for_oid(ExtensionOID.EXTENDED_KEY_USAGE)
-            self.usage_text.insert(tk.END, "\nExtended Key Usage:\n")
+            self.usage_text.insert(tk.END, "\\nExtended Key Usage:\\n")
             for usage in ext_key_usage.value:
-                self.usage_text.insert(tk.END, f"  - {usage._name}\n")
+                self.usage_text.insert(tk.END, f"  - {usage._name}\\n")
             self.logger.debug(f"Found {len(ext_key_usage.value)} extended key usage restrictions")
         except ExtensionNotFound:
             self.logger.warning("No Extended Key Usage restrictions specified")
-            self.usage_text.insert(tk.END, "\nNo Extended Key Usage restrictions specified\n")
+            self.usage_text.insert(tk.END, "\\nNo Extended Key Usage restrictions specified\\n")
 
+    def _display_basic_constraints(self, cert: x509.Certificate):
+        """Helper to display Basic Constraints extension."""
         try:
             basic_constraints = cert.extensions.get_extension_for_oid(
                 ExtensionOID.BASIC_CONSTRAINTS
             )
-            self.usage_text.insert(tk.END, "\nBasic Constraints:\n")
-            self.usage_text.insert(tk.END, f"  CA: {basic_constraints.value.ca}\n")
+            self.usage_text.insert(tk.END, "\\nBasic Constraints:\\n")
+            self.usage_text.insert(tk.END, f"  CA: {basic_constraints.value.ca}\\n")
             if basic_constraints.value.ca and basic_constraints.value.path_length is not None:
                 self.usage_text.insert(
-                    tk.END, f"  Path Length Constraint: {basic_constraints.value.path_length}\n"
+                    tk.END, f"  Path Length Constraint: {basic_constraints.value.path_length}\\n"
                 )
             self.logger.debug(
                 f"Basic Constraints - CA: {basic_constraints.value.ca}, Path Length: {basic_constraints.value.path_length}"
             )
         except ExtensionNotFound:
             self.logger.warning("No Basic Constraints specified")
-            self.usage_text.insert(tk.END, "\nNo Basic Constraints specified\n")
+            self.usage_text.insert(tk.END, "\\nNo Basic Constraints specified\\n")
+
+    def display_usage_restrictions(self, cert: x509.Certificate):
+        """Display certificate usage restrictions."""
+        self.logger.info("Analyzing certificate usage restrictions")
+        self.usage_text.insert(tk.END, "=== Certificate Usage Restrictions ===\\n\\n")
+
+        self._display_key_usage(cert)
+        self._display_extended_key_usage(cert)
+        self._display_basic_constraints(cert)
 
     def display_trust_chain(self, cert: x509.Certificate):
         """Display trust chain information for the certificate."""
@@ -645,10 +771,99 @@ class X509CertViewer:
             self.trust_text.insert(tk.END, f"  Issuer: {chain_cert.issuer.rfc4514_string()}\n\n")
 
     def clear_details(self):
+        """Clear all certificate detail text widgets."""
         for widget in [self.basic_text, self.security_text, self.trust_text, self.usage_text]:
             widget.config(state=tk.NORMAL)
             widget.delete(1.0, tk.END)
             widget.config(state=tk.DISABLED)
+
+    def _get_certificate_from_socket(
+        self, hostname: str, port: int = 443
+    ) -> Optional[x509.Certificate]:
+        """Helper to fetch the end-entity certificate from a host and port.
+
+        Args:
+            hostname: The hostname of the server.
+            port: The port number (default is 443).
+
+        Returns:
+            An x509.Certificate object if successful, None otherwise.
+        """
+        context = ssl.create_default_context()
+        with socket.create_connection((hostname, port)) as sock:
+            with context.wrap_socket(sock, server_hostname=hostname) as ssl_sock:
+                der_cert = ssl_sock.getpeercert(binary_form=True)
+                return x509.load_der_x509_certificate(der_cert, default_backend())
+        return None  # Should not be reached if successful
+
+    def _get_certificate_chain_from_socket(
+        self, hostname: str, port: int = 443
+    ) -> List[x509.Certificate]:
+        """Helper to fetch the certificate chain from a host and port.
+
+        Args:
+            hostname: The hostname of the server.
+            port: The port number (default is 443).
+
+        Returns:
+            A list of x509.Certificate objects representing the chain (excluding end-entity).
+        """
+        chain_certs = []
+        context = ssl.create_default_context()
+        with socket.create_connection((hostname, port)) as sock:
+            with context.wrap_socket(sock, server_hostname=hostname) as ssl_sock:
+                cert_chain_pem = ssl_sock.getpeercert().get("chain", [])
+                for cert_pem_item in cert_chain_pem:
+                    # ssl_sock.getpeercert() for chain might return PEM strings or binary DER
+                    # We need to handle both. The example here assumes PEM strings, which need conversion.
+                    # If it directly provides DER, ssl.PEM_cert_to_DER_cert would fail.
+                    # A more robust solution might check the type or try both decodings.
+                    try:
+                        # Assuming item is a PEM string
+                        cert_der = ssl.PEM_cert_to_DER_cert(cert_pem_item)
+                        ca_cert = x509.load_der_x509_certificate(cert_der, default_backend())
+                        chain_certs.append(ca_cert)
+                    except ssl.SSLError:  # If it's already DER or not a valid PEM
+                        try:
+                            # Assuming item might be binary DER
+                            ca_cert = x509.load_der_x509_certificate(
+                                cert_pem_item, default_backend()
+                            )
+                            chain_certs.append(ca_cert)
+                        except Exception as e_der_load:  # Catch specific loading errors
+                            self.logger.warning(
+                                f"Could not decode certificate in chain (as DER): {e_der_load}"
+                            )
+                    except Exception as e_pem_load:  # Catch specific loading errors
+                        self.logger.warning(
+                            f"Could not decode certificate in chain (as PEM): {e_pem_load}"
+                        )
+        return chain_certs
+
+    def _process_fetched_chain(self, hostname: str, port: int):
+        """Helper to fetch and process the certificate chain.
+
+        Args:
+            hostname: The hostname of the server from which to fetch the chain.
+            port: The port number to connect to.
+        """
+        try:
+            self.logger.info(f"Attempting to fetch certificate chain for {hostname}")
+            chain_certs_list = self._get_certificate_chain_from_socket(hostname, port)
+            if chain_certs_list:
+                self.logger.info(f"Found {len(chain_certs_list)} additional certificates in chain")
+                for ca_cert in chain_certs_list:
+                    if (
+                        ca_cert not in self.certificates
+                    ):  # Avoid duplicates if server sends end-entity in chain
+                        self.certificates.append(ca_cert)
+                        self.cert_list.insert(tk.END, ca_cert.subject.rfc4514_string())
+            else:
+                self.logger.info(
+                    "No additional certificates found in chain via getpeercert()['chain']"
+                )
+        except Exception as e_chain:
+            self.logger.warning(f"Could not fetch or process certificate chain: {e_chain}")
 
     def fetch_certificate_from_site(self):
         """Fetch SSL/TLS certificate from a remote HTTPS site."""
@@ -660,57 +875,37 @@ class X509CertViewer:
         port = 443
         try:
             self.logger.info(f"Fetching certificate from {hostname}:{port}")
-            context = ssl.create_default_context()
-            with socket.create_connection((hostname, port)) as sock:
-                with context.wrap_socket(sock, server_hostname=hostname) as ssl_sock:
-                    # Get the DER-encoded certificate
-                    der_cert = ssl_sock.getpeercert(binary_form=True)
-                    cert = x509.load_der_x509_certificate(der_cert, default_backend())
+            cert = self._get_certificate_from_socket(hostname, port)
 
-                    self.logger.info("Successfully fetched end-entity certificate")
-                    self.certificates.clear()
-                    self.cert_list.delete(0, tk.END)
-                    self.clear_details()
+            if cert:
+                self.logger.info("Successfully fetched end-entity certificate")
+                self.certificates.clear()
+                self.cert_list.delete(0, tk.END)
+                self.clear_details()
 
-                    self.certificates.append(cert)
-                    self.cert_list.insert(tk.END, cert.subject.rfc4514_string())
+                self.certificates.append(cert)
+                self.cert_list.insert(tk.END, cert.subject.rfc4514_string())
 
-                    # Get the certificate chain
-                    try:
-                        self.logger.info("Attempting to fetch certificate chain")
-                        cert_chain = ssl_sock.getpeercert()
-                        if cert_chain and "chain" in cert_chain:
-                            self.logger.info(
-                                f"Found {len(cert_chain['chain'])} certificates in chain"
-                            )
-                            for cert_der in cert_chain["chain"]:
-                                # Convert PEM to DER format
-                                cert_pem = ssl.PEM_cert_to_DER_cert(cert_der)
-                                ca_cert = x509.load_der_x509_certificate(
-                                    cert_pem, default_backend()
-                                )
-                                self.certificates.append(ca_cert)
-                                self.cert_list.insert(tk.END, ca_cert.subject.rfc4514_string())
-                        else:
-                            self.logger.info("No additional certificates found in chain")
-                    except Exception as e:
-                        self.logger.warning(f"Could not fetch certificate chain: {e}")
-                        # Continue without the chain certificates
+                # Attempt to get the certificate chain
+                self._process_fetched_chain(hostname, port)
+            else:
+                self.logger.error(f"Failed to fetch end-entity certificate for {hostname}")
+                messagebox.showerror("Error", f"Could not retrieve certificate for {hostname}")
 
-        except socket.gaierror as e:
+        except socket.gaierror:
             error_msg = f"Could not resolve hostname: {hostname}"
             self.logger.error(error_msg)
             messagebox.showerror("Error", error_msg)
-        except socket.timeout as e:
+        except socket.timeout:
             error_msg = f"Connection to {hostname} timed out"
             self.logger.error(error_msg)
             messagebox.showerror("Error", error_msg)
-        except ssl.SSLError as e:
-            error_msg = f"SSL error occurred: {str(e)}"
+        except ssl.SSLError as e_ssl:
+            error_msg = f"SSL error occurred: {str(e_ssl)}"
             self.logger.error(error_msg)
             messagebox.showerror("Error", error_msg)
-        except Exception as e:
-            error_msg = f"Failed to fetch certificate: {str(e)}"
+        except Exception as e_generic:
+            error_msg = f"Failed to fetch certificate: {str(e_generic)}"
             self.logger.error(error_msg, exc_info=True)
             messagebox.showerror("Error", error_msg)
 
@@ -723,11 +918,15 @@ if __name__ == "__main__":
         root.mainloop()
     except KeyboardInterrupt:
         logger.info("Application terminated by user")
-    except Exception as e:
+    except Exception:  # Keep generic for top-level unforeseen errors
         logger.error("Unhandled exception", exc_info=True)
     finally:
         logger.info("Shutting down")
         try:
-            root.destroy()
-        except:
-            pass
+            if "root" in locals() and root.winfo_exists():  # Check if root exists and is a window
+                root.destroy()
+        except tk.TclError:
+            # This can happen if the window is already destroyed
+            logger.debug("Root window already destroyed or not initialized.")
+        except Exception as e_destroy:
+            logger.error(f"Error during final destroy: {e_destroy}", exc_info=True)

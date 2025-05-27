@@ -23,6 +23,7 @@ Example usage:
     # /path/to/kubeconfig3
 """
 import base64
+import csv
 import json
 import logging
 import os
@@ -30,6 +31,8 @@ import socket
 import ssl
 import sys
 from dataclasses import dataclass
+from datetime import datetime
+from io import StringIO
 from typing import Any, Dict, List, Optional
 
 import click
@@ -152,6 +155,10 @@ def _create_ssl_context(disable_ssl: bool, effective_cert_path: Optional[str]) -
         return ssl._create_unverified_context()
 
     context = ssl.create_default_context()
+    # Enforce minimum TLS version 1.2 for security (especially for Python <3.10)
+    if hasattr(context, "minimum_version"):
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+
     if effective_cert_path and os.path.isfile(effective_cert_path):
         try:
             context.load_verify_locations(effective_cert_path)
@@ -178,7 +185,7 @@ def _create_ssl_context(disable_ssl: bool, effective_cert_path: Optional[str]) -
 
 def connect_to_vsphere(
     params: VSphereConnectionParams,
-) -> Optional[Any]:  # TODO: Replace Any with specific pyVmomi ServiceInstance type
+) -> Optional[vim.ServiceInstance]:
     """Establish connection to VMware vSphere.
 
     Args:
@@ -306,7 +313,9 @@ def extract_vmware_clusters_from_machinesets(
     return list(cluster_names)
 
 
-def get_filtered_clusters(si: Any, cluster_names: List[str]) -> List[Any]:  # TODO: Specific types
+def get_filtered_clusters(
+    si: vim.ServiceInstance, cluster_names: list[str]
+) -> list[vim.ClusterComputeResource]:
     """Get filtered VMware clusters by name using PropertyCollector for efficiency.
 
     Args:
@@ -376,8 +385,8 @@ def get_filtered_clusters(si: Any, cluster_names: List[str]) -> List[Any]:  # TO
     retry=retry_if_exception_type(Exception),  # Retry on any exception
 )
 def get_esxi_hosts_per_cluster(
-    si: Any, cluster_names: List[str]  # TODO: Specific types
-) -> Dict[str, List[Dict[str, Any]]]:
+    si: vim.ServiceInstance, cluster_names: list[str]
+) -> dict[str, list[dict[str, any]]]:
     """Get all ESXi hosts per VMware cluster.
 
     Args:
@@ -615,7 +624,7 @@ def extract_cluster_name_from_api_url(api_url: str) -> str:
         return "unknown-cluster"
 
 
-def _generate_brief_json_data(  # noqa: C901
+def _generate_brief_json_data( 
     all_clusters_data: Dict[str, Dict[str, Any]],
 ) -> Dict[str, Any]:
     """Generate the data structure for the brief JSON report.
@@ -777,6 +786,91 @@ def _generate_detailed_json_data(all_clusters_data: Dict[str, Dict[str, Any]]) -
     return report_data
 
 
+def _generate_csv_data(all_clusters_data: Dict[str, Dict[str, Any]]) -> List[List[str]]:
+    """Generate CSV data from the clusters data.
+
+    Args:
+        all_clusters_data: Dictionary containing the processed data for all clusters.
+
+    Returns:
+        List of rows, where each row is a list of strings representing CSV fields.
+    """
+    # Headers for the CSV
+    headers = ["OpenShift Cluster", "VMware Cluster", "ESXi Host Count", "Portworx Pod Count"]
+    rows = [headers]
+
+    # Track clusters we've already recorded PX pod counts for
+    recorded_px_counts = set()
+
+    # Process each cluster's data
+    for ocp_cluster_name, cluster_data in sorted(all_clusters_data.items()):
+        mapping = cluster_data["mapping"]
+        px_pod_count = cluster_data["portworx_pods_count"]
+
+        # Generate cluster summary
+        cluster_summary = generate_cluster_summary(mapping)
+
+        # Sort VMware clusters for consistent output
+        for vmware_cluster in sorted(cluster_summary.keys()):
+            if vmware_cluster == "Unknown":
+                continue
+
+            # Only include PX pod count once per OCP cluster
+            current_px_count = ""
+            if ocp_cluster_name not in recorded_px_counts:
+                current_px_count = str(px_pod_count)
+                recorded_px_counts.add(ocp_cluster_name)
+
+            row = [
+                ocp_cluster_name,
+                vmware_cluster,
+                str(cluster_summary[vmware_cluster]),
+                current_px_count,
+            ]
+            rows.append(row)
+
+    return rows
+
+
+def _save_report_to_file(
+    content: str,
+    report_type: str,
+    script_name: str = "ocp_report_pxesxi",
+    file_extension: str = "json",
+) -> str:
+    """Save report content to a file in the tmp directory.
+
+    Args:
+        content: The report content to save
+        report_type: Type of report (e.g., 'json', 'csv')
+        script_name: Base name of the script
+        file_extension: File extension to use
+
+    Returns:
+        Path to the saved file
+    """
+    # Get the project root directory
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    tmp_dir = os.path.join(project_root, "tmp")
+
+    # Create tmp directory if it doesn't exist
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    # Generate timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Create filename
+    filename = f"{script_name}_{report_type}_{timestamp}.{file_extension}"
+    filepath = os.path.join(tmp_dir, filename)
+
+    # Write content to file
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(content)
+
+    logger.info(f"Saved {report_type} report to: {filepath}")
+    return filepath
+
+
 def generate_json_report(all_clusters_data: Dict[str, Dict[str, Any]], brief: bool) -> None:
     """Generate the report in JSON format.
 
@@ -789,8 +883,38 @@ def generate_json_report(all_clusters_data: Dict[str, Dict[str, Any]], brief: bo
     else:
         report_output = _generate_detailed_json_data(all_clusters_data)
 
-    # Output the JSON
-    console.print(json.dumps(report_output, indent=2))
+    # Save to file
+    json_content = json.dumps(report_output, indent=2)
+    report_type = "brief_json" if brief else "detailed_json"
+    _save_report_to_file(json_content, report_type)
+
+    # Output to console
+    console.print(json_content)
+
+
+def generate_csv_report(all_clusters_data: Dict[str, Dict[str, Any]]) -> None:
+    """Generate the report in CSV format.
+
+    Args:
+        all_clusters_data: Dictionary containing the processed data for all clusters.
+    """
+    # Generate CSV data
+    csv_rows = _generate_csv_data(all_clusters_data)
+
+    # Create a string buffer to hold CSV content
+    output = StringIO()
+    csv_writer = csv.writer(output)
+    csv_writer.writerows(csv_rows)
+
+    # Get the CSV content
+    csv_content = output.getvalue()
+    output.close()
+
+    # Save to file
+    _save_report_to_file(csv_content, "csv", file_extension="csv")
+
+    # Output to console
+    console.print(csv_content)
 
 
 # --- New Helper Functions for Refactoring ---
@@ -1124,8 +1248,9 @@ def _process_single_kubeconfig(
         cli_vsphere_password,
         credentials_secret_name,
         credentials_secret_namespace,
-        disable_ssl_vsphere,
-        vsphere_cert_path_cli,
+        disable_ssl_vsphere,  # disable_ssl_vsphere
+        vsphere_cert_path_cli,  # Pass CLI option for cert path
+        portworx_namespace,  # portworx_namespace
     )
 
     # If vsphere_conn_params is None and machineset_vsphere_data has content,
@@ -1367,9 +1492,9 @@ def _generate_detailed_table_report(
 @click.option(
     "--output-format",
     default="table",
-    type=click.Choice(["table", "json"]),
+    type=click.Choice(["table", "json", "csv"]),
     show_default=True,
-    help="Output format (table or json)",
+    help="Output format (table, json, or csv)",
 )
 @click.option("--disable-ssl", is_flag=True, help="Disable SSL verification for vSphere connection")
 @click.option(
@@ -1488,6 +1613,8 @@ def main(  # noqa: C901
     try:
         if output_format.lower() == "json":
             generate_json_report(all_ocp_clusters_data, brief)
+        elif output_format.lower() == "csv":
+            generate_csv_report(all_ocp_clusters_data)
         else:  # Default to table format
             if brief:
                 _generate_brief_table_report(all_ocp_clusters_data, console)

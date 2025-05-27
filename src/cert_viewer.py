@@ -12,7 +12,8 @@ Usage:
 
 import datetime
 import json
-import logging
+
+# import logging
 import os
 import signal
 import socket
@@ -25,12 +26,14 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Dict, List, Optional
 
+import click
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.hazmat.primitives.serialization import Encoding, pkcs12
 from cryptography.x509.extensions import ExtensionNotFound
 from cryptography.x509.oid import ExtensionOID
+from rich.logging import RichHandler
 
 from utils.logging_utils import get_logger, setup_logging
 
@@ -912,25 +915,39 @@ class X509CertViewer:
             messagebox.showerror("Error", error_msg)
 
 
-if __name__ == "__main__":
-    setup_logging(level=logging.INFO, script_name="cert_viewer")
+@click.command()
+@click.option("--debug", is_flag=True, default=False, help="Enable debug logging")
+def main(debug):
+    """X.509 Certificate Viewer GUI."""
+    log_level = "DEBUG" if debug else "INFO"
+    # Use RichHandler for console
+    setup_logging(
+        level=log_level,
+        script_name="cert_viewer",
+        handlers=[
+            RichHandler(rich_tracebacks=True, show_time=False, show_level=True, show_path=False)
+        ],
+    )
     logger = get_logger(__name__)
     try:
         logger.info("Starting X.509 Certificate Viewer")
+        import tkinter as tk  # Ensure Tkinter is imported here for click CLI
+
         root = tk.Tk()
         app = X509CertViewer(root)
         root.mainloop()
     except KeyboardInterrupt:
         logger.info("Application terminated by user")
-    except Exception:  # Keep generic for top-level unforeseen errors
+    except Exception:
         logger.error("Unhandled exception", exc_info=True)
     finally:
         logger.info("Shutting down")
         try:
-            if "root" in locals() and root.winfo_exists():  # Check if root exists and is a window
+            if "root" in locals() and root.winfo_exists():
                 root.destroy()
-        except tk.TclError:
-            # This can happen if the window is already destroyed
-            logger.debug("Root window already destroyed or not initialized.")
-        except Exception as e_destroy:
-            logger.error(f"Error during final destroy: {e_destroy}", exc_info=True)
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()

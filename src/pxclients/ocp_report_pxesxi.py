@@ -658,12 +658,12 @@ def _get_globally_unique_esxi_hosts(all_clusters_data: Dict[str, Dict[str, Any]]
 
 
 def _populate_clusters_section(
-    all_clusters_summary: dict,
-) -> dict:
+    all_clusters_data: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
     """Builds the 'clusters' section of the brief JSON output."""
     output_clusters = {}
     ocp_px_counts_recorded = set()
-    for full_cluster_name_key, data in all_clusters_summary.items():
+    for full_cluster_name_key, data in all_clusters_data.items():
         ocp_cluster, vmware_cluster = full_cluster_name_key.split("/", 1)
         if ocp_cluster not in output_clusters:
             output_clusters[ocp_cluster] = {
@@ -687,12 +687,12 @@ def _generate_brief_json_data(
     all_clusters_data: Dict[str, Dict[str, Any]],
 ) -> Dict[str, Any]:
     """Generate the data structure for the brief JSON report."""
-    all_clusters_summary, total_px_pods_count = _get_all_clusters_summary(all_clusters_data)
+    _all_clusters_summary, total_px_pods_count = _get_all_clusters_summary(all_clusters_data)
     globally_unique_esxi_hosts = _get_globally_unique_esxi_hosts(all_clusters_data)
     output_data = {
         "portworx_pods_count": total_px_pods_count,
         "total_esxi_hosts": len(globally_unique_esxi_hosts),
-        "clusters": _populate_clusters_section(all_clusters_summary),
+        "clusters": _populate_clusters_section(all_clusters_data),
     }
     return output_data
 
@@ -725,9 +725,7 @@ def _add_datacenter_info(report_data: dict, cluster_name: str, datacenter_cluste
         for vmware_cluster_name_item, vmware_cluster_data in vmware_clusters.items():
             host_list = sorted(list(vmware_cluster_data["hosts"]))
             hosts_count = len(host_list)
-            report_data[cluster_name]["datacenters"][datacenter_name][
-                vmware_cluster_name_item
-            ] = {
+            report_data[cluster_name]["datacenters"][datacenter_name][vmware_cluster_name_item] = {
                 "hosts": host_list,
                 "hosts_count": hosts_count,
             }
@@ -1266,40 +1264,64 @@ def _process_single_kubeconfig(
 
 
 # --- Refactored Report Generation ---
-def _generate_brief_table_report(
-    all_clusters_data: Dict[str, Dict[str, Any]],
-    console_instance: Console,  # Renamed from console
-    # px_namespace: str # Not directly needed here, but kept for consistency if extended
-) -> None:
-    """Generates and prints the brief table report."""
+def _build_summary_entry(ocp_cluster_name, vmware_cluster, host_count, px_pod_count):
+    return {
+        "ocp_cluster": ocp_cluster_name,
+        "vmware_cluster": vmware_cluster,
+        "host_count": host_count,
+        "px_pod_count": px_pod_count,
+    }
+
+
+def _add_unique_hosts_for_vmware_cluster(mapping, vmware_cluster, host_set):
+    for ms_info in mapping.values():
+        if ms_info["cluster_name"] == vmware_cluster:
+            for host in ms_info["hosts"]:
+                host_set.add(host["name"])
+
+
+def _build_brief_table_summary(all_clusters_data: Dict[str, Dict[str, Any]]):
     all_clusters_summary = {}
     total_px_pods_count = 0
-    # Use a set to count globally unique ESXi hosts for the top-level summary
     globally_unique_esxi_hosts_set = set()
-
     for ocp_cluster_name, cluster_data in all_clusters_data.items():
         mapping = cluster_data["mapping"]
         px_pod_count = cluster_data["portworx_pods_count"]
         total_px_pods_count += px_pod_count
-
         cluster_summary = generate_cluster_summary(mapping)
-
         for vmware_cluster, host_count in cluster_summary.items():
             if vmware_cluster == "Unknown":
                 continue
             key = f"{ocp_cluster_name}/{vmware_cluster}"
-            all_clusters_summary[key] = {
-                "ocp_cluster": ocp_cluster_name,
-                "vmware_cluster": vmware_cluster,
-                "host_count": host_count,
-                "px_pod_count": px_pod_count,  # Store with each entry for sorting/display logic
-            }
-            # Collect unique host names for the global total
-            for ms_info in mapping.values():
-                if ms_info["cluster_name"] == vmware_cluster:
-                    for host in ms_info["hosts"]:
-                        globally_unique_esxi_hosts_set.add(host["name"])
+            all_clusters_summary[key] = _build_summary_entry(
+                ocp_cluster_name, vmware_cluster, host_count, px_pod_count
+            )
+            _add_unique_hosts_for_vmware_cluster(mapping, vmware_cluster, globally_unique_esxi_hosts_set)
+    return all_clusters_summary, total_px_pods_count, globally_unique_esxi_hosts_set
 
+
+def _add_brief_table_rows(table, all_clusters_summary):
+    displayed_px_for_ocp = set()
+    sorted_summary_keys = sorted(all_clusters_summary.keys())
+    for key in sorted_summary_keys:
+        summary_item = all_clusters_summary[key]
+        ocp_name = summary_item["ocp_cluster"]
+        vmware_name = summary_item["vmware_cluster"]
+        hosts = str(summary_item["host_count"])
+        px_pods_for_row = ""
+        if ocp_name not in displayed_px_for_ocp:
+            px_pods_for_row = str(summary_item["px_pod_count"])
+            displayed_px_for_ocp.add(ocp_name)
+        table.add_row(ocp_name, vmware_name, hosts, px_pods_for_row)
+
+
+def _generate_brief_table_report(
+    all_clusters_data: Dict[str, Dict[str, Any]],
+    console_instance: Console,  # Renamed from console
+) -> None:
+    all_clusters_summary, total_px_pods_count, globally_unique_esxi_hosts_set = (
+        _build_brief_table_summary(all_clusters_data)
+    )
     console_instance.print(
         f"[bold]Total Portworx pods across all clusters:[/bold] {total_px_pods_count}"
     )
@@ -1307,30 +1329,12 @@ def _generate_brief_table_report(
         f"[bold]Total unique ESXi hosts across all clusters:[/bold] {len(globally_unique_esxi_hosts_set)}"
     )
     console_instance.print("")
-
     table = Table(title="OpenShift and VMware Clusters Summary")
     table.add_column("OpenShift Cluster", style="cyan")
     table.add_column("VMware Cluster", style="green")
     table.add_column("ESXi Host Count", justify="right", style="yellow")
     table.add_column("Portworx Pod Count", justify="right", style="magenta")
-
-    # Sort by OpenShift cluster, then VMware cluster
-    # Keep track of OCP clusters for which PX count has been displayed
-    displayed_px_for_ocp = set()
-    sorted_summary_keys = sorted(all_clusters_summary.keys())
-
-    for key in sorted_summary_keys:
-        summary_item = all_clusters_summary[key]
-        ocp_name = summary_item["ocp_cluster"]
-        vmware_name = summary_item["vmware_cluster"]
-        hosts = str(summary_item["host_count"])
-        px_pods_for_row = ""
-
-        if ocp_name not in displayed_px_for_ocp:
-            px_pods_for_row = str(summary_item["px_pod_count"])
-            displayed_px_for_ocp.add(ocp_name)
-        table.add_row(ocp_name, vmware_name, hosts, px_pods_for_row)
-
+    _add_brief_table_rows(table, all_clusters_summary)
     console_instance.print(table)
 
 

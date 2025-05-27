@@ -58,6 +58,8 @@ logger = get_logger(__name__)
 # Initialize rich console for output
 console = Console()
 
+CSV_HEADERS = ["OpenShift Cluster", "VMware Cluster", "ESXi Host Count", "Portworx Pod Count"]
+
 
 @dataclass
 class VSphereConnectionParams:
@@ -780,9 +782,8 @@ def _generate_csv_data(all_clusters_data: Dict[str, Dict[str, Any]]) -> List[Lis
     Returns:
         List of rows, where each row is a list of strings representing CSV fields.
     """
-    # Headers for the CSV
-    headers = ["OpenShift Cluster", "VMware Cluster", "ESXi Host Count", "Portworx Pod Count"]
-    rows = [headers]
+    # Use the CSV_HEADERS constant
+    rows = [CSV_HEADERS]
 
     # Track clusters we've already recorded PX pod counts for
     recorded_px_counts = set()

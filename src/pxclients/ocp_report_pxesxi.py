@@ -697,79 +697,58 @@ def _generate_brief_json_data(
     return output_data
 
 
+def _build_datacenter_clusters(mapping: Dict[str, Any]) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    datacenter_clusters = {}
+    for _machineset_name, cluster_info in mapping.items():
+        datacenter = cluster_info.get("datacenter", "Unknown")
+        vmware_cluster_name = cluster_info["cluster_name"]
+        if vmware_cluster_name == "Unknown":
+            continue
+        if datacenter not in datacenter_clusters:
+            datacenter_clusters[datacenter] = {}
+        if vmware_cluster_name not in datacenter_clusters[datacenter]:
+            datacenter_clusters[datacenter][vmware_cluster_name] = {
+                "hosts": set(),
+                "hosts_count": 0,
+            }
+        for host_item in cluster_info["hosts"]:
+            host_name = host_item["name"]
+            datacenter_clusters[datacenter][vmware_cluster_name]["hosts"].add(host_name)
+    return datacenter_clusters
+
+
+def _add_datacenter_info(report_data: dict, cluster_name: str, datacenter_clusters: dict):
+    for datacenter_name, vmware_clusters in datacenter_clusters.items():
+        if "datacenters" not in report_data[cluster_name]:
+            report_data[cluster_name]["datacenters"] = {}
+        report_data[cluster_name]["datacenters"][datacenter_name] = {}
+        for vmware_cluster_name_item, vmware_cluster_data in vmware_clusters.items():
+            host_list = sorted(list(vmware_cluster_data["hosts"]))
+            hosts_count = len(host_list)
+            report_data[cluster_name]["datacenters"][datacenter_name][
+                vmware_cluster_name_item
+            ] = {
+                "hosts": host_list,
+                "hosts_count": hosts_count,
+            }
+
+
 def _generate_detailed_json_data(all_clusters_data: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    """Generate the data structure for the detailed JSON report.
-
-    Args:
-        all_clusters_data: Dictionary containing the processed data for all clusters.
-
-    Returns:
-        Dictionary representing the detailed JSON report data.
-    """
-    # Create a new JSON structure organized by cluster, datacenter, and VMware cluster
+    """Generate the data structure for the detailed JSON report."""
     report_data = {}
-
-    # Process each OpenShift cluster
-    for cluster_name, cluster_data_item in all_clusters_data.items():  # Renamed cluster_data
+    for cluster_name, cluster_data_item in all_clusters_data.items():
         mapping = cluster_data_item["mapping"]
         px_pod_count = cluster_data_item["portworx_pods_count"]
-
-        # Track unique hosts for this cluster
         cluster_hosts = set()
-
-        # First pass: collect all datacenter, cluster, and host information for this cluster
-        datacenter_clusters = {}
-        for _machineset_name, cluster_info in mapping.items():  # Renamed machineset_name
-            datacenter = cluster_info.get("datacenter", "Unknown")
-            vmware_cluster_name = cluster_info["cluster_name"]
-
-            if vmware_cluster_name == "Unknown":  # Skip if cluster is unknown
-                continue
-
-            # Initialize datacenter if not seen before
-            if datacenter not in datacenter_clusters:
-                datacenter_clusters[datacenter] = {}
-
-            # Initialize VMware cluster if not seen before
-            if vmware_cluster_name not in datacenter_clusters[datacenter]:
-                datacenter_clusters[datacenter][vmware_cluster_name] = {
-                    "hosts": set(),
-                    "hosts_count": 0,
-                }
-
-            # Add unique hosts to this VMware cluster
-            for host_item in cluster_info["hosts"]:  # Renamed host
-                host_name = host_item["name"]
-                datacenter_clusters[datacenter][vmware_cluster_name]["hosts"].add(host_name)
-                cluster_hosts.add(host_name)
-
-        # Add this OpenShift cluster's data to the report
+        datacenter_clusters = _build_datacenter_clusters(mapping)
+        for dc in datacenter_clusters.values():
+            for vwc in dc.values():
+                cluster_hosts.update(vwc["hosts"])
         report_data[cluster_name] = {
             "portworx_pods_count": px_pod_count,
             "total_esxi_hosts": len(cluster_hosts),
         }
-
-        # Add datacenter and VMware cluster information
-        for datacenter_name, vmware_clusters in datacenter_clusters.items():  # Renamed datacenter
-            if "datacenters" not in report_data[cluster_name]:
-                report_data[cluster_name]["datacenters"] = {}
-
-            report_data[cluster_name]["datacenters"][datacenter_name] = {}
-            for (
-                vmware_cluster_name_item,
-                vmware_cluster_data,
-            ) in vmware_clusters.items():  # Renamed vmware_cluster_name
-                # Convert set to sorted list for JSON serialization
-                host_list = sorted(list(vmware_cluster_data["hosts"]))
-                hosts_count = len(host_list)
-
-                report_data[cluster_name]["datacenters"][datacenter_name][
-                    vmware_cluster_name_item
-                ] = {
-                    "hosts": host_list,
-                    "hosts_count": hosts_count,
-                }
-
+        _add_datacenter_info(report_data, cluster_name, datacenter_clusters)
     return report_data
 
 

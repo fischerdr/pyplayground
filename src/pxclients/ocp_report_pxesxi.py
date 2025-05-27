@@ -624,89 +624,74 @@ def extract_cluster_name_from_api_url(api_url: str) -> str:
         return "unknown-cluster"
 
 
-def _generate_brief_json_data( 
-    all_clusters_data: Dict[str, Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Generate the data structure for the brief JSON report.
-
-    Args:
-        all_clusters_data: Dictionary containing the processed data for all clusters.
-
-    Returns:
-        Dictionary representing the brief JSON report data.
-    """
-    # Generate a summary of clusters and their ESXi host counts
+def _get_all_clusters_summary(all_clusters_data: Dict[str, Dict[str, Any]]) -> tuple[dict, int]:
+    """Builds the all_clusters_summary dict and total_px_pods_count."""
     all_clusters_summary = {}
-    total_px_pods_count = 0  # Renamed from total_px_pods
-    total_esxi_hosts_count = 0  # Renamed from total_esxi_hosts
-
-    # Collect summary data from all clusters
+    total_px_pods_count = 0
     for cluster_name, cluster_data in all_clusters_data.items():
         mapping = cluster_data["mapping"]
         px_pod_count = cluster_data["portworx_pods_count"]
         total_px_pods_count += px_pod_count
-
-        # Generate cluster summary (cluster name -> host count)
         cluster_summary = generate_cluster_summary(mapping)
-
-        # Add to all clusters summary
         for vmware_cluster, host_count in cluster_summary.items():
-            if vmware_cluster == "Unknown":  # Skip unknown clusters for summary
+            if vmware_cluster == "Unknown":
                 continue
             key = f"{cluster_name}/{vmware_cluster}"
             all_clusters_summary[key] = {
                 "host_count": host_count,
-                "px_pod_count": px_pod_count,  # Store px_pod_count per OCP cluster
+                "px_pod_count": px_pod_count,
             }
-            # Sum unique hosts based on their actual count in the mapping
-            # This logic for total_esxi_hosts_count needs to be careful not to double count
-            # across different OCP clusters if they share VMware clusters.
-            # The most straightforward way is to sum host_count from the cluster_summary.
-            total_esxi_hosts_count += host_count
+    return all_clusters_summary, total_px_pods_count
 
-    # Recalculate total_esxi_hosts for truly unique ESXi hosts across all OCP clusters
-    # This requires iterating through the original mapping data to get unique host names.
+
+def _get_globally_unique_esxi_hosts(all_clusters_data: Dict[str, Dict[str, Any]]) -> set:
+    """Returns a set of all unique ESXi host names across all clusters."""
     globally_unique_esxi_hosts = set()
     for ocp_cluster_data in all_clusters_data.values():
         for ms_info in ocp_cluster_data["mapping"].values():
             if ms_info["cluster_name"] != "Unknown":
                 for host in ms_info["hosts"]:
                     globally_unique_esxi_hosts.add(host["name"])
+    return globally_unique_esxi_hosts
 
-    # Create brief JSON output
-    output_data = {
-        "portworx_pods_count": total_px_pods_count,
-        "total_esxi_hosts": len(
-            globally_unique_esxi_hosts
-        ),  # Use the count of globally unique hosts
-        "clusters": {},
-    }
 
-    # Group by OpenShift cluster
-    # Store OCP cluster specific PX pod count only once.
+def _populate_clusters_section(
+    all_clusters_summary: dict,
+) -> dict:
+    """Builds the 'clusters' section of the brief JSON output."""
+    output_clusters = {}
     ocp_px_counts_recorded = set()
-
-    for full_cluster_name_key, data in all_clusters_summary.items():  # Renamed full_cluster_name
+    for full_cluster_name_key, data in all_clusters_summary.items():
         ocp_cluster, vmware_cluster = full_cluster_name_key.split("/", 1)
-
-        if ocp_cluster not in output_data["clusters"]:
-            output_data["clusters"][ocp_cluster] = {
-                # Store px_pod_count only once per OCP cluster
+        if ocp_cluster not in output_clusters:
+            output_clusters[ocp_cluster] = {
                 "px_pod_count": data["px_pod_count"],
                 "vmware_clusters": {},
             }
             ocp_px_counts_recorded.add(ocp_cluster)
-        # If OCP cluster already exists, but px_pod_count wasn't set (e.g. older logic)
         elif (
-            "px_pod_count" not in output_data["clusters"][ocp_cluster]
+            "px_pod_count" not in output_clusters[ocp_cluster]
             and ocp_cluster not in ocp_px_counts_recorded
         ):
-            output_data["clusters"][ocp_cluster]["px_pod_count"] = data["px_pod_count"]
+            output_clusters[ocp_cluster]["px_pod_count"] = data["px_pod_count"]
             ocp_px_counts_recorded.add(ocp_cluster)
-
-        output_data["clusters"][ocp_cluster]["vmware_clusters"][vmware_cluster] = {
+        output_clusters[ocp_cluster]["vmware_clusters"][vmware_cluster] = {
             "hosts_count": data["host_count"]
         }
+    return output_clusters
+
+
+def _generate_brief_json_data(
+    all_clusters_data: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Generate the data structure for the brief JSON report."""
+    all_clusters_summary, total_px_pods_count = _get_all_clusters_summary(all_clusters_data)
+    globally_unique_esxi_hosts = _get_globally_unique_esxi_hosts(all_clusters_data)
+    output_data = {
+        "portworx_pods_count": total_px_pods_count,
+        "total_esxi_hosts": len(globally_unique_esxi_hosts),
+        "clusters": _populate_clusters_section(all_clusters_summary),
+    }
     return output_data
 
 
@@ -1250,7 +1235,6 @@ def _process_single_kubeconfig(
         credentials_secret_namespace,
         disable_ssl_vsphere,  # disable_ssl_vsphere
         vsphere_cert_path_cli,  # Pass CLI option for cert path
-        portworx_namespace,  # portworx_namespace
     )
 
     # If vsphere_conn_params is None and machineset_vsphere_data has content,

@@ -1102,8 +1102,8 @@ def _extract_vsphere_info_and_params(
         credentials_secret_name,
         credentials_secret_namespace,
         ocp_cluster_name,
-        disable_ssl_vsphere,
-        vsphere_cert_path_cli,
+        disable_ssl_vsphere,  # disable_ssl_vsphere
+        vsphere_cert_path_cli,  # Pass CLI option for cert path
     )
     if (
         not vsphere_conn_params and machineset_vsphere_data
@@ -1338,13 +1338,54 @@ def _generate_brief_table_report(
     console_instance.print(table)
 
 
+def _build_machineset_table_rows(mapping):
+    rows = []
+    for machineset_name in sorted(mapping.keys()):
+        cluster_info = mapping[machineset_name]
+        rows.append((
+            machineset_name,
+            cluster_info.get("datacenter", "N/A"),
+            cluster_info["cluster_name"],
+            cluster_info.get("datastore", "N/A"),
+        ))
+    return rows
+
+
+def _build_detailed_hosts_info_list(mapping):
+    detailed_hosts_info_list = []
+    seen_host_in_ocp_cluster_scope = set()
+    for ms_info in mapping.values():
+        vmware_cluster_for_ms = ms_info["cluster_name"]
+        if vmware_cluster_for_ms != "Unknown":
+            for host_detail in ms_info["hosts"]:
+                host_key = (vmware_cluster_for_ms, host_detail["name"])
+                if host_key not in seen_host_in_ocp_cluster_scope:
+                    detailed_hosts_info_list.append(
+                        {"vmware_cluster": vmware_cluster_for_ms, "host": host_detail}
+                    )
+                    seen_host_in_ocp_cluster_scope.add(host_key)
+    return detailed_hosts_info_list
+
+
+def _add_hosts_table_rows(hosts_table, detailed_hosts_info_list):
+    detailed_hosts_info_list.sort(key=lambda x: (x["vmware_cluster"], x["host"]["name"]))
+    for item in detailed_hosts_info_list:
+        host = item["host"]
+        hosts_table.add_row(
+            item["vmware_cluster"],
+            host["name"],
+            str(host.get("cpu_cores", "N/A")),
+            str(host.get("memory_size_gb", "N/A")),
+            host.get("power_state", "N/A"),
+        )
+
+
 def _generate_detailed_table_report_for_cluster(  # noqa: C901
     ocp_cluster_name: str,
     cluster_data: Dict[str, Any],
     console_instance: Console,  # Renamed
     px_namespace: str,
 ) -> None:
-    """Generates and prints the detailed table report for a single OCP cluster."""
     mapping = cluster_data["mapping"]
     px_pod_count = cluster_data["portworx_pods_count"]
 
@@ -1371,32 +1412,11 @@ def _generate_detailed_table_report_for_cluster(  # noqa: C901
     ms_table.add_column("VMware Cluster", style="green")
     ms_table.add_column("Datastore", style="blue")
 
-    sorted_machineset_names = sorted(mapping.keys())
-    for machineset_name in sorted_machineset_names:
-        cluster_info = mapping[machineset_name]
-        ms_table.add_row(
-            machineset_name,
-            cluster_info.get("datacenter", "N/A"),
-            cluster_info["cluster_name"],
-            cluster_info.get("datastore", "N/A"),
-        )
+    for row in _build_machineset_table_rows(mapping):
+        ms_table.add_row(*row)
     console_instance.print(ms_table)
 
-    # Collect all unique hosts for the detailed host table for this OCP cluster
-    # Format: (vmware_cluster_name, host_detail_dict)
-    detailed_hosts_info_list = []
-    seen_host_in_ocp_cluster_scope = set()  # (vmware_cluster_name, esxi_host_name)
-
-    for ms_info in mapping.values():
-        vmware_cluster_for_ms = ms_info["cluster_name"]
-        if vmware_cluster_for_ms != "Unknown":
-            for host_detail in ms_info["hosts"]:
-                host_key = (vmware_cluster_for_ms, host_detail["name"])
-                if host_key not in seen_host_in_ocp_cluster_scope:
-                    detailed_hosts_info_list.append(
-                        {"vmware_cluster": vmware_cluster_for_ms, "host": host_detail}
-                    )
-                    seen_host_in_ocp_cluster_scope.add(host_key)
+    detailed_hosts_info_list = _build_detailed_hosts_info_list(mapping)
 
     if detailed_hosts_info_list:
         hosts_table = Table(title=f"ESXi Hosts Details for {ocp_cluster_name}")
@@ -1405,18 +1425,7 @@ def _generate_detailed_table_report_for_cluster(  # noqa: C901
         hosts_table.add_column("CPU Cores", justify="right", style="yellow")
         hosts_table.add_column("Memory (GB)", justify="right", style="yellow")
         hosts_table.add_column("State", style="magenta")
-
-        detailed_hosts_info_list.sort(key=lambda x: (x["vmware_cluster"], x["host"]["name"]))
-
-        for item in detailed_hosts_info_list:
-            host = item["host"]
-            hosts_table.add_row(
-                item["vmware_cluster"],
-                host["name"],
-                str(host.get("cpu_cores", "N/A")),
-                str(host.get("memory_size_gb", "N/A")),
-                host.get("power_state", "N/A"),
-            )
+        _add_hosts_table_rows(hosts_table, detailed_hosts_info_list)
         console_instance.print(hosts_table)
     console_instance.print("")
 

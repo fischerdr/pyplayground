@@ -1263,6 +1263,40 @@ def _process_single_kubeconfig(
     # or a partial result.
 
 
+def _process_all_kubeconfigs(
+    kubeconfig_files_to_process: List[str],
+    vsphere_host: Optional[str],
+    vsphere_user: Optional[str],
+    vsphere_password: Optional[str],
+    namespace: str,
+    disable_ssl: bool,
+    vsphere_cert_path: Optional[str],
+    credentials_secret: Optional[str],
+    credentials_namespace: str,
+    px_namespace: str,
+) -> Dict[str, Dict[str, Any]]:
+    all_ocp_clusters_data: Dict[str, Dict[str, Any]] = {}
+    for kc_file_path in kubeconfig_files_to_process:
+        processed_data = _process_single_kubeconfig(
+            kc_file_path,
+            vsphere_host,
+            vsphere_user,
+            vsphere_password,
+            namespace,
+            disable_ssl,
+            vsphere_cert_path,
+            credentials_secret,
+            credentials_namespace,
+            px_namespace,
+        )
+        if processed_data:
+            all_ocp_clusters_data[processed_data["ocp_cluster_name"]] = processed_data
+    if not all_ocp_clusters_data:
+        logger.error("No OpenShift clusters were successfully processed.")
+        sys.exit(1)
+    return all_ocp_clusters_data
+
+
 # --- Refactored Report Generation ---
 def _build_summary_entry(ocp_cluster_name, vmware_cluster, host_count, px_pod_count):
     return {
@@ -1296,7 +1330,9 @@ def _build_brief_table_summary(all_clusters_data: Dict[str, Dict[str, Any]]):
             all_clusters_summary[key] = _build_summary_entry(
                 ocp_cluster_name, vmware_cluster, host_count, px_pod_count
             )
-            _add_unique_hosts_for_vmware_cluster(mapping, vmware_cluster, globally_unique_esxi_hosts_set)
+            _add_unique_hosts_for_vmware_cluster(
+                mapping, vmware_cluster, globally_unique_esxi_hosts_set
+            )
     return all_clusters_summary, total_px_pods_count, globally_unique_esxi_hosts_set
 
 
@@ -1342,12 +1378,14 @@ def _build_machineset_table_rows(mapping):
     rows = []
     for machineset_name in sorted(mapping.keys()):
         cluster_info = mapping[machineset_name]
-        rows.append((
-            machineset_name,
-            cluster_info.get("datacenter", "N/A"),
-            cluster_info["cluster_name"],
-            cluster_info.get("datastore", "N/A"),
-        ))
+        rows.append(
+            (
+                machineset_name,
+                cluster_info.get("datacenter", "N/A"),
+                cluster_info["cluster_name"],
+                cluster_info.get("datastore", "N/A"),
+            )
+        )
     return rows
 
 
@@ -1444,7 +1482,26 @@ def _generate_detailed_table_report(
         )
 
 
-# --- Main Click Command ---
+def _resolve_kubeconfig_files(kubeconfig: Optional[str], clusterlist: Optional[str]) -> List[str]:
+    kubeconfig_files_to_process: List[str] = []
+    if clusterlist:
+        try:
+            with open(clusterlist, "r") as f:
+                kubeconfig_files_to_process = [line.strip() for line in f if line.strip()]
+        except FileNotFoundError:
+            logger.error(f"Cluster list file not found: {clusterlist}")
+            sys.exit(1)
+    elif kubeconfig:
+        kubeconfig_files_to_process = [kubeconfig]
+    else:
+        logger.error("Either --kubeconfig or --clusterlist must be provided.")
+        sys.exit(1)
+    if not kubeconfig_files_to_process:
+        logger.error("No kubeconfig files specified for processing.")
+        sys.exit(1)
+    return kubeconfig_files_to_process
+
+
 @click.command()
 @click.option("--kubeconfig", help="Path to a kubeconfig file for a single OpenShift cluster")
 @click.option(
@@ -1507,7 +1564,7 @@ def _generate_detailed_table_report(
     required=False,
 )
 @click.option("--debug", is_flag=True, help="Enable debug logging")
-def main(  # noqa: C901
+def main(
     kubeconfig: Optional[str],  # Made options optional to allow None check
     clusterlist: Optional[str],
     vsphere_host: Optional[str],
@@ -1543,47 +1600,21 @@ def main(  # noqa: C901
     socket.setdefaulttimeout(timeout)
 
     # Determine list of kubeconfig files
-    kubeconfig_files_to_process: List[str] = []  # Renamed from kubeconfigs
-    if clusterlist:
-        try:
-            with open(clusterlist, "r") as f:
-                kubeconfig_files_to_process = [line.strip() for line in f if line.strip()]
-        except FileNotFoundError:
-            logger.error(f"Cluster list file not found: {clusterlist}")
-            sys.exit(1)
-    elif kubeconfig:
-        kubeconfig_files_to_process = [kubeconfig]
-    else:
-        logger.error("Either --kubeconfig or --clusterlist must be provided.")
-        sys.exit(1)
-
-    if not kubeconfig_files_to_process:
-        logger.error("No kubeconfig files specified for processing.")
-        sys.exit(1)
+    kubeconfig_files_to_process = _resolve_kubeconfig_files(kubeconfig, clusterlist)
 
     # Process each kubeconfig and store results
-    all_ocp_clusters_data: Dict[str, Dict[str, Any]] = {}  # Renamed from all_clusters_data
-
-    for kc_file_path in kubeconfig_files_to_process:
-        processed_data = _process_single_kubeconfig(
-            kc_file_path,
-            vsphere_host,  # Pass CLI args directly
-            vsphere_user,
-            vsphere_password,
-            namespace,  # machineset_namespace
-            disable_ssl,  # disable_ssl_vsphere
-            vsphere_cert_path,  # Pass CLI option for cert path
-            credentials_secret,  # credentials_secret_name
-            credentials_namespace,
-            px_namespace,  # portworx_namespace
-        )
-        if processed_data:
-            # Use the ocp_cluster_name returned by the processing function as the key
-            all_ocp_clusters_data[processed_data["ocp_cluster_name"]] = processed_data
-
-    if not all_ocp_clusters_data:
-        logger.error("No OpenShift clusters were successfully processed.")
-        sys.exit(1)
+    all_ocp_clusters_data = _process_all_kubeconfigs(
+        kubeconfig_files_to_process,
+        vsphere_host,
+        vsphere_user,
+        vsphere_password,
+        namespace,
+        disable_ssl,
+        vsphere_cert_path,
+        credentials_secret,
+        credentials_namespace,
+        px_namespace,
+    )
 
     # Generate combined report
     logger.info("Generating combined report for all processed OpenShift clusters.")

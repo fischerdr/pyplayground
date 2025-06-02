@@ -17,6 +17,7 @@ Example usage:
 ```
 """
 
+import base64
 import json
 import logging
 import os
@@ -703,6 +704,41 @@ def output_results_csv(data: List[Dict[str, Any]], filename: str):
         console.print(f"[bold red]Unexpected error writing CSV file '{full_path}': {e}[/bold red]")
 
 
+# NEW: Helper to check Portworx security and get PXCTL_AUTH_TOKEN
+def get_pxctl_auth_env(core_v1: client.CoreV1Api, px_namespace: str) -> Optional[str]:
+    """Return PXCTL_AUTH_TOKEN env var if Portworx security is enabled in StorageCluster."""
+    logger = get_logger(__name__)
+    try:
+        co_api = get_k8s_client("CustomObjectsApi")
+        stc = co_api.list_namespaced_custom_object(
+            group="core.libopenstorage.org",
+            version="v1",
+            namespace=px_namespace,
+            plural="storageclusters",
+        )
+        if stc["items"]:
+            sec_enabled = stc["items"][0].get("spec", {}).get("security", {}).get("enabled", False)
+            if sec_enabled:
+                # Use the provided core_v1 client for secret access (already from get_k8s_client)
+                secret = core_v1.read_namespaced_secret("px-admin-token", px_namespace)
+                token_b64 = secret.data.get("auth-token")
+                if token_b64:
+                    token = base64.b64decode(token_b64).decode("utf-8")
+                    logger.info(
+                        "Portworx security enabled; using PXCTL_AUTH_TOKEN from px-admin-token secret."
+                    )
+                    return f"PXCTL_AUTH_TOKEN={token}"
+                else:
+                    logger.warning("px-admin-token secret found but 'auth-token' key missing.")
+            else:
+                logger.info("Portworx security is not enabled in StorageCluster.")
+        else:
+            logger.warning(f"No StorageCluster found in namespace '{px_namespace}'.")
+    except Exception as e:
+        logger.warning(f"Could not determine PXCTL_AUTH_TOKEN: {e}")
+    return None
+
+
 # NEW: Helper function containing the core logic extracted from main
 def _gather_volume_details(
     core_v1: client.CoreV1Api,
@@ -767,6 +803,12 @@ def _gather_volume_details(
     total_pvs = len(combined_k8s_data)
     logger.info(f"Combined Kubernetes data for {total_pvs} Portworx PVs to process.")
 
+    # --- NEW: Add PXCTL_AUTH_TOKEN if security is enabled ---
+    pxctl_auth_env = get_pxctl_auth_env(core_v1, px_namespace)
+    effective_env_vars = list(env_vars)  # Copy to avoid mutating input
+    if pxctl_auth_env:
+        effective_env_vars.append(pxctl_auth_env)
+
     # 5. Execute pxctl and enrich data
     final_results = []
     processed_pv_count = 0
@@ -776,7 +818,7 @@ def _gather_volume_details(
         logger.info(f"Processing PV {processed_pv_count}/{total_pvs}: {pv_name}")
 
         pxctl_json, pxctl_raw, pxctl_err = execute_pxctl_inspect(
-            core_v1, px_namespace, px_pod_name, px_container_name, pv_name, env_vars
+            core_v1, px_namespace, px_pod_name, px_container_name, pv_name, effective_env_vars
         )
 
         # Add pxctl results to the combined data

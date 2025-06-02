@@ -779,11 +779,10 @@ def _gather_volume_details(
         logger.warning(
             f"No StorageClasses found with provisioner '{PORTWORX_PROVISIONER}'. Cannot identify Portworx volumes."
         )
-        # Use console for user-facing message before exiting
         console.print(
             f"[yellow]Warning: No StorageClasses found with provisioner '{PORTWORX_PROVISIONER}'. Cannot identify Portworx volumes.[/yellow]"
         )
-        sys.exit(0)
+        return []
 
     # 3. Filter Portworx PVs and PVCs, passing skip_prefixes
     portworx_pvs = filter_portworx_pvs(core_v1, px_sc_names, skip_prefixes)
@@ -796,7 +795,7 @@ def _gather_volume_details(
         console.print(
             "[yellow]No Portworx PVs found matching the criteria (StorageClass, allowed namespaces).[/yellow]"
         )
-        sys.exit(0)
+        return []
 
     # 4. Combine PV/PVC Data (uses the already filtered lists)
     combined_k8s_data = combine_data(portworx_pvs, portworx_pvcs)
@@ -927,6 +926,10 @@ def process_clusters(
             final_results = gather_and_enrich_volume_details(
                 core_v1, storage_v1, px_namespace, env_var, skip_namespace_prefix
             )
+            if not final_results:
+                logger.info(f"No Portworx PVs or PVCs found for cluster: {cluster_name}. Skipping output.")
+                console.print(f"[yellow]No Portworx PVs or PVCs found for cluster: {cluster_name}.[/yellow]")
+                continue  # Move to next cluster
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_base = f"{cluster_name}_pxvoldetails_{timestamp}"
             if output_format == "json":

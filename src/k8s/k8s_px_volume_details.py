@@ -238,9 +238,9 @@ def filter_portworx_pvs(  # noqa: C901
             pv_name = pv.metadata.name
 
             # Check if it's a Portworx PV based on SC or CSI driver
-            if pv.spec.storage_class_name in portworx_sc_names:
-                is_portworx_pv = True
-            elif pv.spec.csi and pv.spec.csi.driver == PORTWORX_PROVISIONER:
+            if pv.spec.storage_class_name in portworx_sc_names or (
+                pv.spec.csi and pv.spec.csi.driver == PORTWORX_PROVISIONER
+            ):
                 is_portworx_pv = True
                 # logger.debug(f"Identified PV {pv.metadata.name} via CSI driver.") # Debug logged later if added
 
@@ -829,7 +829,6 @@ def _gather_volume_details(
         )
 
         final_results.append(pv_data)
-        # processed_pv_count += 1 # Removed from here as it's incremented before logging
 
     # logger.info(f"Finished processing {processed_pv_count} Portworx PVs.") # Can keep or remove this line as the loop provides counts
     logger.info(
@@ -927,8 +926,12 @@ def process_clusters(
                 core_v1, storage_v1, px_namespace, env_var, skip_namespace_prefix
             )
             if not final_results:
-                logger.info(f"No Portworx PVs or PVCs found for cluster: {cluster_name}. Skipping output.")
-                console.print(f"[yellow]No Portworx PVs or PVCs found for cluster: {cluster_name}.[/yellow]")
+                logger.info(
+                    f"No Portworx PVs or PVCs found for cluster: {cluster_name}. Skipping output."
+                )
+                console.print(
+                    f"[yellow]No Portworx PVs or PVCs found for cluster: {cluster_name}.[/yellow]"
+                )
                 continue  # Move to next cluster
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_base = f"{cluster_name}_pxvoldetails_{timestamp}"

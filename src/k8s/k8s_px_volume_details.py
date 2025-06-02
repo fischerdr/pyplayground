@@ -880,23 +880,6 @@ def gather_and_enrich_volume_details(
     )
 
 
-def handle_output(final_results, output_format, output_file, logger):
-    """Handle output of results in the requested format."""
-    if output_format != "console":
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_name, _ext = os.path.splitext(output_file)
-        if output_format == "json":
-            output_filename = f"{base_name}_{timestamp}.json"
-            logger.info(f"JSON output file will be: {output_filename}")
-            output_results_json(final_results, output_filename)
-        elif output_format == "csv":
-            output_filename = f"{base_name}_{timestamp}.csv"
-            logger.info(f"CSV output file will be: {output_filename}")
-            output_results_csv(final_results, output_filename)
-    else:
-        output_results_console(final_results)
-
-
 def handle_main_errors(e, logger, console):
     """Centralized error handling for main."""
     import sys
@@ -923,6 +906,56 @@ def handle_main_errors(e, logger, console):
         sys.exit(1)
 
 
+def process_clusters(
+    kubeconfig_files,
+    output_format,
+    px_namespace,
+    env_var,
+    skip_namespace_prefix,
+    logger,
+    console,
+):
+    """Process each cluster, output per-cluster results, and log errors."""
+    failed_clusters = []
+    for kubeconfig_path in kubeconfig_files:
+        cluster_name = os.path.splitext(os.path.basename(kubeconfig_path))[0]
+        try:
+            logger.info(f"Processing cluster: {cluster_name} (kubeconfig: {kubeconfig_path})")
+            console.print(f"[bold blue]Processing cluster: {cluster_name}[/bold blue]")
+            load_kubeconfig_or_exit(kubeconfig_path, console)
+            core_v1, storage_v1 = get_k8s_clients()
+            final_results = gather_and_enrich_volume_details(
+                core_v1, storage_v1, px_namespace, env_var, skip_namespace_prefix
+            )
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_base = f"{cluster_name}_pxvoldetails_{timestamp}"
+            if output_format == "json":
+                output_filename = f"{output_base}.json"
+                logger.info(f"JSON output file for cluster {cluster_name}: {output_filename}")
+                output_results_json(final_results, output_filename)
+            elif output_format == "csv":
+                output_filename = f"{output_base}.csv"
+                logger.info(f"CSV output file for cluster {cluster_name}: {output_filename}")
+                output_results_csv(final_results, output_filename)
+            else:
+                console.print(f"[bold green]Results for cluster: {cluster_name}[/bold green]")
+                output_results_console(final_results)
+            logger.info(f"Finished processing cluster: {cluster_name}")
+        except Exception as e:
+            logger.error(
+                f"Failed to process cluster '{cluster_name}' ({kubeconfig_path}): {e}",
+                exc_info=True,
+            )
+            console.print(f"[bold red]Error processing cluster '{cluster_name}': {e}[/bold red]")
+            failed_clusters.append(cluster_name)
+            continue
+    if failed_clusters:
+        logger.warning(f"The following clusters failed to process: {', '.join(failed_clusters)}")
+        console.print(
+            f"[yellow]The following clusters failed to process: {', '.join(failed_clusters)}[/yellow]"
+        )
+
+
 # --- Main Execution ---
 
 
@@ -934,18 +967,15 @@ def handle_main_errors(e, logger, console):
     envvar="KUBECONFIG",
 )
 @click.option(
+    "--clusterlist",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to a file containing a list of kubeconfig files (one per line).",
+)
+@click.option(
     "--px-namespace",
     default=DEFAULT_PORTWORX_NAMESPACE,
     show_default=True,
     help="Namespace where Portworx pods are running.",
-)
-@click.option(
-    "-o",
-    "--output-file",
-    type=click.Path(dir_okay=False),
-    default="px-volume-summary",  # Base name without extension
-    show_default=True,
-    help="Base path for the output file (without extension). Relative paths are saved to ./tmp/",
 )
 @click.option(
     "-f",
@@ -970,42 +1000,41 @@ def handle_main_errors(e, logger, console):
 )
 def main(
     kubeconfig: Optional[str],
+    clusterlist: Optional[str],
     px_namespace: str,
-    output_file: str,  # Renamed from output_json
     output_format: str,  # Added format
     debug: bool,
     env_var: Tuple[str],
     skip_namespace_prefix: Tuple[str],
 ):
-    """Query Portworx PVs/PVCs, enrich with pxctl details, and output results."""
+    """Query Portworx PVs/PVCs, enrich with pxctl details, and output results. Supports single or multiple clusters."""
     logger = setup_logging_from_cli(debug, __file__)
-
     logger.info("Starting Portworx Volume Detail script...")
-    if kubeconfig:
-        logger.info(f"Using kubeconfig: {kubeconfig}")
-    logger.info(f"Portworx namespace: {px_namespace}")
-    logger.info(f"Output format: {output_format}")
-    if output_format != "console":
-        logger.info(f"Base output file path: {output_file}")
-    if skip_namespace_prefix:
-        logger.info(f"Skipping namespaces starting with: {', '.join(skip_namespace_prefix)}")
-    if env_var:
-        logger.info(f"Using environment variables: {env_var}")  # Log provided env vars
-
-    # Load K8s Config
-    load_kubeconfig_or_exit(kubeconfig, console)
-
-    # Initialize K8s Clients
-    core_v1, storage_v1 = get_k8s_clients()
-
-    try:
-        final_results = gather_and_enrich_volume_details(
-            core_v1, storage_v1, px_namespace, env_var, skip_namespace_prefix
+    kubeconfig_files = []
+    if clusterlist:
+        try:
+            with open(clusterlist, "r") as f:
+                kubeconfig_files = [line.strip() for line in f if line.strip()]
+        except Exception as e:
+            logger.error(f"Failed to read clusterlist file '{clusterlist}': {e}", exc_info=True)
+            console.print(f"[bold red]Error reading clusterlist file: {e}[/bold red]")
+            sys.exit(1)
+    elif kubeconfig:
+        kubeconfig_files = [kubeconfig]
+    else:
+        console.print(
+            "[bold red]Error: Must provide either --kubeconfig or --clusterlist.[/bold red]"
         )
-        handle_output(final_results, output_format, output_file, logger)
-        logger.info("Portworx Volume Detail script finished successfully.")
-    except Exception as e:
-        handle_main_errors(e, logger, console)
+        sys.exit(1)
+    process_clusters(
+        kubeconfig_files,
+        output_format,
+        px_namespace,
+        env_var,
+        skip_namespace_prefix,
+        logger,
+        console,
+    )
 
 
 if __name__ == "__main__":

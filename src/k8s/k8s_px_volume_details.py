@@ -839,6 +839,90 @@ def _gather_volume_details(
     return final_results
 
 
+def setup_logging_from_cli(debug: bool, script_path: str) -> logging.Logger:
+    """Set up logging based on CLI debug flag and script path.
+
+    Returns a logger instance for the current module.
+    """
+    script_base_name = os.path.basename(script_path).replace(".py", "")
+    log_level = logging.DEBUG if debug else logging.INFO
+    setup_logging(level=log_level, script_name=script_base_name)
+    return get_logger(__name__)
+
+
+def load_kubeconfig_or_exit(kubeconfig: Optional[str], console: Console) -> None:
+    """Load Kubernetes configuration or exit with error if it fails."""
+    if not load_kube_config_auto(config_file=kubeconfig):
+        console.print("[bold red]Error: Failed to load Kubernetes configuration.[/bold red]")
+        sys.exit(1)
+
+
+def get_k8s_clients() -> tuple:
+    """Return CoreV1Api and StorageV1Api clients, or exit with error if initialization fails."""
+    try:
+        core_v1 = get_k8s_client("CoreV1Api")
+        storage_v1 = get_k8s_client("StorageV1Api")
+        return core_v1, storage_v1
+    except Exception as e:
+        logger = get_logger(__name__)
+        logger.error(f"Failed to initialize Kubernetes API clients: {e}", exc_info=True)
+        console = Console()
+        console.print(f"[bold red]Error initializing Kubernetes clients: {e}[/bold red]")
+        sys.exit(1)
+
+
+def gather_and_enrich_volume_details(
+    core_v1, storage_v1, px_namespace, env_var, skip_namespace_prefix
+):
+    """Gather and enrich Portworx volume details using K8s and pxctl."""
+    return _gather_volume_details(
+        core_v1, storage_v1, px_namespace, list(env_var), list(skip_namespace_prefix)
+    )
+
+
+def handle_output(final_results, output_format, output_file, logger):
+    """Handle output of results in the requested format."""
+    if output_format != "console":
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_name, _ext = os.path.splitext(output_file)
+        if output_format == "json":
+            output_filename = f"{base_name}_{timestamp}.json"
+            logger.info(f"JSON output file will be: {output_filename}")
+            output_results_json(final_results, output_filename)
+        elif output_format == "csv":
+            output_filename = f"{base_name}_{timestamp}.csv"
+            logger.info(f"CSV output file will be: {output_filename}")
+            output_results_csv(final_results, output_filename)
+    else:
+        output_results_console(final_results)
+
+
+def handle_main_errors(e, logger, console):
+    """Centralized error handling for main."""
+    import sys
+
+    if isinstance(e, RuntimeError):
+        console.print(f"[bold red]Error: {e}[/bold red]")
+        sys.exit(1)
+    elif isinstance(e, ApiException):
+        logger.error(
+            f"Kubernetes API Error: {e.status} {e.reason} - {getattr(e, 'body', '')}", exc_info=True
+        )
+        console.print(f"[bold red]Kubernetes API Error: {e.reason}[/bold red]")
+        sys.exit(1)
+    elif isinstance(e, SystemExit):
+        logger.info(f"Script exiting gracefully (code: {e.code}).")
+        sys.exit(e.code)
+    elif isinstance(e, KeyboardInterrupt):
+        logger.warning("Script execution interrupted by user (Ctrl+C).")
+        console.print("[yellow]\nExecution interrupted by user.[/yellow]")
+        sys.exit(130)
+    else:
+        logger.exception(f"An unexpected error occurred: {e}")
+        console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+        sys.exit(1)
+
+
 # --- Main Execution ---
 
 
@@ -884,7 +968,7 @@ def _gather_volume_details(
     multiple=True,
     help="Environment variable to set in the format VAR=VALUE. Can be used multiple times.",
 )
-def main(  # noqa: C901
+def main(
     kubeconfig: Optional[str],
     px_namespace: str,
     output_file: str,  # Renamed from output_json
@@ -894,14 +978,7 @@ def main(  # noqa: C901
     skip_namespace_prefix: Tuple[str],
 ):
     """Query Portworx PVs/PVCs, enrich with pxctl details, and output results."""
-    # Allow modification of the logger instance
-    # logger = get_logger(__name__) # Define logger locally in main if needed, or rely on module-level if setup_logging configures root
-
-    # Setup Logging
-    script_base_name = os.path.basename(__file__).replace(".py", "")
-    log_level = logging.DEBUG if debug else logging.INFO
-    setup_logging(level=log_level, script_name=script_base_name)
-    logger = get_logger(__name__)  # Get logger instance after setup
+    logger = setup_logging_from_cli(debug, __file__)
 
     logger.info("Starting Portworx Volume Detail script...")
     if kubeconfig:
@@ -916,74 +993,19 @@ def main(  # noqa: C901
         logger.info(f"Using environment variables: {env_var}")  # Log provided env vars
 
     # Load K8s Config
-    if not load_kube_config_auto(config_file=kubeconfig):
-        console.print("[bold red]Error: Failed to load Kubernetes configuration.[/bold red]")
-        sys.exit(1)
+    load_kubeconfig_or_exit(kubeconfig, console)
 
     # Initialize K8s Clients
-    try:
-        core_v1 = get_k8s_client("CoreV1Api")
-        storage_v1 = get_k8s_client("StorageV1Api")
-    except Exception as e:
-        logger.error(f"Failed to initialize Kubernetes API clients: {e}", exc_info=True)
-        console.print(f"[bold red]Error initializing Kubernetes clients: {e}[/bold red]")
-        sys.exit(1)
+    core_v1, storage_v1 = get_k8s_clients()
 
-    # --- Main Logic ---
     try:
-        # Call the helper function to get the results, passing skip prefixes
-        final_results = _gather_volume_details(
-            core_v1, storage_v1, px_namespace, list(env_var), list(skip_namespace_prefix)
+        final_results = gather_and_enrich_volume_details(
+            core_v1, storage_v1, px_namespace, env_var, skip_namespace_prefix
         )
-
-        # --- Output Results --- # Section clarified
-        if output_format != "console":
-            # Generate timestamp for filename
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            # Insert timestamp before the extension
-            base_name, ext = os.path.splitext(output_file)
-            # Handle cases where user might include extension in output_file accidentally
-            # If no extension in output_file, base_name is output_file, ext is empty
-            # If extension IS present, splitext correctly separates it
-            # We reconstruct with the base_name, timestamp, and the *intended* format extension
-
-            if output_format == "json":
-                output_filename = f"{base_name}_{timestamp}.json"
-                logger.info(f"JSON output file will be: {output_filename}")  # Log the final name
-                output_results_json(final_results, output_filename)
-            elif output_format == "csv":
-                output_filename = f"{base_name}_{timestamp}.csv"
-                logger.info(f"CSV output file will be: {output_filename}")  # Log the final name
-                output_results_csv(final_results, output_filename)
-        else:
-            # Console output doesn't need a filename
-            output_results_console(final_results)
-
+        handle_output(final_results, output_format, output_file, logger)
         logger.info("Portworx Volume Detail script finished successfully.")
-
-    except RuntimeError as e:
-        # Catch errors specifically raised by _gather_volume_details (e.g., pod not found)
-        console.print(f"[bold red]Error: {e}[/bold red]")
-        sys.exit(1)
-    except ApiException as e:
-        # Catch K8s API errors that might occur during client operations within the helper
-        logger.error(f"Kubernetes API Error: {e.status} {e.reason} - {e.body}", exc_info=True)
-        console.print(f"[bold red]Kubernetes API Error: {e.reason}[/bold red]")
-        sys.exit(1)
-    except SystemExit as e:
-        # Catch sys.exit called for graceful exits (e.g., no SCs/PVs found)
-        logger.info(f"Script exiting gracefully (code: {e.code}).")
-        sys.exit(e.code)  # Propagate the exit code
-    # Add specific handler for KeyboardInterrupt (Ctrl+C)
-    except KeyboardInterrupt:
-        logger.warning("Script execution interrupted by user (Ctrl+C).")
-        console.print("[yellow]\nExecution interrupted by user.[/yellow]")
-        sys.exit(130)  # Standard exit code for Ctrl+C # Fixed linter error (added space)
     except Exception as e:
-        # Catch any other unexpected errors
-        logger.exception(f"An unexpected error occurred: {e}")
-        console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
-        sys.exit(1)
+        handle_main_errors(e, logger, console)
 
 
 if __name__ == "__main__":

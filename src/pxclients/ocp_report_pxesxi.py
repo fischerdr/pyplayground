@@ -58,7 +58,7 @@ logger = get_logger(__name__)
 # Initialize rich console for output
 console = Console()
 
-CSV_HEADERS = ["OCP", "PX Pods", "ESXi Host Cluster", "ESXi Host Count"]
+CSV_HEADERS = ["ESXi Host Cluster", "ESXi Host Count", "OCP", "PX Pods"]
 
 
 @dataclass
@@ -785,22 +785,21 @@ def _generate_csv_data(all_clusters_data: Dict[str, Dict[str, Any]]) -> List[Lis
                 }
 
             # Add hosts for this cluster
-            _add_unique_hosts_for_vmware_cluster(
-                mapping, vmware_cluster, unique_vmware_clusters[vmware_cluster]["hosts"]
-            )
+            for host in ms_info["hosts"]:
+                unique_vmware_clusters[vmware_cluster]["hosts"].add(host["name"])
             # Track which OCP clusters use this VMware cluster
             unique_vmware_clusters[vmware_cluster]["ocp_clusters"].add(ocp_cluster_name)
 
     # Second pass: generate CSV rows
     for vmware_cluster, data in sorted(unique_vmware_clusters.items()):
         ocp_clusters = sorted(data["ocp_clusters"])
-        # Only print OCP cluster and PX pod count for the first occurrence
+        # Only print VMware cluster and host count for the first occurrence
         for i, ocp_cluster in enumerate(ocp_clusters):
             row = [
-                ocp_cluster if ocp_cluster not in printed_ocp_clusters else "",  # OpenShift cluster
-                str(data["px_pod_count"]) if ocp_cluster not in printed_ocp_clusters else "",  # Portworx pods
-                vmware_cluster,  # Unique ESXi host cluster
-                str(len(data["hosts"]))  # Number of hosts in ESXi cluster count
+                vmware_cluster if i == 0 else "",  # ESXi Host Cluster
+                str(len(data["hosts"])) if i == 0 else "",  # ESXi Host Count
+                ocp_cluster,  # OCP cluster
+                str(data["px_pod_count"])  # Portworx pods
             ]
             rows.append(row)
             printed_ocp_clusters.add(ocp_cluster)
@@ -1407,7 +1406,7 @@ def _generate_brief_table_report(
     )
     console_instance.print("")
     table = Table(title="OpenShift and VMware Clusters Summary")
-    table.add_column("Kubernetes Cluster", style="cyan")
+    table.add_column("OCP Cluster", style="cyan")
     table.add_column("Portworx Pod Count", justify="right", style="magenta")
     table.add_column("ESXi Host Cluster", style="green")
     table.add_column("ESXi Host Count", justify="right", style="yellow")

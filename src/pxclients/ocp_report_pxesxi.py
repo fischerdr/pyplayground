@@ -781,7 +781,7 @@ def _generate_csv_data(all_clusters_data: Dict[str, Dict[str, Any]]) -> List[Lis
                 unique_vmware_clusters[vmware_cluster] = {
                     "hosts": set(),
                     "ocp_clusters": set(),
-                    "px_pod_count": px_pod_count
+                    "px_pod_count": px_pod_count,
                 }
 
             # Add hosts for this cluster
@@ -799,7 +799,7 @@ def _generate_csv_data(all_clusters_data: Dict[str, Dict[str, Any]]) -> List[Lis
                 vmware_cluster if i == 0 else "",  # ESXi Host Cluster
                 str(len(data["hosts"])) if i == 0 else "",  # ESXi Host Count
                 ocp_cluster,  # OCP cluster
-                str(data["px_pod_count"])  # Portworx pods
+                str(data["px_pod_count"]),  # Portworx pods
             ]
             rows.append(row)
             printed_ocp_clusters.add(ocp_cluster)
@@ -1341,7 +1341,7 @@ def _build_brief_table_summary(all_clusters_data: Dict[str, Dict[str, Any]]):
         if ocp_cluster_name not in all_clusters_summary:
             all_clusters_summary[ocp_cluster_name] = {
                 "px_pod_count": px_pod_count,
-                "vmware_clusters": {}
+                "vmware_clusters": {},
             }
 
         # Add VMware clusters and their host counts
@@ -1371,14 +1371,11 @@ def _add_brief_table_rows(table, all_clusters_summary):
         first_row = True
         for vmware_cluster_name in sorted(vmware_clusters.keys()):
             host_count = vmware_clusters[vmware_cluster_name]
-            
+
             # For first row of each OCP cluster, show cluster name and pod count
             if first_row:
                 table.add_row(
-                    ocp_cluster_name,
-                    str(px_pod_count),
-                    vmware_cluster_name,
-                    str(host_count)
+                    ocp_cluster_name, str(px_pod_count), vmware_cluster_name, str(host_count)
                 )
                 first_row = False
             else:
@@ -1387,7 +1384,7 @@ def _add_brief_table_rows(table, all_clusters_summary):
                     "",  # Empty OCP cluster name
                     "",  # Empty pod count
                     vmware_cluster_name,
-                    str(host_count)
+                    str(host_count),
                 )
 
 

@@ -58,7 +58,7 @@ logger = get_logger(__name__)
 # Initialize rich console for output
 console = Console()
 
-CSV_HEADERS = ["OpenShift Cluster", "VMware Cluster", "ESXi Host Count", "Portworx Pod Count"]
+CSV_HEADERS = ["OCP", "PX Pods", "ESXi Host Cluster", "ESXi Host Count"]
 
 
 @dataclass
@@ -762,35 +762,48 @@ def _generate_csv_data(all_clusters_data: Dict[str, Dict[str, Any]]) -> List[Lis
     # Use the CSV_HEADERS constant
     rows = [CSV_HEADERS]
 
-    # Track clusters we've already recorded PX pod counts for
-    recorded_px_counts = set()
+    # Track unique VMware clusters and their hosts
+    unique_vmware_clusters = {}
+    # Track which OCP clusters we've already printed
+    printed_ocp_clusters = set()
 
-    # Process each cluster's data
-    for ocp_cluster_name, cluster_data in sorted(all_clusters_data.items()):
+    # First pass: collect all unique hosts per VMware cluster
+    for ocp_cluster_name, cluster_data in all_clusters_data.items():
         mapping = cluster_data["mapping"]
         px_pod_count = cluster_data["portworx_pods_count"]
 
-        # Generate cluster summary
-        cluster_summary = generate_cluster_summary(mapping)
-
-        # Sort VMware clusters for consistent output
-        for vmware_cluster in sorted(cluster_summary.keys()):
+        for ms_info in mapping.values():
+            vmware_cluster = ms_info["cluster_name"]
             if vmware_cluster == "Unknown":
                 continue
 
-            # Only include PX pod count once per OCP cluster
-            current_px_count = ""
-            if ocp_cluster_name not in recorded_px_counts:
-                current_px_count = str(px_pod_count)
-                recorded_px_counts.add(ocp_cluster_name)
+            if vmware_cluster not in unique_vmware_clusters:
+                unique_vmware_clusters[vmware_cluster] = {
+                    "hosts": set(),
+                    "ocp_clusters": set(),
+                    "px_pod_count": px_pod_count
+                }
 
+            # Add hosts for this cluster
+            _add_unique_hosts_for_vmware_cluster(
+                mapping, vmware_cluster, unique_vmware_clusters[vmware_cluster]["hosts"]
+            )
+            # Track which OCP clusters use this VMware cluster
+            unique_vmware_clusters[vmware_cluster]["ocp_clusters"].add(ocp_cluster_name)
+
+    # Second pass: generate CSV rows
+    for vmware_cluster, data in sorted(unique_vmware_clusters.items()):
+        ocp_clusters = sorted(data["ocp_clusters"])
+        # Only print OCP cluster and PX pod count for the first occurrence
+        for i, ocp_cluster in enumerate(ocp_clusters):
             row = [
-                ocp_cluster_name,
-                vmware_cluster,
-                str(cluster_summary[vmware_cluster]),
-                current_px_count,
+                ocp_cluster if ocp_cluster not in printed_ocp_clusters else "",  # OpenShift cluster
+                str(data["px_pod_count"]) if ocp_cluster not in printed_ocp_clusters else "",  # Portworx pods
+                vmware_cluster,  # Unique ESXi host cluster
+                str(len(data["hosts"]))  # Number of hosts in ESXi cluster count
             ]
             rows.append(row)
+            printed_ocp_clusters.add(ocp_cluster)
 
     return rows
 
@@ -1318,42 +1331,70 @@ def _build_brief_table_summary(all_clusters_data: Dict[str, Dict[str, Any]]):
     all_clusters_summary = {}
     total_px_pods_count = 0
     globally_unique_esxi_hosts_set = set()
+
     for ocp_cluster_name, cluster_data in all_clusters_data.items():
         mapping = cluster_data["mapping"]
         px_pod_count = cluster_data["portworx_pods_count"]
         total_px_pods_count += px_pod_count
         cluster_summary = generate_cluster_summary(mapping)
+
+        # Initialize cluster entry if not exists
+        if ocp_cluster_name not in all_clusters_summary:
+            all_clusters_summary[ocp_cluster_name] = {
+                "px_pod_count": px_pod_count,
+                "vmware_clusters": {}
+            }
+
+        # Add VMware clusters and their host counts
         for vmware_cluster, host_count in cluster_summary.items():
             if vmware_cluster == "Unknown":
                 continue
-            key = f"{ocp_cluster_name}/{vmware_cluster}"
-            all_clusters_summary[key] = _build_summary_entry(
-                ocp_cluster_name, vmware_cluster, host_count, px_pod_count
-            )
+
+            # Add hosts for this cluster to global set
             _add_unique_hosts_for_vmware_cluster(
                 mapping, vmware_cluster, globally_unique_esxi_hosts_set
             )
+
+            # Add to cluster's VMware clusters
+            all_clusters_summary[ocp_cluster_name]["vmware_clusters"][vmware_cluster] = host_count
+
     return all_clusters_summary, total_px_pods_count, globally_unique_esxi_hosts_set
 
 
 def _add_brief_table_rows(table, all_clusters_summary):
-    displayed_px_for_ocp = set()
-    sorted_summary_keys = sorted(all_clusters_summary.keys())
-    for key in sorted_summary_keys:
-        summary_item = all_clusters_summary[key]
-        ocp_name = summary_item["ocp_cluster"]
-        vmware_name = summary_item["vmware_cluster"]
-        hosts = str(summary_item["host_count"])
-        px_pods_for_row = ""
-        if ocp_name not in displayed_px_for_ocp:
-            px_pods_for_row = str(summary_item["px_pod_count"])
-            displayed_px_for_ocp.add(ocp_name)
-        table.add_row(ocp_name, vmware_name, hosts, px_pods_for_row)
+    # Sort OCP clusters alphabetically
+    for ocp_cluster_name in sorted(all_clusters_summary.keys()):
+        cluster_data = all_clusters_summary[ocp_cluster_name]
+        px_pod_count = cluster_data["px_pod_count"]
+        vmware_clusters = cluster_data["vmware_clusters"]
+
+        # Sort VMware clusters alphabetically
+        first_row = True
+        for vmware_cluster_name in sorted(vmware_clusters.keys()):
+            host_count = vmware_clusters[vmware_cluster_name]
+            
+            # For first row of each OCP cluster, show cluster name and pod count
+            if first_row:
+                table.add_row(
+                    ocp_cluster_name,
+                    str(px_pod_count),
+                    vmware_cluster_name,
+                    str(host_count)
+                )
+                first_row = False
+            else:
+                # For subsequent rows, leave OCP cluster and pod count blank
+                table.add_row(
+                    "",  # Empty OCP cluster name
+                    "",  # Empty pod count
+                    vmware_cluster_name,
+                    str(host_count)
+                )
 
 
 def _generate_brief_table_report(
     all_clusters_data: Dict[str, Dict[str, Any]],
-    console_instance: Console,  # Renamed from console
+    console_instance: Console,
 ) -> None:
     all_clusters_summary, total_px_pods_count, globally_unique_esxi_hosts_set = (
         _build_brief_table_summary(all_clusters_data)
@@ -1366,10 +1407,10 @@ def _generate_brief_table_report(
     )
     console_instance.print("")
     table = Table(title="OpenShift and VMware Clusters Summary")
-    table.add_column("OpenShift Cluster", style="cyan")
-    table.add_column("VMware Cluster", style="green")
-    table.add_column("ESXi Host Count", justify="right", style="yellow")
+    table.add_column("Kubernetes Cluster", style="cyan")
     table.add_column("Portworx Pod Count", justify="right", style="magenta")
+    table.add_column("ESXi Host Cluster", style="green")
+    table.add_column("ESXi Host Count", justify="right", style="yellow")
     _add_brief_table_rows(table, all_clusters_summary)
     console_instance.print(table)
 

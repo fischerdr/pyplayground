@@ -30,7 +30,6 @@ import os
 import socket
 import ssl
 import sys
-from dataclasses import dataclass
 from datetime import datetime
 from io import StringIO
 from typing import Any, Dict, List, Optional
@@ -45,8 +44,9 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fi
 
 # Import utility functions
 from utils.config_utils import get_env_var, load_env_file
-from utils.k8s_utils import get_custom_objects_api
+from utils.k8s_utils import extract_cluster_name_from_api_url, get_custom_objects_api
 from utils.logging_utils import get_logger, setup_logging
+from utils.vmware_utils import VSphereConnectionParams
 
 # SSL Certs location
 # Consider making this configurable or removing if default context works for most cases
@@ -58,18 +58,7 @@ logger = get_logger(__name__)
 # Initialize rich console for output
 console = Console()
 
-CSV_HEADERS = ["ESXi Host Cluster", "ESXi Host Count", "OCP", "PX Pods"]
-
-
-@dataclass
-class VSphereConnectionParams:
-    """Dataclass to hold vSphere connection parameters."""
-
-    host: str
-    user: str
-    password: str
-    disable_ssl: bool
-    effective_cert_path: Optional[str]
+CSV_HEADERS = ["OCP", "PX Pods", "ESXi Host Cluster", "ESXi Host Count"]
 
 
 def get_vmware_credentials_from_secret(
@@ -597,35 +586,6 @@ def count_portworx_pods(px_namespace: str = "portworx") -> int:  # Renamed names
         return 0
 
 
-def extract_cluster_name_from_api_url(api_url: str) -> str:
-    """Extract the cluster name from the Kubernetes API URL.
-
-    Args:
-        api_url: The Kubernetes API URL (e.g., https://api.hostname.fqdn)
-
-    Returns:
-        The extracted hostname (e.g., hostname)
-    """
-    try:
-        # Remove the protocol part (https://)
-        hostname_part = api_url  # Renamed from api_url to avoid confusion
-        if "://" in hostname_part:
-            hostname_part = hostname_part.split("://")[1]
-
-        # Remove the 'api.' prefix if present
-        if hostname_part.startswith("api."):
-            hostname_part = hostname_part[4:]
-
-        # Extract the hostname part (remove domain/fqdn)
-        hostname = hostname_part.split(".")[0]
-
-        logger.info(f"Extracted cluster name '{hostname}' from API URL '{api_url}'")
-        return hostname
-    except Exception as e:
-        logger.warning(f"Failed to extract cluster name from API URL '{api_url}': {e}")
-        return "unknown-cluster"
-
-
 def _get_all_clusters_summary(all_clusters_data: Dict[str, Dict[str, Any]]) -> tuple[dict, int]:
     """Builds the all_clusters_summary dict and total_px_pods_count."""
     all_clusters_summary = {}
@@ -785,21 +745,22 @@ def _generate_csv_data(all_clusters_data: Dict[str, Dict[str, Any]]) -> List[Lis
                 }
 
             # Add hosts for this cluster
-            for host in ms_info["hosts"]:
-                unique_vmware_clusters[vmware_cluster]["hosts"].add(host["name"])
+            _add_unique_hosts_for_vmware_cluster(
+                mapping, vmware_cluster, unique_vmware_clusters[vmware_cluster]["hosts"]
+            )
             # Track which OCP clusters use this VMware cluster
             unique_vmware_clusters[vmware_cluster]["ocp_clusters"].add(ocp_cluster_name)
 
     # Second pass: generate CSV rows
     for vmware_cluster, data in sorted(unique_vmware_clusters.items()):
         ocp_clusters = sorted(data["ocp_clusters"])
-        # Only print VMware cluster and host count for the first occurrence
+        # Only print OCP cluster and PX pod count for the first occurrence
         for i, ocp_cluster in enumerate(ocp_clusters):
             row = [
-                vmware_cluster if i == 0 else "",  # ESXi Host Cluster
-                str(len(data["hosts"])) if i == 0 else "",  # ESXi Host Count
-                ocp_cluster,  # OCP cluster
-                str(data["px_pod_count"]),  # Portworx pods
+                ocp_cluster if ocp_cluster not in printed_ocp_clusters else "",
+                str(data["px_pod_count"]) if ocp_cluster not in printed_ocp_clusters else "",
+                vmware_cluster,
+                str(len(data["hosts"])),
             ]
             rows.append(row)
             printed_ocp_clusters.add(ocp_cluster)
@@ -1202,7 +1163,23 @@ def _process_single_kubeconfig(
     credentials_secret_namespace: str,
     portworx_namespace: str,
 ) -> Optional[Dict[str, Any]]:
-    """Processes a single OpenShift cluster to gather vSphere and Portworx data."""
+    """Processes a single OpenShift cluster to gather vSphere and Portworx data.
+
+    Args:
+        kubeconfig_file_path: Path to the kubeconfig file
+        cli_vsphere_host: vSphere host
+        cli_vsphere_user: vSphere user
+        cli_vsphere_password: vSphere password
+        machineset_namespace: namespace for the MachineSets
+        disable_ssl_vsphere: disable SSL
+        vsphere_cert_path_cli: vSphere cert path
+        credentials_secret_name: name of the credentials secret
+        credentials_secret_namespace: namespace for the credentials secret
+        portworx_namespace: namespace for the Portworx pods
+
+    Returns:
+        Optional[Dict[str, Any]]: Dictionary of OpenShift cluster data, or None if there was an error
+    """
     ocp_cluster_name, machinesets = _initialize_ocp_connection_and_get_machinesets(
         kubeconfig_file_path, machineset_namespace
     )
@@ -1287,6 +1264,23 @@ def _process_all_kubeconfigs(
     credentials_namespace: str,
     px_namespace: str,
 ) -> Dict[str, Dict[str, Any]]:
+    """Process all kubeconfigs and return a dictionary of OpenShift cluster data.
+
+    Args:
+        kubeconfig_files_to_process: List of kubeconfig file paths to process
+        vsphere_host: vSphere host
+        vsphere_user: vSphere user
+        vsphere_password: vSphere password
+        namespace: namespace
+        disable_ssl: disable SSL
+        vsphere_cert_path: vSphere cert path
+        credentials_secret: credentials secret
+        credentials_namespace: credentials namespace
+        px_namespace: Portworx namespace
+
+    Returns:
+        Dict[str, Dict[str, Any]]: Dictionary of OpenShift cluster data
+    """
     all_ocp_clusters_data: Dict[str, Dict[str, Any]] = {}
     for kc_file_path in kubeconfig_files_to_process:
         processed_data = _process_single_kubeconfig(
@@ -1403,9 +1397,9 @@ def _generate_brief_table_report(
     )
     console_instance.print("")
     table = Table(title="OpenShift and VMware Clusters Summary")
-    table.add_column("OCP Cluster", style="cyan")
-    table.add_column("Portworx Pod Count", justify="right", style="magenta")
-    table.add_column("ESXi Host Cluster", style="green")
+    table.add_column("OCP", style="cyan")
+    table.add_column("PX Pod Count", justify="right", style="magenta")
+    table.add_column("ESXi Cluster", style="green")
     table.add_column("ESXi Host Count", justify="right", style="yellow")
     _add_brief_table_rows(table, all_clusters_summary)
     console_instance.print(table)

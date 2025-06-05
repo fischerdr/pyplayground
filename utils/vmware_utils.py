@@ -7,6 +7,7 @@ These functions are shared across the vmdk_manager and related scripts.
 """
 
 import atexit
+from dataclasses import dataclass
 from typing import Optional
 
 import pyVmomi
@@ -17,6 +18,17 @@ from utils.logging_utils import get_logger
 
 logger = get_logger(__name__)
 # setup_logging() # Remove: Logging should be configured by the calling script's entry point
+
+
+@dataclass
+class VSphereConnectionParams:
+    """Dataclass to hold vSphere connection parameters."""
+
+    host: str
+    user: str
+    password: str
+    disable_ssl: bool
+    effective_cert_path: Optional[str]
 
 
 def print_vm_info(vm, depth=1, max_depth=10):

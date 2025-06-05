@@ -12,7 +12,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
 
 
-def setup_logging(
+def setup_logging(  # noqa: C901
     level: Union[str, int] = logging.INFO,
     log_dir: Optional[Union[str, Path]] = DEFAULT_LOG_DIR,
     script_name: str = "app_log",

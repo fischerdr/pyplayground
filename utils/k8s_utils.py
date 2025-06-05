@@ -294,6 +294,35 @@ def wait_for_pod_readiness(
     return False
 
 
+def extract_cluster_name_from_api_url(api_url: str) -> str:
+    """Extract the cluster name from the Kubernetes API URL.
+
+    Args:
+        api_url: The Kubernetes API URL (e.g., https://api.hostname.fqdn)
+
+    Returns:
+        The extracted hostname (e.g., hostname)
+    """
+    try:
+        # Remove the protocol part (https://)
+        hostname_part = api_url  # Renamed from api_url to avoid confusion
+        if "://" in hostname_part:
+            hostname_part = hostname_part.split("://")[1]
+
+        # Remove the 'api.' prefix if present
+        if hostname_part.startswith("api."):
+            hostname_part = hostname_part[4:]
+
+        # Extract the hostname part (remove domain/fqdn)
+        hostname = hostname_part.split(".")[0]
+
+        logger.info(f"Extracted cluster name '{hostname}' from API URL '{api_url}'")
+        return hostname
+    except Exception as e:
+        logger.warning(f"Failed to extract cluster name from API URL '{api_url}': {e}")
+        return "unknown-cluster"
+
+
 # Helper function for get_nodes_from_machineset_specific
 def _extract_node_info_from_machine(
     machine: Dict[str, Any], machineset_name: str, machineset_labels: Dict[str, str]

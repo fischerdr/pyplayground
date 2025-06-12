@@ -8,14 +8,14 @@ using the --clusterlist option (a file with one kubeconfig path per line).
 The script connects to the OpenShift API to retrieve MachineSets and their corresponding vSphere
 information, then connects to vSphere to retrieve the ESXi hosts where the VMs are running.
 
-The report can be generated in either table or CSV format.
+The report can be generated in either table or JSON format.
 
 Example usage:
     # Process a single cluster
-    python ocp_report_pxesxi.py --kubeconfig /path/to/kubeconfig --output-format table
+    python ocp_report_pxesxi.py --kubeconfig /path/to/kubeconfig --output-format json
 
     # Process multiple clusters from a list file
-    python ocp_report_pxesxi.py --clusterlist /path/to/clusterlist.txt --output-format csv
+    python ocp_report_pxesxi.py --clusterlist /path/to/clusterlist.txt --output-format json
 
     # The clusterlist.txt file should contain one kubeconfig path per line, for example:
     # /path/to/kubeconfig1
@@ -24,11 +24,13 @@ Example usage:
 """
 import base64
 import csv
+import json
 import logging
 import os
 import socket
 import ssl
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from io import StringIO
 from typing import Any, Dict, List, Optional
@@ -43,9 +45,8 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fi
 
 # Import utility functions
 from utils.config_utils import get_env_var, load_env_file
-from utils.k8s_utils import extract_cluster_name_from_api_url, get_custom_objects_api
+from utils.k8s_utils import get_custom_objects_api
 from utils.logging_utils import get_logger, setup_logging
-from utils.vmware_utils import VSphereConnectionParams
 
 # SSL Certs location
 # Consider making this configurable or removing if default context works for most cases
@@ -57,94 +58,16 @@ logger = get_logger(__name__)
 # Initialize rich console for output
 console = Console()
 
-CSV_HEADERS = ["OCP", "PX Pods", "ESXi Host Cluster", "ESXi Host Count"]
 
+@dataclass
+class VSphereConnectionParams:
+    """Dataclass to hold vSphere connection parameters."""
 
-def _add_unique_hosts_for_vmware_cluster(mapping, vmware_cluster, host_set):
-    for ms_info in mapping.values():
-        if ms_info["cluster_name"] == vmware_cluster:
-            for host in ms_info["hosts"]:
-                host_set.add(host["name"])
-
-
-def _build_machineset_table_rows(mapping):
-    rows = []
-    for machineset_name in sorted(mapping.keys()):
-        cluster_info = mapping[machineset_name]
-        rows.append(
-            (
-                machineset_name,
-                cluster_info.get("datacenter", "N/A"),
-                cluster_info["cluster_name"],
-                cluster_info.get("datastore", "N/A"),
-            )
-        )
-    return rows
-
-
-def _add_brief_table_rows(table, all_clusters_summary):
-    # Sort OCP clusters alphabetically
-    for ocp_cluster_name in sorted(all_clusters_summary.keys()):
-        cluster_data = all_clusters_summary[ocp_cluster_name]
-        px_pod_count = cluster_data["px_pod_count"]
-        vmware_clusters = cluster_data["vmware_clusters"]
-
-        # Sort VMware clusters alphabetically
-        first_row = True
-        for vmware_cluster_name in sorted(vmware_clusters.keys()):
-            host_count = vmware_clusters[vmware_cluster_name]
-
-            # For first row of each OCP cluster, show cluster name and pod count
-            if first_row:
-                table.add_row(
-                    ocp_cluster_name, str(px_pod_count), vmware_cluster_name, str(host_count)
-                )
-                first_row = False
-            else:
-                # For subsequent rows, leave OCP cluster and pod count blank
-                table.add_row(
-                    "",  # Empty OCP cluster name
-                    "",  # Empty pod count
-                    vmware_cluster_name,
-                    str(host_count),
-                )
-
-
-def _generate_brief_table_report(
-    all_clusters_data: Dict[str, Dict[str, Any]],
-    console_instance: Console,
-) -> None:
-    all_clusters_summary, total_px_pods_count, globally_unique_esxi_hosts_set = (
-        _build_brief_table_summary(all_clusters_data)
-    )
-    console_instance.print(
-        f"[bold]Total Portworx pods across all clusters:[/bold] {total_px_pods_count}"
-    )
-    console_instance.print(
-        f"[bold]Total unique ESXi hosts across all clusters:[/bold] {len(globally_unique_esxi_hosts_set)}"
-    )
-    console_instance.print("")
-    table = Table(title="OpenShift and VMware Clusters Summary")
-    table.add_column("OCP", style="cyan")
-    table.add_column("PX Pod Count", justify="right", style="magenta")
-    table.add_column("ESXi Cluster", style="green")
-    table.add_column("ESXi Host Count", justify="right", style="yellow")
-    _add_brief_table_rows(table, all_clusters_summary)
-    console_instance.print(table)
-
-
-def _generate_detailed_table_report(
-    all_clusters_data: Dict[str, Dict[str, Any]],
-    console_instance: Console,  # Renamed
-    px_namespace: str,
-) -> None:
-    """Generates and prints the detailed table report for all clusters."""
-    sorted_ocp_cluster_names = sorted(all_clusters_data.keys())
-    for ocp_cluster_name in sorted_ocp_cluster_names:
-        cluster_data = all_clusters_data[ocp_cluster_name]
-        _generate_detailed_table_report_for_cluster(
-            ocp_cluster_name, cluster_data, console_instance, px_namespace
-        )
+    host: str
+    user: str
+    password: str
+    disable_ssl: bool
+    effective_cert_path: Optional[str]
 
 
 def get_vmware_credentials_from_secret(
@@ -672,69 +595,195 @@ def count_portworx_pods(px_namespace: str = "portworx") -> int:  # Renamed names
         return 0
 
 
-def _get_all_clusters_summary(all_clusters_data: Dict[str, Dict[str, Any]]) -> tuple[dict, int]:
-    """Builds the all_clusters_summary dict and total_px_pods_count."""
+def extract_cluster_name_from_api_url(api_url: str) -> str:
+    """Extract the cluster name from the Kubernetes API URL.
+
+    Args:
+        api_url: The Kubernetes API URL (e.g., https://api.hostname.fqdn)
+
+    Returns:
+        The extracted hostname (e.g., hostname)
+    """
+    try:
+        # Remove the protocol part (https://)
+        hostname_part = api_url  # Renamed from api_url to avoid confusion
+        if "://" in hostname_part:
+            hostname_part = hostname_part.split("://")[1]
+
+        # Remove the 'api.' prefix if present
+        if hostname_part.startswith("api."):
+            hostname_part = hostname_part[4:]
+
+        # Extract the hostname part (remove domain/fqdn)
+        hostname = hostname_part.split(".")[0]
+
+        logger.info(f"Extracted cluster name '{hostname}' from API URL '{api_url}'")
+        return hostname
+    except Exception as e:
+        logger.warning(f"Failed to extract cluster name from API URL '{api_url}': {e}")
+        return "unknown-cluster"
+
+
+def _generate_brief_json_data(  # noqa: C901
+    all_clusters_data: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Generate the data structure for the brief JSON report.
+
+    Args:
+        all_clusters_data: Dictionary containing the processed data for all clusters.
+
+    Returns:
+        Dictionary representing the brief JSON report data.
+    """
+    # Generate a summary of clusters and their ESXi host counts
     all_clusters_summary = {}
-    total_px_pods_count = 0
+    total_px_pods_count = 0  # Renamed from total_px_pods
+    total_esxi_hosts_count = 0  # Renamed from total_esxi_hosts
+
+    # Collect summary data from all clusters
     for cluster_name, cluster_data in all_clusters_data.items():
         mapping = cluster_data["mapping"]
         px_pod_count = cluster_data["portworx_pods_count"]
         total_px_pods_count += px_pod_count
+
+        # Generate cluster summary (cluster name -> host count)
         cluster_summary = generate_cluster_summary(mapping)
+
+        # Add to all clusters summary
         for vmware_cluster, host_count in cluster_summary.items():
-            if vmware_cluster == "Unknown":
+            if vmware_cluster == "Unknown":  # Skip unknown clusters for summary
                 continue
             key = f"{cluster_name}/{vmware_cluster}"
             all_clusters_summary[key] = {
                 "host_count": host_count,
-                "px_pod_count": px_pod_count,
+                "px_pod_count": px_pod_count,  # Store px_pod_count per OCP cluster
             }
-    return all_clusters_summary, total_px_pods_count
+            # Sum unique hosts based on their actual count in the mapping
+            # This logic for total_esxi_hosts_count needs to be careful not to double count
+            # across different OCP clusters if they share VMware clusters.
+            # The most straightforward way is to sum host_count from the cluster_summary.
+            total_esxi_hosts_count += host_count
 
-
-def _get_globally_unique_esxi_hosts(all_clusters_data: Dict[str, Dict[str, Any]]) -> set:
-    """Returns a set of all unique ESXi host names across all clusters."""
+    # Recalculate total_esxi_hosts for truly unique ESXi hosts across all OCP clusters
+    # This requires iterating through the original mapping data to get unique host names.
     globally_unique_esxi_hosts = set()
     for ocp_cluster_data in all_clusters_data.values():
         for ms_info in ocp_cluster_data["mapping"].values():
             if ms_info["cluster_name"] != "Unknown":
                 for host in ms_info["hosts"]:
                     globally_unique_esxi_hosts.add(host["name"])
-    return globally_unique_esxi_hosts
 
+    # Create brief JSON output
+    output_data = {
+        "portworx_pods_count": total_px_pods_count,
+        "total_esxi_hosts": len(
+            globally_unique_esxi_hosts
+        ),  # Use the count of globally unique hosts
+        "clusters": {},
+    }
 
-def _build_datacenter_clusters(mapping: Dict[str, Any]) -> Dict[str, Dict[str, Dict[str, Any]]]:
-    datacenter_clusters = {}
-    for _machineset_name, cluster_info in mapping.items():
-        datacenter = cluster_info.get("datacenter", "Unknown")
-        vmware_cluster_name = cluster_info["cluster_name"]
-        if vmware_cluster_name == "Unknown":
-            continue
-        if datacenter not in datacenter_clusters:
-            datacenter_clusters[datacenter] = {}
-        if vmware_cluster_name not in datacenter_clusters[datacenter]:
-            datacenter_clusters[datacenter][vmware_cluster_name] = {
-                "hosts": set(),
-                "hosts_count": 0,
+    # Group by OpenShift cluster
+    # Store OCP cluster specific PX pod count only once.
+    ocp_px_counts_recorded = set()
+
+    for full_cluster_name_key, data in all_clusters_summary.items():  # Renamed full_cluster_name
+        ocp_cluster, vmware_cluster = full_cluster_name_key.split("/", 1)
+
+        if ocp_cluster not in output_data["clusters"]:
+            output_data["clusters"][ocp_cluster] = {
+                # Store px_pod_count only once per OCP cluster
+                "px_pod_count": data["px_pod_count"],
+                "vmware_clusters": {},
             }
-        for host_item in cluster_info["hosts"]:
-            host_name = host_item["name"]
-            datacenter_clusters[datacenter][vmware_cluster_name]["hosts"].add(host_name)
-    return datacenter_clusters
+            ocp_px_counts_recorded.add(ocp_cluster)
+        # If OCP cluster already exists, but px_pod_count wasn't set (e.g. older logic)
+        elif (
+            "px_pod_count" not in output_data["clusters"][ocp_cluster]
+            and ocp_cluster not in ocp_px_counts_recorded
+        ):
+            output_data["clusters"][ocp_cluster]["px_pod_count"] = data["px_pod_count"]
+            ocp_px_counts_recorded.add(ocp_cluster)
+
+        output_data["clusters"][ocp_cluster]["vmware_clusters"][vmware_cluster] = {
+            "hosts_count": data["host_count"]
+        }
+    return output_data
 
 
-def _add_datacenter_info(report_data: dict, cluster_name: str, datacenter_clusters: dict):
-    for datacenter_name, vmware_clusters in datacenter_clusters.items():
-        if "datacenters" not in report_data[cluster_name]:
-            report_data[cluster_name]["datacenters"] = {}
-        report_data[cluster_name]["datacenters"][datacenter_name] = {}
-        for vmware_cluster_name_item, vmware_cluster_data in vmware_clusters.items():
-            host_list = sorted(list(vmware_cluster_data["hosts"]))
-            hosts_count = len(host_list)
-            report_data[cluster_name]["datacenters"][datacenter_name][vmware_cluster_name_item] = {
-                "hosts": host_list,
-                "hosts_count": hosts_count,
-            }
+def _generate_detailed_json_data(all_clusters_data: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Generate the data structure for the detailed JSON report.
+
+    Args:
+        all_clusters_data: Dictionary containing the processed data for all clusters.
+
+    Returns:
+        Dictionary representing the detailed JSON report data.
+    """
+    # Create a new JSON structure organized by cluster, datacenter, and VMware cluster
+    report_data = {}
+
+    # Process each OpenShift cluster
+    for cluster_name, cluster_data_item in all_clusters_data.items():  # Renamed cluster_data
+        mapping = cluster_data_item["mapping"]
+        px_pod_count = cluster_data_item["portworx_pods_count"]
+
+        # Track unique hosts for this cluster
+        cluster_hosts = set()
+
+        # First pass: collect all datacenter, cluster, and host information for this cluster
+        datacenter_clusters = {}
+        for _machineset_name, cluster_info in mapping.items():  # Renamed machineset_name
+            datacenter = cluster_info.get("datacenter", "Unknown")
+            vmware_cluster_name = cluster_info["cluster_name"]
+
+            if vmware_cluster_name == "Unknown":  # Skip if cluster is unknown
+                continue
+
+            # Initialize datacenter if not seen before
+            if datacenter not in datacenter_clusters:
+                datacenter_clusters[datacenter] = {}
+
+            # Initialize VMware cluster if not seen before
+            if vmware_cluster_name not in datacenter_clusters[datacenter]:
+                datacenter_clusters[datacenter][vmware_cluster_name] = {
+                    "hosts": set(),
+                    "hosts_count": 0,
+                }
+
+            # Add unique hosts to this VMware cluster
+            for host_item in cluster_info["hosts"]:  # Renamed host
+                host_name = host_item["name"]
+                datacenter_clusters[datacenter][vmware_cluster_name]["hosts"].add(host_name)
+                cluster_hosts.add(host_name)
+
+        # Add this OpenShift cluster's data to the report
+        report_data[cluster_name] = {
+            "portworx_pods_count": px_pod_count,
+            "total_esxi_hosts": len(cluster_hosts),
+        }
+
+        # Add datacenter and VMware cluster information
+        for datacenter_name, vmware_clusters in datacenter_clusters.items():  # Renamed datacenter
+            if "datacenters" not in report_data[cluster_name]:
+                report_data[cluster_name]["datacenters"] = {}
+
+            report_data[cluster_name]["datacenters"][datacenter_name] = {}
+            for (
+                vmware_cluster_name_item,
+                vmware_cluster_data,
+            ) in vmware_clusters.items():  # Renamed vmware_cluster_name
+                # Convert set to sorted list for JSON serialization
+                host_list = sorted(list(vmware_cluster_data["hosts"]))
+                hosts_count = len(host_list)
+
+                report_data[cluster_name]["datacenters"][datacenter_name][
+                    vmware_cluster_name_item
+                ] = {
+                    "hosts": host_list,
+                    "hosts_count": hosts_count,
+                }
+
+    return report_data
 
 
 def _generate_csv_data(all_clusters_data: Dict[str, Dict[str, Any]]) -> List[List[str]]:
@@ -746,51 +795,39 @@ def _generate_csv_data(all_clusters_data: Dict[str, Dict[str, Any]]) -> List[Lis
     Returns:
         List of rows, where each row is a list of strings representing CSV fields.
     """
-    # Use the CSV_HEADERS constant
-    rows = [CSV_HEADERS]
+    # Headers for the CSV
+    headers = ["OpenShift Cluster", "VMware Cluster", "ESXi Host Count", "Portworx Pod Count"]
+    rows = [headers]
 
-    # Track unique VMware clusters and their hosts
-    unique_vmware_clusters = {}
-    # Track which OCP clusters we've already printed
-    printed_ocp_clusters = set()
+    # Track clusters we've already recorded PX pod counts for
+    recorded_px_counts = set()
 
-    # First pass: collect all unique hosts per VMware cluster
-    for ocp_cluster_name, cluster_data in all_clusters_data.items():
+    # Process each cluster's data
+    for ocp_cluster_name, cluster_data in sorted(all_clusters_data.items()):
         mapping = cluster_data["mapping"]
         px_pod_count = cluster_data["portworx_pods_count"]
 
-        for ms_info in mapping.values():
-            vmware_cluster = ms_info["cluster_name"]
+        # Generate cluster summary
+        cluster_summary = generate_cluster_summary(mapping)
+
+        # Sort VMware clusters for consistent output
+        for vmware_cluster in sorted(cluster_summary.keys()):
             if vmware_cluster == "Unknown":
                 continue
 
-            if vmware_cluster not in unique_vmware_clusters:
-                unique_vmware_clusters[vmware_cluster] = {
-                    "hosts": set(),
-                    "ocp_clusters": set(),
-                    "px_pod_count": px_pod_count,
-                }
+            # Only include PX pod count once per OCP cluster
+            current_px_count = ""
+            if ocp_cluster_name not in recorded_px_counts:
+                current_px_count = str(px_pod_count)
+                recorded_px_counts.add(ocp_cluster_name)
 
-            # Add hosts for this cluster
-            _add_unique_hosts_for_vmware_cluster(
-                mapping, vmware_cluster, unique_vmware_clusters[vmware_cluster]["hosts"]
-            )
-            # Track which OCP clusters use this VMware cluster
-            unique_vmware_clusters[vmware_cluster]["ocp_clusters"].add(ocp_cluster_name)
-
-    # Second pass: generate CSV rows
-    for vmware_cluster, data in sorted(unique_vmware_clusters.items()):
-        ocp_clusters = sorted(data["ocp_clusters"])
-        # Only print OCP cluster and PX pod count for the first occurrence
-        for i, ocp_cluster in enumerate(ocp_clusters):
             row = [
-                ocp_cluster if ocp_cluster not in printed_ocp_clusters else "",
-                str(data["px_pod_count"]) if ocp_cluster not in printed_ocp_clusters else "",
+                ocp_cluster_name,
                 vmware_cluster,
-                str(len(data["hosts"])),
+                str(cluster_summary[vmware_cluster]),
+                current_px_count,
             ]
             rows.append(row)
-            printed_ocp_clusters.add(ocp_cluster)
 
     return rows
 
@@ -799,13 +836,13 @@ def _save_report_to_file(
     content: str,
     report_type: str,
     script_name: str = "ocp_report_pxesxi",
-    file_extension: str = "csv",
+    file_extension: str = "json",
 ) -> str:
     """Save report content to a file in the tmp directory.
 
     Args:
         content: The report content to save
-        report_type: Type of report (e.g., 'csv')
+        report_type: Type of report (e.g., 'json', 'csv')
         script_name: Base name of the script
         file_extension: File extension to use
 
@@ -832,6 +869,27 @@ def _save_report_to_file(
 
     logger.info(f"Saved {report_type} report to: {filepath}")
     return filepath
+
+
+def generate_json_report(all_clusters_data: Dict[str, Dict[str, Any]], brief: bool) -> None:
+    """Generate the report in JSON format.
+
+    Args:
+        all_clusters_data: Dictionary containing the processed data for all clusters.
+        brief: Whether to generate a brief summary report.
+    """
+    if brief:
+        report_output = _generate_brief_json_data(all_clusters_data)
+    else:
+        report_output = _generate_detailed_json_data(all_clusters_data)
+
+    # Save to file
+    json_content = json.dumps(report_output, indent=2)
+    report_type = "brief_json" if brief else "detailed_json"
+    _save_report_to_file(json_content, report_type)
+
+    # Output to console
+    console.print(json_content)
 
 
 def generate_csv_report(all_clusters_data: Dict[str, Dict[str, Any]]) -> None:
@@ -1081,8 +1139,8 @@ def _extract_vsphere_info_and_params(
         credentials_secret_name,
         credentials_secret_namespace,
         ocp_cluster_name,
-        disable_ssl_vsphere,  # disable_ssl_vsphere
-        vsphere_cert_path_cli,  # Pass CLI option for cert path
+        disable_ssl_vsphere,
+        vsphere_cert_path_cli,
     )
     if (
         not vsphere_conn_params and machineset_vsphere_data
@@ -1169,23 +1227,7 @@ def _process_single_kubeconfig(
     credentials_secret_namespace: str,
     portworx_namespace: str,
 ) -> Optional[Dict[str, Any]]:
-    """Processes a single OpenShift cluster to gather vSphere and Portworx data.
-
-    Args:
-        kubeconfig_file_path: Path to the kubeconfig file
-        cli_vsphere_host: vSphere host
-        cli_vsphere_user: vSphere user
-        cli_vsphere_password: vSphere password
-        machineset_namespace: namespace for the MachineSets
-        disable_ssl_vsphere: disable SSL
-        vsphere_cert_path_cli: vSphere cert path
-        credentials_secret_name: name of the credentials secret
-        credentials_secret_namespace: namespace for the credentials secret
-        portworx_namespace: namespace for the Portworx pods
-
-    Returns:
-        Optional[Dict[str, Any]]: Dictionary of OpenShift cluster data, or None if there was an error
-    """
+    """Processes a single OpenShift cluster to gather vSphere and Portworx data."""
     ocp_cluster_name, machinesets = _initialize_ocp_connection_and_get_machinesets(
         kubeconfig_file_path, machineset_namespace
     )
@@ -1208,6 +1250,7 @@ def _process_single_kubeconfig(
         credentials_secret_namespace,
         disable_ssl_vsphere,  # disable_ssl_vsphere
         vsphere_cert_path_cli,  # Pass CLI option for cert path
+        portworx_namespace,  # portworx_namespace
     )
 
     # If vsphere_conn_params is None and machineset_vsphere_data has content,
@@ -1258,90 +1301,73 @@ def _process_single_kubeconfig(
     # or a partial result.
 
 
-def _process_all_kubeconfigs(
-    kubeconfig_files_to_process: List[str],
-    vsphere_host: Optional[str],
-    vsphere_user: Optional[str],
-    vsphere_password: Optional[str],
-    namespace: str,
-    disable_ssl: bool,
-    vsphere_cert_path: Optional[str],
-    credentials_secret: Optional[str],
-    credentials_namespace: str,
-    px_namespace: str,
-) -> Dict[str, Dict[str, Any]]:
-    """Process all kubeconfigs and return a dictionary of OpenShift cluster data.
-
-    Args:
-        kubeconfig_files_to_process: List of kubeconfig file paths to process
-        vsphere_host: vSphere host
-        vsphere_user: vSphere user
-        vsphere_password: vSphere password
-        namespace: namespace
-        disable_ssl: disable SSL
-        vsphere_cert_path: vSphere cert path
-        credentials_secret: credentials secret
-        credentials_namespace: credentials namespace
-        px_namespace: Portworx namespace
-
-    Returns:
-        Dict[str, Dict[str, Any]]: Dictionary of OpenShift cluster data
-    """
-    all_ocp_clusters_data: Dict[str, Dict[str, Any]] = {}
-    for kc_file_path in kubeconfig_files_to_process:
-        processed_data = _process_single_kubeconfig(
-            kc_file_path,
-            vsphere_host,
-            vsphere_user,
-            vsphere_password,
-            namespace,
-            disable_ssl,
-            vsphere_cert_path,
-            credentials_secret,
-            credentials_namespace,
-            px_namespace,
-        )
-        if processed_data:
-            all_ocp_clusters_data[processed_data["ocp_cluster_name"]] = processed_data
-    if not all_ocp_clusters_data:
-        logger.error("No OpenShift clusters were successfully processed.")
-        sys.exit(1)
-    return all_ocp_clusters_data
-
-
 # --- Refactored Report Generation ---
-def _build_brief_table_summary(all_clusters_data: Dict[str, Dict[str, Any]]):
+def _generate_brief_table_report(
+    all_clusters_data: Dict[str, Dict[str, Any]],
+    console_instance: Console,  # Renamed from console
+    # px_namespace: str # Not directly needed here, but kept for consistency if extended
+) -> None:
+    """Generates and prints the brief table report."""
     all_clusters_summary = {}
     total_px_pods_count = 0
+    # Use a set to count globally unique ESXi hosts for the top-level summary
     globally_unique_esxi_hosts_set = set()
 
     for ocp_cluster_name, cluster_data in all_clusters_data.items():
         mapping = cluster_data["mapping"]
         px_pod_count = cluster_data["portworx_pods_count"]
         total_px_pods_count += px_pod_count
+
         cluster_summary = generate_cluster_summary(mapping)
 
-        # Initialize cluster entry if not exists
-        if ocp_cluster_name not in all_clusters_summary:
-            all_clusters_summary[ocp_cluster_name] = {
-                "px_pod_count": px_pod_count,
-                "vmware_clusters": {},
-            }
-
-        # Add VMware clusters and their host counts
         for vmware_cluster, host_count in cluster_summary.items():
             if vmware_cluster == "Unknown":
                 continue
+            key = f"{ocp_cluster_name}/{vmware_cluster}"
+            all_clusters_summary[key] = {
+                "ocp_cluster": ocp_cluster_name,
+                "vmware_cluster": vmware_cluster,
+                "host_count": host_count,
+                "px_pod_count": px_pod_count,  # Store with each entry for sorting/display logic
+            }
+            # Collect unique host names for the global total
+            for ms_info in mapping.values():
+                if ms_info["cluster_name"] == vmware_cluster:
+                    for host in ms_info["hosts"]:
+                        globally_unique_esxi_hosts_set.add(host["name"])
 
-            # Add hosts for this cluster to global set
-            _add_unique_hosts_for_vmware_cluster(
-                mapping, vmware_cluster, globally_unique_esxi_hosts_set
-            )
+    console_instance.print(
+        f"[bold]Total Portworx pods across all clusters:[/bold] {total_px_pods_count}"
+    )
+    console_instance.print(
+        f"[bold]Total unique ESXi hosts across all clusters:[/bold] {len(globally_unique_esxi_hosts_set)}"
+    )
+    console_instance.print("")
 
-            # Add to cluster's VMware clusters
-            all_clusters_summary[ocp_cluster_name]["vmware_clusters"][vmware_cluster] = host_count
+    table = Table(title="OpenShift and VMware Clusters Summary")
+    table.add_column("OpenShift Cluster", style="cyan")
+    table.add_column("VMware Cluster", style="green")
+    table.add_column("ESXi Host Count", justify="right", style="yellow")
+    table.add_column("Portworx Pod Count", justify="right", style="magenta")
 
-    return all_clusters_summary, total_px_pods_count, globally_unique_esxi_hosts_set
+    # Sort by OpenShift cluster, then VMware cluster
+    # Keep track of OCP clusters for which PX count has been displayed
+    displayed_px_for_ocp = set()
+    sorted_summary_keys = sorted(all_clusters_summary.keys())
+
+    for key in sorted_summary_keys:
+        summary_item = all_clusters_summary[key]
+        ocp_name = summary_item["ocp_cluster"]
+        vmware_name = summary_item["vmware_cluster"]
+        hosts = str(summary_item["host_count"])
+        px_pods_for_row = ""
+
+        if ocp_name not in displayed_px_for_ocp:
+            px_pods_for_row = str(summary_item["px_pod_count"])
+            displayed_px_for_ocp.add(ocp_name)
+        table.add_row(ocp_name, vmware_name, hosts, px_pods_for_row)
+
+    console_instance.print(table)
 
 
 def _generate_detailed_table_report_for_cluster(  # noqa: C901
@@ -1350,6 +1376,7 @@ def _generate_detailed_table_report_for_cluster(  # noqa: C901
     console_instance: Console,  # Renamed
     px_namespace: str,
 ) -> None:
+    """Generates and prints the detailed table report for a single OCP cluster."""
     mapping = cluster_data["mapping"]
     px_pod_count = cluster_data["portworx_pods_count"]
 
@@ -1376,60 +1403,71 @@ def _generate_detailed_table_report_for_cluster(  # noqa: C901
     ms_table.add_column("VMware Cluster", style="green")
     ms_table.add_column("Datastore", style="blue")
 
-    for row in _build_machineset_table_rows(mapping):
-        ms_table.add_row(*row)
+    sorted_machineset_names = sorted(mapping.keys())
+    for machineset_name in sorted_machineset_names:
+        cluster_info = mapping[machineset_name]
+        ms_table.add_row(
+            machineset_name,
+            cluster_info.get("datacenter", "N/A"),
+            cluster_info["cluster_name"],
+            cluster_info.get("datastore", "N/A"),
+        )
     console_instance.print(ms_table)
 
-    # Build hosts table
-    hosts_table = Table(title=f"ESXi Hosts Details for {ocp_cluster_name}")
-    hosts_table.add_column("VMware Cluster", style="green")
-    hosts_table.add_column("Host", style="cyan")
-    hosts_table.add_column("CPU Cores", justify="right", style="yellow")
-    hosts_table.add_column("Memory (GB)", justify="right", style="yellow")
-    hosts_table.add_column("State", style="magenta")
+    # Collect all unique hosts for the detailed host table for this OCP cluster
+    # Format: (vmware_cluster_name, host_detail_dict)
+    detailed_hosts_info_list = []
+    seen_host_in_ocp_cluster_scope = set()  # (vmware_cluster_name, esxi_host_name)
 
-    # Sort hosts by cluster and name
-    hosts_info = []
     for ms_info in mapping.values():
-        if ms_info["cluster_name"] != "Unknown":
-            for host in ms_info["hosts"]:
-                hosts_info.append({"vmware_cluster": ms_info["cluster_name"], "host": host})
+        vmware_cluster_for_ms = ms_info["cluster_name"]
+        if vmware_cluster_for_ms != "Unknown":
+            for host_detail in ms_info["hosts"]:
+                host_key = (vmware_cluster_for_ms, host_detail["name"])
+                if host_key not in seen_host_in_ocp_cluster_scope:
+                    detailed_hosts_info_list.append(
+                        {"vmware_cluster": vmware_cluster_for_ms, "host": host_detail}
+                    )
+                    seen_host_in_ocp_cluster_scope.add(host_key)
 
-    hosts_info.sort(key=lambda x: (x["vmware_cluster"], x["host"]["name"]))
-    for item in hosts_info:
-        host = item["host"]
-        hosts_table.add_row(
-            item["vmware_cluster"],
-            host["name"],
-            str(host.get("cpu_cores", "N/A")),
-            str(host.get("memory_size_gb", "N/A")),
-            host.get("power_state", "N/A"),
-        )
+    if detailed_hosts_info_list:
+        hosts_table = Table(title=f"ESXi Hosts Details for {ocp_cluster_name}")
+        hosts_table.add_column("VMware Cluster", style="green")
+        hosts_table.add_column("Host", style="cyan")
+        hosts_table.add_column("CPU Cores", justify="right", style="yellow")
+        hosts_table.add_column("Memory (GB)", justify="right", style="yellow")
+        hosts_table.add_column("State", style="magenta")
 
-    console_instance.print(hosts_table)
+        detailed_hosts_info_list.sort(key=lambda x: (x["vmware_cluster"], x["host"]["name"]))
+
+        for item in detailed_hosts_info_list:
+            host = item["host"]
+            hosts_table.add_row(
+                item["vmware_cluster"],
+                host["name"],
+                str(host.get("cpu_cores", "N/A")),
+                str(host.get("memory_size_gb", "N/A")),
+                host.get("power_state", "N/A"),
+            )
+        console_instance.print(hosts_table)
     console_instance.print("")
 
 
-def _resolve_kubeconfig_files(kubeconfig: Optional[str], clusterlist: Optional[str]) -> List[str]:
-    kubeconfig_files_to_process: List[str] = []
-    if clusterlist:
-        try:
-            with open(clusterlist, "r") as f:
-                kubeconfig_files_to_process = [line.strip() for line in f if line.strip()]
-        except FileNotFoundError:
-            logger.error(f"Cluster list file not found: {clusterlist}")
-            sys.exit(1)
-    elif kubeconfig:
-        kubeconfig_files_to_process = [kubeconfig]
-    else:
-        logger.error("Either --kubeconfig or --clusterlist must be provided.")
-        sys.exit(1)
-    if not kubeconfig_files_to_process:
-        logger.error("No kubeconfig files specified for processing.")
-        sys.exit(1)
-    return kubeconfig_files_to_process
+def _generate_detailed_table_report(
+    all_clusters_data: Dict[str, Dict[str, Any]],
+    console_instance: Console,  # Renamed
+    px_namespace: str,
+) -> None:
+    """Generates and prints the detailed table report for all clusters."""
+    sorted_ocp_cluster_names = sorted(all_clusters_data.keys())
+    for ocp_cluster_name in sorted_ocp_cluster_names:
+        cluster_data = all_clusters_data[ocp_cluster_name]
+        _generate_detailed_table_report_for_cluster(
+            ocp_cluster_name, cluster_data, console_instance, px_namespace
+        )
 
 
+# --- Main Click Command ---
 @click.command()
 @click.option("--kubeconfig", help="Path to a kubeconfig file for a single OpenShift cluster")
 @click.option(
@@ -1454,9 +1492,9 @@ def _resolve_kubeconfig_files(kubeconfig: Optional[str], clusterlist: Optional[s
 @click.option(
     "--output-format",
     default="table",
-    type=click.Choice(["table", "csv"]),
+    type=click.Choice(["table", "json", "csv"]),
     show_default=True,
-    help="Output format (table or csv)",
+    help="Output format (table, json, or csv)",
 )
 @click.option("--disable-ssl", is_flag=True, help="Disable SSL verification for vSphere connection")
 @click.option(
@@ -1492,7 +1530,7 @@ def _resolve_kubeconfig_files(kubeconfig: Optional[str], clusterlist: Optional[s
     required=False,
 )
 @click.option("--debug", is_flag=True, help="Enable debug logging")
-def main(
+def main(  # noqa: C901
     kubeconfig: Optional[str],  # Made options optional to allow None check
     clusterlist: Optional[str],
     vsphere_host: Optional[str],
@@ -1528,26 +1566,54 @@ def main(
     socket.setdefaulttimeout(timeout)
 
     # Determine list of kubeconfig files
-    kubeconfig_files_to_process = _resolve_kubeconfig_files(kubeconfig, clusterlist)
+    kubeconfig_files_to_process: List[str] = []  # Renamed from kubeconfigs
+    if clusterlist:
+        try:
+            with open(clusterlist, "r") as f:
+                kubeconfig_files_to_process = [line.strip() for line in f if line.strip()]
+        except FileNotFoundError:
+            logger.error(f"Cluster list file not found: {clusterlist}")
+            sys.exit(1)
+    elif kubeconfig:
+        kubeconfig_files_to_process = [kubeconfig]
+    else:
+        logger.error("Either --kubeconfig or --clusterlist must be provided.")
+        sys.exit(1)
+
+    if not kubeconfig_files_to_process:
+        logger.error("No kubeconfig files specified for processing.")
+        sys.exit(1)
 
     # Process each kubeconfig and store results
-    all_ocp_clusters_data = _process_all_kubeconfigs(
-        kubeconfig_files_to_process,
-        vsphere_host,
-        vsphere_user,
-        vsphere_password,
-        namespace,
-        disable_ssl,
-        vsphere_cert_path,
-        credentials_secret,
-        credentials_namespace,
-        px_namespace,
-    )
+    all_ocp_clusters_data: Dict[str, Dict[str, Any]] = {}  # Renamed from all_clusters_data
+
+    for kc_file_path in kubeconfig_files_to_process:
+        processed_data = _process_single_kubeconfig(
+            kc_file_path,
+            vsphere_host,  # Pass CLI args directly
+            vsphere_user,
+            vsphere_password,
+            namespace,  # machineset_namespace
+            disable_ssl,  # disable_ssl_vsphere
+            vsphere_cert_path,  # Pass CLI option for cert path
+            credentials_secret,  # credentials_secret_name
+            credentials_namespace,
+            px_namespace,  # portworx_namespace
+        )
+        if processed_data:
+            # Use the ocp_cluster_name returned by the processing function as the key
+            all_ocp_clusters_data[processed_data["ocp_cluster_name"]] = processed_data
+
+    if not all_ocp_clusters_data:
+        logger.error("No OpenShift clusters were successfully processed.")
+        sys.exit(1)
 
     # Generate combined report
     logger.info("Generating combined report for all processed OpenShift clusters.")
     try:
-        if output_format.lower() == "csv":
+        if output_format.lower() == "json":
+            generate_json_report(all_ocp_clusters_data, brief)
+        elif output_format.lower() == "csv":
             generate_csv_report(all_ocp_clusters_data)
         else:  # Default to table format
             if brief:

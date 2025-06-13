@@ -146,266 +146,175 @@ For each sub-step, use the Python scripts in Appendix A to automate export, back
 
 ## Appendices
 
-### Appendix A: Python Migration Scripts
+### Appendix A: Migration Scripts
 
-The following skeleton scripts use `logging`, `typer`, and `awxcli` to automate Tower and AWX export/import tasks. Customize API endpoints, credentials, and file paths as needed.
+The following scripts are available in the `/awxtower` directory to automate the migration process:
 
-#### `tower_export_credentials.py`
+#### Export Scripts (Tower to JSON)
+- `tower_export_credentials.py`: Exports Tower credentials to JSON
+- `tower_export_projects.py`: Exports Tower project definitions to JSON
+- `tower_export_inventory.py`: Exports Tower inventories and hosts to JSON
+- `tower_export_job_templates.py`: Exports Tower job templates and workflows to JSON
+- `tower_export_schedules.py`: Exports Tower schedules and notifications to JSON
 
-```python
-import logging
-import typer
-from awxcli import Tower
+#### Import Scripts (JSON to AWX)
+- `awx_import_credentials.py`: Imports credentials JSON into AWX
+- `awx_import_projects.py`: Imports project definitions into AWX
+- `awx_import_inventory.py`: Imports inventories and hosts JSON into AWX
+- `awx_import_job_templates.py`: Imports job templates and workflows into AWX
+- `awx_import_schedules.py`: Imports schedules and notification templates into AWX
 
-app = typer.Typer()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+#### Additional Utilities
+- `download_awx_images.py`: Downloads required container images for AWX deployment
+- `run_template_restapi.py`: Example of using AWX REST API to run job templates
 
-@app.command()
-def export(output: str = "credentials.json"):
-    """Export Tower credentials to a JSON file"""
-    tower = Tower(host="https://tower.example.com", token="YOUR_TOWER_TOKEN")
-    creds = tower.credentials.list()
-    with open(output, "w") as f:
-        f.write(creds.json())
-    logger.info(f"Exported {len(creds)} credentials to {output}")
+Each script uses the `awxkit` library and includes proper error handling, logging, and progress tracking. The scripts are designed to be run in sequence as part of the migration process.
 
-if __name__ == "__main__":
-    app()
-```
+### Appendix B: Custom Dockerfiles for EE and Init Images
 
-#### `awx_import_credentials.py`
+- EE: config/awx/Dockerfile
+- Init: config/awx/init/Dockerfile
 
-```python
-import logging
-import typer
-from awxcli import AWX
-import json
+### Appendix C: Backup and Restore Commands
 
-app = typer.Typer()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+- Docs awx_large_scale_configuration.md
 
-@app.command()
-def import_creds(input: str = "credentials.json"):
-    """Import credentials JSON into AWX"""
-    awx = AWX(host="https://awx.example.com", token="YOUR_AWX_TOKEN")
-    data = json.load(open(input))
-    for cred in data:
-        awx.credentials.create(**cred)
-        logger.info(f"Imported credential {cred['name']}")
+### Appendix E: AWX CLI Examples
 
-if __name__ == "__main__":
-    app()
-```
+The following examples demonstrate common AWX CLI operations using `awxkit`. These examples can be used for automation, troubleshooting, and management tasks.
 
-#### `tower_export_projects.py`
+#### Basic Authentication and Connection
 
 ```python
-import logging
-import typer
-from awxcli import Tower
+from awxkit import awx
 
-app = typer.Typer()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Connect to AWX instance
+awx = awx.AWX(host='https://awx.example.com', username='admin', password='password')
 
-@app.command()
-def export(output: str = "projects.json"):
-    """Export Tower project definitions to JSON"""
-    tower = Tower(host="https://tower.example.com", token="YOUR_TOWER_TOKEN")
-    projs = tower.projects.list()
-    with open(output, "w") as f:
-        f.write(projs.json())
-    logger.info(f"Exported {len(projs)} projects to {output}")
-
-if __name__ == "__main__":
-    app()
+# Using token authentication
+awx = awx.AWX(host='https://awx.example.com', token='your-token-here')
 ```
 
-#### `awx_import_projects.py`
+#### Managing Inventories
 
 ```python
-import logging
-import typer
-from awxcli import AWX
-import json
+# List all inventories
+inventories = awx.inventories.list()
 
-app = typer.Typer()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Create a new inventory
+new_inventory = awx.inventories.create(name='My Inventory', organization=1)
 
-@app.command()
-def import_projects(input: str = "projects.json"):
-    """Import project definitions into AWX"""
-    awx = AWX(host="https://awx.example.com", token="YOUR_AWX_TOKEN")
-    data = json.load(open(input))
-    for proj in data:
-        awx.projects.create(**proj)
-        logger.info(f"Imported project {proj['name']}")
-
-if __name__ == "__main__":
-    app()
+# Add hosts to inventory
+host = awx.hosts.create(
+    name='web-server',
+    inventory=new_inventory.id,
+    variables={'ansible_host': '192.168.1.100'}
+)
 ```
 
-#### `tower_export_inventory.py`
+#### Working with Job Templates
 
 ```python
-import logging
-import typer
-from awxcli import Tower
+# List job templates
+templates = awx.job_templates.list()
 
-app = typer.Typer()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Create a new job template
+template = awx.job_templates.create(
+    name='Deploy Web App',
+    job_type='run',
+    inventory=1,
+    project=1,
+    playbook='deploy.yml'
+)
 
-@app.command()
-def export(output: str = "inventory.json"):
-    """Export Tower inventories and hosts to JSON"""
-    tower = Tower(host="https://tower.example.com", token="YOUR_TOWER_TOKEN")
-    inv = tower.inventories.list()
-    with open(output, "w") as f:
-        f.write(inv.json())
-    logger.info(f"Exported {len(inv)} inventories to {output}")
-
-if __name__ == "__main__":
-    app()
+# Launch a job
+job = template.launch()
 ```
 
-#### `awx_import_inventory.py`
+#### Project Management
 
 ```python
-import logging
-import typer
-from awxcli import AWX
-import json
+# List projects
+projects = awx.projects.list()
 
-app = typer.Typer()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Create a new project
+project = awx.projects.create(
+    name='My Project',
+    scm_type='git',
+    scm_url='https://github.com/org/repo.git'
+)
 
-@app.command()
-def import_inventory(input: str = "inventory.json"):
-    """Import inventories and hosts JSON into AWX"""
-    awx = AWX(host="https://awx.example.com", token="YOUR_AWX_TOKEN")
-    data = json.load(open(input))
-    for inv in data:
-        awx.inventories.create(**inv)
-        logger.info(f"Imported inventory {inv['name']}")
-
-if __name__ == "__main__":
-    app()
+# Update project
+project.scm_branch = 'main'
+project.update()
 ```
 
-#### `tower_export_job_templates.py`
+#### Credential Management
 
 ```python
-import logging
-import typer
-from awxcli import Tower
+# List credentials
+credentials = awx.credentials.list()
 
-app = typer.Typer()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-@app.command()
-def export(output: str = "job_templates.json"):
-    """Export Tower job templates and workflows to JSON"""
-    tower = Tower(host="https://tower.example.com", token="YOUR_TOWER_TOKEN")
-    jt = tower.job_templates.list()
-    with open(output, "w") as f:
-        f.write(jt.json())
-    logger.info(f"Exported {len(jt)} job templates to {output}")
-
-if __name__ == "__main__":
-    app()
+# Create a new credential
+credential = awx.credentials.create(
+    name='AWS Credentials',
+    credential_type=1,
+    inputs={
+        'username': 'aws-user',
+        'password': 'aws-password'
+    }
+)
 ```
 
-#### `awx_import_job_templates.py`
+#### Workflow Management
 
 ```python
-import logging
-import typer
-from awxcli import AWX
-import json
+# List workflow job templates
+workflows = awx.workflow_job_templates.list()
 
-app = typer.Typer()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Create a new workflow
+workflow = awx.workflow_job_templates.create(
+    name='Deployment Pipeline',
+    organization=1
+)
 
-@app.command()
-def import_job_templates(input: str = "job_templates.json"):
-    """Import job templates and workflows into AWX"""
-    awx = AWX(host="https://awx.example.com", token="YOUR_AWX_TOKEN")
-    data = json.load(open(input))
-    for jt in data:
-        awx.job_templates.create(**jt)
-        logger.info(f"Imported job template {jt['name']}")
-
-if __name__ == "__main__":
-    app()
+# Add nodes to workflow
+workflow.workflow_nodes.create(
+    unified_job_template=1,
+    workflow_job_template=workflow.id
+)
 ```
 
-#### `tower_export_schedules.py`
+#### Monitoring and Logs
 
 ```python
-import logging
-import typer
-from awxcli import Tower
+# Get job status
+job = awx.jobs.get(1)
+print(f"Job status: {job.status}")
 
-app = typer.Typer()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Get job events
+events = job.events.list()
+for event in events:
+    print(f"Event: {event.event}")
 
-@app.command()
-def export(output: str = "schedules.json"):
-    """Export Tower schedules and notifications to JSON"""
-    tower = Tower(host="https://tower.example.com", token="YOUR_TOWER_TOKEN")
-    sch = tower.schedules.list()
-    with open(output, "w") as f:
-        f.write(sch.json())
-    logger.info(f"Exported {len(sch)} schedules to {output}")
-
-if __name__ == "__main__":
-    app()
+# Get job stdout
+stdout = job.stdout
 ```
 
-#### `awx_import_schedules.py`
+#### Bulk Operations
 
 ```python
-import logging
-import typer
-from awxcli import AWX
-import json
+# Bulk create hosts
+hosts_data = [
+    {'name': f'host-{i}', 'inventory': 1} for i in range(5)
+]
+hosts = awx.hosts.create(hosts_data)
 
-app = typer.Typer()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-@app.command()
-def import_schedules(input: str = "schedules.json"):
-    """Import schedules and notification templates into AWX"""
-    awx = AWX(host="https://awx.example.com", token="YOUR_AWX_TOKEN")
-    data = json.load(open(input))
-    for sch in data:
-        awx.schedules.create(**sch)
-        logger.info(f"Imported schedule {sch['name']}")
-
-if __name__ == "__main__":
-    app()
+# Bulk update job templates
+templates = awx.job_templates.list()
+for template in templates:
+    template.extra_vars = {'new_var': 'value'}
+    template.update()
 ```
 
-- Appendix B: Custom Dockerfiles for EE and Init Images
-
-- Appendix C: Backup and Restore Commands
-
-- Appendix D: Useful AWX CLI Commands
-
-- Appendix A: Tower API Export/Import Scripts
-
-- Appendix B: Custom Dockerfiles for EE and Init Images
-
-- Appendix C: Backup and Restore Commands
-
-- Appendix D: Useful AWX CLI Commands
-
+These examples can be used as building blocks for custom automation scripts and integration with other tools. Remember to handle exceptions and implement proper error checking in production code.  

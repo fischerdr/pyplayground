@@ -3,9 +3,13 @@ kind: AWX
 metadata:
   name: awx-instance
   namespace: awx
+  annotations:
+    openshift.io/scc: restricted-v2
+    openshift.io/display-name: "AWX Automation Platform"
+    openshift.io/description: "AWX provides a web-based user interface, REST API, and task engine built on top of Ansible"
 spec:
   service_type: ClusterIP
-  ingress_type: Ingress
+  ingress_type: Route
   admin_user: admin
   admin_password: StrongPassword123
   image: "registry.internal.domain/ansible/awx"
@@ -21,41 +25,130 @@ spec:
   init_projects_container_image: myorg/my-mirrored-centos:stream9
   projects_persistence: true
   projects_storage_class: "standard"
-  projects_storage_size: 8Gi
+  projects_storage_size: 20Gi
   postgres_storage_class: "standard"
-  postgres_storage_size: 8Gi
+  postgres_storage_size: 50Gi
   redis_storage_class: "standard"
-  redis_storage_size: 2Gi
+  redis_storage_size: 4Gi
   hostname: awx.my.domain
-  replicas: 1
+  replicas: 2
+  ha_enabled: true
+  ha_replicas: 2
+  pod_disruption_budget:
+    minAvailable: 1
+    maxUnavailable: 1
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+              - awx
+          topologyKey: kubernetes.io/hostname
   task_resource_requirements:
       requests:
-        cpu: "500m"
-        memory: "2Gi"
-      limits:
-        cpu: "1"
+        cpu: "1000m"
         memory: "4Gi"
+      limits:
+        cpu: "2000m"
+        memory: "8Gi"
   web_resource_requirements:
     requests:
-      cpu: "250m"
-      memory: "1Gi"
-    limits:
-      cpu: "500m"
+      cpu: "1000m"
       memory: "2Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
   postgres_resource_requirements:
     requests:
-      cpu: "250m"
-      memory: "512Mi"
+      cpu: "1000m"
+      memory: "4Gi"
     limits:
-      cpu: "500m"
-      memory: "1Gi"
+      cpu: "2000m"
+      memory: "8Gi"
   redis_resource_requirements:
     requests:
-      cpu: "100m"
-      memory: "256Mi"
+      cpu: "500m"
+      memory: "1Gi"
     limits:
-      cpu: "250m"
-      memory: "512Mi"
+      cpu: "1000m"
+      memory: "2Gi"
+  postgres_extra_args:
+    - '-c'
+    - 'max_connections=1000'
+    - '-c'
+    - 'shared_buffers=2GB'
+    - '-c'
+    - 'work_mem=64MB'
+    - '-c'
+    - 'maintenance_work_mem=256MB'
+    - '-c'
+    - 'effective_cache_size=6GB'
+    - '-c'
+    - 'max_worker_processes=8'
+    - '-c'
+    - 'max_parallel_workers=8'
+    - '-c'
+    - 'max_parallel_workers_per_gather=4'
+  metrics_enabled: true
+  metrics_port: 9090
+  metrics_path: /metrics
+  logging_configuration:
+    level: INFO
+    handlers:
+      - type: file
+        filename: /var/log/awx/awx.log
+        maxBytes: 10485760
+        backupCount: 5
+  security_context_settings:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+    capabilities:
+      drop:
+        - ALL
+  network_policy:
+    ingress:
+      - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: awx
+    egress:
+      - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: awx
+  container_groups:
+    - name: "default"
+      credential: "k8s-credential"
+      pod_spec_override:
+        spec:
+          containers:
+            - name: "worker"
+              resources:
+                requests:
+                  cpu: "1000m"
+                  memory: "2Gi"
+                limits:
+                  cpu: "2000m"
+                  memory: "4Gi"
+  instance_groups:
+    - name: "default"
+      policy_instance_minimum: 1
+      policy_instance_percentage: 100
+  capacity_adjustment:
+    min_capacity: 1
+    max_capacity: 10
+    scale_up_threshold: 80
+    scale_down_threshold: 20
   extra_settings:
     - setting: AUTH_LDAP_SERVER_URI
       value: "ldaps://ldap.internal"
@@ -65,3 +158,101 @@ spec:
       value: "supersecret"
     - setting: AUTH_LDAP_USER_SEARCH
       value: "LDAPSearch('ou=users,dc=internal', ldap.SCOPE_SUBTREE, '(uid=%(user)s)')"
+    - setting: AWX_TASK_LAUNCH_TIMEOUT
+      value: "600"
+    - setting: AWX_TASK_LAUNCH_RETRY_COUNT
+      value: "3"
+    - setting: AWX_TASK_LAUNCH_RETRY_DELAY
+      value: "30"
+    - setting: AWX_TASK_LAUNCH_MAX_RETRIES
+      value: "3"
+    - setting: AWX_TASK_LAUNCH_MAX_RETRY_DELAY
+      value: "300"
+    - setting: JOB_EVENT_WORKERS
+      value: "8"
+    - setting: MAX_UI_JOB_EVENTS
+      value: "4000"
+    - setting: MAX_EVENT_RES_DATA
+      value: "700000"
+    - setting: EVENT_STDOUT_MAX_BYTES_DISPLAY
+      value: "1024"
+    - setting: MAX_WEBSOCKET_EVENT_RATE
+      value: "30"
+  # Backup Configuration
+  backup_configuration:
+    enabled: true
+    schedule: "0 0 * * *"  # Daily at midnight
+    retention: 7  # Keep backups for 7 days
+    storage_class: "standard"
+    storage_size: "10Gi"
+    backup_command: |
+      pg_dump -h ${POSTGRES_HOST} -U ${POSTGRES_USER} -d ${POSTGRES_DB} -F c -b -v -f /backup/awx-$(date +%Y%m%d-%H%M%S).backup
+  # OpenShift Security Settings
+  openshift_security:
+    scc: restricted-v2
+    route:
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect
+      annotations:
+        haproxy.router.openshift.io/timeout: 30s
+        haproxy.router.openshift.io/rate-limit-connections: "true"
+        haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp: "1000"
+        haproxy.router.openshift.io/rate-limit-connections.rate-tcp: "100"
+        haproxy.router.openshift.io/rate-limit-connections.rate-http: "200"
+    network_policy:
+      ingress:
+        - from:
+          - namespaceSelector:
+              matchLabels:
+                name: monitoring
+          ports:
+            - protocol: TCP
+              port: 9090
+      egress:
+        - to:
+          - namespaceSelector:
+              matchLabels:
+                name: monitoring
+          ports:
+            - protocol: TCP
+              port: 9090
+  # Monitoring Configuration
+  monitoring:
+    prometheus:
+      serviceMonitor:
+        enabled: true
+        interval: 30s
+        scrapeTimeout: 10s
+        namespaceSelector:
+          matchNames:
+            - monitoring
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: awx
+        endpoints:
+          - port: metrics
+            path: /metrics
+            scheme: https
+            tlsConfig:
+              insecureSkipVerify: true
+    grafana:
+      dashboards:
+        - name: awx-overview
+          namespace: monitoring
+          configMap:
+            name: awx-dashboards
+            key: awx-overview.json
+  # Resource Quotas
+  resource_quotas:
+    requests:
+      cpu: "4000m"
+      memory: "16Gi"
+      storage: "100Gi"
+    limits:
+      cpu: "8000m"
+      memory: "32Gi"
+      storage: "200Gi"
+    scopes:
+      - BestEffort
+      - NotTerminating

@@ -3,44 +3,23 @@
 
 """Script to export Tower inventories and hosts to JSON."""
 
+import json
+import os
 import sys
 from pathlib import Path
 
 import typer
-from awxcli import Tower
+from awxkit.exceptions import NoContent
 
-from utils.config_utils import get_env_var, load_env_file, save_json_config
+from utils.ansible_tower_utils import get_awx_or_tower_client
 from utils.logging_utils import get_logger, setup_logging
 
 # Initialize Typer app
 app = typer.Typer()
 
 # Setup logging
-setup_logging(script_name="tower_export_inventory")
+setup_logging(script_name=os.path.basename(__file__).replace(".py", ""))
 logger = get_logger(__name__)
-
-
-def get_tower_client() -> Tower:
-    """Get Tower client with credentials from environment.
-
-    Returns:
-        Tower: Initialized Tower client
-
-    Raises:
-        ValueError: If required environment variables are not set
-    """
-    # Load environment variables
-    load_env_file()
-
-    # Get Tower credentials from environment
-    tower_host = get_env_var("TOWER_HOST", required=True)
-    tower_token = get_env_var("TOWER_TOKEN", required=True)
-
-    try:
-        return Tower(host=tower_host, token=tower_token)
-    except Exception as e:
-        logger.error(f"Failed to initialize Tower client: {e}")
-        raise
 
 
 @app.command()
@@ -53,42 +32,32 @@ def export(
         writable=True,
     )
 ) -> None:
-    """Export Tower inventories and hosts to JSON.
-
-    Args:
-        output: Output JSON file path
-    """
+    """Export Tower inventories and hosts to JSON."""
     try:
-        # Get Tower client
-        tower = get_tower_client()
-
-        # Get inventories
+        tower = get_awx_or_tower_client("TOWER")
         logger.info("Fetching inventories from Tower...")
-        inventories = tower.inventories.list()
 
-        # Get hosts for each inventory
-        inventory_data = []
-        for inventory in inventories:
-            try:
-                # Get hosts for this inventory
-                hosts = tower.hosts.list(inventory=inventory.id)
+        inventories_data = []
+        for inventory in tower.inventories.pget():
+            inventory_json = inventory.json
+            logger.info(f"Fetching hosts for inventory: {inventory.name}")
+            hosts = [h.json for h in inventory.hosts.pget()]
+            inventory_json["hosts"] = hosts
+            inventories_data.append(inventory_json)
 
-                # Convert to dict for JSON serialization
-                inventory_dict = inventory.dict()
-                inventory_dict["hosts"] = [host.dict() for host in hosts]
-                inventory_data.append(inventory_dict)
+        if not inventories_data:
+            logger.warning("No inventories found in Tower.")
+            sys.exit(0)
 
-                logger.info(f"Fetched {len(hosts)} hosts for inventory: {inventory.name}")
-            except Exception as e:
-                logger.error(f"Failed to fetch hosts for inventory {inventory.name}: {e}")
-                continue
+        with open(output, "w") as f:
+            json.dump(inventories_data, f, indent=2)
+        logger.info(f"Successfully exported {len(inventories_data)} inventories to {output}")
 
-        # Save to file
-        save_json_config(inventory_data, output)
-        logger.info(f"Successfully exported {len(inventory_data)} inventories to {output}")
-
+    except NoContent:
+        logger.warning("No inventories found in Tower.")
+        sys.exit(0)
     except Exception as e:
-        logger.error(f"Failed to export inventories: {e}")
+        logger.error(f"Failed to export inventories: {e}", exc_info=True)
         sys.exit(1)
 
 

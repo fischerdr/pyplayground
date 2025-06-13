@@ -3,44 +3,22 @@
 
 """Script to import credentials JSON into AWX."""
 
+import json
+import os
 import sys
 from pathlib import Path
 
 import typer
-from awxcli import AWX
 
-from utils.config_utils import get_env_var, load_env_file, load_json_config
+from utils.ansible_tower_utils import get_awx_or_tower_client
 from utils.logging_utils import get_logger, setup_logging
 
 # Initialize Typer app
 app = typer.Typer()
 
 # Setup logging
-setup_logging(script_name="awx_import_credentials")
+setup_logging(script_name=os.path.basename(__file__).replace(".py", ""))
 logger = get_logger(__name__)
-
-
-def get_awx_client() -> AWX:
-    """Get AWX client with credentials from environment.
-
-    Returns:
-        AWX: Initialized AWX client
-
-    Raises:
-        ValueError: If required environment variables are not set
-    """
-    # Load environment variables
-    load_env_file()
-
-    # Get AWX credentials from environment
-    awx_host = get_env_var("AWX_HOST", required=True)
-    awx_token = get_env_var("AWX_TOKEN", required=True)
-
-    try:
-        return AWX(host=awx_host, token=awx_token)
-    except Exception as e:
-        logger.error(f"Failed to initialize AWX client: {e}")
-        raise
 
 
 @app.command()
@@ -53,34 +31,31 @@ def import_creds(
         readable=True,
     )
 ) -> None:
-    """Import credentials from JSON into AWX.
-
-    Args:
-        input_file: Input JSON file path
-    """
+    """Import credentials from JSON into AWX."""
     try:
-        # Get AWX client
-        awx = get_awx_client()
+        awx = get_awx_or_tower_client("AWX")
 
-        # Load credentials from file
-        logger.info(f"Loading credentials from {input_file}...")
-        creds_data = load_json_config(input_file)
+        with open(input_file, "r") as f:
+            creds_data = json.load(f)
 
-        # Import credentials
-        logger.info("Importing credentials into AWX...")
+        logger.info(f"Importing {len(creds_data)} credentials into AWX...")
         for cred_data in creds_data:
+            cred_name = cred_data.get("name")
             try:
-                # Create credential
-                awx.credentials.create(**cred_data)
-                logger.info(f"Successfully imported credential: {cred_data.get('name')}")
+                # To prevent duplicates, check if a credential with the same name exists
+                if not awx.credentials.find(name=cred_name):
+                    awx.credentials.create(payload=cred_data)
+                    logger.info(f"Successfully imported credential: {cred_name}")
+                else:
+                    logger.warning(f"Credential '{cred_name}' already exists. Skipping.")
             except Exception as e:
-                logger.error(f"Failed to import credential {cred_data.get('name')}: {e}")
+                logger.error(f"Failed to import credential {cred_name}: {e}", exc_info=True)
                 continue
 
-        logger.info("Credential import completed")
+        logger.info("Credential import completed.")
 
     except Exception as e:
-        logger.error(f"Failed to import credentials: {e}")
+        logger.error(f"Failed to import credentials: {e}", exc_info=True)
         sys.exit(1)
 
 

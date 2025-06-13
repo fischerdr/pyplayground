@@ -2,14 +2,60 @@
 
 import json
 import logging
+import os
+import sys
 from time import sleep
 from typing import Any, Dict, List, Optional
 
 import requests
+from awxkit import api
+from dotenv import load_dotenv
 from requests.auth import HTTPBasicAuth
 
 # It's better to get a logger instance per module
 logger = logging.getLogger(__name__)
+
+
+def get_awx_or_tower_client(prefix: str):
+    """Get an authenticated AWX or Tower API client using awxkit.
+
+    Args:
+        prefix (str): The prefix for environment variables, e.g., 'AWX' or 'TOWER'.
+
+    Returns:
+        An awxkit API client object.
+    """
+    load_dotenv()
+    host = os.getenv(f"{prefix}_HOST")
+    username = os.getenv(f"{prefix}_USERNAME")
+    password = os.getenv(f"{prefix}_PASSWORD")
+    token = os.getenv(f"{prefix}_TOKEN")
+
+    if not host:
+        logger.error(f"Missing required environment variable: {prefix}_HOST")
+        sys.exit(1)
+
+    try:
+        if token:
+            logger.info(f"Connecting to {host} using token.")
+            return api.connect(host=host, token=token, verify_ssl=True)
+        elif username and password:
+            logger.info(f"Connecting to {host} using user/pass for {username}.")
+            return api.connect(
+                host=host,
+                username=username,
+                password=password,
+                verify_ssl=True,
+            )
+        else:
+            logger.error(
+                f"Missing credentials for {prefix}. "
+                f"Set ({prefix}_USERNAME and {prefix}_PASSWORD), or {prefix}_TOKEN."
+            )
+            sys.exit(1)
+    except Exception as e:
+        logger.error(f"Failed to connect to {prefix} instance at {host}: {e}", exc_info=True)
+        sys.exit(1)
 
 
 def get_tower_token_from_credentials(

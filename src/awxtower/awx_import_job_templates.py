@@ -3,44 +3,54 @@
 
 """Script to import job templates and workflows into AWX."""
 
+import json
+import os
 import sys
 from pathlib import Path
 
 import typer
-from awxcli import AWX
 
-from utils.config_utils import get_env_var, load_env_file, load_json_config
+from utils.ansible_tower_utils import get_awx_or_tower_client
 from utils.logging_utils import get_logger, setup_logging
 
 # Initialize Typer app
 app = typer.Typer()
 
 # Setup logging
-setup_logging(script_name="awx_import_job_templates")
+setup_logging(script_name=os.path.basename(__file__).replace(".py", ""))
 logger = get_logger(__name__)
 
 
-def get_awx_client() -> AWX:
-    """Get AWX client with credentials from environment.
+def import_job_templates_from_data(awx, job_templates):
+    """Import job templates into AWX from a list of data."""
+    logger.info(f"Importing {len(job_templates)} job templates into AWX...")
+    for template_data in job_templates:
+        template_name = template_data.get("name")
+        try:
+            if not awx.job_templates.find(name=template_name):
+                awx.job_templates.create(payload=template_data)
+                logger.info(f"Successfully imported job template: {template_name}")
+            else:
+                logger.warning(f"Job template '{template_name}' already exists. Skipping.")
+        except Exception as e:
+            logger.error(f"Failed to import job template {template_name}: {e}", exc_info=True)
+            continue
 
-    Returns:
-        AWX: Initialized AWX client
 
-    Raises:
-        ValueError: If required environment variables are not set
-    """
-    # Load environment variables
-    load_env_file()
-
-    # Get AWX credentials from environment
-    awx_host = get_env_var("AWX_HOST", required=True)
-    awx_token = get_env_var("AWX_TOKEN", required=True)
-
-    try:
-        return AWX(host=awx_host, token=awx_token)
-    except Exception as e:
-        logger.error(f"Failed to initialize AWX client: {e}")
-        raise
+def import_workflows_from_data(awx, workflows):
+    """Import workflows into AWX from a list of data."""
+    logger.info(f"Importing {len(workflows)} workflows into AWX...")
+    for workflow_data in workflows:
+        workflow_name = workflow_data.get("name")
+        try:
+            if not awx.workflow_job_templates.find(name=workflow_name):
+                awx.workflow_job_templates.create(payload=workflow_data)
+                logger.info(f"Successfully imported workflow: {workflow_name}")
+            else:
+                logger.warning(f"Workflow '{workflow_name}' already exists. Skipping.")
+        except Exception as e:
+            logger.error(f"Failed to import workflow {workflow_name}: {e}", exc_info=True)
+            continue
 
 
 @app.command()
@@ -53,45 +63,20 @@ def import_job_templates(
         readable=True,
     )
 ) -> None:
-    """Import job templates and workflows from JSON into AWX.
-
-    Args:
-        input_file: Input JSON file path
-    """
+    """Import job templates and workflows from JSON into AWX."""
     try:
-        # Get AWX client
-        awx = get_awx_client()
+        awx = get_awx_or_tower_client("AWX")
 
-        # Load data from file
-        logger.info(f"Loading job templates and workflows from {input_file}...")
-        data = load_json_config(input_file)
+        with open(input_file, "r") as f:
+            data = json.load(f)
 
-        # Import job templates
-        logger.info("Importing job templates into AWX...")
-        for template_data in data.get("job_templates", []):
-            try:
-                # Create job template
-                awx.job_templates.create(**template_data)
-                logger.info(f"Successfully imported job template: {template_data.get('name')}")
-            except Exception as e:
-                logger.error(f"Failed to import job template {template_data.get('name')}: {e}")
-                continue
+        import_job_templates_from_data(awx, data.get("job_templates", []))
+        import_workflows_from_data(awx, data.get("workflows", []))
 
-        # Import workflows
-        logger.info("Importing workflows into AWX...")
-        for workflow_data in data.get("workflows", []):
-            try:
-                # Create workflow
-                awx.workflows.create(**workflow_data)
-                logger.info(f"Successfully imported workflow: {workflow_data.get('name')}")
-            except Exception as e:
-                logger.error(f"Failed to import workflow {workflow_data.get('name')}: {e}")
-                continue
-
-        logger.info("Job templates and workflows import completed")
+        logger.info("Job templates and workflows import completed.")
 
     except Exception as e:
-        logger.error(f"Failed to import job templates and workflows: {e}")
+        logger.error(f"Failed to import job templates and workflows: {e}", exc_info=True)
         sys.exit(1)
 
 

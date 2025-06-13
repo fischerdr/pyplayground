@@ -3,44 +3,23 @@
 
 """Script to export Tower project definitions to JSON."""
 
+import json
+import os
 import sys
 from pathlib import Path
 
 import typer
-from awxcli import Tower
+from awxkit.exceptions import NoContent
 
-from utils.config_utils import get_env_var, load_env_file, save_json_config
+from utils.ansible_tower_utils import get_awx_or_tower_client
 from utils.logging_utils import get_logger, setup_logging
 
 # Initialize Typer app
 app = typer.Typer()
 
 # Setup logging
-setup_logging(script_name="tower_export_projects")
+setup_logging(script_name=os.path.basename(__file__).replace(".py", ""))
 logger = get_logger(__name__)
-
-
-def get_tower_client() -> Tower:
-    """Get Tower client with credentials from environment.
-
-    Returns:
-        Tower: Initialized Tower client
-
-    Raises:
-        ValueError: If required environment variables are not set
-    """
-    # Load environment variables
-    load_env_file()
-
-    # Get Tower credentials from environment
-    tower_host = get_env_var("TOWER_HOST", required=True)
-    tower_token = get_env_var("TOWER_TOKEN", required=True)
-
-    try:
-        return Tower(host=tower_host, token=tower_token)
-    except Exception as e:
-        logger.error(f"Failed to initialize Tower client: {e}")
-        raise
 
 
 @app.command()
@@ -53,28 +32,26 @@ def export(
         writable=True,
     )
 ) -> None:
-    """Export Tower project definitions to JSON.
-
-    Args:
-        output: Output JSON file path
-    """
+    """Export Tower project definitions to JSON."""
     try:
-        # Get Tower client
-        tower = get_tower_client()
-
-        # Get projects
+        tower = get_awx_or_tower_client("TOWER")
         logger.info("Fetching projects from Tower...")
-        projects = tower.projects.list()
 
-        # Convert to dict for JSON serialization
-        projects_data = [project.dict() for project in projects]
+        projects = [project.json for project in tower.projects.pget()]
 
-        # Save to file
-        save_json_config(projects_data, output)
-        logger.info(f"Successfully exported {len(projects_data)} projects to {output}")
+        if not projects:
+            logger.warning("No projects found in Tower.")
+            sys.exit(0)
 
+        with open(output, "w") as f:
+            json.dump(projects, f, indent=2)
+        logger.info(f"Successfully exported {len(projects)} projects to {output}")
+
+    except NoContent:
+        logger.warning("No projects found in Tower.")
+        sys.exit(0)
     except Exception as e:
-        logger.error(f"Failed to export projects: {e}")
+        logger.error(f"Failed to export projects: {e}", exc_info=True)
         sys.exit(1)
 
 

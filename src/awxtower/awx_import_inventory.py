@@ -3,44 +3,42 @@
 
 """Script to import inventories and hosts JSON into AWX."""
 
+import json
+import os
 import sys
 from pathlib import Path
 
 import typer
-from awxcli import AWX
 
-from utils.config_utils import get_env_var, load_env_file, load_json_config
+from utils.ansible_tower_utils import get_awx_or_tower_client
 from utils.logging_utils import get_logger, setup_logging
 
 # Initialize Typer app
 app = typer.Typer()
 
 # Setup logging
-setup_logging(script_name="awx_import_inventory")
+setup_logging(script_name=os.path.basename(__file__).replace(".py", ""))
 logger = get_logger(__name__)
 
 
-def get_awx_client() -> AWX:
-    """Get AWX client with credentials from environment.
-
-    Returns:
-        AWX: Initialized AWX client
-
-    Raises:
-        ValueError: If required environment variables are not set
-    """
-    # Load environment variables
-    load_env_file()
-
-    # Get AWX credentials from environment
-    awx_host = get_env_var("AWX_HOST", required=True)
-    awx_token = get_env_var("AWX_TOKEN", required=True)
-
-    try:
-        return AWX(host=awx_host, token=awx_token)
-    except Exception as e:
-        logger.error(f"Failed to initialize AWX client: {e}")
-        raise
+def import_hosts_to_inventory(inventory, hosts, inv_name):
+    """Import a list of hosts into a given inventory."""
+    for host_data in hosts:
+        host_name = host_data.get("name")
+        try:
+            if not inventory.hosts.find(name=host_name):
+                inventory.hosts.create(payload=host_data)
+                logger.info(f"Successfully imported host '{host_name}' to inventory '{inv_name}'")
+            else:
+                logger.warning(
+                    f"Host '{host_name}' already exists in inventory '{inv_name}'. Skipping."
+                )
+        except Exception as e:
+            logger.error(
+                f"Failed to import host '{host_name}' to inventory '{inv_name}': {e}",
+                exc_info=True,
+            )
+            continue
 
 
 @app.command()
@@ -53,51 +51,36 @@ def import_inventory(
         readable=True,
     )
 ) -> None:
-    """Import inventories and hosts from JSON into AWX.
-
-    Args:
-        input_file: Input JSON file path
-    """
+    """Import inventories and hosts from JSON into AWX."""
     try:
-        # Get AWX client
-        awx = get_awx_client()
+        awx = get_awx_or_tower_client("AWX")
 
-        # Load inventories from file
-        logger.info(f"Loading inventories from {input_file}...")
-        inventories_data = load_json_config(input_file)
+        with open(input_file, "r") as f:
+            inventories_data = json.load(f)
 
-        # Import inventories and hosts
-        logger.info("Importing inventories and hosts into AWX...")
-        for inventory_data in inventories_data:
+        logger.info(f"Importing {len(inventories_data)} inventories into AWX...")
+        for inv_data in inventories_data:
+            inv_name = inv_data.get("name")
             try:
-                # Extract hosts before creating inventory
-                hosts = inventory_data.pop("hosts", [])
+                inventory = awx.inventories.find(name=inv_name)
+                if not inventory:
+                    hosts = inv_data.pop("hosts", [])
+                    inventory = awx.inventories.create(payload=inv_data)
+                    logger.info(f"Successfully created inventory: {inv_name}")
+                else:
+                    hosts = inv_data.get("hosts", [])
+                    logger.warning(f"Inventory '{inv_name}' already exists. Skipping creation.")
 
-                # Create inventory
-                inventory = awx.inventories.create(**inventory_data)
-                logger.info(f"Successfully imported inventory: {inventory_data.get('name')}")
-
-                # Create hosts
-                for host_data in hosts:
-                    try:
-                        # Add inventory ID to host data
-                        host_data["inventory"] = inventory.id
-
-                        # Create host
-                        awx.hosts.create(**host_data)
-                        logger.info(f"Successfully imported host: {host_data.get('name')}")
-                    except Exception as e:
-                        logger.error(f"Failed to import host {host_data.get('name')}: {e}")
-                        continue
+                import_hosts_to_inventory(inventory, hosts, inv_name)
 
             except Exception as e:
-                logger.error(f"Failed to import inventory {inventory_data.get('name')}: {e}")
+                logger.error(f"Failed to process inventory {inv_name}: {e}", exc_info=True)
                 continue
 
-        logger.info("Inventory import completed")
+        logger.info("Inventory import completed.")
 
     except Exception as e:
-        logger.error(f"Failed to import inventories: {e}")
+        logger.error(f"Failed to import inventories: {e}", exc_info=True)
         sys.exit(1)
 
 

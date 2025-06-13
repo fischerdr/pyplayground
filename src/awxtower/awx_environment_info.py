@@ -27,7 +27,7 @@ load_env_file()
 
 def get_system_info() -> Dict:
     """Get system information for migration planning.
-    
+
     Returns:
         Dict containing system information
     """
@@ -38,15 +38,14 @@ def get_system_info() -> Dict:
             "release": platform.release(),
             "version": platform.version(),
             "machine": platform.machine(),
-            "processor": platform.processor()
+            "processor": platform.processor(),
         }
-        
+
         # Get RHEL specific information if available
         if os_info["system"] == "Linux":
             try:
                 rhel_version = subprocess.check_output(
-                    ["cat", "/etc/redhat-release"], 
-                    universal_newlines=True
+                    ["cat", "/etc/redhat-release"], universal_newlines=True
                 ).strip()
                 os_info["rhel_version"] = rhel_version
             except (subprocess.SubprocessError, FileNotFoundError):
@@ -71,15 +70,11 @@ def get_environment_info(tower_url: str, token: str, verify_ssl: bool = True) ->
     """
     try:
         # Initialize AWX connection
-        awx = api.Connection(
-            tower_url,
-            token=token,
-            verify=verify_ssl
-        )
+        awx = api.Connection(tower_url, token=token, verify=verify_ssl)
 
         # Get base info
         base_info = awx.get()
-        
+
         # Fetch various environment components
         info = {
             "system_info": get_system_info(),
@@ -90,26 +85,27 @@ def get_environment_info(tower_url: str, token: str, verify_ssl: bool = True) ->
             "config": base_info.config,
             "inventory_stats": {
                 "inventories": len(awx.inventories.get().results),
-                "hosts": len(awx.hosts.get().results)
+                "hosts": len(awx.hosts.get().results),
             },
-            "project_stats": {
-                "projects": len(awx.projects.get().results)
-            },
+            "project_stats": {"projects": len(awx.projects.get().results)},
             "template_stats": {
                 "job_templates": len(awx.job_templates.get().results),
-                "workflow_job_templates": len(awx.workflow_job_templates.get().results)
+                "workflow_job_templates": len(awx.workflow_job_templates.get().results),
             },
-            "credential_stats": {
-                "credentials": len(awx.credentials.get().results)
-            },
+            "credential_stats": {"credentials": len(awx.credentials.get().results)},
             "database_info": {
-                "type": base_info.settings.get("DATABASES", {}).get("default", {}).get("ENGINE", "unknown"),
-                "name": base_info.settings.get("DATABASES", {}).get("default", {}).get("NAME", "unknown")
+                "type": base_info.settings.get("DATABASES", {})
+                .get("default", {})
+                .get("ENGINE", "unknown"),
+                "name": base_info.settings.get("DATABASES", {})
+                .get("default", {})
+                .get("NAME", "unknown"),
             },
             "authentication_info": {
                 "auth_backends": base_info.settings.get("AUTHENTICATION_BACKENDS", []),
-                "ldap_enabled": "django_auth_ldap.backend.LDAPBackend" in base_info.settings.get("AUTHENTICATION_BACKENDS", [])
-            }
+                "ldap_enabled": "django_auth_ldap.backend.LDAPBackend"
+                in base_info.settings.get("AUTHENTICATION_BACKENDS", []),
+            },
         }
 
         return info
@@ -178,4 +174,4 @@ def main(
 
 
 if __name__ == "__main__":
-    main() 
+    main()

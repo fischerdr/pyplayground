@@ -151,6 +151,7 @@ For each sub-step, use the Python scripts in Appendix A to automate export, back
 The following scripts are available in the `/awxtower` directory to automate the migration process:
 
 #### Export Scripts (Tower to JSON)
+
 - `tower_export_credentials.py`: Exports Tower credentials to JSON
 - `tower_export_projects.py`: Exports Tower project definitions to JSON
 - `tower_export_inventory.py`: Exports Tower inventories and hosts to JSON
@@ -158,6 +159,7 @@ The following scripts are available in the `/awxtower` directory to automate the
 - `tower_export_schedules.py`: Exports Tower schedules and notifications to JSON
 
 #### Import Scripts (JSON to AWX)
+
 - `awx_import_credentials.py`: Imports credentials JSON into AWX
 - `awx_import_projects.py`: Imports project definitions into AWX
 - `awx_import_inventory.py`: Imports inventories and hosts JSON into AWX
@@ -165,6 +167,7 @@ The following scripts are available in the `/awxtower` directory to automate the
 - `awx_import_schedules.py`: Imports schedules and notification templates into AWX
 
 #### Additional Utilities
+
 - `download_awx_images.py`: Downloads required container images for AWX deployment
 - `run_template_restapi.py`: Example of using AWX REST API to run job templates
 

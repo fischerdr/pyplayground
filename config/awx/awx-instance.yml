@@ -1,0 +1,67 @@
+apiVersion: awx.ansible.com/v1beta1
+kind: AWX
+metadata:
+  name: awx-instance
+  namespace: awx
+spec:
+  service_type: ClusterIP
+  ingress_type: Ingress
+  admin_user: admin
+  admin_password: StrongPassword123
+  image: "registry.internal.domain/ansible/awx"
+  image_version: "24.3.0"
+  image_pull_policy: IfNotPresent
+  image_pull_secret: "internal-registry-creds" 
+  ee_images:
+    - name: my-custom-awx-ee
+      image: myorg/my-custom-awx-ee
+  control_plane_ee_image: myorg/my-custom-awx-ee:latest
+  init_container_image: myorg/my-custom-awx-ee
+  init_container_image_version: latest
+  init_projects_container_image: myorg/my-mirrored-centos:stream9
+  projects_persistence: true
+  projects_storage_class: "standard"
+  projects_storage_size: 8Gi
+  postgres_storage_class: "standard"
+  postgres_storage_size: 8Gi
+  redis_storage_class: "standard"
+  redis_storage_size: 2Gi
+  hostname: awx.my.domain
+  replicas: 1
+  task_resource_requirements:
+      requests:
+        cpu: "500m"
+        memory: "2Gi"
+      limits:
+        cpu: "1"
+        memory: "4Gi"
+  web_resource_requirements:
+    requests:
+      cpu: "250m"
+      memory: "1Gi"
+    limits:
+      cpu: "500m"
+      memory: "2Gi"
+  postgres_resource_requirements:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "500m"
+      memory: "1Gi"
+  redis_resource_requirements:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "250m"
+      memory: "512Mi"
+  extra_settings:
+    - setting: AUTH_LDAP_SERVER_URI
+      value: "ldaps://ldap.internal"
+    - setting: AUTH_LDAP_BIND_DN
+      value: "cn=readonly,dc=internal"
+    - setting: AUTH_LDAP_BIND_PASSWORD
+      value: "supersecret"
+    - setting: AUTH_LDAP_USER_SEARCH
+      value: "LDAPSearch('ou=users,dc=internal', ldap.SCOPE_SUBTREE, '(uid=%(user)s)')"

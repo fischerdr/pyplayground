@@ -72,8 +72,6 @@ bin/tools/**
 !bin/tools/bin/
 !bin/tools/bin/.gitkeep
 !bin/tools/**/.gitkeep
-
-
 # Keep script directories but ignore binaries
 !bin/scripts/
 bin/scripts/**/*.exe
@@ -121,6 +119,9 @@ tmp/build/*
 *.tmp
 *.temp
 *~
+
+# Config files
+!config/**/*
 
 # Misc
 *.retry

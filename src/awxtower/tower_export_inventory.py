@@ -9,8 +9,8 @@ from pathlib import Path
 import typer
 from awxcli import Tower
 
-from utils.logging_utils import setup_logging, get_logger
-from utils.config_utils import load_env_file, get_env_var, save_json_config
+from utils.config_utils import get_env_var, load_env_file, save_json_config
+from utils.logging_utils import get_logger, setup_logging
 
 # Initialize Typer app
 app = typer.Typer()
@@ -22,20 +22,20 @@ logger = get_logger(__name__)
 
 def get_tower_client() -> Tower:
     """Get Tower client with credentials from environment.
-    
+
     Returns:
         Tower: Initialized Tower client
-        
+
     Raises:
         ValueError: If required environment variables are not set
     """
     # Load environment variables
     load_env_file()
-    
+
     # Get Tower credentials from environment
     tower_host = get_env_var("TOWER_HOST", required=True)
     tower_token = get_env_var("TOWER_TOKEN", required=True)
-    
+
     try:
         return Tower(host=tower_host, token=tower_token)
     except Exception as e:
@@ -54,43 +54,43 @@ def export(
     )
 ) -> None:
     """Export Tower inventories and hosts to JSON.
-    
+
     Args:
         output: Output JSON file path
     """
     try:
         # Get Tower client
         tower = get_tower_client()
-        
+
         # Get inventories
         logger.info("Fetching inventories from Tower...")
         inventories = tower.inventories.list()
-        
+
         # Get hosts for each inventory
         inventory_data = []
         for inventory in inventories:
             try:
                 # Get hosts for this inventory
                 hosts = tower.hosts.list(inventory=inventory.id)
-                
+
                 # Convert to dict for JSON serialization
                 inventory_dict = inventory.dict()
                 inventory_dict["hosts"] = [host.dict() for host in hosts]
                 inventory_data.append(inventory_dict)
-                
+
                 logger.info(f"Fetched {len(hosts)} hosts for inventory: {inventory.name}")
             except Exception as e:
                 logger.error(f"Failed to fetch hosts for inventory {inventory.name}: {e}")
                 continue
-        
+
         # Save to file
         save_json_config(inventory_data, output)
         logger.info(f"Successfully exported {len(inventory_data)} inventories to {output}")
-        
+
     except Exception as e:
         logger.error(f"Failed to export inventories: {e}")
         sys.exit(1)
 
 
 if __name__ == "__main__":
-    app() 
+    app()

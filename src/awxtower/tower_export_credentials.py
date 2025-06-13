@@ -5,12 +5,14 @@
 
 import sys
 from pathlib import Path
+from typing import Dict, List, Optional
 
+import requests
 import typer
-from awxcli import Tower
 
-from utils.logging_utils import setup_logging, get_logger
-from utils.config_utils import load_env_file, get_env_var, save_json_config
+from utils.ansible_tower_utils import get_tower_token_from_credentials
+from utils.config_utils import get_env_var, load_env_file, save_json_config
+from utils.logging_utils import get_logger, setup_logging
 
 # Initialize Typer app
 app = typer.Typer()
@@ -20,27 +22,57 @@ setup_logging(script_name="tower_export_credentials")
 logger = get_logger(__name__)
 
 
-def get_tower_client() -> Tower:
-    """Get Tower client with credentials from environment.
-    
+def get_tower_headers() -> Optional[Dict[str, str]]:
+    """Get Tower API headers with token from environment or credentials.
+
     Returns:
-        Tower: Initialized Tower client
-        
-    Raises:
-        ValueError: If required environment variables are not set
+        Optional[Dict[str, str]]: Headers dict with token if successful, None if failed
     """
     # Load environment variables
     load_env_file()
-    
-    # Get Tower credentials from environment
-    tower_host = get_env_var("TOWER_HOST", required=True)
-    tower_token = get_env_var("TOWER_TOKEN", required=True)
-    
+
+    # Try to get token from environment first
+    tower_token = get_env_var("TOWER_TOKEN", required=False)
+
+    # If no token in env, try to get one using credentials
+    if not tower_token:
+        tower_host = get_env_var("TOWER_HOST", required=True)
+        username = get_env_var("TOWER_USERNAME", required=True)
+        password = get_env_var("TOWER_PASSWORD", required=True)
+
+        tower_token = get_tower_token_from_credentials(
+            tower_url=tower_host, username=username, password=password, verify=True
+        )
+
+        if not tower_token:
+            logger.error("Failed to obtain Tower token")
+            return None
+
+    return {"Authorization": f"Bearer {tower_token}", "Content-Type": "application/json"}
+
+
+def get_credentials(tower_url: str, headers: Dict[str, str]) -> Optional[List[Dict]]:
+    """Get all credentials from Tower.
+
+    Args:
+        tower_url: Tower API URL
+        headers: API request headers
+
+    Returns:
+        Optional[List[Dict]]: List of credential dicts if successful, None if failed
+    """
+    url = f"{tower_url.rstrip('/')}/api/v2/credentials/"
     try:
-        return Tower(host=tower_host, token=tower_token)
+        response = requests.get(url, headers=headers, verify=True, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("results", [])
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to fetch credentials: {e}")
+        return None
     except Exception as e:
-        logger.error(f"Failed to initialize Tower client: {e}")
-        raise
+        logger.error(f"Unexpected error fetching credentials: {e}")
+        return None
 
 
 @app.command()
@@ -54,29 +86,35 @@ def export(
     )
 ) -> None:
     """Export Tower credentials to JSON.
-    
+
     Args:
         output: Output JSON file path
     """
     try:
-        # Get Tower client
-        tower = get_tower_client()
-        
+        # Get Tower URL and headers
+        tower_url = get_env_var("TOWER_HOST", required=True)
+        headers = get_tower_headers()
+
+        if not headers:
+            logger.error("Failed to get Tower API headers")
+            sys.exit(1)
+
         # Get credentials
         logger.info("Fetching credentials from Tower...")
-        creds = tower.credentials.list()
-        
-        # Convert to dict for JSON serialization
-        creds_data = [cred.dict() for cred in creds]
-        
+        creds = get_credentials(tower_url, headers)
+
+        if not creds:
+            logger.error("No credentials found or failed to fetch credentials")
+            sys.exit(1)
+
         # Save to file
-        save_json_config(creds_data, output)
-        logger.info(f"Successfully exported {len(creds_data)} credentials to {output}")
-        
+        save_json_config(creds, output)
+        logger.info(f"Successfully exported {len(creds)} credentials to {output}")
+
     except Exception as e:
         logger.error(f"Failed to export credentials: {e}")
         sys.exit(1)
 
 
 if __name__ == "__main__":
-    app() 
+    app()

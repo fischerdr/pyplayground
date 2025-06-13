@@ -1,0 +1,54 @@
+---
+collections:
+  - name: community.general
+    version: ">=7.0.0"
+  - name: community.kubernetes
+    version: ">=2.0.0"
+  - name: kubernetes.core
+    version: ">=2.0.0"
+  - name: awx.awx
+    version: ">=23.0.0"
+  - name: ansible.posix
+    version: ">=1.5.0"
+  - name: community.docker
+    version: ">=3.0.0"
+
+roles:
+  - name: geerlingguy.docker
+    version: "7.0.0"
+  - name: geerlingguy.kubernetes
+    version: "1.0.0"
+
+python_packages:
+  - name: kubernetes
+    version: ">=28.0.0"
+  - name: openshift
+    version: ">=0.13.0"
+  - name: docker
+    version: ">=6.0.0"
+  - name: requests
+    version: ">=2.31.0"
+  - name: pyyaml
+    version: ">=6.0.1"
+  - name: jmespath
+    version: ">=1.0.1"
+  - name: netaddr
+    version: ">=0.8.0"
+  - name: dnspython
+    version: ">=2.4.0"
+  - name: cryptography
+    version: ">=41.0.0"
+  - name: boto3
+    version: ">=1.34.0"
+  - name: botocore
+    version: ">=1.34.0"
+  - name: azure-mgmt-compute
+    version: ">=30.0.0"
+  - name: azure-mgmt-network
+    version: ">=30.0.0"
+  - name: azure-mgmt-resource
+    version: ">=23.0.0"
+  - name: google-cloud-compute
+    version: ">=1.0.0"
+  - name: google-cloud-storage
+    version: ">=2.0.0" 

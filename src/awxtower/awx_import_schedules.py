@@ -10,7 +10,11 @@ from pathlib import Path
 
 import typer
 
-from utils.ansible_tower_utils import get_awx_or_tower_client
+from utils.ansible_tower_utils import (
+    create_resource,
+    find_resource_by_name,
+    get_awx_or_tower_client,
+)
 from utils.logging_utils import get_logger, setup_logging
 
 # Initialize Typer app
@@ -33,7 +37,11 @@ def import_schedules(
 ) -> None:
     """Import schedules from JSON into AWX."""
     try:
-        awx = get_awx_or_tower_client("AWX")
+        # Get AWX client configuration
+        client_config = get_awx_or_tower_client("AWX")
+        tower_url = client_config["url"]
+        headers = client_config["headers"]
+        verify = client_config["verify"]
 
         with open(input_file, "r") as f:
             schedules_data = json.load(f)
@@ -42,13 +50,18 @@ def import_schedules(
         for schedule_data in schedules_data:
             schedule_name = schedule_data.get("name")
             try:
-                # Note: awxkit does not have a .find() for schedules.
-                # A simple check by name is performed here.
-                # More robust checking may require iterating over existing schedules.
-                existing = awx.schedules.get(name=schedule_name)
-                if not existing.results:
-                    awx.schedules.create(payload=schedule_data)
-                    logger.info(f"Successfully imported schedule: {schedule_name}")
+                # Check if schedule already exists
+                existing_schedule = find_resource_by_name(
+                    tower_url, headers, "schedules", schedule_name, verify
+                )
+                if not existing_schedule:
+                    created_schedule = create_resource(
+                        tower_url, headers, "schedules", schedule_data, verify
+                    )
+                    if created_schedule:
+                        logger.info(f"Successfully imported schedule: {schedule_name}")
+                    else:
+                        logger.error(f"Failed to create schedule: {schedule_name}")
                 else:
                     logger.warning(f"Schedule '{schedule_name}' already exists. Skipping.")
             except Exception as e:

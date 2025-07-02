@@ -1,7 +1,10 @@
-.PHONY: install-dev clean test lint format
+.PHONY: install-dev install-dev-deps clean test lint format
 
 install-dev:
 	pip install -e .
+
+install-dev-deps:
+	pip install -e ".[dev]"
 
 clean:
 	rm -rf build/

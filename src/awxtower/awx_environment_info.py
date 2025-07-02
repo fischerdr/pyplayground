@@ -9,8 +9,8 @@ import subprocess
 from typing import Dict, Optional
 
 import click
+import requests
 import urllib3
-from awxkit import api
 
 from utils.config_utils import load_env_file
 from utils.logging_utils import setup_logging
@@ -69,42 +69,99 @@ def get_environment_info(tower_url: str, token: str, verify_ssl: bool = True) ->
         Dict containing environment information
     """
     try:
-        # Initialize AWX connection
-        awx = api.Connection(tower_url, token=token, verify=verify_ssl)
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
 
         # Get base info
-        base_info = awx.get()
+        base_url = f"{tower_url}/api/v2/"
+        response = requests.get(base_url, headers=headers, verify=verify_ssl, timeout=30)
+        response.raise_for_status()
+        base_info = response.json()
 
-        # Fetch various environment components
+        # Get version info
+        version_url = f"{tower_url}/api/v2/config/"
+        response = requests.get(version_url, headers=headers, verify=verify_ssl, timeout=30)
+        response.raise_for_status()
+        config_info = response.json()
+
+        # Get user info
+        me_url = f"{tower_url}/api/v2/me/"
+        response = requests.get(me_url, headers=headers, verify=verify_ssl, timeout=30)
+        response.raise_for_status()
+        me_info = response.json()
+
+        # Get inventory stats
+        inventories_url = f"{tower_url}/api/v2/inventories/"
+        response = requests.get(inventories_url, headers=headers, verify=verify_ssl, timeout=30)
+        response.raise_for_status()
+        inventories_data = response.json()
+
+        # Get hosts stats
+        hosts_url = f"{tower_url}/api/v2/hosts/"
+        response = requests.get(hosts_url, headers=headers, verify=verify_ssl, timeout=30)
+        response.raise_for_status()
+        hosts_data = response.json()
+
+        # Get project stats
+        projects_url = f"{tower_url}/api/v2/projects/"
+        response = requests.get(projects_url, headers=headers, verify=verify_ssl, timeout=30)
+        response.raise_for_status()
+        projects_data = response.json()
+
+        # Get job template stats
+        job_templates_url = f"{tower_url}/api/v2/job_templates/"
+        response = requests.get(job_templates_url, headers=headers, verify=verify_ssl, timeout=30)
+        response.raise_for_status()
+        job_templates_data = response.json()
+
+        # Get workflow job template stats
+        workflow_job_templates_url = f"{tower_url}/api/v2/workflow_job_templates/"
+        response = requests.get(
+            workflow_job_templates_url, headers=headers, verify=verify_ssl, timeout=30
+        )
+        response.raise_for_status()
+        workflow_job_templates_data = response.json()
+
+        # Get credential stats
+        credentials_url = f"{tower_url}/api/v2/credentials/"
+        response = requests.get(credentials_url, headers=headers, verify=verify_ssl, timeout=30)
+        response.raise_for_status()
+        credentials_data = response.json()
+
+        # Get settings
+        settings_url = f"{tower_url}/api/v2/settings/"
+        response = requests.get(settings_url, headers=headers, verify=verify_ssl, timeout=30)
+        response.raise_for_status()
+        settings_data = response.json()
+
+        # Compile information
         info = {
             "system_info": get_system_info(),
-            "version": base_info.version,
-            "settings": base_info.settings,
-            "me": base_info.me,
-            "instances": base_info.instances,
-            "config": base_info.config,
+            "version": config_info.get("version", "unknown"),
+            "settings": settings_data,
+            "me": me_info,
+            "config": config_info,
             "inventory_stats": {
-                "inventories": len(awx.inventories.get().results),
-                "hosts": len(awx.hosts.get().results),
+                "inventories": inventories_data.get("count", 0),
+                "hosts": hosts_data.get("count", 0),
             },
-            "project_stats": {"projects": len(awx.projects.get().results)},
+            "project_stats": {"projects": projects_data.get("count", 0)},
             "template_stats": {
-                "job_templates": len(awx.job_templates.get().results),
-                "workflow_job_templates": len(awx.workflow_job_templates.get().results),
+                "job_templates": job_templates_data.get("count", 0),
+                "workflow_job_templates": workflow_job_templates_data.get("count", 0),
             },
-            "credential_stats": {"credentials": len(awx.credentials.get().results)},
+            "credential_stats": {"credentials": credentials_data.get("count", 0)},
             "database_info": {
-                "type": base_info.settings.get("DATABASES", {})
+                "type": settings_data.get("DATABASES", {})
                 .get("default", {})
                 .get("ENGINE", "unknown"),
-                "name": base_info.settings.get("DATABASES", {})
+                "name": settings_data.get("DATABASES", {})
                 .get("default", {})
                 .get("NAME", "unknown"),
             },
             "authentication_info": {
-                "auth_backends": base_info.settings.get("AUTHENTICATION_BACKENDS", []),
+                "auth_backends": settings_data.get("AUTHENTICATION_BACKENDS", []),
                 "ldap_enabled": "django_auth_ldap.backend.LDAPBackend"
-                in base_info.settings.get("AUTHENTICATION_BACKENDS", []),
+                in settings_data.get("AUTHENTICATION_BACKENDS", []),
             },
         }
 

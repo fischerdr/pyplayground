@@ -9,9 +9,8 @@ import sys
 from pathlib import Path
 
 import typer
-from awxkit.exceptions import NoContent
 
-from utils.ansible_tower_utils import get_awx_or_tower_client
+from utils.ansible_tower_utils import get_awx_or_tower_client, list_resources
 from utils.logging_utils import get_logger, setup_logging
 
 # Initialize Typer app
@@ -35,15 +34,19 @@ def export(
 ) -> None:
     """Export Tower job templates and workflows to JSON."""
     try:
-        tower = get_awx_or_tower_client("TOWER")
+        # Get Tower client configuration
+        client_config = get_awx_or_tower_client("TOWER")
+        tower_url = client_config["url"]
+        headers = client_config["headers"]
+        verify = client_config["verify"]
 
         logger.info("Fetching job templates from Tower...")
-        job_templates = [jt.json for jt in tower.job_templates.pget()]
+        job_templates = list_resources(tower_url, headers, "job_templates", verify)
 
         workflows = []
         if include_workflows:
             logger.info("Fetching workflow job templates from Tower...")
-            workflows = [wf.json for wf in tower.workflow_job_templates.pget()]
+            workflows = list_resources(tower_url, headers, "workflow_job_templates", verify)
 
         if not job_templates and not workflows:
             logger.warning("No job templates or workflows found in Tower.")
@@ -61,9 +64,6 @@ def export(
             f"{len(workflows)} workflows to {output}"
         )
 
-    except NoContent:
-        logger.warning("No job templates or workflows found in Tower.")
-        sys.exit(0)
     except Exception as e:
         logger.error(f"Failed to export job templates: {e}", exc_info=True)
         sys.exit(1)

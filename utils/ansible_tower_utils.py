@@ -8,7 +8,6 @@ from time import sleep
 from typing import Any, Dict, List, Optional
 
 import requests
-from awxkit import api
 from dotenv import load_dotenv
 from requests.auth import HTTPBasicAuth
 
@@ -16,14 +15,14 @@ from requests.auth import HTTPBasicAuth
 logger = logging.getLogger(__name__)
 
 
-def get_awx_or_tower_client(prefix: str):
-    """Get an authenticated AWX or Tower API client using awxkit.
+def get_awx_or_tower_client(prefix: str) -> Dict[str, Any]:
+    """Get an authenticated AWX or Tower API client configuration for REST API.
 
     Args:
         prefix (str): The prefix for environment variables, e.g., 'AWX' or 'TOWER'.
 
     Returns:
-        An awxkit API client object.
+        Dict containing connection details: {'url': str, 'headers': Dict[str, str], 'verify': bool}
     """
     load_dotenv()
     host = os.getenv(f"{prefix}_HOST")
@@ -35,18 +34,27 @@ def get_awx_or_tower_client(prefix: str):
         logger.error(f"Missing required environment variable: {prefix}_HOST")
         sys.exit(1)
 
+    # Ensure host has proper scheme
+    if not host.startswith(("http://", "https://")):
+        host = f"https://{host}"
+
+    headers = {"Content-Type": "application/json"}
+
     try:
         if token:
             logger.info(f"Connecting to {host} using token.")
-            return api.connect(host=host, token=token, verify_ssl=True)
+            headers["Authorization"] = f"Bearer {token}"
+            return {"url": host, "headers": headers, "verify": True, "auth_type": "token"}
         elif username and password:
             logger.info(f"Connecting to {host} using user/pass for {username}.")
-            return api.connect(
-                host=host,
-                username=username,
-                password=password,
-                verify_ssl=True,
-            )
+            # Get token using credentials
+            token = get_tower_token_from_credentials(host, username, password, verify=True)
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+                return {"url": host, "headers": headers, "verify": True, "auth_type": "token"}
+            else:
+                logger.error(f"Failed to obtain token for user {username}")
+                sys.exit(1)
         else:
             logger.error(
                 f"Missing credentials for {prefix}. "
@@ -285,4 +293,158 @@ def fetch_job_output(
         return response.text
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to fetch job stdout for job ID {job_id}: {e}")
+        return None
+
+
+def list_resources(
+    tower_url: str, headers: Dict[str, str], endpoint: str, verify: bool = True
+) -> Optional[List[Dict[str, Any]]]:
+    """List all resources of a specific type from AWX/Tower API.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'credentials', 'inventories', 'projects')
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        List of resource dictionaries or None if failed
+    """
+    url = f"{tower_url}/api/v2/{endpoint}/"
+    try:
+        response = requests.get(url, headers=headers, verify=verify, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("results", [])
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to list {endpoint}: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when listing {endpoint}: {e}")
+        return None
+
+
+def find_resource_by_name(
+    tower_url: str, headers: Dict[str, str], endpoint: str, name: str, verify: bool = True
+) -> Optional[Dict[str, Any]]:
+    """Find a specific resource by exact name.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'credentials', 'inventories', 'projects')
+        name: Exact name of the resource to find
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        Resource dictionary if found, None otherwise
+    """
+    url = f"{tower_url}/api/v2/{endpoint}/?name={name}"
+    try:
+        response = requests.get(url, headers=headers, verify=verify, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        results = data.get("results", [])
+        return results[0] if results else None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to find {endpoint} with name '{name}': {e}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when finding {endpoint}: {e}")
+        return None
+
+
+def create_resource(
+    tower_url: str,
+    headers: Dict[str, str],
+    endpoint: str,
+    payload: Dict[str, Any],
+    verify: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Create a new resource via AWX/Tower API.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'credentials', 'inventories', 'projects')
+        payload: Resource data to create
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        Created resource dictionary if successful, None otherwise
+    """
+    url = f"{tower_url}/api/v2/{endpoint}/"
+    try:
+        response = requests.post(url, headers=headers, json=payload, verify=verify, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to create {endpoint}: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            logger.error(f"Response: {e.response.text}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when creating {endpoint}: {e}")
+        return None
+
+
+def get_inventory_hosts(
+    tower_url: str, headers: Dict[str, str], inventory_id: int, verify: bool = True
+) -> Optional[List[Dict[str, Any]]]:
+    """Get all hosts for a specific inventory.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        inventory_id: ID of the inventory
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        List of host dictionaries or None if failed
+    """
+    url = f"{tower_url}/api/v2/inventories/{inventory_id}/hosts/"
+    try:
+        response = requests.get(url, headers=headers, verify=verify, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("results", [])
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to get hosts for inventory {inventory_id}: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when getting hosts: {e}")
+        return None
+
+
+def add_host_to_inventory(
+    tower_url: str,
+    headers: Dict[str, str],
+    inventory_id: int,
+    host_data: Dict[str, Any],
+    verify: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Add a host to a specific inventory.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        inventory_id: ID of the inventory
+        host_data: Host data to create
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        Created host dictionary if successful, None otherwise
+    """
+    url = f"{tower_url}/api/v2/inventories/{inventory_id}/hosts/"
+    try:
+        response = requests.post(url, headers=headers, json=host_data, verify=verify, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to add host to inventory {inventory_id}: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            logger.error(f"Response: {e.response.text}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when adding host: {e}")
         return None

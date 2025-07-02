@@ -8,8 +8,8 @@ from typing import Optional
 
 import click
 import urllib3
-from awxkit import api
-from awxkit.exceptions import ConnectionError, NotFound
+
+from utils.ansible_tower_utils import get_tower_token_from_credentials
 
 # Disable SSL warnings - due to self-signed certs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -60,14 +60,11 @@ def get_token(
         Authentication token if successful, None otherwise
     """
     try:
-        # Initialize AWX connection
-        awx = api.Connection(tower_url, verify=verify_ssl)
-
-        # Get token
-        token = awx.get_token(username, password)
+        # Use the existing utility function
+        token = get_tower_token_from_credentials(tower_url, username, password, verify_ssl)
         return token
 
-    except (ConnectionError, NotFound) as e:
+    except Exception as e:
         click.echo(f"Error: Failed to get token - {str(e)}", err=True)
         return None
 

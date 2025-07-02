@@ -9,9 +9,8 @@ import sys
 from pathlib import Path
 
 import typer
-from awxkit.exceptions import NoContent
 
-from utils.ansible_tower_utils import get_awx_or_tower_client
+from utils.ansible_tower_utils import get_awx_or_tower_client, list_resources
 from utils.logging_utils import get_logger, setup_logging
 
 # Initialize Typer app
@@ -34,10 +33,15 @@ def export(
 ) -> None:
     """Export Tower schedules to JSON."""
     try:
-        tower = get_awx_or_tower_client("TOWER")
+        # Get Tower client configuration
+        client_config = get_awx_or_tower_client("TOWER")
+        tower_url = client_config["url"]
+        headers = client_config["headers"]
+        verify = client_config["verify"]
+
         logger.info("Fetching schedules from Tower...")
 
-        schedules = [s.json for s in tower.schedules.pget()]
+        schedules = list_resources(tower_url, headers, "schedules", verify)
 
         if not schedules:
             logger.warning("No schedules found in Tower.")
@@ -47,9 +51,6 @@ def export(
             json.dump(schedules, f, indent=2)
         logger.info(f"Successfully exported {len(schedules)} schedules to {output}")
 
-    except NoContent:
-        logger.warning("No schedules found in Tower.")
-        sys.exit(0)
     except Exception as e:
         logger.error(f"Failed to export schedules: {e}", exc_info=True)
         sys.exit(1)

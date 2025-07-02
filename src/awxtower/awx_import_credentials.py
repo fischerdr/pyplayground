@@ -10,7 +10,11 @@ from pathlib import Path
 
 import typer
 
-from utils.ansible_tower_utils import get_awx_or_tower_client
+from utils.ansible_tower_utils import (
+    create_resource,
+    find_resource_by_name,
+    get_awx_or_tower_client,
+)
 from utils.logging_utils import get_logger, setup_logging
 
 # Initialize Typer app
@@ -33,7 +37,11 @@ def import_creds(
 ) -> None:
     """Import credentials from JSON into AWX."""
     try:
-        awx = get_awx_or_tower_client("AWX")
+        # Get AWX client configuration
+        client_config = get_awx_or_tower_client("AWX")
+        tower_url = client_config["url"]
+        headers = client_config["headers"]
+        verify = client_config["verify"]
 
         with open(input_file, "r") as f:
             creds_data = json.load(f)
@@ -42,10 +50,18 @@ def import_creds(
         for cred_data in creds_data:
             cred_name = cred_data.get("name")
             try:
-                # To prevent duplicates, check if a credential with the same name exists
-                if not awx.credentials.find(name=cred_name):
-                    awx.credentials.create(payload=cred_data)
-                    logger.info(f"Successfully imported credential: {cred_name}")
+                # Check if credential already exists
+                existing_cred = find_resource_by_name(
+                    tower_url, headers, "credentials", cred_name, verify
+                )
+                if not existing_cred:
+                    created_cred = create_resource(
+                        tower_url, headers, "credentials", cred_data, verify
+                    )
+                    if created_cred:
+                        logger.info(f"Successfully imported credential: {cred_name}")
+                    else:
+                        logger.error(f"Failed to create credential: {cred_name}")
                 else:
                     logger.warning(f"Credential '{cred_name}' already exists. Skipping.")
             except Exception as e:

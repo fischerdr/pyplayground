@@ -71,12 +71,6 @@ def get_environment_info(tower_url: str, token: str, verify_ssl: bool = True) ->
     try:
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
 
-        # Get base info
-        base_url = f"{tower_url}/api/v2/"
-        response = requests.get(base_url, headers=headers, verify=verify_ssl, timeout=30)
-        response.raise_for_status()
-        base_info = response.json()
-
         # Get version info
         version_url = f"{tower_url}/api/v2/config/"
         response = requests.get(version_url, headers=headers, verify=verify_ssl, timeout=30)

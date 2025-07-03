@@ -300,6 +300,99 @@ def fetch_job_output(
         return None
 
 
+def list_resources_with_params(
+    tower_url: str,
+    headers: Dict[str, str],
+    endpoint: str,
+    verify: bool = True,
+    params: Optional[Dict[str, Any]] = None,
+    paginated: bool = True,
+) -> Optional[List[Dict[str, Any]]]:
+    """List all resources of a specific type from AWX/Tower API with query parameters.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'credentials', 'inventories', 'projects')
+        verify: Whether to verify SSL certificates
+        params: Optional query parameters for filtering, searching, sorting, etc.
+        paginated: If True, fetch all pages of results. If False, return only first page.
+
+    Returns:
+        List of resource dictionaries or None if failed
+    """
+    if not paginated:
+        # Original behavior - return only first page
+        url = f"{tower_url}/api/v2/{endpoint}/"
+        try:
+            response = requests.get(url, headers=headers, params=params, verify=verify, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            return data.get("results", [])
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to list {endpoint}: {e}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to decode JSON response when listing {endpoint}: {e}")
+            return None
+    else:
+        # New behavior - fetch all pages
+        return _fetch_all_paginated_resources(tower_url, headers, endpoint, verify, params)
+
+
+def _fetch_all_paginated_resources(
+    tower_url: str,
+    headers: Dict[str, str],
+    endpoint: str,
+    verify: bool = True,
+    params: Optional[Dict[str, Any]] = None,
+) -> Optional[List[Dict[str, Any]]]:
+    """Internal function to fetch all pages of resources from a paginated Tower API endpoint.
+
+    Args:
+        tower_url: The base URL of the Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'job_templates', 'workflow_job_templates')
+        verify: Whether to verify SSL certificates
+        params: Optional query parameters for filtering, searching, sorting, etc.
+
+    Returns:
+        Complete list of all resources from all pages, or None if failed
+    """
+    all_results = []
+    url = f"{tower_url}/api/v2/{endpoint}/"
+    page_count = 0
+
+    try:
+        while url:
+            page_count += 1
+            logger.debug(f"Fetching page {page_count} for {endpoint}")
+
+            response = requests.get(url, headers=headers, params=params, verify=verify, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+
+            page_results = data.get("results", [])
+            all_results.extend(page_results)
+
+            # Get next page URL
+            url = data.get("next")
+
+            # Only use params on the first request (Tower handles pagination URLs)
+            if page_count == 1:
+                params = None
+
+        logger.info(f"Fetched {len(all_results)} total {endpoint} across {page_count} pages")
+        return all_results
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to fetch paginated {endpoint}: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when fetching paginated {endpoint}: {e}")
+        return None
+
+
 def list_resources(
     tower_url: str, headers: Dict[str, str], endpoint: str, verify: bool = True
 ) -> Optional[List[Dict[str, Any]]]:
@@ -314,18 +407,7 @@ def list_resources(
     Returns:
         List of resource dictionaries or None if failed
     """
-    url = f"{tower_url}/api/v2/{endpoint}/"
-    try:
-        response = requests.get(url, headers=headers, verify=verify, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        return data.get("results", [])
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to list {endpoint}: {e}")
-        return None
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to decode JSON response when listing {endpoint}: {e}")
-        return None
+    return list_resources_with_params(tower_url, headers, endpoint, verify)
 
 
 def find_resource_by_name(
@@ -452,3 +534,68 @@ def add_host_to_inventory(
     except json.JSONDecodeError as e:
         logger.error(f"Failed to decode JSON response when adding host: {e}")
         return None
+
+
+def export_all_resources(
+    tower_url: str,
+    headers: Dict[str, str],
+    endpoint: str,
+    verify: bool = True,
+    params: Optional[Dict[str, Any]] = None,
+) -> Optional[List[Dict[str, Any]]]:
+    """Export all resources from a Tower API endpoint with pagination enabled.
+
+    This function is specifically designed for export scripts and always fetches
+    all pages to ensure complete data export.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'job_templates', 'workflow_job_templates')
+        verify: Whether to verify SSL certificates
+        params: Optional query parameters for filtering, searching, sorting, etc.
+
+    Returns:
+        Complete list of all resources from all pages, or None if failed
+    """
+    return list_resources_with_params(tower_url, headers, endpoint, verify, params, paginated=True)
+
+
+def export_job_templates(
+    tower_url: str,
+    headers: Dict[str, str],
+    verify: bool = True,
+    params: Optional[Dict[str, Any]] = None,
+) -> Optional[List[Dict[str, Any]]]:
+    """Export all job templates from Tower with pagination enabled.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        verify: Whether to verify SSL certificates
+        params: Optional query parameters for filtering, searching, sorting, etc.
+
+    Returns:
+        Complete list of all job templates, or None if failed
+    """
+    return export_all_resources(tower_url, headers, "job_templates", verify, params)
+
+
+def export_workflow_job_templates(
+    tower_url: str,
+    headers: Dict[str, str],
+    verify: bool = True,
+    params: Optional[Dict[str, Any]] = None,
+) -> Optional[List[Dict[str, Any]]]:
+    """Export all workflow job templates from Tower with pagination enabled.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        verify: Whether to verify SSL certificates
+        params: Optional query parameters for filtering, searching, sorting, etc.
+
+    Returns:
+        Complete list of all workflow job templates, or None if failed
+    """
+    return export_all_resources(tower_url, headers, "workflow_job_templates", verify, params)

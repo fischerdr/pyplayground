@@ -16,7 +16,9 @@ from rich.table import Table
 
 from pyplayground.utils.logging_utils import setup_logging  # Import the new logging setup function
 from pyplayground.utils.px_api import PXBackupClient, generate_token  # Import shared utilities
-from pyplayground.utils.report_utils import save_inspect_backup_report  # Add import for the new function
+from pyplayground.utils.report_utils import (  # Add import for the new function
+    save_inspect_backup_report,
+)
 
 # Disable SSL warnings - due to self-signed certs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)

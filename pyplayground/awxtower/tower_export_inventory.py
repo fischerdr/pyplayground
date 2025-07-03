@@ -10,7 +10,11 @@ from pathlib import Path
 
 import typer
 
-from pyplayground.utils.ansible_tower_utils import get_awx_or_tower_client, get_inventory_hosts, list_resources
+from pyplayground.utils.ansible_tower_utils import (
+    get_awx_or_tower_client,
+    get_inventory_hosts,
+    list_resources,
+)
 from pyplayground.utils.logging_utils import get_logger, setup_logging
 
 # Initialize Typer app

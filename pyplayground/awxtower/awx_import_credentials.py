@@ -33,12 +33,16 @@ def import_creds(
         exists=True,
         dir_okay=False,
         readable=True,
-    )
+    ),
+    verify: bool = typer.Option(
+        False,
+        help="Verify the connection to Tower",
+    ),
 ) -> None:
     """Import credentials from JSON into AWX."""
     try:
         # Get AWX client configuration
-        client_config = get_awx_or_tower_client("AWX")
+        client_config = get_awx_or_tower_client("AWX", verify=verify)
         tower_url = client_config["url"]
         headers = client_config["headers"]
         verify = client_config["verify"]

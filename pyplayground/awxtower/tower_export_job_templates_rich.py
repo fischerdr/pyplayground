@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 """Script to export Tower job templates and workflows to JSON."""
-
 import json
 import os
 from collections import defaultdict, deque
@@ -10,6 +9,8 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import typer
+from rich.console import Console
+from rich.table import Table
 
 from pyplayground.utils.ansible_tower_utils import get_awx_or_tower_client, list_resources
 from pyplayground.utils.logging_utils import get_logger, setup_logging
@@ -21,9 +22,15 @@ app = typer.Typer()
 setup_logging(script_name=os.path.basename(__file__).replace(".py", ""))
 logger = get_logger(__name__)
 
+console = Console()
+
 
 def sort_job_templates_by_dependencies(job_templates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Sort job templates by their dependencies using topological sorting.
+
+    This function constructs a dependency graph and computes the indegree for each job template.
+    It then performs a topological sort to ensure that job templates with no dependencies are processed first,
+    followed by those that depend on them. If cyclic dependencies are detected, it raises a ValueError.
 
     Args:
         job_templates: List of job templates fetched from Tower
@@ -67,6 +74,31 @@ def sort_job_templates_by_dependencies(job_templates: List[Dict[str, Any]]) -> L
     return [job_template_dict[job_id] for job_id in sorted_job_ids]
 
 
+def get_dependency_names(jt: Dict[str, Any]) -> str:
+    """Extract dependency names from job template.
+
+    Args:
+        jt: Job template dictionary
+
+    Returns:
+        Comma-separated string of dependency names
+    """
+    related = jt.get("summary_fields", {}).get("related", {})
+    dependencies = related.get("dependencies", [])
+
+    if not dependencies:
+        return "None"
+
+    # Get dependency names from the job template dict
+    dependency_names = []
+    for dep_id in dependencies:
+        # Look up the dependency name by ID in the job templates
+        # This is a simplified approach - in a real scenario, you might need to fetch dependency details
+        dependency_names.append(f"ID:{dep_id}")
+
+    return ", ".join(dependency_names)
+
+
 @app.command()
 def export(
     output: Path = typer.Option(
@@ -79,67 +111,76 @@ def export(
     include_workflows: bool = typer.Option(True, help="Include workflow job templates in export"),
     verify: bool = typer.Option(True, help="Verify the connection to Tower"),
 ) -> None:
-    """Export Tower job templates and workflows to JSON.
+    """Export Tower job templates and workflows to JSON or Rich table.
 
     This function fetches job templates and workflows from Tower, sorts the job templates based on their dependencies,
-    and then exports them to a specified JSON file. It handles logging throughout the process to provide feedback
-    about the operations being performed.
-
-    Args:
-        output: Path to the output JSON file where job templates and workflows will be exported.
-        include_workflows: Boolean flag indicating whether to include workflow job templates in the export.
-        verify: Boolean flag indicating whether to verify the connection to Tower.
+    and then exports them either as a JSON file or in a rich formatted table.
     """
     try:
         # Get Tower client configuration
         client_config = get_awx_or_tower_client("TOWER", verify=verify)
         tower_url = client_config["url"]
         headers = client_config["headers"]
-        verify = client_config["verify"]
 
         logger.info("Fetching job templates from Tower...")
         job_templates = list_resources(tower_url, headers, "job_templates", verify)
+
         if job_templates is None:
-            logger.error("Failed to fetch job templates from Tower.")
-            print("Failed to fetch job templates from Tower.")
+            logger.error("Failed to fetch job templates from Tower")
+            console.print("[red]Failed to fetch job templates from Tower[/red]")
             return
 
         workflows: List[Dict[str, Any]] = []
         if include_workflows:
             logger.info("Fetching workflow job templates from Tower...")
             workflows_result = list_resources(tower_url, headers, "workflow_job_templates", verify)
+            
             if workflows_result is None:
-                logger.error("Failed to fetch workflows from Tower.")
-                print("Failed to fetch workflows from Tower.")
+                logger.error("Failed to fetch workflows from Tower")
+                console.print("[red]Failed to fetch workflows from Tower[/red]")
             else:
                 workflows = workflows_result
 
-        if not job_templates and not workflows:
-            logger.warning("No job templates or workflows found in Tower.")
-            print("No job templates or workflows found in Tower.")
-            return
-
-        # Sort job templates by dependencies
+        # Filter and sort data
         sorted_job_templates = sort_job_templates_by_dependencies(job_templates)
 
-        export_data = {
-            "job_templates": sorted_job_templates,
-            "workflows": workflows,
-        }
+        # Create table for job templates
+        job_table = Table(title="Job Templates")
+        job_table.add_column("ID", style="bold", width=5)
+        job_table.add_column("Name", style="bold")
+        job_table.add_column("Description", style="italic")
+        job_table.add_column("Dependencies", style="dim")
 
-        with open(output, "w") as f:
-            json.dump(export_data, f, indent=2)
-        logger.info(
-            f"Successfully exported {len(sorted_job_templates)} job templates and "
-            f"{len(workflows)} workflows to {output}"
-        )
-        print(
-            f"Successfully exported {len(sorted_job_templates)} job templates and {len(workflows)} workflows to {output}"
-        )
+        for jt in sorted_job_templates:
+            job_table.add_row(
+                str(jt["id"]), jt["name"], jt.get("description", "N/A"), get_dependency_names(jt)
+            )
+
+        # Create table for workflows
+        workflow_table = Table(title="Workflows")
+        workflow_table.add_column("ID", style="bold", width=5)
+        workflow_table.add_column("Name", style="bold")
+        workflow_table.add_column("Description", style="italic")
+
+        for wf in workflows:
+            workflow_table.add_row(str(wf["id"]), wf["name"], wf.get("description", "N/A"))
+
+        # Display tables
+        console.print(job_table)
+        console.print(workflow_table)
+
+        if output:
+            with open(output, "w") as f:
+                json.dump(
+                    {"job_templates": sorted_job_templates, "workflows": workflows}, f, indent=2
+                )
+            logger.info(
+                f"Successfully exported {len(sorted_job_templates)} job templates and {len(workflows)} workflows to {output}"
+            )
 
     except Exception as e:
         logger.error(f"Failed to export job templates: {e}", exc_info=True)
-        print(f"An error occurred while exporting data: {e}")
+        console.print("[red]An error occurred while exporting data.[/red]")
 
 
 if __name__ == "__main__":

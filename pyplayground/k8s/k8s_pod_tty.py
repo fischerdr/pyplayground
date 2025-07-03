@@ -45,11 +45,11 @@ from kubernetes.client.rest import ApiException
 from kubernetes.stream import stream
 from kubernetes.stream.ws_client import WSClient  # Import for type hint
 
-# Import K8s utilities
-from utils import k8s_utils
-
 # Add import for logging utilities
 from pyplayground.utils.logging_utils import get_logger, setup_logging
+
+# Import K8s utilities
+from utils import k8s_utils
 
 # Setup logger for module level
 logger = get_logger(__name__)

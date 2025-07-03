@@ -143,7 +143,9 @@ def export(
         if output:
             with open(output, "w") as f:
                 json.dump(
-                    {"job_templates": sorted_job_templates, "workflows": sorted_workflows}, f, indent=2
+                    {"job_templates": sorted_job_templates, "workflows": sorted_workflows},
+                    f,
+                    indent=2,
                 )
             logger.info(
                 f"Successfully exported {len(sorted_job_templates)} job templates and {len(sorted_workflows)} workflows to {output}"

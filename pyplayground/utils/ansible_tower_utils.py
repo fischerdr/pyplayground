@@ -6,6 +6,7 @@ import os
 import sys
 from time import sleep
 from typing import Any, Dict, List, Optional
+from urllib.parse import urljoin
 
 import requests
 import urllib3
@@ -306,7 +307,7 @@ def list_resources_with_params(
     endpoint: str,
     verify: bool = True,
     params: Optional[Dict[str, Any]] = None,
-    paginated: bool = True,
+    paginated: Optional[bool] = True,
 ) -> Optional[List[Dict[str, Any]]]:
     """List all resources of a specific type from AWX/Tower API with query parameters.
 
@@ -360,15 +361,20 @@ def _fetch_all_paginated_resources(
         Complete list of all resources from all pages, or None if failed
     """
     all_results = []
-    url = f"{tower_url}/api/v2/{endpoint}/"
+    url = f"{tower_url.rstrip('/')}/api/v2/{endpoint}/"
     page_count = 0
+
+    # Use a copy to avoid modifying the original dict in case it's reused
+    current_params = params.copy() if params else {}
 
     try:
         while url:
             page_count += 1
             logger.debug(f"Fetching page {page_count} for {endpoint}")
 
-            response = requests.get(url, headers=headers, params=params, verify=verify, timeout=30)
+            response = requests.get(
+                url, headers=headers, params=current_params, verify=verify, timeout=30
+            )
             response.raise_for_status()
             data = response.json()
 
@@ -376,11 +382,17 @@ def _fetch_all_paginated_resources(
             all_results.extend(page_results)
 
             # Get next page URL
-            url = data.get("next")
+            next_page_path = data.get("next")
 
-            # Only use params on the first request (Tower handles pagination URLs)
-            if page_count == 1:
-                params = None
+            if next_page_path:
+                # AWX/Tower API can return a relative path for the next page
+                url = urljoin(tower_url, next_page_path)
+                logger.debug(f"Fetching next page: {url}")
+                # Parameters are included in the 'next' URL, so clear them for the next loop
+                current_params = {}
+            else:
+                # No more pages, exit the loop
+                url = None
 
         logger.info(f"Fetched {len(all_results)} total {endpoint} across {page_count} pages")
         return all_results
@@ -542,6 +554,7 @@ def export_all_resources(
     endpoint: str,
     verify: bool = True,
     params: Optional[Dict[str, Any]] = None,
+    paginated: Optional[bool] = True,
 ) -> Optional[List[Dict[str, Any]]]:
     """Export all resources from a Tower API endpoint with pagination enabled.
 
@@ -554,48 +567,9 @@ def export_all_resources(
         endpoint: API endpoint (e.g., 'job_templates', 'workflow_job_templates')
         verify: Whether to verify SSL certificates
         params: Optional query parameters for filtering, searching, sorting, etc.
+        paginated: If True, fetch all pages of results. If False, return only first page.
 
     Returns:
         Complete list of all resources from all pages, or None if failed
     """
-    return list_resources_with_params(tower_url, headers, endpoint, verify, params, paginated=True)
-
-
-def export_job_templates(
-    tower_url: str,
-    headers: Dict[str, str],
-    verify: bool = True,
-    params: Optional[Dict[str, Any]] = None,
-) -> Optional[List[Dict[str, Any]]]:
-    """Export all job templates from Tower with pagination enabled.
-
-    Args:
-        tower_url: The base URL of the AWX/Tower instance
-        headers: HTTP headers for authentication
-        verify: Whether to verify SSL certificates
-        params: Optional query parameters for filtering, searching, sorting, etc.
-
-    Returns:
-        Complete list of all job templates, or None if failed
-    """
-    return export_all_resources(tower_url, headers, "job_templates", verify, params)
-
-
-def export_workflow_job_templates(
-    tower_url: str,
-    headers: Dict[str, str],
-    verify: bool = True,
-    params: Optional[Dict[str, Any]] = None,
-) -> Optional[List[Dict[str, Any]]]:
-    """Export all workflow job templates from Tower with pagination enabled.
-
-    Args:
-        tower_url: The base URL of the AWX/Tower instance
-        headers: HTTP headers for authentication
-        verify: Whether to verify SSL certificates
-        params: Optional query parameters for filtering, searching, sorting, etc.
-
-    Returns:
-        Complete list of all workflow job templates, or None if failed
-    """
-    return export_all_resources(tower_url, headers, "workflow_job_templates", verify, params)
+    return list_resources_with_params(tower_url, headers, endpoint, verify, params, paginated)

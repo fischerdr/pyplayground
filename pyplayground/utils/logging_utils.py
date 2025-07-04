@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 # Get the project root directory
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Check for environment variable first, fall back to default
+DEFAULT_LOG_DIR = os.getenv("DEFAULT_LOG_DIR", os.path.join(PROJECT_ROOT, "logs"))
 
 
 def setup_logging(  # noqa: C901

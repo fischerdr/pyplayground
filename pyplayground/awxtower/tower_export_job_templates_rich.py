@@ -12,8 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from pyplayground.utils.ansible_tower_utils import (
-    export_job_templates,
-    export_workflow_job_templates,
+    export_all_resources,
     get_awx_or_tower_client,
 )
 from pyplayground.utils.logging_utils import get_logger, setup_logging
@@ -54,7 +53,7 @@ def get_dependency_names(jt: Dict[str, Any]) -> str:
 
 
 @app.command()
-def export(
+def export(  # noqa: C901
     output: Path = typer.Option(
         "job_templates.json",
         help="Output JSON file path",
@@ -63,7 +62,7 @@ def export(
         writable=True,
     ),
     include_workflows: bool = typer.Option(True, help="Include workflow job templates in export"),
-    verify: bool = typer.Option(True, help="Verify the connection to Tower"),
+    verify: bool = typer.Option(False, help="Verify the connection to Tower"),
     search: Optional[str] = typer.Option(None, help="Search term for filtering workflows"),
     order_by: Optional[str] = typer.Option(
         None, help="Sort workflows by field (e.g., 'name', '-name')"
@@ -82,7 +81,7 @@ def export(
         verify = client_config["verify"]
 
         logger.info("Fetching job templates from Tower...")
-        job_templates = export_job_templates(tower_url, headers, verify)
+        job_templates = export_all_resources(tower_url, headers, "job_templates", verify)
         if job_templates is None:
             logger.error("Failed to fetch job templates from Tower")
             console.print("[red]Failed to fetch job templates from Tower[/red]")
@@ -99,7 +98,9 @@ def export(
             if order_by:
                 params["order_by"] = order_by
 
-            workflows_result = export_workflow_job_templates(tower_url, headers, verify, params)
+            workflows_result = export_all_resources(
+                tower_url, headers, "workflow_job_templates", verify, params
+            )
             if workflows_result is None:
                 logger.error("Failed to fetch workflows from Tower")
                 console.print("[red]Failed to fetch workflows from Tower[/red]")

@@ -11,8 +11,7 @@ from typing import Any, Dict, List, Optional
 import typer
 
 from pyplayground.utils.ansible_tower_utils import (
-    export_job_templates,
-    export_workflow_job_templates,
+    export_all_resources,
     get_awx_or_tower_client,
 )
 from pyplayground.utils.logging_utils import get_logger, setup_logging
@@ -62,7 +61,7 @@ def export(
         verify = client_config["verify"]
 
         logger.info("Fetching job templates from Tower...")
-        job_templates = export_job_templates(tower_url, headers, verify)
+        job_templates = export_all_resources(tower_url, headers, "job_templates", verify)
         if job_templates is None:
             logger.error("Failed to fetch job templates from Tower.")
             print("Failed to fetch job templates from Tower.")
@@ -79,7 +78,9 @@ def export(
             if order_by:
                 params["order_by"] = order_by
 
-            workflows_result = export_workflow_job_templates(tower_url, headers, verify, params)
+            workflows_result = export_all_resources(
+                tower_url, headers, "workflow_job_templates", verify, params
+            )
             if workflows_result is None:
                 logger.error("Failed to fetch workflows from Tower.")
                 print("Failed to fetch workflows from Tower.")

@@ -1,0 +1,28 @@
+version: '3.9'
+
+services:
+  ollama:
+    image: ollama/ollama:0.10.0-rc0-rocm
+    container_name: ollama-rocm
+    ports:
+      - "11434:11434"
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - "video"
+    volumes:
+      - ollama:/root/.ollama
+    environment:
+      - HSA_OVERRIDE_GFX_VERSION=10.3.0
+      - HIP_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+              driver: radeon
+              count: all
+
+volumes:
+  ollama:

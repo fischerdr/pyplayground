@@ -4,13 +4,19 @@ This module provides a set of utility functions for interacting with HashiCorp V
 including client creation, secret management, and token operations.
 """
 
+import base64
+import json
 import logging
 import os
 from typing import Any, Dict, List, Optional
 
 import hvac
+import urllib3
 from dotenv import load_dotenv
 from hvac.exceptions import VaultError
+
+# Disable SSL warnings - due to self-signed certs
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +54,13 @@ def create_vault_client(
         >>> client = create_vault_client(url="http://vault:8200", token="hvs.example")
         >>> assert client.is_authenticated()
     """
+    logger.debug(
+        "create_vault_client called with: url=%s, token=%s, namespace=%s, verify=%s",
+        url,
+        debug_token(token) if token else "None",
+        namespace,
+        verify,
+    )
     if load_env:
         load_dotenv()
 
@@ -60,14 +73,109 @@ def create_vault_client(
     if not vault_token:
         raise ValueError("Vault token not provided and VAULT_TOKEN env var not set")
 
+    logger.debug(
+        "Creating hvac.Client with resolved params: url=%s, token=%s, namespace=%s, verify=%s",
+        vault_url,
+        debug_token(vault_token),
+        vault_namespace,
+        verify,
+    )
+
     client = hvac.Client(url=vault_url, token=vault_token, namespace=vault_namespace, verify=verify)
+    logger.debug("hvac.Client created: %s", client)
 
     try:
         client.sys.is_sealed()
+        logger.debug("Vault client authenticated successfully against the Vault API.")
     except VaultError as e:
+        logger.error("Failed to create and authenticate Vault client.", exc_info=True)
         raise VaultError("Failed to authenticate with Vault") from e
 
     return client
+
+
+def login_with_kubernetes(
+    role: str,
+    jwt: str,
+    url: Optional[str] = None,
+    mount_point: str = "kubernetes",
+    namespace: Optional[str] = None,
+    verify: bool = False,
+    load_env: bool = True,
+) -> hvac.Client:
+    """Authenticates to Vault using the Kubernetes auth method.
+
+    This is the recommended approach for services running inside Kubernetes.
+
+    Args:
+        role: The Vault role to authenticate against.
+        jwt: The Kubernetes service account token (JWT).
+        url: Vault server URL. If None, uses VAULT_ADDR environment variable.
+        mount_point: The mount path of the Kubernetes auth method in Vault.
+        namespace: Vault Enterprise namespace. If None, uses VAULT_NAMESPACE environment variable.
+        verify: Whether to verify SSL certificates. Defaults to False.
+        load_env: Whether to load environment variables from .env file. Defaults to True.
+
+    Returns:
+        hvac.Client: An authenticated Vault client instance.
+
+    Raises:
+        VaultError: If authentication fails.
+        ValueError: If Vault URL is not provided or found in environment variables.
+    """
+    logger.debug(
+        "login_with_kubernetes called with: role=%s, jwt=%s, url=%s, mount_point=%s, namespace=%s, verify=%s",
+        role,
+        debug_jwt(jwt),
+        url,
+        mount_point,
+        namespace,
+        verify,
+    )
+    if load_env:
+        load_dotenv()
+
+    vault_url = url or os.environ.get("VAULT_ADDR")
+    vault_namespace = namespace or os.environ.get("VAULT_NAMESPACE")
+
+    if not vault_url:
+        raise ValueError("Vault URL not provided and VAULT_ADDR env var not set")
+
+    logger.debug(
+        "Creating initial hvac.Client for K8s auth: url=%s, namespace=%s",
+        vault_url,
+        vault_namespace,
+    )
+
+    client = hvac.Client(url=vault_url, namespace=vault_namespace, verify=verify)
+    logger.debug("Initial (unauthenticated) hvac.Client created: %s", client)
+    try:
+        auth_response = hvac.api.auth_methods.Kubernetes(client.adapter).login(
+            role=role,
+            jwt=jwt,
+            mount_point=mount_point,
+        )
+        logger.info(
+            "Successfully authenticated to Vault with Kubernetes role '%s'. Token accessor: %s",
+            role,
+            auth_response["auth"]["accessor"],
+        )
+        logger.debug("hvac.Client is now authenticated. Client state: %s", client)
+        logger.debug("Client token is now set: %s", debug_token(client.token))
+        # The client token is automatically set by the hvac library upon successful login.
+
+        # Log the full auth response and JWT payload for detailed debugging
+        logger.debug("Full Vault auth response: %s", auth_response)
+        log_jwt_payload(jwt)
+
+        return client
+    except VaultError as e:
+        logger.error(
+            "Failed to authenticate with Vault using Kubernetes auth method (role: %s): %s",
+            role,
+            e,
+        )
+        raise
 
 
 def list_secrets(
@@ -164,6 +272,55 @@ def debug_token(token: str) -> str:
     if len(token) > 8:
         return f"{token[:4]}...{token[-4:]}"
     return "Token too short"
+
+
+def log_jwt_payload(jwt: str):
+    """Safely decodes and logs the payload of a JWT for debugging.
+
+    Args:
+        jwt: The JWT string to decode.
+    """
+    if not jwt:
+        logger.debug("No JWT provided to decode.")
+        return
+    try:
+        # A JWT is three parts separated by dots: header.payload.signature
+        parts = jwt.split(".")
+        if len(parts) != 3:
+            logger.warning("Malformed JWT: does not contain 3 parts.")
+            return
+
+        payload_b64 = parts[1]
+        # The payload might have incorrect padding, so we add it if needed
+        payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
+
+        # Decode from Base64 and then from UTF-8
+        payload_json = base64.urlsafe_b64decode(payload_b64).decode("utf-8")
+        payload_dict = json.loads(payload_json)
+
+        logger.debug("Decoded JWT Payload Claims: %s", payload_dict)
+
+    except (IndexError, TypeError, base64.binascii.Error, json.JSONDecodeError) as e:
+        logger.warning("Could not decode JWT payload for debugging: %s", e, exc_info=True)
+
+
+def debug_jwt(jwt: str) -> str:
+    """Create a safe debug representation of a JWT.
+
+    Creates a partially redacted version of a JWT suitable for logging,
+    showing only the first 8 and last 8 characters.
+
+    Args:
+        jwt: The JWT string to create a debug representation for.
+
+    Returns:
+        str: A redacted representation of the JWT.
+    """
+    if not jwt:
+        return "No JWT provided"
+    if len(jwt) > 16:
+        return f"{jwt[:8]}...{jwt[-8:]}"
+    return "JWT too short to redact"
 
 
 def validate_path_access(client: hvac.Client, path: str, mount_point: str = "secret") -> bool:

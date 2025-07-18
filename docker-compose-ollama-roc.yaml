@@ -1,28 +1,105 @@
-version: '3.9'
+version: '3.8'
 
 services:
   ollama:
     image: ollama/ollama:0.10.0-rc0-rocm
     container_name: ollama-rocm
+    restart: unless-stopped
+    
+    # ROCm GPU access for AMD GPUs
+    devices:
+      - /dev/kfd:/dev/kfd    # AMD GPU kernel driver
+      - /dev/dri:/dev/dri    # Direct Rendering Infrastructure
+    
+    # Expose Ollama API port
     ports:
       - "11434:11434"
-    devices:
-      - /dev/kfd
-      - /dev/dri
-    group_add:
-      - "video"
+    
+    # Persistent storage for models
     volumes:
       - ollama:/root/.ollama
+    
+    # Security options for ROCm GPU access
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+    
+    # Add video group for GPU access
+    group_add:
+      - video
+    
     environment:
-      - HSA_OVERRIDE_GFX_VERSION=10.3.0
+      # === ROCm GPU Configuration ===
+      # Override GPU version for compatibility
+      - HSA_OVERRIDE_GFX_VERSION=11.0.0
+      
+      # Use only the first GPU (adjust as needed)
       - HIP_VISIBLE_DEVICES=0
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: [gpu]
-              driver: radeon
-              count: all
+      
+      # === Server Configuration ===
+      # Listen on all interfaces (allows external connections)
+      - OLLAMA_HOST=0.0.0.0:11434
+      
+      # Allow connections from any origin (adjust for security)
+      - OLLAMA_ORIGINS=*
+      
+      # Enable debug logging (set to 1 for troubleshooting)
+      - OLLAMA_DEBUG=0
+      
+      # === Model Management ===
+      # Keep models loaded for 1 hour (prevents GPU hangs)
+      - OLLAMA_KEEP_ALIVE=30m
+      
+      # Allow up to 2 models loaded simultaneously
+      - OLLAMA_MAX_LOADED_MODELS=2
+      
+      # Allow 5 minutes for model loading
+      - OLLAMA_LOAD_TIMEOUT=5m
+      
+      # Don't automatically prune unused model files
+      - OLLAMA_NOPRUNE=false
+      
+      # === Performance Settings ===
+      # Handle 2 parallel requests (conservative for stability)
+      - OLLAMA_NUM_PARALLEL=2
+      
+      # Queue up to 100 requests
+      - OLLAMA_MAX_QUEUE=100
+      
+      # === GPU Optimization ===
+      # Spread models across GPUs if multiple available
+      - OLLAMA_SCHED_SPREAD=false
+      
+      # Enable flash attention for memory efficiency
+      - OLLAMA_FLASH_ATTENTION=true
+      
+      # Reserve 512MB VRAM per GPU (adjust based on your GPU memory)
+      - OLLAMA_GPU_OVERHEAD=536870912
+      
+      # Use 16-bit float for K/V cache (good balance of speed/memory)
+      - OLLAMA_KV_CACHE_TYPE=f16
+      
+      # === Optional Advanced Settings ===
+      # Uncomment to force specific LLM library
+      # - OLLAMA_LLM_LIBRARY=rocm
+      
+      # Uncomment to use custom models directory
+      # - OLLAMA_MODELS=/custom/models/path
 
+    # Optional: Resource limits to prevent system overload
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 16G
+    #     reservations:
+    #       memory: 8G
+
+# Named volume for persistent model storage
 volumes:
   ollama:
+    driver: local
+
+# Optional: Custom network for isolation
+# networks:
+#   ollama-network:
+#     driver: bridge

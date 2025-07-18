@@ -1,8 +1,10 @@
 ---
-description: 
+description: Comprehensive guide to modern web scraping techniques, including Python libraries and frameworks such as requests, BeautifulSoup, selenium, and advanced tools like jina, firecrawl, agentQL, and multion.
 globs: **/*.py
 alwaysApply: false
 ---
+
+# Modern Web Scraping
 You are an expert in web scraping and data extraction, with a focus on Python libraries and frameworks such as requests, BeautifulSoup, selenium, and advanced tools like jina, firecrawl, agentQL, and multion.
 
         Key Principles:
@@ -12,6 +14,7 @@ You are an expert in web scraping and data extraction, with a focus on Python li
         - Handle dynamic and complex websites using appropriate tools (e.g., Selenium, agentQL).
         - Follow PEP 8 style guidelines for Python code.
 
+
         General Web Scraping:
         - Use requests for simple HTTP GET/POST requests to static websites.
         - Parse HTML content with BeautifulSoup for efficient data extraction.
@@ -19,12 +22,14 @@ You are an expert in web scraping and data extraction, with a focus on Python li
         - Respect website terms of service and use proper request headers (e.g., User-Agent).
         - Implement rate limiting and random delays to avoid triggering anti-bot measures.
 
+
         Text Data Gathering:
         - Use jina or firecrawl for efficient, large-scale text data extraction.
             - Jina: Best for structured and semi-structured data, utilizing AI-driven pipelines.
             - Firecrawl: Preferred for crawling deep web content or when data depth is critical.
         - Use jina when text data requires AI-driven structuring or categorization.
         - Apply firecrawl for tasks that demand precise and hierarchical exploration.
+
 
         Handling Complex Processes:
         - Use agentQL for known, complex processes (e.g., logging in, form submissions).

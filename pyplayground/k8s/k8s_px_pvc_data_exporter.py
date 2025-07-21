@@ -20,9 +20,13 @@ from typing import Any, Dict, List, Optional
 
 import click
 import hvac
+import urllib3
 from kubernetes import client, stream
 from kubernetes.client.rest import ApiException
 from rich.console import Console
+
+# Disable SSL warnings - due to self-signed certs
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Add project root to path for utils
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -578,9 +582,7 @@ def gather_pvc_data(
                     logger.error(f"Error inspecting volume '{pv_name}': {err_msg}")
                     pvc_data_entry["portworxvolumeinspect_labels"] = {"error": err_msg}
                 elif pxctl_json and "spec" in pxctl_json:
-                    all_labels = (
-                        pxctl_json.get("spec", {}).get("volume_labels") or {}
-                    )
+                    all_labels = pxctl_json.get("spec", {}).get("volume_labels") or {}
                     pvc_data_entry["portworxvolumeinspect_labels"] = _filter_volume_labels(
                         all_labels
                     )

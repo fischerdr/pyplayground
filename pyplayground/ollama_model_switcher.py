@@ -40,9 +40,7 @@ def get_ollama_url(host: str) -> str:
     return f"http://{host}:11434/api"
 
 
-def pull_model_with_progress(
-    model_name: str, ollama_url: str, console: Console
-) -> bool:
+def pull_model_with_progress(model_name: str, ollama_url: str, console: Console) -> bool:
     """Pull a model from Ollama with a progress bar.
 
     Args:
@@ -170,9 +168,7 @@ def test_model_switching(model_name: str, ollama_url: str, console: Console):
         response_text = data.get("response", "").strip()
         console.print(f"    Response: [bold green]{response_text}[/]")
     except requests.exceptions.RequestException as e:
-        console.print(
-            f"    [bold red]✗[/] Failed to get response from {model_name}: {e}"
-        )
+        console.print(f"    [bold red]✗[/] Failed to get response from {model_name}: {e}")
 
 
 @click.command()

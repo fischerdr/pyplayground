@@ -20,10 +20,14 @@ from typing import Any, Dict, List, Optional
 
 import click
 import hvac
+import urllib3
 from kubernetes import client, stream
 from kubernetes.client.rest import ApiException
 from rich.console import Console
 from rich.table import Table
+
+# Disable SSL warnings - due to self-signed certs
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Add project root to path for utils
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))

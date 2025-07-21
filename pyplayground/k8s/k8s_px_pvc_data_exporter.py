@@ -195,13 +195,17 @@ def write_json_output(data: Dict, output_file: str):
 )
 @click.option(
     "--output-file",
-    required=True,
-    type=click.Path(dir_okay=False, writable=True),
-    help="Path to the output JSON file.",
+    default="px_pvc_export",
+    show_default=True,
+    required=False,
+    type=str,
+    help="Base name for the output JSON file (no path, .json will be added, file will be written to tmp/ with a timestamp).",
 )
 @click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
 def main(kubeconfig: Optional[str], px_namespace: str, output_file: str, debug: bool):
-    """Exports Portworx PVC data (PV, annotations, volume labels) to a JSON file."""
+    """Exports Portworx PVC data (PV, annotations, volume labels) to a JSON file in tmp/ with a timestamped filename."""
+    import datetime
+
     log_level = logging.DEBUG if debug else logging.INFO
     setup_logging(level=log_level, script_name=os.path.basename(__file__).replace(".py", ""))
 
@@ -221,8 +225,17 @@ def main(kubeconfig: Optional[str], px_namespace: str, output_file: str, debug: 
 
     exported_data = gather_pvc_data(core_v1, storage_v1, px_namespace)
 
+    # Ensure tmp/ directory exists
+    tmp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    # Create timestamped output filename
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_name = os.path.splitext(os.path.basename(output_file))[0]
+    final_output_file = os.path.join(tmp_dir, f"{base_name}_{timestamp}.json")
+
     if exported_data:
-        write_json_output(exported_data, output_file)
+        write_json_output(exported_data, final_output_file)
     else:
         console.print("[yellow]No data was gathered to export.[/yellow]")
 

@@ -49,6 +49,9 @@ logger = get_logger(__name__)
 def normalize_secret_name(secret_key: str, pvc_name: str) -> Tuple[str, bool]:
     """Normalize SECRET_KEY to a valid Kubernetes secret name.
 
+    IMPORTANT: Preserves '-pvc' suffixes as Portworx requires this naming
+    pattern to locate encryption keys correctly.
+
     Returns:
         Tuple of (normalized_name, was_changed)
     """
@@ -61,20 +64,30 @@ def normalize_secret_name(secret_key: str, pvc_name: str) -> Tuple[str, bool]:
     # Convert to lowercase and replace invalid characters with hyphens
     normalized = re.sub(r"[^a-z0-9-]", "-", secret_key.lower())
 
-    # Remove leading/trailing non-alphanumeric characters
-    normalized = re.sub(r"^[^a-z0-9]+", "", normalized)
-    normalized = re.sub(r"[^a-z0-9]+$", "", normalized)
-
     # Replace multiple consecutive hyphens with single hyphen
     normalized = re.sub(r"-+", "-", normalized)
 
-    # Truncate if too long
+    # Remove leading/trailing hyphens only (preserve alphanumeric + internal hyphens)
+    normalized = normalized.strip("-")
+
+    # Truncate if too long, but preserve the -pvc suffix if present
     if len(normalized) > MAX_SECRET_NAME_LENGTH:
-        normalized = normalized[:MAX_SECRET_NAME_LENGTH].rstrip("-")
+        if normalized.endswith("-pvc") and len(normalized) > 4:
+            # Preserve -pvc suffix, truncate the beginning part
+            max_prefix_length = MAX_SECRET_NAME_LENGTH - 4  # Save space for "-pvc"
+            prefix = normalized[:-4][:max_prefix_length].rstrip("-")
+            old_normalized = normalized
+            normalized = f"{prefix}-pvc"
+            logger.debug(
+                f"Preserved -pvc suffix during truncation: '{old_normalized}' → '{normalized}'"
+            )
+        else:
+            normalized = normalized[:MAX_SECRET_NAME_LENGTH].rstrip("-")
 
     # If result is empty or still invalid, use PVC name as fallback
     if not normalized or not VALID_SECRET_NAME_PATTERN.match(normalized):
         normalized = pvc_name.lower()
+        # For PVC names, preserve the structure but ensure K8s compliance
         normalized = re.sub(r"[^a-z0-9-]", "-", normalized)
         normalized = re.sub(r"-+", "-", normalized).strip("-")
 
@@ -329,11 +342,14 @@ def process_pvc_entry(
     normalized_secret_name, name_changed = normalize_secret_name(secret_key, pvc_name)
 
     if name_changed:
+        pvc_suffix_info = (
+            " (-pvc suffix preserved)" if normalized_secret_name.endswith("-pvc") else ""
+        )
         console.print(
-            f"[yellow]Secret name normalized: '{secret_key}' → '{normalized_secret_name}'[/yellow]"
+            f"[yellow]Secret name normalized: '{secret_key}' → '{normalized_secret_name}'{pvc_suffix_info}[/yellow]"
         )
         logger.info(
-            f"Secret name normalized for PVC '{pvc_name}': '{secret_key}' → '{normalized_secret_name}'"
+            f"Secret name normalized for PVC '{pvc_name}': '{secret_key}' → '{normalized_secret_name}'{pvc_suffix_info}"
         )
 
     # Create Kubernetes secret

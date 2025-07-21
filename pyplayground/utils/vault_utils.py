@@ -214,11 +214,12 @@ def list_secrets(
 
 def get_secret(
     client: hvac.Client, path: str, mount_point: str = "secret", version: Optional[int] = None
-) -> Dict[str, Any]:
+) -> Optional[Dict[str, Any]]:
     """Retrieve a secret from Vault.
 
     Gets the secret data at the specified path from the Vault KV2 secrets engine.
-    Optionally retrieves a specific version of the secret.
+    Optionally retrieves a specific version of the secret. Returns None if the
+    secret is not found, access is forbidden, or an error occurs.
 
     Args:
         client: An authenticated Vault client instance
@@ -227,14 +228,15 @@ def get_secret(
         version: Specific version of the secret to retrieve. If None, gets latest version
 
     Returns:
-        Dict[str, Any]: Dictionary containing the secret data
+        A dictionary containing the secret data, or None.
 
     Raises:
-        VaultError: If secret retrieval fails due to permissions or connectivity issues
+        VaultError: If secret retrieval fails for reasons other than not found/forbidden.
 
     Example:
         >>> secret = get_secret(client, "myapp/config")
-        >>> print(secret["api_key"])
+        >>> if secret:
+        ...     print(secret["api_key"])
         'abc123'
     """
     try:
@@ -242,9 +244,15 @@ def get_secret(
             path=path, mount_point=mount_point, version=version
         )
         if not result or "data" not in result or "data" not in result["data"]:
-            return {}
+            logger.warning(f"Secret at path '{path}' contains no data.")
+            return {}  # Return empty dict for existing but empty secret
         return result["data"]["data"]
-
+    except hvac.exceptions.InvalidPath:
+        logger.warning(f"Invalid Vault path for secret '{path}' in mount '{mount_point}'.")
+        return None
+    except hvac.exceptions.Forbidden:
+        logger.warning(f"Vault access forbidden for secret path '{path}' in mount '{mount_point}'.")
+        return None
     except VaultError as e:
         logger.error(f"Failed to get secret at path {path}: {e}")
         raise
@@ -429,6 +437,57 @@ def collect_secrets(
                     secrets_list.append(full_path)
     except Exception as e:
         logging.error(f"Error collecting secrets at {path}: {str(e)}")
+
+
+def get_token_for_namespace(
+    vault_namespace: str,
+    vault_tokens_cache: Dict[str, Optional[str]],
+    vault_conn_info: Dict[str, str],
+    sa_jwt: str,
+) -> Optional[str]:
+    """Retrieves a Vault token for a given namespace, using a cache.
+
+    Args:
+        vault_namespace: The Vault namespace to authenticate against.
+        vault_tokens_cache: A dictionary to cache tokens.
+        vault_conn_info: A dictionary with Vault connection details.
+        sa_jwt: The Kubernetes service account JWT.
+
+    Returns:
+        The Vault token string if successful, otherwise None.
+    """
+    if vault_namespace in vault_tokens_cache:
+        return vault_tokens_cache[vault_namespace]
+
+    try:
+        logger.info(f"Authenticating to Vault for namespace: '{vault_namespace}'")
+        vault_client = login_with_kubernetes(
+            role=vault_conn_info["auth_role"],
+            jwt=sa_jwt,
+            url=vault_conn_info["addr"],
+            mount_point=vault_conn_info["auth_mount_path"],
+            namespace=vault_namespace,
+        )
+        token = vault_client.token
+        if not token:
+            raise ValueError("Authentication successful but client token is empty.")
+        logger.info(f"Successfully authenticated for Vault namespace '{vault_namespace}'.")
+        vault_tokens_cache[vault_namespace] = token
+        return token
+    except VaultError as e:
+        logger.error(
+            f"Vault API error during authentication for namespace '{vault_namespace}': {e}",
+            exc_info=True,
+        )
+        vault_tokens_cache[vault_namespace] = None
+        return None
+    except Exception as e:
+        logger.error(
+            f"Failed to authenticate with Vault for namespace '{vault_namespace}': {e}",
+            exc_info=True,
+        )
+        vault_tokens_cache[vault_namespace] = None  # Cache failure
+        return None
 
 
 def normalize_vault_path(path: str) -> tuple[str, str]:

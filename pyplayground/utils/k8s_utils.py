@@ -1,5 +1,6 @@
 """Kubernetes utility functions."""
 
+import base64
 import logging
 import os
 import re
@@ -201,37 +202,52 @@ def exec_pod_command(
     stderr: bool = True,
     stdin: bool = False,
     tty: bool = False,
-) -> Dict[str, str]:
-    """Execute a command in a pod.
+    v1_client: Optional[client.CoreV1Api] = None,
+) -> Tuple[int, str, str]:
+    """Execute a command in a pod and stream the output.
 
     Args:
         namespace: Pod namespace
         pod_name: Pod name
         command: Command to execute
-        container: Optional container name
-        stdout: Capture stdout
-        stderr: Capture stderr
-        stdin: Enable stdin
-        tty: Enable TTY
+        container: Optional container name. If not specified, will be determined.
+        stdout: Capture stdout. Defaults to True.
+        stderr: Capture stderr. Defaults to True.
+        stdin: Enable stdin. Defaults to False.
+        tty: Enable TTY. Defaults to False.
+        v1_client: Optional CoreV1Api client. If not provided, creates a new one.
 
     Returns:
-        Dict containing stdout and stderr
+        A tuple containing the exit code (int), stdout (str), and stderr (str).
+
+    Raises:
+        ApiException: If the Kubernetes API call fails.
+        ValueError: If container resolution fails.
     """
+    if not v1_client:
+        v1_client = client.CoreV1Api()
+
     try:
-        core_v1 = client.CoreV1Api()
-        resp = core_v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+        pod = v1_client.read_namespaced_pod(name=pod_name, namespace=namespace)
+        target_container = determine_target_container(pod, container)
+    except ApiException as e:
+        logger.error(f"Failed to read pod '{pod_name}' in namespace '{namespace}': {e}")
+        raise
 
-        if not container and len(resp.spec.containers) > 1:
-            container = resp.spec.containers[0].name
-            logger.warning(f"Multiple containers found, using: {container}")
+    exec_command = [str(cmd) for cmd in command]
 
-        exec_command = [str(cmd) for cmd in command]
-        resp = stream(
-            core_v1.connect_get_namespaced_pod_exec,
-            pod_name,
-            namespace,
+    stdout_data = ""
+    stderr_data = ""
+    exit_code = -1
+    resp = None
+
+    try:
+        resp = stream.stream(
+            v1_client.connect_get_namespaced_pod_exec,
+            name=pod_name,
+            namespace=namespace,
+            container=target_container,
             command=exec_command,
-            container=container,
             stdout=stdout,
             stderr=stderr,
             stdin=stdin,
@@ -239,18 +255,28 @@ def exec_pod_command(
             _preload_content=False,
         )
 
-        output = resp.read_all().decode("utf-8")
-        error = None
-
-        if resp.returncode != 0:
-            error = f"Command failed with exit code {resp.returncode}"
-            logger.error(error)
-
-        return {"stdout": output, "stderr": error}
+        while resp.is_open():
+            resp.update(timeout=1)
+            if resp.peek_stdout():
+                stdout_data += resp.read_stdout()
+            if resp.peek_stderr():
+                stderr_data += resp.read_stderr()
 
     except ApiException as e:
-        logger.error(f"Failed to execute command in pod: {e}")
+        logger.error(f"API error executing command in pod '{pod_name}': {e.reason}")
         raise
+    finally:
+        if resp:
+            resp.close()
+            # Ensure returncode is an integer
+            exit_code = resp.returncode if resp.returncode is not None else -1
+
+    if exit_code != 0:
+        logger.error(
+            f"Command in pod '{pod_name}' failed with exit code {exit_code}. Stderr: {stderr_data.strip()}"
+        )
+
+    return exit_code, stdout_data, stderr_data
 
 
 def wait_for_pod_readiness(
@@ -842,3 +868,148 @@ def determine_target_container(pod: V1Pod, specified_container_name: Optional[st
         )
         logger_local.error(error_msg)
         raise ValueError(error_msg)
+
+
+def find_running_pod_by_label(
+    namespace: str,
+    label_selector: str,
+    v1_client: Optional[client.CoreV1Api] = None,
+) -> Optional[V1Pod]:
+    """Finds the first running pod based on a label selector.
+
+    Args:
+        namespace: The namespace to search in.
+        label_selector: The label selector string to filter pods.
+        v1_client: Optional CoreV1Api client. If not provided, creates a new one.
+
+    Returns:
+        The V1Pod object if a running pod is found, otherwise None.
+    """
+    if not v1_client:
+        v1_client = client.CoreV1Api()
+
+    logger.debug(
+        f"Searching for running pod with labels '{label_selector}' in namespace '{namespace}'..."
+    )
+    try:
+        pods = v1_client.list_namespaced_pod(namespace=namespace, label_selector=label_selector)
+        if not pods.items:
+            logger.warning(
+                f"No pods found with labels '{label_selector}' in namespace '{namespace}'."
+            )
+            return None
+
+        for pod in pods.items:
+            if pod.status.phase == "Running":
+                logger.info(f"Found running pod: '{pod.metadata.name}'")
+                return pod
+
+        logger.warning(f"No *running* pods found with labels '{label_selector}' in '{namespace}'.")
+        return None
+    except ApiException as e:
+        logger.error(
+            f"API error finding pod in namespace '{namespace}': {e.status} - {e.reason}",
+            exc_info=True,
+        )
+        return None
+    except Exception as e:
+        logger.exception(f"Unexpected error finding pod: {e}")
+        return None
+
+
+def get_secret_data(
+    namespace: str,
+    secret_name: str,
+    v1_client: Optional[client.CoreV1Api] = None,
+) -> Optional[Dict[str, str]]:
+    """Retrieves and decodes all data from a Kubernetes secret.
+
+    Args:
+        namespace: The namespace of the secret.
+        secret_name: The name of the secret.
+        v1_client: Optional CoreV1Api client. If not provided, creates a new one.
+
+    Returns:
+        A dictionary with the decoded secret data, or None if the secret is not found or an error occurs.
+    """
+    if not v1_client:
+        v1_client = client.CoreV1Api()
+
+    logger.debug(f"Attempting to read secret '{secret_name}' in namespace '{namespace}'.")
+    try:
+        secret = v1_client.read_namespaced_secret(secret_name, namespace)
+        if not secret.data:
+            logger.warning(f"Secret '{secret_name}' in namespace '{namespace}' contains no data.")
+            return {}
+
+        # Decode all values from base64
+        decoded_data = {
+            key: base64.b64decode(value).decode("utf-8")
+            for key, value in secret.data.items()
+            if value
+        }
+        return decoded_data
+    except ApiException as e:
+        if e.status == 404:
+            logger.error(f"Secret '{secret_name}' not found in namespace '{namespace}'.")
+        else:
+            logger.error(f"API error reading secret '{secret_name}': {e.reason}", exc_info=True)
+        return None
+    except (base64.binascii.Error, UnicodeDecodeError) as e:
+        logger.error(f"Failed to decode secret data from '{secret_name}': {e}", exc_info=True)
+        return None
+
+
+def get_service_account_jwt(
+    namespace: str,
+    service_account_name: str,
+    v1_client: Optional[client.CoreV1Api] = None,
+) -> Optional[str]:
+    """Retrieves an existing K8s service account token (JWT) from a secret.
+
+    It searches for a secret associated with the service account that contains '-token' in its name.
+
+    Args:
+        namespace: The namespace of the service account.
+        service_account_name: The name of the service account.
+        v1_client: Optional CoreV1Api client.
+
+    Returns:
+        The JWT string if found, otherwise None.
+    """
+    if not v1_client:
+        v1_client = client.CoreV1Api()
+
+    logger.info(
+        f"Searching for an existing token secret for SA '{service_account_name}' in namespace '{namespace}'."
+    )
+    try:
+        secrets = v1_client.list_namespaced_secret(namespace)
+        for secret in secrets.items:
+            secret_name = secret.metadata.name
+            annotations = secret.metadata.annotations
+            if (
+                secret.type == "kubernetes.io/service-account-token"
+                and annotations
+                and annotations.get("kubernetes.io/service-account.name") == service_account_name
+                and f"{service_account_name}-token" in secret_name
+            ):
+                if "token" in secret.data and secret.data["token"]:
+                    token_b64 = secret.data["token"]
+                    token = base64.b64decode(token_b64).decode("utf-8").strip()
+                    logger.info(
+                        f"Found and decoded service account JWT from secret '{secret_name}'."
+                    )
+                    return token
+                else:
+                    logger.warning(
+                        f"Secret '{secret_name}' is a SA token but missing 'token' data."
+                    )
+
+    except ApiException as e:
+        logger.error(
+            f"API error listing secrets in namespace '{namespace}': {e.reason}", exc_info=True
+        )
+
+    logger.error(f"Could not retrieve a token for ServiceAccount '{service_account_name}'.")
+    return None

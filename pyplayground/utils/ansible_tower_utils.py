@@ -628,6 +628,14 @@ def find_resource_by_attribute_name(
             )
             del _resource_cache[cache_key]  # Remove expired entry
 
+    # Log cache stats on cache miss
+    cache_stats = get_cache_stats()
+    logger.info(
+        f"[CACHE MISS] Cache stats: total_entries={cache_stats['total_entries']}, "
+        f"valid_entries={cache_stats['valid_entries']}, expired_entries={cache_stats['expired_entries']}, "
+        f"cache_size_limit={cache_stats['cache_size_limit']}, ttl_seconds={cache_stats['ttl_seconds']}"
+    )
+
     url = f"{tower_url}/api/v2/{endpoint}/?{attribute_name}={value}"
     try:
         response = requests.get(url, headers=headers, verify=verify, timeout=30)

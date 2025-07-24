@@ -42,33 +42,62 @@ class VariableManager:
         self.repo_path = repo_path
         self.variables: Dict[str, Any] = {}
         self.unresolved_variables: Set[str] = set()
+        logger.info(f"Initializing VariableManager for repository: {self.repo_path}")
         self.load_variables()
 
     def load_variables(self):  # noqa: C901
         """Load variables from common Ansible locations."""
+        logger.info("Starting variable loading process")
+        vars_loaded_count = 0
+
         # This is a simplified implementation. A real one would need inventory parsing
         # to understand groups and hosts to load files in the correct precedence.
         # For now, we load all vars files we find.
         for var_dir in TOP_LEVEL_VARS_DIRS:
             dir_path = self.repo_path / var_dir
+            logger.debug(f"Checking for top-level vars directory: {dir_path}")
             if dir_path.is_dir():
+                logger.info(f"Found top-level vars directory: {dir_path}")
                 for var_file in dir_path.glob("**/*"):
                     if var_file.suffix in YAML_EXTENSIONS and var_file.is_file():
+                        logger.debug(f"Found vars file: {var_file}")
                         self.load_vars_from_file(var_file)
+                        vars_loaded_count += 1
+            else:
+                logger.debug(f"Top-level vars directory not found: {dir_path}")
 
         roles_path = self.repo_path / "roles"
+        logger.debug(f"Checking for roles directory: {roles_path}")
         if roles_path.is_dir():
+            logger.info(f"Found roles directory: {roles_path}")
+            role_count = 0
             for role_dir in roles_path.iterdir():
                 if role_dir.is_dir():
+                    role_count += 1
+                    logger.debug(f"Processing role directory: {role_dir}")
                     for var_dir_name in ROLE_VARS_DIRS:
                         var_dir = role_dir / var_dir_name
+                        logger.debug(f"Checking role vars directory: {var_dir}")
                         if var_dir.is_dir():
+                            logger.debug(f"Found role vars directory: {var_dir}")
                             for var_file in var_dir.glob("**/*"):
                                 if var_file.suffix in YAML_EXTENSIONS and var_file.is_file():
+                                    logger.debug(f"Found role vars file: {var_file}")
                                     self.load_vars_from_file(var_file)
+                                    vars_loaded_count += 1
+                        else:
+                            logger.debug(f"Role vars directory not found: {var_dir}")
+            logger.info(f"Processed {role_count} role directories")
+        else:
+            logger.debug(f"Roles directory not found: {roles_path}")
+
+        logger.info(f"Variable loading complete. Loaded {vars_loaded_count} variable files")
+        logger.info(f"Total variables loaded: {len(self.variables)}")
+        logger.debug(f"Variable names: {list(self.variables.keys())}")
 
     def load_vars_from_file(self, file_path: Path):
         """Load variables from a YAML file."""
+        logger.debug(f"Attempting to load variables from: {file_path}")
         try:
             with file_path.open("r", encoding="utf-8") as f:
                 content = f.read()
@@ -79,7 +108,12 @@ class VariableManager:
                 CustomLoader = create_custom_yaml_loader()
                 data = yaml.load(content, Loader=CustomLoader)
                 if isinstance(data, dict):
+                    var_count_before = len(self.variables)
                     self.variables.update(data)
+                    new_vars = len(self.variables) - var_count_before
+                    logger.debug(f"Successfully loaded {new_vars} variables from: {file_path}")
+                else:
+                    logger.debug(f"No dictionary data found in: {file_path}")
         except Exception as e:
             logger.error(f"Error loading vars from {file_path}: {e}")
 
@@ -93,9 +127,11 @@ class VariableManager:
         def replace_var(match):
             var_name = match.group(1).strip()
             if var_name in self.variables:
+                logger.debug(f"Resolved variable {var_name} to: {self.variables[var_name]}")
                 return str(self.variables[var_name])
             else:
                 self.unresolved_variables.add(var_name)
+                logger.debug(f"Could not resolve variable: {var_name}")
                 return match.group(0)  # Return original if not found
 
         resolved_string = re.sub(r"{{\s*(.*?)\s*}}", replace_var, input_string)
@@ -109,6 +145,7 @@ class PlaybookParser:
         """Initialize the PlaybookParser."""
         self.variable_manager = variable_manager
         self.results: List[Dict[str, Any]] = []
+        logger.debug("PlaybookParser initialized")
 
     def parse_playbook(self, file_path: Path):
         """Parse a single playbook file."""
@@ -122,27 +159,50 @@ class PlaybookParser:
                 CustomLoader = create_custom_yaml_loader()
                 plays = yaml.load(content, Loader=CustomLoader)
                 if plays:
-                    for play in plays:
-                        if isinstance(play, dict):
-                            self._process_play(play, file_path)
+                    if isinstance(plays, list):
+                        logger.debug(f"Found {len(plays)} plays in: {file_path}")
+                        for play_index, play in enumerate(plays):
+                            if isinstance(play, dict):
+                                logger.debug(f"Processing play {play_index + 1} in: {file_path}")
+                                self._process_play(play, file_path)
+                    else:
+                        logger.debug(f"Single play found in: {file_path}")
+                        if isinstance(plays, dict):
+                            self._process_play(plays, file_path)
+                else:
+                    logger.debug(f"No plays found in: {file_path}")
         except Exception as e:
             logger.error(f"Failed to parse playbook {file_path}: {e}")
 
     def _process_play(self, play: Dict[str, Any], file_path: Path):
         """Process a single play within a playbook."""
+        play_name = play.get("name", "Unnamed Play")
+        logger.debug(f"Processing play '{play_name}' in: {file_path}")
+
         # Process vars_files if present
         if "vars_files" in play:
+            logger.debug(f"Found vars_files in play: {play['vars_files']}")
             self._process_vars_files(play["vars_files"], file_path)
 
         # Process inline vars
         if "vars" in play:
+            var_count = len(play["vars"]) if isinstance(play["vars"], dict) else 0
+            logger.debug(f"Found {var_count} inline vars in play")
             self.variable_manager.variables.update(play["vars"])
 
+        task_sections_found = []
         for task_key in ["tasks", "pre_tasks", "post_tasks"]:
             if task_key in play:
+                task_count = len(play[task_key]) if isinstance(play[task_key], list) else 0
+                logger.debug(f"Found {task_count} {task_key} in play")
+                task_sections_found.append(f"{task_count} {task_key}")
                 self._process_tasks(play[task_key], file_path)
 
+        if task_sections_found:
+            logger.debug(f"Processed task sections: {', '.join(task_sections_found)}")
+
         if "roles" in play:
+            logger.debug(f"Found roles in play: {play['roles']}")
             # Simplified role handling: assumes roles are in '<repo>/roles/'
             # A full implementation would need to respect roles_path config.
             pass  # Role task processing will happen when roles are parsed directly
@@ -151,16 +211,26 @@ class PlaybookParser:
         """Recursively process a list of tasks."""
         if not tasks:
             return
-        for task in tasks:
+
+        logger.debug(f"Processing {len(tasks)} tasks from: {file_path}")
+        target_tasks_found = 0
+
+        for task_index, task in enumerate(tasks):
             if not isinstance(task, dict):
                 continue
 
+            task_name = task.get("name", f"Task {task_index + 1}")
+            logger.debug(f"Processing task: {task_name}")
+
             # Process task-level vars
             if "vars" in task:
+                var_count = len(task["vars"]) if isinstance(task["vars"], dict) else 0
+                logger.debug(f"Found {var_count} task-level vars in: {task_name}")
                 self.variable_manager.variables.update(task["vars"])
 
             # Process set_fact tasks
             if "set_fact" in task:
+                logger.debug(f"Found set_fact task: {task_name}")
                 self._process_set_fact(task["set_fact"])
 
             # Process register variables (we can't resolve them, but we can track them)
@@ -170,16 +240,24 @@ class PlaybookParser:
                 logger.debug(f"Found register variable: {register_var}")
 
             if "block" in task:
+                logger.debug(f"Found block task: {task_name}")
                 self._process_tasks(task["block"], file_path)
                 if "rescue" in task:
+                    logger.debug(f"Found rescue block in: {task_name}")
                     self._process_tasks(task["rescue"], file_path)
                 if "always" in task:
+                    logger.debug(f"Found always block in: {task_name}")
                     self._process_tasks(task["always"], file_path)
                 continue
 
             for module in TARGET_MODULES:
                 if module in task:
+                    logger.debug(f"Found {module} module in task: {task_name}")
                     self._extract_command_info(task, module, file_path)
+                    target_tasks_found += 1
+
+        if target_tasks_found > 0:
+            logger.info(f"Found {target_tasks_found} target module tasks in: {file_path}")
 
     def _extract_command_info(self, task: Dict[str, Any], module: str, file_path: Path):
         """Extract information from a command/shell task."""
@@ -191,19 +269,18 @@ class PlaybookParser:
         resolved_command, contains_vars = self.variable_manager.resolve_string(raw_command)
         primary_executable = self._get_primary_executable(resolved_command)
 
-        # PyYAML doesn't preserve line numbers well. This is a limitation.
-        # We can only provide the file path.
-        self.results.append(
-            {
-                "Playbook File Path": str(file_path.relative_to(self.variable_manager.repo_path)),
-                "Task Name": task.get("name", "N/A"),
-                "Module Type": module,
-                "Full Command": resolved_command.replace("\n", " "),
-                "Primary Executable": primary_executable,
-                "Line Number": "N/A",
-                "Contains Variables": "Y" if contains_vars else "N",
-            }
-        )
+        result = {
+            "Playbook File Path": str(file_path.relative_to(self.variable_manager.repo_path)),
+            "Task Name": task.get("name", "N/A"),
+            "Module Type": module,
+            "Full Command": resolved_command.replace("\n", " "),
+            "Primary Executable": primary_executable,
+            "Line Number": "N/A",
+            "Contains Variables": "Y" if contains_vars else "N",
+        }
+
+        logger.debug(f"Extracted command info: {primary_executable} from {module} module")
+        self.results.append(result)
 
     def _get_primary_executable(self, command: str) -> str:
         """Extract the primary executable from a command string."""
@@ -212,15 +289,20 @@ class PlaybookParser:
         # Simplistic parser: split by pipe/semicolon/etc. and take first word of first part.
         command_parts = re.split(r"\s*&&\s*|\s*\|\|\s*|\s*;\s*|\s*\|\s*", command)
         first_command = command_parts[0].strip()
-        return first_command.split()[0]
+        executable = first_command.split()[0] if first_command.split() else "N/A"
+        logger.debug(f"Extracted primary executable: {executable} from command: {command[:50]}...")
+        return executable
 
     def _process_vars_files(self, vars_files: List[str], file_path: Path):
         """Process vars_files declarations in plays."""
         base_dir = file_path.parent
+        logger.debug(f"Processing {len(vars_files)} vars_files from: {file_path}")
+
         for vars_file in vars_files:
             # Handle simple string vars_files (no variable resolution for now)
             if isinstance(vars_file, str) and not ("{{" in vars_file):
                 vars_file_path = base_dir / vars_file
+                logger.debug(f"Checking vars_file path: {vars_file_path}")
                 if vars_file_path.exists():
                     self.variable_manager.load_vars_from_file(vars_file_path)
                     logger.debug(f"Loaded vars from vars_files: {vars_file_path}")
@@ -232,6 +314,7 @@ class PlaybookParser:
     def _process_set_fact(self, set_fact_data: Dict[str, Any]):
         """Process set_fact task data."""
         if isinstance(set_fact_data, dict):
+            logger.debug(f"Processing set_fact with {len(set_fact_data)} variables")
             # Only process simple string values, skip complex expressions
             for key, value in set_fact_data.items():
                 if isinstance(value, str) and not ("{{" in value):
@@ -248,37 +331,151 @@ class AnsibleAnalyzer:
     def __init__(self, repo_path: str):
         """Initialize the AnsibleAnalyzer."""
         self.repo_path = Path(repo_path).resolve()
+        logger.info(f"Initializing AnsibleAnalyzer for path: {self.repo_path}")
+
         if not self.repo_path.is_dir():
+            logger.error(f"Repository path not found: {self.repo_path}")
             raise NotADirectoryError(f"Repository path not found: {self.repo_path}")
 
+        logger.info(f"Repository path validated: {self.repo_path}")
         self.variable_manager = VariableManager(self.repo_path)
         self.playbook_parser = PlaybookParser(self.variable_manager)
 
     def analyze(self):
         """Run the analysis across the repository."""
         logger.info(f"Starting analysis of repository: {self.repo_path}")
+
+        # Log repository structure
+        self._log_repository_structure()
+
         playbook_files = self._find_playbooks()
+        logger.info(f"Found {len(playbook_files)} playbook files to analyze")
+
+        if not playbook_files:
+            logger.warning("No playbook files found in the repository")
+
         for pb_file in playbook_files:
             self.playbook_parser.parse_playbook(pb_file)
 
         # Also parse tasks inside roles directly
         roles_path = self.repo_path / "roles"
+        role_task_files = []
         if roles_path.is_dir():
+            logger.info(f"Scanning roles directory for task files: {roles_path}")
             for role_file in roles_path.glob("**/tasks/**/*.yml"):
-                self.playbook_parser.parse_playbook(role_file)
+                role_task_files.append(role_file)
             for role_file in roles_path.glob("**/tasks/**/*.yaml"):
+                role_task_files.append(role_file)
+
+            logger.info(f"Found {len(role_task_files)} role task files")
+            for role_file in role_task_files:
+                logger.debug(f"Parsing role task file: {role_file}")
                 self.playbook_parser.parse_playbook(role_file)
 
-        logger.info(f"Analysis complete. Found {len(self.results)} command/shell tasks.")
+        total_results = len(self.results)
+        logger.info(f"Analysis complete. Found {total_results} command/shell tasks.")
+
+        if total_results == 0:
+            logger.warning(
+                "No target module tasks found. Check if the repository contains Ansible playbooks with shell/command/raw/script modules"
+            )
+
+    def _log_repository_structure(self):
+        """Log the basic structure of the repository to help with debugging."""
+        logger.info("Repository structure analysis:")
+        self._check_ansible_paths()
+        self._list_yaml_files_in_root()
+
+    def _check_ansible_paths(self):
+        """Check for common Ansible directories and files."""
+        common_ansible_paths = [
+            "playbooks",
+            "roles",
+            "group_vars",
+            "host_vars",
+            "inventory",
+            "ansible.cfg",
+            "site.yml",
+            "main.yml",
+        ]
+
+        found_paths = []
+        for path_name in common_ansible_paths:
+            path = self.repo_path / path_name
+            if path.exists():
+                found_path = self._process_ansible_path(path, path_name)
+                found_paths.append(found_path)
+
+        if found_paths:
+            logger.info(f"Ansible-related paths found: {', '.join(found_paths)}")
+        else:
+            logger.warning("No common Ansible directories or files found in repository root")
+
+    def _process_ansible_path(self, path: Path, path_name: str) -> str:
+        """Process a single Ansible path and return its description."""
+        if path.is_dir():
+            try:
+                file_count = sum(1 for _ in path.rglob("*") if _.is_file())
+                logger.info(f"  Found directory: {path_name}/ with {file_count} files")
+                return f"{path_name}/ ({file_count} files)"
+            except Exception as e:
+                logger.info(f"  Found directory: {path_name}/ (could not count files: {e})")
+                return f"{path_name}/"
+        else:
+            logger.info(f"  Found file: {path_name}")
+            return path_name
+
+    def _list_yaml_files_in_root(self):
+        """List all YAML files in the root directory."""
+        yaml_files_root = []
+        try:
+            for ext in YAML_EXTENSIONS:
+                yaml_files_root.extend(
+                    [f.name for f in self.repo_path.glob(f"*{ext}") if f.is_file()]
+                )
+            if yaml_files_root:
+                logger.info(f"YAML files in root directory: {', '.join(yaml_files_root)}")
+            else:
+                logger.info("No YAML files found in root directory")
+        except Exception as e:
+            logger.error(f"Error scanning root directory for YAML files: {e}")
 
     def _find_playbooks(self) -> List[Path]:
         """Find all playbook files in the repository."""
+        logger.info("Searching for playbook files...")
         playbooks = []
-        for ext in YAML_EXTENSIONS:
-            # Look in root and a 'playbooks' directory
-            playbooks.extend(self.repo_path.glob(f"*{ext}"))
-            playbooks.extend((self.repo_path / "playbooks").glob(f"**/*{ext}"))
-        return [p for p in playbooks if p.is_file()]
+
+        # Search patterns and their descriptions
+        search_patterns = [
+            (self.repo_path, "*", "root directory"),
+            (self.repo_path / "playbooks", "**/*", "playbooks directory"),
+        ]
+
+        for base_path, pattern, description in search_patterns:
+            if base_path.exists():
+                logger.debug(f"Searching in {description}: {base_path}")
+                for ext in YAML_EXTENSIONS:
+                    full_pattern = f"{pattern}{ext}"
+                    found_files = list(base_path.glob(full_pattern))
+                    file_playbooks = [p for p in found_files if p.is_file()]
+                    if file_playbooks:
+                        logger.info(f"Found {len(file_playbooks)} {ext} files in {description}")
+                        for pb in file_playbooks:
+                            logger.debug(f"  Found playbook: {pb}")
+                    playbooks.extend(file_playbooks)
+            else:
+                logger.debug(f"Search path does not exist: {base_path}")
+
+        # Remove duplicates while preserving order
+        unique_playbooks = []
+        seen = set()
+        for pb in playbooks:
+            if pb not in seen:
+                unique_playbooks.append(pb)
+                seen.add(pb)
+
+        logger.info(f"Total unique playbook files found: {len(unique_playbooks)}")
+        return unique_playbooks
 
     @property
     def results(self):
@@ -291,6 +488,7 @@ class AnsibleAnalyzer:
         for result in self.results:
             exe = result["Primary Executable"]
             summary[exe] = summary.get(exe, 0) + 1
+        logger.debug(f"Generated summary for {len(summary)} unique executables")
         return summary
 
     def write_csv_report(self, output_path: str):
@@ -323,6 +521,15 @@ class AnsibleAnalyzer:
         if not include_executables and not exclude_executables and not pattern:
             return
 
+        original_count = len(self.playbook_parser.results)
+        logger.info(f"Applying filters to {original_count} results")
+        if include_executables:
+            logger.info(f"Include executables: {include_executables}")
+        if exclude_executables:
+            logger.info(f"Exclude executables: {exclude_executables}")
+        if pattern:
+            logger.info(f"Pattern filter: {pattern}")
+
         filtered_results = []
         for result in self.playbook_parser.results:
             exe = result["Primary Executable"]
@@ -352,7 +559,10 @@ class AnsibleAnalyzer:
 
         # Update the results in the parser
         self.playbook_parser.results = filtered_results
-        logger.info(f"Applied filters. Remaining results: {len(filtered_results)}")
+        filtered_count = len(filtered_results)
+        logger.info(
+            f"Applied filters. Remaining results: {filtered_count} (filtered out: {original_count - filtered_count})"
+        )
 
 
 @click.command()

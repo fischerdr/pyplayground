@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Script to export Tower project definitions to CSV, including job template count per project."""
+"""Script to display Tower project definitions in a rich table, including job template count per project."""
 
-import csv
 import os
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import typer
+from rich.console import Console
+from rich.table import Table
 
 from pyplayground.utils.ansible_tower_utils import (
     export_all_resources,
@@ -22,6 +22,8 @@ app = typer.Typer()
 # Setup logging
 setup_logging(script_name=os.path.basename(__file__).replace(".py", ""))
 logger = get_logger(__name__)
+
+console = Console()
 
 
 def get_username(
@@ -47,7 +49,7 @@ def extract_project_row(
     headers: Dict[str, str],
     verify: bool,
 ) -> List[Any]:
-    """Extract a row for the project CSV."""
+    """Extract a row for the project table."""
     summary_fields = project.get("summary_fields", {})
     created_by = get_username(summary_fields.get("created_by"), tower_url, headers, verify)
     modified_by = get_username(summary_fields.get("modified_by"), tower_url, headers, verify)
@@ -57,7 +59,7 @@ def extract_project_row(
     )
     job_template_count = len(job_templates) if job_templates else 0
     return [
-        project.get("id", ""),
+        str(project.get("id", "")),
         project.get("name", ""),
         project.get("created", ""),
         project.get("modified", ""),
@@ -66,23 +68,15 @@ def extract_project_row(
         project.get("scm_branch", ""),
         created_by,
         modified_by,
-        job_template_count,
+        str(job_template_count),
     ]
 
 
-def write_csv(filename: str, header: List[str], rows: List[List[Any]]) -> None:
-    """Write rows to a CSV file with the given header."""
-    with open(filename, "w", newline="", encoding="utf-8") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(header)
-        writer.writerows(rows)
-
-
 @app.command()
-def export(
+def show(
     verify: bool = typer.Option(False, help="Verify the connection to Tower"),
 ) -> None:
-    """Export Tower project definitions to CSV, including job template count per project."""
+    """Display Tower project definitions in a rich table, including job template count per project."""
     try:
         client_config = get_awx_or_tower_client("TOWER", verify=verify)
         tower_url = client_config["url"]
@@ -93,32 +87,33 @@ def export(
         projects = export_all_resources(tower_url, headers, "projects", verify)
         if not projects:
             logger.warning("No projects found in Tower.")
-            typer.echo("No projects found in Tower.")
+            console.print("[yellow]No projects found in Tower.[/yellow]")
             return
 
         sorted_projects = sorted(projects, key=lambda x: x.get("name", "").lower())
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        csv_filename = f"tmp/projects_{timestamp}.csv"
-        fields = [
-            "id",
-            "name",
-            "created",
-            "modified",
-            "scm_type",
-            "scm_url",
-            "scm_branch",
-            "created_by",
-            "modified_by",
-            "job_template_count",
-        ]
-        rows = [extract_project_row(p, tower_url, headers, verify) for p in sorted_projects]
-        write_csv(csv_filename, fields, rows)
-        logger.info(f"Exported {len(rows)} projects to {csv_filename}")
-        typer.echo(f"Exported {len(rows)} projects to {csv_filename}")
+
+        table = Table(title="Tower Projects")
+        table.add_column("ID", style="bold", width=5)
+        table.add_column("Name", style="bold", width=30, justify="left")
+        table.add_column("Created", style="", width=28, justify="left")
+        table.add_column("Modified", style="", width=28, justify="left")
+        table.add_column("SCM Type", style="", width=10, justify="left")
+        table.add_column("SCM URL", style="", width=40, justify="left")
+        table.add_column("SCM Branch", style="", width=20, justify="left")
+        table.add_column("Created By", style="", width=15, justify="left")
+        table.add_column("Modified By", style="", width=15, justify="left")
+        table.add_column("Job Templates", style="bold", width=8, justify="right")
+
+        for project in sorted_projects:
+            row = extract_project_row(project, tower_url, headers, verify)
+            table.add_row(*row)
+
+        console.print(table)
+
     except Exception as e:
-        logger.error(f"Failed to export projects: {e}", exc_info=True)
-        typer.echo(f"An error occurred while exporting data: {e}")
+        logger.error(f"Failed to display projects: {e}", exc_info=True)
+        console.print("[red]An error occurred while displaying data.[/red]")
 
 
 if __name__ == "__main__":
-    app()
+    app() 

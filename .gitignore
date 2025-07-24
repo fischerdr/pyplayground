@@ -151,3 +151,14 @@ Temporary Items
 .vault_pass
 vault.key
 vault.txt
+
+# sound files
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.m4a
+*.aac
+*.wma
+*.aiff
+*.au

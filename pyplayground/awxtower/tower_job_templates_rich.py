@@ -120,40 +120,59 @@ def export(  # noqa: C901
         # Create table for job templates
         job_table = Table(title="Job Templates")
         job_table.add_column("ID", style="bold", width=5)
-        job_table.add_column("Name", style="bold")
+        job_table.add_column("Name", style="bold", width=30, justify="left")
         job_table.add_column(
             "Description",
             style="italic",
-            width=80,  # Set a fixed width for the description column
+            width=45,  # Set a fixed width for the description column
             justify="left",  # Align text to the left
         )
         job_table.add_column(
             "Owner",
             style="bold",
-            width=15,  # Set a fixed width for the owner column
+            width=10,  # Set a fixed width for the owner column
+            justify="left",  # Align text to the left
+        )
+        job_table.add_column(
+            "Project",
+            style="bold",
+            width=20,  # Set a fixed width for the project column
             justify="left",  # Align text to the left
         )
         job_table.add_column(
             "Created",
             style="bold",
-            width=15,  # Set a fixed width for the created column
+            width=28,  # Set a fixed width for the created column
             justify="left",  # Align text to the left
         )
         job_table.add_column(
             "Modified",
             style="bold",
-            width=15,  # Set a fixed width for the modified column
+            width=10,  # Set a fixed width for the modified column
             justify="left",  # Align text to the left
         )
         job_table.add_column(
             "Last Modified",
             style="bold",
-            width=15,  # Set a fixed width for the last modified by column
+            width=28,  # Set a fixed width for the last modified by column
             justify="left",  # Align text to the left
         )
         job_table.add_column("Job Runs", style="bold", width=15, justify="left")
 
         for jt in sorted_job_templates:
+
+            project_id = str(jt.get("project", ""))
+            if project_id and project_id.lower() != "none":
+                project = find_resource_by_id(tower_url, headers, "projects", project_id, verify)
+                project_results = project.get("results", [])
+                if project_results:
+                    project_name = project_results[0].get("name", "N/A")
+                else:
+                    logger.warning(f"No project found for job template {jt['id']} {jt['name']}")
+                    project_name = "N/A"
+            else:
+                logger.warning(f"No project ID for job template {jt['id']} {jt['name']}")
+                project_name = "N/A"
             create_id = str(dict(jt["related"]).get("created_by", "1")).rstrip("/").split("/")[-1]
             create_by = find_resource_by_id(tower_url, headers, "users", create_id, verify)
             create_by_name = create_by.get("results", [])[0].get("username", "N/A")
@@ -173,11 +192,12 @@ def export(  # noqa: C901
                 str(jt["id"]),
                 jt["name"],
                 jt.get("description", "N/A"),
+                project_name,
                 create_by_name,
                 create_datetime,
-                modify_datetime,
                 modified_by_name,
-                job_runs,
+                modify_datetime,
+                str(job_runs),
             )
 
         # Display job templates table

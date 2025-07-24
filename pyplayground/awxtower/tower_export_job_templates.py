@@ -53,6 +53,20 @@ def extract_job_template_row(
     jt: Dict[str, Any], tower_url: str, headers: Dict[str, str], verify: bool
 ) -> List[Any]:
     """Extract a row for the job template CSV."""
+    # Project lookup logic (robust, as in tower_job_templates_rich.py)
+    project_id = str(jt.get("project", ""))
+    if project_id and project_id.lower() != "none":
+        project = find_resource_by_id(tower_url, headers, "projects", project_id, verify)
+        project_results = project.get("results", [])
+        if project_results:
+            project_name = project_results[0].get("name", "N/A")
+        else:
+            logger.warning(f"No project found for job template {jt['id']} {jt['name']}")
+            project_name = "N/A"
+    else:
+        logger.warning(f"No project ID for job template {jt['id']} {jt['name']}")
+        project_name = "N/A"
+
     create_id = str(dict(jt["related"]).get("created_by", "1")).rstrip("/").split("/")[-1]
     create_by_name = get_username_by_id(tower_url, headers, create_id, verify)
     create_datetime = jt.get("created", "N/A")
@@ -64,10 +78,11 @@ def extract_job_template_row(
         str(jt["id"]),
         jt["name"],
         jt.get("description", "N/A"),
+        project_name,
         create_by_name,
         create_datetime,
-        modify_datetime,
         modified_by_name,
+        modify_datetime,
         job_runs,
     ]
 
@@ -136,13 +151,14 @@ def export(
         )
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        jt_csv_filename = f"job_templates_{timestamp}.csv"
-        wf_csv_filename = f"workflow_job_templates_{timestamp}.csv"
+        jt_csv_filename = f"tmp/job_templates_{timestamp}.csv"
+        wf_csv_filename = f"tmp/workflow_job_templates_{timestamp}.csv"
 
         jt_fields = [
             "ID",
             "Name",
             "Description",
+            "Project",
             "Owner",
             "Created",
             "Modified",

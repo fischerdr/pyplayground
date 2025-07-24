@@ -1,0 +1,4 @@
+---
+app_name: "resolved_app"
+database_host: "db.example.com"
+log_level: "info" 

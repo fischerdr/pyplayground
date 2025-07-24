@@ -61,13 +61,13 @@ def extract_project_row(
     return [
         str(project.get("id", "")),
         project.get("name", ""),
+        created_by,
         project.get("created", ""),
+        modified_by,
         project.get("modified", ""),
         project.get("scm_type", ""),
         project.get("scm_url", ""),
         project.get("scm_branch", ""),
-        created_by,
-        modified_by,
         str(job_template_count),
     ]
 
@@ -95,13 +95,13 @@ def show(
         table = Table(title="Tower Projects")
         table.add_column("ID", style="bold", width=5)
         table.add_column("Name", style="bold", width=30, justify="left")
+        table.add_column("Created By", style="", width=10, justify="left")
         table.add_column("Created", style="", width=28, justify="left")
+        table.add_column("Modified By", style="", width=10, justify="left")
         table.add_column("Modified", style="", width=28, justify="left")
         table.add_column("SCM Type", style="", width=10, justify="left")
-        table.add_column("SCM URL", style="", width=40, justify="left")
+        table.add_column("SCM URL", style="", width=80, justify="left")
         table.add_column("SCM Branch", style="", width=20, justify="left")
-        table.add_column("Created By", style="", width=15, justify="left")
-        table.add_column("Modified By", style="", width=15, justify="left")
         table.add_column("Job Templates", style="bold", width=8, justify="right")
 
         for project in sorted_projects:

@@ -34,6 +34,23 @@ logger = get_logger(__name__)
 console = Console()
 
 
+def get_username(
+    user_field: Optional[Dict[str, Any]],
+    tower_url: str,
+    headers: Dict[str, str],
+    verify: bool,
+) -> str:
+    """Get username from summary_fields or fetch by user ID."""
+    if user_field and "username" in user_field:
+        return user_field["username"]
+    if user_field and "id" in user_field:
+        user_id = user_field["id"]
+        user = find_resource_by_id(tower_url, headers, "users", user_id, verify)
+        if user and user.get("results"):
+            return user["results"][0].get("username", "N/A")
+    return "N/A"
+
+
 def get_dependency_names(jt: Dict[str, Any]) -> str:
     """Extract dependency names from job template.
 
@@ -173,15 +190,13 @@ def export(  # noqa: C901
             else:
                 logger.warning(f"No project ID for job template {jt['id']} {jt['name']}")
                 project_name = "N/A"
-            create_id = str(dict(jt["related"]).get("created_by", "1")).rstrip("/").split("/")[-1]
-            create_by = find_resource_by_id(tower_url, headers, "users", create_id, verify)
-            create_by_name = create_by.get("results", [])[0].get("username", "N/A")
-            create_datetime = jt.get("created", "N/A")
-            modified_id = (
-                str(dict(jt["related"]).get("modified_by", "1")).rstrip("/").split("/")[-1]
+            create_by_name = get_username(
+                jt.get("summary_fields", {}).get("created_by"), tower_url, headers, verify
             )
-            modified_by = find_resource_by_id(tower_url, headers, "users", modified_id, verify)
-            modified_by_name = modified_by.get("results", [])[0].get("username", "N/A")
+            create_datetime = jt.get("created", "N/A")
+            modified_by_name = get_username(
+                jt.get("summary_fields", {}).get("modified_by"), tower_url, headers, verify
+            )
             modify_datetime = jt.get("modified", "N/A")
             count_job_runs = find_resource_by_attribute_name(
                 tower_url, headers, "jobs", "job_template", jt["id"], verify

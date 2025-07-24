@@ -102,13 +102,13 @@ def export(
         fields = [
             "id",
             "name",
+            "created_by",
             "created",
             "modified",
+            "modified_by",
             "scm_type",
             "scm_url",
             "scm_branch",
-            "created_by",
-            "modified_by",
             "job_template_count",
         ]
         rows = [extract_project_row(p, tower_url, headers, verify) for p in sorted_projects]

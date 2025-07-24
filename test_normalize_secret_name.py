@@ -8,10 +8,11 @@ from typing import Tuple
 VALID_SECRET_NAME_PATTERN = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 MAX_SECRET_NAME_LENGTH = 253
 
+
 def normalize_secret_name(secret_key: str, pvc_name: str) -> Tuple[str, bool]:
     """Normalize SECRET_KEY to a valid Kubernetes secret name.
 
-    IMPORTANT: Preserves '-pvc' suffixes as Portworx requires this naming 
+    IMPORTANT: Preserves '-pvc' suffixes as Portworx requires this naming
     pattern to locate encryption keys correctly.
 
     Returns:
@@ -57,6 +58,7 @@ def normalize_secret_name(secret_key: str, pvc_name: str) -> Tuple[str, bool]:
 
     return normalized, True
 
+
 # Test cases to verify -pvc suffix preservation
 # Note: The function preserves -pvc when it exists in SECRET_KEY, but doesn't add it if not present
 test_cases = [
@@ -66,8 +68,12 @@ test_cases = [
     ("vault/path/to/frontend-service-pvc", "frontend-service-pvc", True, "Complex path with -pvc"),
     ("invalid/chars/backend-pvc", "backend-pvc", True, "Invalid chars, preserve -pvc"),
     ("UPPERCASE/SERVICE-PVC", "service-pvc", True, "Case normalization, preserve -pvc"),
-    ("very/long/path/that/might/exceed/length/limits/super-long-service-name-pvc", 
-     "super-long-service-name-pvc", True, "Truncation preserves -pvc"),
+    (
+        "very/long/path/that/might/exceed/length/limits/super-long-service-name-pvc",
+        "super-long-service-name-pvc",
+        True,
+        "Truncation preserves -pvc",
+    ),
     ("vault/secret/database", "database-pvc", False, "No -pvc in SECRET_KEY, normalize as-is"),
     ("normal-secret", "normal-pvc", False, "Valid SECRET_KEY without -pvc"),
 ]
@@ -78,7 +84,7 @@ for i, (secret_key, pvc_name, should_have_pvc, description) in enumerate(test_ca
     normalized, changed = normalize_secret_name(secret_key, pvc_name)
     has_pvc = normalized.endswith("-pvc")
     status = "✓ PASS" if has_pvc == should_have_pvc else "✗ FAIL"
-    
+
     print(f"Test {i}: {status} - {description}")
     print(f"  Secret Key: {secret_key}")
     print(f"  PVC Name: {pvc_name}")
@@ -88,4 +94,4 @@ for i, (secret_key, pvc_name, should_have_pvc, description) in enumerate(test_ca
     print(f"  Valid K8s name: {VALID_SECRET_NAME_PATTERN.match(normalized) is not None}")
     print()
 
-print("All tests demonstrate that -pvc suffixes are preserved when present!") 
+print("All tests demonstrate that -pvc suffixes are preserved when present!")

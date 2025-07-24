@@ -10,21 +10,19 @@ import subprocess
 # Add project root to path for utils
 import sys
 from typing import Any, Dict, List, Optional
-from rich.console import Console
 
 import click
 from kubernetes import client
 from kubernetes.dynamic import DynamicClient
+from rich.console import Console
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from pyplayground.utils.k8s_utils import (
-    get_k8s_client,
-    load_kube_config_auto,
-)
+# from pyplayground.utils.k8s_utils import (
+#     get_k8s_client,
+# )
 from pyplayground.utils.logging_utils import get_logger, setup_logging
 from pyplayground.utils.px_api import (
-    DEFAULT_PX_NAMESPACE,
     VAULT_NAMESPACE_ANNOTATION,
     VAULT_SECRET_NAME_ANNOTATION,
     execute_pxctl_command,
@@ -309,13 +307,13 @@ def main(input: str, dry_run: bool, pxctl_path: str, debug: bool) -> None:
         console.print(f"[bold red]Error decoding JSON in file '{input}': {e}[/bold red]")
         sys.exit(1)
 
-    try:
-        core_v1 = get_k8s_client("CoreV1Api")
-        storage_v1 = get_k8s_client("StorageV1Api")
-    except Exception as e:
-        logger.error(f"Failed to initialize Kubernetes API clients: {e}", exc_info=True)
-        console.print(f"[bold red]Error initializing Kubernetes clients: {e}[/bold red]")
-        sys.exit(1)
+    # try:
+    #     core_v1 = get_k8s_client("CoreV1Api")
+    #     storage_v1 = get_k8s_client("StorageV1Api")
+    # except Exception as e:
+    #     logger.error(f"Failed to initialize Kubernetes API clients: {e}", exc_info=True)
+    #     console.print(f"[bold red]Error initializing Kubernetes clients: {e}[/bold red]")
+    #     sys.exit(1)
 
     for namespace, pvc_data_list in data.items():
         for pvc_data in pvc_data_list:

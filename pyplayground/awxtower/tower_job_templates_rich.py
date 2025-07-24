@@ -18,9 +18,9 @@ from rich.table import Table
 
 from pyplayground.utils.ansible_tower_utils import (
     export_all_resources,
-    get_awx_or_tower_client,
-    find_resource_by_id,
     find_resource_by_attribute_name,
+    find_resource_by_id,
+    get_awx_or_tower_client,
 )
 from pyplayground.utils.logging_utils import get_logger, setup_logging
 
@@ -61,7 +61,6 @@ def get_dependency_names(jt: Dict[str, Any]) -> str:
 
 @app.command()
 def export(  # noqa: C901
-
     include_workflows: bool = typer.Option(False, help="Include workflow job templates in export"),
     verify: bool = typer.Option(False, help="Verify the connection to Tower"),
     search: Optional[str] = typer.Option(None, help="Search term for filtering workflows"),
@@ -159,11 +158,15 @@ def export(  # noqa: C901
             create_by = find_resource_by_id(tower_url, headers, "users", create_id, verify)
             create_by_name = create_by.get("results", [])[0].get("username", "N/A")
             create_datetime = jt.get("created", "N/A")
-            modified_id = str(dict(jt["related"]).get("modified_by", "1")).rstrip("/").split("/")[-1]
+            modified_id = (
+                str(dict(jt["related"]).get("modified_by", "1")).rstrip("/").split("/")[-1]
+            )
             modified_by = find_resource_by_id(tower_url, headers, "users", modified_id, verify)
             modified_by_name = modified_by.get("results", [])[0].get("username", "N/A")
             modify_datetime = jt.get("modified", "N/A")
-            count_job_runs = find_resource_by_attribute_name(tower_url, headers, "jobs", "job_template", jt["id"], verify)
+            count_job_runs = find_resource_by_attribute_name(
+                tower_url, headers, "jobs", "job_template", jt["id"], verify
+            )
             job_runs = count_job_runs.get("count", 0)
 
             job_table.add_row(

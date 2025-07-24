@@ -3,9 +3,12 @@
 """Ansible Playbook Analyzer.
 
 This script analyzes Ansible playbooks from a given repository to identify
-and extract shell, command, raw, and script module calls. It helps in
-planning migrations to Ansible Automation Platform (AAP) Execution Environments
-by identifying external dependencies and commands.
+and extract shell, command, raw, and script module calls. It supports both
+short module names (shell, command, raw, script) and fully qualified
+collection names (ansible.builtin.shell, ansible.builtin.command, etc.).
+
+It helps in planning migrations to Ansible Automation Platform (AAP)
+Execution Environments by identifying external dependencies and commands.
 """
 
 import csv
@@ -27,6 +30,14 @@ from pyplayground.utils.report_utils import save_summary_report
 
 # Constants
 TARGET_MODULES = ["shell", "command", "raw", "script"]
+TARGET_MODULES_FQCN = [
+    "ansible.builtin.shell",
+    "ansible.builtin.command",
+    "ansible.builtin.raw",
+    "ansible.builtin.script",
+]
+# Combined list for easier checking
+ALL_TARGET_MODULES = TARGET_MODULES + TARGET_MODULES_FQCN
 YAML_EXTENSIONS = [".yml", ".yaml"]
 ROLE_VARS_DIRS = ["vars", "defaults"]
 TOP_LEVEL_VARS_DIRS = ["group_vars", "host_vars"]
@@ -174,6 +185,28 @@ class PlaybookParser:
         except Exception as e:
             logger.error(f"Failed to parse playbook {file_path}: {e}")
 
+    def parse_role_tasks(self, file_path: Path):
+        """Parse a role tasks file (direct list of tasks)."""
+        logger.info(f"Parsing role tasks file: {file_path}")
+        try:
+            with file_path.open("r", encoding="utf-8") as f:
+                content = f.read()
+                if "ANSIBLE_VAULT" in content:
+                    logger.warning(f"Skipping vaulted role tasks file: {file_path}")
+                    return
+                CustomLoader = create_custom_yaml_loader()
+                tasks = yaml.load(content, Loader=CustomLoader)
+                if tasks:
+                    if isinstance(tasks, list):
+                        logger.debug(f"Found {len(tasks)} tasks in role file: {file_path}")
+                        self._process_tasks(tasks, file_path)
+                    else:
+                        logger.warning(f"Unexpected structure in role tasks file: {file_path}")
+                else:
+                    logger.debug(f"No tasks found in role file: {file_path}")
+        except Exception as e:
+            logger.error(f"Failed to parse role tasks file {file_path}: {e}")
+
     def _process_play(self, play: Dict[str, Any], file_path: Path):
         """Process a single play within a playbook."""
         play_name = play.get("name", "Unnamed Play")
@@ -250,7 +283,7 @@ class PlaybookParser:
                     self._process_tasks(task["always"], file_path)
                 continue
 
-            for module in TARGET_MODULES:
+            for module in ALL_TARGET_MODULES:
                 if module in task:
                     logger.debug(f"Found {module} module in task: {task_name}")
                     self._extract_command_info(task, module, file_path)
@@ -262,36 +295,90 @@ class PlaybookParser:
     def _extract_command_info(self, task: Dict[str, Any], module: str, file_path: Path):
         """Extract information from a command/shell task."""
         raw_command = task[module]
+        logger.debug(f"Processing {module} task with raw command type: {type(raw_command)}")
+
+        # Handle different command formats
         if isinstance(raw_command, dict):
             # Handle complex args like cmd: ... chdir: ...
-            raw_command = raw_command.get("cmd", raw_command)
+            logger.debug(f"Complex command structure: {list(raw_command.keys())}")
+            raw_command = raw_command.get("cmd", raw_command.get("_raw_params", str(raw_command)))
+
+        # Convert to string and log original format
+        raw_command = str(raw_command)
+        logger.debug(f"Raw command (first 100 chars): {raw_command[:100]}")
 
         resolved_command, contains_vars = self.variable_manager.resolve_string(raw_command)
         primary_executable = self._get_primary_executable(resolved_command)
 
+        # Normalize module name for display
+        display_module = self._normalize_module_name(module)
+
         result = {
             "Playbook File Path": str(file_path.relative_to(self.variable_manager.repo_path)),
             "Task Name": task.get("name", "N/A"),
-            "Module Type": module,
-            "Full Command": resolved_command.replace("\n", " "),
+            "Module Type": display_module,
+            "Full Command": resolved_command.replace("\n", " ").strip(),
             "Primary Executable": primary_executable,
             "Line Number": "N/A",
             "Contains Variables": "Y" if contains_vars else "N",
         }
 
-        logger.debug(f"Extracted command info: {primary_executable} from {module} module")
+        logger.debug(f"Extracted command info: '{primary_executable}' from {display_module} module")
+        logger.debug(f"Task name: '{task.get('name', 'N/A')}'")
         self.results.append(result)
+
+    def _normalize_module_name(self, module: str) -> str:
+        """Normalize module name for consistent display."""
+        # Keep FQCN for clarity, but could be simplified if needed
+        return module
 
     def _get_primary_executable(self, command: str) -> str:
         """Extract the primary executable from a command string."""
         if not command or not isinstance(command, str):
             return "N/A"
-        # Simplistic parser: split by pipe/semicolon/etc. and take first word of first part.
-        command_parts = re.split(r"\s*&&\s*|\s*\|\|\s*|\s*;\s*|\s*\|\s*", command)
-        first_command = command_parts[0].strip()
-        executable = first_command.split()[0] if first_command.split() else "N/A"
-        logger.debug(f"Extracted primary executable: {executable} from command: {command[:50]}...")
-        return executable
+
+        # Handle multi-line commands by processing line by line
+        lines = command.strip().split("\n")
+        logger.debug(f"Processing {len(lines)} command lines")
+
+        for line_num, line in enumerate(lines, 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                # Skip empty lines and comments
+                continue
+
+            # Skip common shell directives that aren't executables
+            if line.startswith(("set ", "export ", "cd ", "mkdir -p", "echo ")):
+                logger.debug(f"Line {line_num}: Skipping shell directive: {line[:50]}...")
+                continue
+
+            # Split by shell operators to find the main command
+            command_parts = re.split(r"\s*&&\s*|\s*\|\|\s*|\s*;\s*|\s*\|\s*", line)
+
+            for part in command_parts:
+                part = part.strip()
+                if part:
+                    # Extract the first word as the executable
+                    words = part.split()
+                    if words:
+                        executable = words[0]
+                        # Remove common shell prefixes
+                        executable = re.sub(r"^(sudo\s+|nohup\s+)", "", executable).strip()
+                        if executable and not executable.startswith(("$", "{{", "[")):
+                            logger.debug(
+                                f"Found primary executable: '{executable}' from line {line_num}: {line[:50]}..."
+                            )
+                            return executable
+
+        # Fallback: try to extract from the first line
+        first_line = lines[0].strip() if lines else ""
+        if first_line:
+            first_word = first_line.split()[0] if first_line.split() else "N/A"
+            logger.debug(f"Fallback executable: '{first_word}' from: {command[:50]}...")
+            return first_word
+
+        logger.debug(f"Could not extract executable from command: {command[:50]}...")
+        return "N/A"
 
     def _process_vars_files(self, vars_files: List[str], file_path: Path):
         """Process vars_files declarations in plays."""
@@ -370,7 +457,7 @@ class AnsibleAnalyzer:
             logger.info(f"Found {len(role_task_files)} role task files")
             for role_file in role_task_files:
                 logger.debug(f"Parsing role task file: {role_file}")
-                self.playbook_parser.parse_playbook(role_file)
+                self.playbook_parser.parse_role_tasks(role_file)
 
         total_results = len(self.results)
         logger.info(f"Analysis complete. Found {total_results} command/shell tasks.")

@@ -1,9 +1,11 @@
+#! /usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Counts standard resources and custom resources (CRDs) grouped by namespace."""
 from kubernetes import client, config
 
 
 def count_resources_by_namespace():
-    """
-    Count all standard resources and custom resources (CRDs) grouped by namespace.
+    """Count all standard resources and custom resources (CRDs) grouped by namespace.
 
     :return: A dictionary with namespaces as keys and resource counts as values.
     """

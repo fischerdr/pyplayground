@@ -15,23 +15,34 @@ import logging
 import os
 import re
 import sys
+import time
+from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import click
+from filelock import FileLock
 from kubernetes import client
-from kubernetes.client.rest import ApiClient, ApiException
+from kubernetes.client import ApiClient
+from kubernetes.client.rest import ApiException
 from rich.console import Console
 
 # Add parent directories to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
-from pyplayground.utils.logging_utils import get_project_root
+from pyplayground.utils.k8s_utils import (
+    format_duration,
+    list_all_namespaces,
+    load_kube_config_auto,
+    parse_storage_string,
+)
+from pyplayground.utils.logging_utils import get_logger, get_project_root, setup_logging
 
 # Get the project root directory
 PROJECT_ROOT = get_project_root()
 DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "tmp")
 
 console = Console()
+logger = get_logger(__name__)  # Initialize logger early
 
 
 def handle_datetime(obj):

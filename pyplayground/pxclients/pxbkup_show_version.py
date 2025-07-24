@@ -1,3 +1,6 @@
+#! /usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Shows the version of PX-backup."""
 import argparse
 import getpass
 import json
@@ -16,6 +19,7 @@ def _prompt_for_password(args):
 
 
 def grab_token(user, passwd, url):
+    """Grab a token for PX-backup."""
     pxbk_authep = "/auth/realms/master/protocol/openid-connect/token"
     pxbk_authrequest = f"grant_type=password&client_id=pxcentral&username={user}&password={passwd}&token-duration=365d"
     pxbk_url = url + pxbk_authep
@@ -26,6 +30,7 @@ def grab_token(user, passwd, url):
 
 
 def get_jwt_token(consumer_key, consumer_secret, url):
+    """Get a JWT token for PX-backup."""
     data = (
         "grant_type=client_credentials&client_id="
         + consumer_key
@@ -44,6 +49,7 @@ def get_jwt_token(consumer_key, consumer_secret, url):
 
 
 def checkpxbkstatus(token, url):
+    """Check the status of PX-backup."""
     pxbk_version = "/v1/version"
     ckurl = url + pxbk_version
     pxbkheaders = {"accept": "application/json", "Authorization": f"bearer {token}"}
@@ -62,6 +68,7 @@ def checkpxbkstatus(token, url):
 
 
 if __name__ == "__main__":
+    """Main function."""
     parser = argparse.ArgumentParser(description="Check PX - Backup status")
     parser.add_argument(
         "-u",
@@ -90,16 +97,12 @@ if __name__ == "__main__":
     debug_cm = args.debug_cm
     pxbk_url = "https://px-backup-ui-px-backup.apps." + args.host
 
-    if debug_cm == True:
+    if debug_cm:
         print("Debug true")
         # These two lines enable debugging at httplib level (requests->urllib3->http.client)
         # You will see the REQUEST, including HEADERS and DATA, and RESPONSE with HEADERS but without DATA.
         # The only thing missing will be the response.body which is not logged.
-        try:
-            import http.client as http_client
-        except ImportError:
-            # Python 2
-            import httplib as http_client
+        import http.client as http_client
         http_client.HTTPConnection.debuglevel = 1
         # You must initialize logging, otherwise you'll not see debug output.
         logging.basicConfig()

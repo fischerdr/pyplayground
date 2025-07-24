@@ -1,28 +1,31 @@
+#! /usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Creates a schedule policy for PX-backup."""
 import csv
 import getpass
 import json
 import logging
+import os
 import sys
 from argparse import ArgumentParser
 
 import requests
 from jinja2 import Environment, FileSystemLoader
 
-logging.basicConfig()
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-logger.handlers.clear()
-console_handler = logging.StreamHandler()
-logger.addHandler(console_handler)
-formatter = logging.Formatter(
-    "{asctime} - {levelname} - {message}", style="{", datefmt="%Y-%m-%d %H:%M"
-)
-console_handler.setFormatter(formatter)
+from pyplayground.utils.logging_utils import get_logger, setup_logging
+
+# Setup logging
+setup_logging(script_name=os.path.basename(__file__).replace(".py", ""))
+logger = get_logger(__name__)
+
 logger.warning("Stay calm!")
 
 
 class REST_API:
+    """REST API class."""
+
     def __init__(self, host, user, password, duration=None, verify=None):
+        """Initialize the REST API class."""
         self.host = host
         self.user = user
         self.password = password
@@ -35,6 +38,7 @@ class REST_API:
         self.token = self.get_token()
 
     def get_token(self):
+        """Get a token for the REST API."""
         logger.info(self.pxbk_url)
         try:
             response = requests.post(
@@ -52,16 +56,12 @@ class REST_API:
         return token
 
     def refresh_token(self):
+        """Refresh the token for the REST API."""
         return self.get_token()
 
 
 class dotdict(dict):
-    """
-    dot.notation to dictionary attributes
-
-    Args:
-        dict (_type_): dictionary to wrap
-    """
+    """dot.notation to dictionary attributes."""
 
     __getattr__ = dict.__getitem__
     __setattr__ = dict.__setitem__
@@ -69,15 +69,7 @@ class dotdict(dict):
 
 
 def _prompt_for_password(args):
-    """
-    if no password is specified on the command line, prompt for it
-
-    Args:
-        args (_type_): argparser parsed variable
-
-    Returns:
-        _type_: updated args
-    """
+    """If no password is specified on the command line, prompt for it."""
     if not args.password:
         args.password = getpass.getpass(
             prompt="Enter password for host %s and user %s: " % (args.host, args.user)
@@ -86,6 +78,7 @@ def _prompt_for_password(args):
 
 
 def searchUUID(url, token, name):
+    """Search for a user by name."""
     usr_search = f"{url}/auth/admin/realms/master/users?search={name}"
     payload = {}
     pxbkheaders = {"accept": "application/json", "Authorization": f"bearer {token}"}
@@ -96,15 +89,18 @@ def searchUUID(url, token, name):
 
 
 def createSchedPol(url, token, name, orgID, ownerID, schedType, schedOptions):
+    """Create a schedule policy."""
     pass
 
 
 def search(name, users):
+    """Search for a user by name."""
     # return [element for element in users if element['username'] == name]
     return next(filter(lambda obj: obj.get("username") == name, users), None)
 
 
 def load_schedpolicy(file_path):
+    """Load a schedule policy from a file."""
     try:
         with open(file_path, mode="r") as f:
             csvFile = csv.reader(f)
@@ -197,16 +193,12 @@ if __name__ == "__main__":
     pxbkui_url = "https://pxbk-ui.apps." + args.host
     pxbkapi_url = "https://pxbk-api.apps." + args.host
 
-    if args.debug == True:
+    if args.debug:
         print("Debug true")
         # These two lines enable debugging at httplib level (requests->urllib3->http.client)
         # You will see the REQUEST, including HEADERS and DATA, and RESPONSE with HEADERS but without DATA.
         # The only thing missing will be the response.body which is not logged.
-        try:
-            import http.client as http_client
-        except ImportError:
-            # Python 2
-            import httplib as http_client
+        import http.client as http_client
         http_client.HTTPConnection.debuglevel = 1
         # You must initialize logging, otherwise you'll not see debug output.
         logger.setLevel(logging.DEBUG)
@@ -225,7 +217,7 @@ if __name__ == "__main__":
                 for row in csvFile:
                     logger.info(row)
                     owner_id = searchUUID(pxbkui_url, pxbktkn, row["ownername"])
-                    createSchedPol(pxbkapi_url, pxbktkn, rec[0], args.orgID, rec[1], rec[2], rec[3])
+                    # createSchedPol(pxbkapi_url, pxbktkn, rec[0], args.orgID, rec[1], rec[2], rec[3])
 
         except FileNotFoundError:
             logger.info(f"Error: The file {args.s3cred_file} was not found.")

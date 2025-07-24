@@ -1,3 +1,6 @@
+#! /usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Merges multiple kubeconfig files into a single file."""
 import argparse
 
 import yaml

@@ -57,7 +57,7 @@ def get_object_size(obj: Any) -> int:
         return 0  # Return 0 if serialization fails
 
 
-def count_resources(
+def count_resources(  # noqa: C901
     namespace: str,
     include_crds: bool,
     api_client: Optional[ApiClient] = None,
@@ -308,7 +308,7 @@ def sanitize_filename(name: str) -> str:
     default=False,
     help="Output only namespace and size columns, omitting resource counts.",
 )
-def main(
+def main(  # noqa: C901
     target_namespace: Optional[str],
     include_crds: bool,
     output_file: str,

@@ -1,3 +1,6 @@
+#! /usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Watches PVCs and prints their size."""
 import os
 
 import pint
@@ -5,6 +8,7 @@ from kubernetes import client, config, watch
 
 
 def main():
+    """Watches PVCs and prints their size."""
     # setup the namespace
     ns = os.getenv("K8S_NAMESPACE")
     if ns is None:

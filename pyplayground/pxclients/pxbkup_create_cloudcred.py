@@ -1,3 +1,6 @@
+#! /usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Creates a cloud credential for PX-backup."""
 import argparse
 import csv
 import getpass
@@ -9,9 +12,7 @@ import requests
 
 
 def _prompt_for_password(args):
-    """
-    if no password is specified on the command line, prompt for it
-    """
+    """If no password is specified on the command line, prompt for it."""
     if not args.password:
         args.password = getpass.getpass(
             prompt='"Please enter password for host %s and user %s: ' % (args.host, args.user)
@@ -20,6 +21,7 @@ def _prompt_for_password(args):
 
 
 def grab_token(url, user, passwd):
+    """Grab a token for PX-backup."""
     pxbk_authep = "/auth/realms/master/protocol/openid-connect/token"
     pxbk_authrequest = f"grant_type=password&client_id=pxcentral&username={user}&password={passwd}&token-duration=365d"
     pxbk_url = url + pxbk_authep
@@ -36,6 +38,7 @@ def grab_token(url, user, passwd):
 
 
 def findownerID(url, token, name):
+    """Find the owner ID for a given name."""
     usr_search = f"{url}/auth/admin/realms/master/users?search={name}"
     payload = {}
     pxbkheaders = {"accept": "application/json", "Authorization": f"bearer {token}"}
@@ -46,6 +49,7 @@ def findownerID(url, token, name):
 
 
 def createAWSCldCred(url, token, name, orgID, ownerid, accessID, secretKey):
+    """Create an AWS cloud credential."""
     s3addurl = url + "/v1/cloudcredential"
     payload = json.dumps(
         {
@@ -76,11 +80,13 @@ def createAWSCldCred(url, token, name, orgID, ownerid, accessID, secretKey):
 
 
 def search(name, users):
+    """Search for a user by name."""
     # return [element for element in users if element['username'] == name]
     return next(filter(lambda obj: obj.get("username") == name, users), None)
 
 
 def load_s3creds_from_file(file_path):
+    """Load S3 credentials from a file."""
     try:
         with open(file_path, mode="r") as f:
             csvFile = csv.reader(f)
@@ -94,6 +100,7 @@ def load_s3creds_from_file(file_path):
 
 
 if __name__ == "__main__":
+    """Main function."""
     parser = argparse.ArgumentParser(description="Add S3 AWS type cred")
     parser.add_argument(
         "-u",
@@ -155,16 +162,12 @@ if __name__ == "__main__":
     pxbkui_url = "https://px-backup-ui-px-backup.apps." + args.host
     pxbkapi_url = "https://px-backup-api-px-backup.apps." + args.host
 
-    if debug_cm == True:
+    if debug_cm:
         print("Debug true")
         # These two lines enable debugging at httplib level (requests->urllib3->http.client)
         # You will see the REQUEST, including HEADERS and DATA, and RESPONSE with HEADERS but without DATA.
         # The only thing missing will be the response.body which is not logged.
-        try:
-            import http.client as http_client
-        except ImportError:
-            # Python 2
-            import httplib as http_client
+        import http.client as http_client
         http_client.HTTPConnection.debuglevel = 1
         # You must initialize logging, otherwise you'll not see debug output.
         logging.basicConfig()

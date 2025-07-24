@@ -138,7 +138,7 @@ def find_vm_by_name(content, vm_name):
 @click.option(
     "--disable_vcenter_ssl", is_flag=True, help="Disable SSL verification for vCenter connection."
 )
-def check_k8s_nodes(
+def check_k8s_nodes(  # noqa: C901
     vcenter_host,
     username,
     password,

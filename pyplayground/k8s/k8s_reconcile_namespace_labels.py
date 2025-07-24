@@ -1,3 +1,6 @@
+#! /usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Reconciles namespace labels based on a mapping configuration."""
 import datetime
 import json
 import logging
@@ -188,7 +191,7 @@ def get_namespaces_with_label(v1_api: client.CoreV1Api, label_key: str) -> Optio
     default=False,
     help="If set, check for namespaces with the label that are NOT in the input JSON.",
 )
-def main(
+def main(  # noqa: C901
     input_json: str,
     config_yaml: str,
     label_key: str,

@@ -1,3 +1,6 @@
+#! /usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Executes a command in a pod and returns the output."""
 import json
 import sys
 
@@ -11,6 +14,7 @@ from kubernetes.stream import stream
 @click.option("--podname", help="Name of the pod", required=True)
 @click.option("--command", help="Command to run in the pod", required=True)
 def pod_exec_tty(namespace, podname, command):
+    """Executes a command in a pod and returns the output."""
     # Load Kubernetes configuration
     config.load_kube_config()
 

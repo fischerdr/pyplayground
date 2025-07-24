@@ -1,14 +1,16 @@
-"""Utilities for saving simple text summary reports."""
+"""Report utility functions for saving analysis results."""
 
 import logging
 import os
 from datetime import datetime
 from typing import Dict, List
 
+from .logging_utils import get_project_root
+
 logger = logging.getLogger(__name__)
 
-# Get the project root directory (assuming utils is one level down)
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Get the project root directory
+PROJECT_ROOT = get_project_root()
 DEFAULT_LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
 
 

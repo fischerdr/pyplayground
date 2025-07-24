@@ -8,10 +8,12 @@ from typing import Any, Dict, Optional, Union
 
 from dotenv import load_dotenv
 
+from .logging_utils import get_project_root
+
 logger = logging.getLogger(__name__)
 
 # Get the project root directory
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = get_project_root()
 DEFAULT_CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
 
 

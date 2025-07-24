@@ -1,4 +1,9 @@
-"""Logging utility functions."""
+"""Logging utility functions.
+
+This module provides logging setup and configuration utilities.
+It includes robust project root detection that works correctly when
+scripts are executed as modules (e.g., python -m pyplayground.awxtower.script).
+"""
 
 import logging
 import os
@@ -7,8 +12,47 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union
 
-# Get the project root directory
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+def get_project_root() -> str:
+    """Find the project root directory by looking for project markers.
+
+    This function looks for common project files to identify the root directory,
+    starting from the current file's location and walking up the directory tree.
+
+    This works correctly when scripts are executed as modules using
+    python -m pyplayground.awxtower.<script> syntax.
+
+    Returns:
+        str: Path to the project root directory
+    """
+    # Start from the current file's directory
+    current_path = Path(__file__).resolve().parent
+
+    # Project markers that indicate we've found the root
+    project_markers = {"pyproject.toml", "README.md", ".git", "requirements.txt"}
+
+    # Walk up the directory tree looking for project markers
+    for parent in [current_path] + list(current_path.parents):
+        if any((parent / marker).exists() for marker in project_markers):
+            return str(parent)
+
+    # Fallback 1: If we can't find markers, try the current working directory
+    cwd = Path.cwd()
+    if any((cwd / marker).exists() for marker in project_markers):
+        return str(cwd)
+
+    # Fallback 2: Use the original method as last resort
+    original_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return original_root
+
+
+def _find_project_root() -> str:
+    """Deprecated: Use get_project_root() instead."""
+    return get_project_root()
+
+
+# Get the project root directory using the robust method
+PROJECT_ROOT = get_project_root()
 # Check for environment variable first, fall back to default
 DEFAULT_LOG_DIR = os.getenv("DEFAULT_LOG_DIR", os.path.join(PROJECT_ROOT, "logs"))
 

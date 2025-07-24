@@ -18,8 +18,7 @@ def save_summary_report(
     script_name: str,
     log_dir: str = DEFAULT_LOG_DIR,
 ) -> None:
-    """
-    Saves provided data to a simple timestamped text file in the logs directory.
+    """Saves provided data to a simple timestamped text file in the logs directory.
 
     Args:
         summary_data: A dictionary (for inspect) or list of dictionaries (for list)
@@ -74,8 +73,7 @@ def save_volume_issue_report(
     script_name: str,
     log_dir: str = DEFAULT_LOG_DIR,
 ) -> None:
-    """
-    Saves details of non-successful volumes for a specific backup to a simple timestamped text file in the logs directory.
+    """Saves details of non-successful volumes for a specific backup to a simple timestamped text file in the logs directory.
 
     Args:
         backup_name: The name of the backup.
@@ -137,13 +135,12 @@ def save_volume_issue_report(
         logger.exception(f"An unexpected error occurred while saving volume issue report: {e}")
 
 
-def save_inspect_backup_report(
+def save_inspect_backup_report(  # noqa: C901
     backup_details: Dict,
     script_name: str,
     log_dir: str = DEFAULT_LOG_DIR,
 ) -> None:
-    """
-    Saves detailed inspection information for a specific backup to a text file,mirroring the structure of the console output table.
+    """Saves detailed inspection information for a specific backup to a text file,mirroring the structure of the console output table.
 
     Args:
         backup_details: The dictionary containing the full backup details from the API.

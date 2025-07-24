@@ -2,12 +2,12 @@
 
 ## Overview
 
-The Ansible Playbook Analyzer is a Python script that scans Ansible repositories to identify and extract shell, command, raw, and script module calls. It helps organizations plan migrations to Ansible Automation Platform (AAP) Execution Environments by cataloging external dependencies and commands used across playbooks and roles.
+The Ansible Playbook Analyzer scans Ansible repositories to identify shell, command, raw, and script module calls. It supports both short module names and fully qualified collection names (FQCN), helping organizations plan migrations to Ansible Automation Platform (AAP) Execution Environments by cataloging external dependencies and commands.
 
 ## Prerequisites
 
 - Python 3.9 or later
-- Required dependencies: `click`, `yaml`, `rich`
+- Required dependencies: `click`, `pyyaml`, `rich`
 - Access to cloned Ansible git repositories
 
 ## Architecture
@@ -20,7 +20,8 @@ Handles Ansible variable discovery and resolution across the repository structur
 
 **Responsibilities:**
 
-- Loads variables from standard Ansible locations (group_vars/, host_vars/, role vars/, defaults/)
+- Loads variables from standard Ansible locations (`group_vars/`, `host_vars/`, role `vars/`, `defaults/`)
+- Processes `vars_files`, `set_fact`, inline `vars`, and register variables  
 - Attempts to resolve Jinja2 template variables in commands
 - Tracks unresolved variables for manual review
 
@@ -36,10 +37,11 @@ Parses YAML files to identify target module usage and extract command informatio
 
 **Responsibilities:**
 
-- Recursively processes playbook structures (tasks, pre_tasks, post_tasks, blocks)
-- Identifies shell, command, raw, and script module usage
+- Recursively processes playbook structures (`tasks`, `pre_tasks`, `post_tasks`, `blocks`)
+- Identifies shell, command, raw, and script module usage (both short names and FQCN)
 - Extracts task metadata (name, file path, command content)
-- Handles nested task structures (blocks with rescue/always)
+- Handles nested task structures (blocks with `rescue`/`always`)
+- Processes role task files directly
 
 **Current Implementation:**
 
@@ -57,6 +59,7 @@ Orchestrates the analysis process and manages output generation.
 - Manages the analysis workflow
 - Generates summary statistics and detailed reports
 - Provides multiple output formats (CSV, JSON)
+- Applies filtering based on executable names or patterns
 
 ## Detailed Description
 
@@ -64,9 +67,25 @@ Orchestrates the analysis process and manages output generation.
 
 The analyzer searches for Ansible content in these locations:
 
-1. Root-level YAML files (*.yml,*.yaml)
+1. Root-level YAML files (`*.yml`, `*.yaml`)
 2. `playbooks/` directory (recursive)
 3. `roles/*/tasks/` directories (recursive)
+
+### Supported Module Types
+
+The analyzer identifies these modules:
+
+**Short names:**
+- `shell`
+- `command` 
+- `raw`
+- `script`
+
+**Fully Qualified Collection Names (FQCN):**
+- `ansible.builtin.shell`
+- `ansible.builtin.command`
+- `ansible.builtin.raw`
+- `ansible.builtin.script`
 
 ### Variable Resolution Strategy
 
@@ -76,6 +95,10 @@ Variables are collected from:
 - `host_vars/` directory (all files)  
 - `roles/*/vars/` directories
 - `roles/*/defaults/` directories
+- `vars_files` declarations in plays
+- Inline `vars` in plays and tasks
+- `set_fact` tasks (simple values only)
+- `register` variables (tracked as unresolved)
 
 **Resolution Process:**
 
@@ -89,7 +112,7 @@ Variables are collected from:
 For each identified task:
 
 1. Extract raw command string from module parameters
-2. Handle both simple strings and complex argument dictionaries
+2. Handle both simple strings and complex argument dictionaries (`cmd`, `_raw_params`)
 3. Attempt variable resolution using VariableManager
 4. Parse primary executable using regex splitting on shell operators
 5. Generate structured output record
@@ -98,27 +121,39 @@ For each identified task:
 
 - Splits commands on shell operators (`&&`, `||`, `;`, `|`)
 - Takes first word of the first command segment
+- Removes common prefixes (`sudo`, `nohup`)
+- Skips common shell directives (`set`, `export`, `cd`, `mkdir -p`, `echo`)
 - Handles basic command structures but may miss complex shell constructs
 
 ## Code Examples
 
-### Basic Usage
+### Module Execution (Recommended)
 
 ```bash
-# Analyze repository and generate CSV report
-python ansible_analyzer.py --repo /path/to/ansible/repo --output report.csv --verbose
+# Basic analysis with module execution
+python -m pyplayground.ansible_analyzer --repo /path/to/ansible/repo --output report.csv --verbose
 
 # Generate JSON format report
-python ansible_analyzer.py --repo /path/to/repo --output report.json --format json
+python -m pyplayground.ansible_analyzer --repo /path/to/repo --output report.json --format json
 
 # Filter to show only specific executables
-python ansible_analyzer.py --repo /path/to/repo --output report.csv --filter-executable curl --filter-executable wget
+python -m pyplayground.ansible_analyzer --repo /path/to/repo --output report.csv \
+  --filter-executable curl --filter-executable wget
 
-# Exclude certain executables from results
-python ansible_analyzer.py --repo /path/to/repo --output report.csv --exclude-executable systemctl --exclude-executable echo
+# Exclude certain executables from results  
+python -m pyplayground.ansible_analyzer --repo /path/to/repo --output report.csv \
+  --exclude-executable systemctl --exclude-executable echo
 
 # Use regex pattern to filter executables
-python ansible_analyzer.py --repo /path/to/repo --output report.csv --filter-pattern "^(curl|wget|git)$"
+python -m pyplayground.ansible_analyzer --repo /path/to/repo --output report.csv \
+  --filter-pattern "^(curl|wget|git)$"
+```
+
+### Direct Script Execution
+
+```bash
+# Alternative execution method
+python pyplayground/ansible_analyzer.py --repo /path/to/ansible/repo --output report.csv --verbose
 ```
 
 ### Programmatic Usage
@@ -136,6 +171,13 @@ analyzer.analyze()
 results = analyzer.results
 summary = analyzer.get_unique_executables_summary()
 
+# Apply filtering
+analyzer.apply_filters(
+    include_executables=["curl", "wget"],
+    exclude_executables=["echo"],
+    pattern=r"^(git|ssh).*"
+)
+
 # Generate reports
 analyzer.write_csv_report("output.csv")
 analyzer.write_json_report("output.json")
@@ -145,13 +187,13 @@ analyzer.write_json_report("output.json")
 
 **CSV Report Columns:**
 
-- Playbook File Path: Relative path from repository root
-- Task Name: Ansible task name or "N/A"
-- Module Type: shell, command, raw, or script
-- Full Command: Resolved command string (variables substituted where possible)
-- Primary Executable: Extracted binary/executable name
-- Line Number: "N/A" (limitation of current YAML parser)
-- Contains Variables: "Y" if original command had Jinja2 templates
+- **Playbook File Path**: Relative path from repository root
+- **Task Name**: Ansible task name or "N/A"
+- **Module Type**: shell, command, raw, script, or FQCN equivalent
+- **Full Command**: Resolved command string (variables substituted where possible)
+- **Primary Executable**: Extracted binary/executable name
+- **Line Number**: "N/A" (limitation of current YAML parser)
+- **Contains Variables**: "Y" if original command had Jinja2 templates
 
 **Summary Report:**
 
@@ -163,34 +205,29 @@ analyzer.write_json_report("output.json")
 
 ### ✅ Implemented Features
 
-**From prompttoscancmdshellansible1.md:**
+**Core Functionality:**
 
 - ✅ Recursive YAML file discovery
 - ✅ Standard playbook structure handling
-- ✅ Target module identification (shell, command, raw, script)
+- ✅ Target module identification (shell, command, raw, script + FQCN)
 - ✅ Task name capture with fallback
-- ✅ Jinja2 template detection
+- ✅ Jinja2 template detection and resolution
 - ✅ Variable collection from standard locations
-- ✅ Static variable resolution
 - ✅ Binary detection and extraction
-- ✅ Structured output generation
-- ✅ CLI interface with argparse-like functionality (Click)
+- ✅ Structured output generation (CSV, JSON)
+- ✅ CLI interface with Click framework
 - ✅ Error handling for YAML syntax issues
 - ✅ Modular code structure
 
-**From prompttoscancmdshellansible2.md:**
+**Advanced Features:**
 
-- ✅ Git repository scanning
-- ✅ Comprehensive directory structure support
-- ✅ Variable resolution from multiple sources
-- ✅ Command parsing with variable handling
-- ✅ CSV report generation
-- ✅ Summary statistics
-- ✅ Verbose logging
-- ✅ Vault file handling
-- ✅ Graceful error handling
-- ✅ **Advanced Variable Sources**: Parse vars_files, set_fact, register, and inline task vars
+- ✅ **Module Execution Support**: Can be run as `python -m pyplayground.ansible_analyzer`
+- ✅ **Advanced Variable Sources**: Parse `vars_files`, `set_fact`, register, and inline task vars
 - ✅ **Filtering Options**: Filter by specific executables, exclude executables, or use regex patterns
+- ✅ **FQCN Support**: Handles both short and fully qualified module names
+- ✅ **Vault File Handling**: Gracefully skips encrypted files with warnings
+- ✅ **Rich Terminal Output**: Uses Rich library for enhanced console display
+- ✅ **Comprehensive Logging**: Detailed logging with configurable levels
 
 ### ⚠️ Partial Implementation
 
@@ -200,18 +237,11 @@ analyzer.write_json_report("output.json")
 
 ### ❌ Missing Features
 
-**From prompttoscancmdshellansible1.md:**
-
 - ❌ **ruamel.yaml**: Uses PyYAML instead (affects line number preservation)
 - ❌ **Advanced Binary Normalization**: No path stripping or version collapsing
 - ❌ **Confidence Scoring**: No ambiguity detection for binary identification
-- ❌ **binaries.txt Output**: Only generates JSON/CSV, not flat text file
-
-**From prompttoscancmdshellansible2.md:**
-
 - ❌ **Multiple Repository Support**: Single repo only
 - ❌ **Inventory File Processing**: No inventory parsing
-- ❌ **Variable Export**: No separate variable export functionality
 
 ## Common Issues
 
@@ -231,6 +261,10 @@ Complex Ansible variable precedence and runtime evaluation are not fully support
 
 Large repositories with many files may take significant time to process. The script processes files sequentially without optimization for parallel processing.
 
+### Module Execution Path Issues
+
+**Fixed**: Recent updates to the logging utilities ensure that logs are created in the correct project-level `logs/` directory when running as a module (`python -m pyplayground.ansible_analyzer`).
+
 ## Related Documentation
 
 - [Project Organization Guide](project_organization.md) - Understanding the project structure
@@ -247,3 +281,4 @@ Large repositories with many files may take significant time to process. The scr
 5. **Performance Optimization**: Parallel file processing
 6. **Extended Output Formats**: Additional report formats and filtering options
 7. **Inventory Integration**: Parse inventory files for complete variable context
+8. **Confidence Scoring**: Add ambiguity detection for executable identification

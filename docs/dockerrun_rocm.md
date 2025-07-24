@@ -21,6 +21,25 @@ docker run -ti --name local-ai \
 ```
 
 ```bash
+docker run -ti --name local-ai \
+  -p 8080:8080 \
+  --group-add video \
+  --security-opt seccomp=unconfined \
+  --security-opt apparmor=unconfined \
+  --device /dev/kfd \
+  --device /dev/dri \
+  --ipc=host \
+  --shm-size 16G \
+  -v ${PWD}/models:/models \
+  -e HSA_OVERRIDE_GFX_VERSION=11.0.0 \
+  -e BUILD_TYPE=vulkan \
+  -e DEBUG=true \
+  localai/localai:master-aio-gpu-vulkan
+
+```
+
+
+```bash
 docker run -d -p 3000:8080 \
 	--group-add video \
 	--security-opt seccomp=unconfined \

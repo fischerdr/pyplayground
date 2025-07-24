@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Script to export Portworx PVC data to a JSON file."""
+"""Script to migrate Portworx volume encryption keys from Vault to Kubernetes Secrets."""
 
 import json
 import logging
 import os
-import sys
-from collections import defaultdict
-from typing import Any, Dict, List, Optional
-
-import click
-import urllib3
-from kubernetes import client
-from rich.console import Console
-
-# Disable SSL warnings - due to self-signed certs
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+import subprocess
 
 # Add project root to path for utils
+import sys
+from typing import Any, Dict, List, Optional
+from rich.console import Console
+
+import click
+from kubernetes import client
+from kubernetes.dynamic import DynamicClient
+
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from pyplayground.utils.k8s_utils import (
@@ -101,7 +99,7 @@ def gather_pvc_data(
         console.print("[yellow]No Portworx PVCs with required Vault annotations found.[/yellow]")
         return {}
 
-    export_data = defaultdict(list)
+    export_data = {}
     vault_tokens: Dict[str, Optional[str]] = {}
 
     with console.status("[bold green]Processing PVCs...") as status:
@@ -160,59 +158,155 @@ def gather_pvc_data(
             else:
                 logger.warning(f"PVC {namespace}/{pvc_name} has no PV name (unbound?).")
 
-            export_data[namespace].append(pvc_data_entry)
+            export_data[namespace] = export_data.get(namespace, []) + [pvc_data_entry]
 
     console.print(f"[bold green]✓[/bold green] Processed {len(annotated_pvcs)} PVCs.")
-    return dict(export_data)
+    return export_data
 
 
-def write_json_output(data: Dict, output_file: str):
-    """Writes the collected data to a JSON file."""
+def migrate_key(
+    namespace: str,
+    pvc_data: Dict,
+    pxctl_path: str,
+    dry_run: bool,
+) -> None:
+    """Migrates a single key from Vault to Kubernetes Secret."""
+    secret_name = pvc_data["vaultpath"]
+    normalized_secret_name = normalize_secret_name(secret_name)
+    secret_key = pvc_data["portworxvolumeinspect_labels"]["SECRET_KEY"]
+
+    if normalized_secret_name != secret_key:
+        logger.info(
+            f"Secret key '{secret_key}' will be migrated to secret '{normalized_secret_name}' in namespace '{namespace}'."
+        )
+
+    # Check if vault_data contains valid data
+    if "error" in pvc_data["vault_data"]:
+        logger.warning(
+            f"Skipping migration for '{secret_key}' due to error: {pvc_data['vault_data']['error']}"
+        )
+        return
+
+    key_value = pvc_data["vault_data"]["data"]
+    secret = client.V1Secret(
+        api_version="v1",
+        kind="Secret",
+        metadata=client.V1ObjectMeta(name=normalized_secret_name, namespace=namespace),
+        type="Opaque",
+        data={"key": (key_value).encode()},
+    )
+
     try:
-        with open(output_file, "w") as f:
-            json.dump(data, f, indent=4)
-        console.print(f"[green]Successfully wrote data to {output_file}[/green]")
-    except IOError as e:
-        console.print(f"[bold red]Error writing to file '{output_file}': {e}[/bold red]")
-        sys.exit(1)
+        dynamic_client = DynamicClient(client.ApiClient())
+        existing_secret = dynamic_client.custom_objects(
+            group="v1",
+            version="secrets.core",
+            plural="secrets",
+            namespace=namespace,
+        ).get_namespaced_custom_object(name=normalized_secret_name, namespace=namespace)
+        if existing_secret:
+            logger.info(
+                f"Secret '{normalized_secret_name}' already exists in namespace '{namespace}'. Skipping creation."
+            )
+            return
+
+        if not dry_run:
+            secret.write_namespaced_secret(namespace=namespace)
+            logger.info(f"Created secret '{normalized_secret_name}' in namespace '{namespace}'.")
+        else:
+            logger.info(
+                f"Dry run: Would create secret '{normalized_secret_name}' in namespace '{namespace}'."
+            )
+
+        # Update Portworx volume label
+        update_px_volume_label(pvc_data, normalized_secret_name, pxctl_path, dry_run)
+
+    except client.exceptions.ApiException as e:
+        logger.error(
+            f"Error creating/updating secret '{normalized_secret_name}' in namespace '{namespace}': {e}",
+            exc_info=True,
+        )
 
 
-# --- Main Command ---
+def normalize_secret_name(secret_name: str) -> str:
+    """Normalizes a secret name to be Kubernetes compliant."""
+    normalized_name = secret_name.replace("/", "-")
+    if not normalized_name:
+        normalized_name = "temp-secret"
+    return normalized_name
+
+
+def update_px_volume_label(pvc_data: Dict, new_name: str, pxctl_path: str, dry_run: bool) -> None:
+    """Updates the Portworx volume label with the new secret name."""
+    pv_name = pvc_data["pv"]
+    old_secret_name = pvc_data["portworxvolumeinspect_labels"].get("SECRET_KEY")
+    px_secret_name = pvc_data["portworxvolumeinspect_labels"].get("px/secret-name")
+
+    if (old_secret_name != new_name) or (px_secret_name != new_name):
+        command = [
+            pxctl_path,
+            "volume",
+            "update",
+            "--label",
+            f"SECRET_NAME={new_name},px/secret-name={new_name}",
+            pv_name,
+        ]
+        logger.info(f"Running command: {' '.join(command)}")
+        if not dry_run:
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, check=True)
+                logger.info(f"Command result: {result.stdout}")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Error updating volume label: {e}", exc_info=True)
+        else:
+            logger.info("Dry run: Would update volume label.")
+
+
+# --- CLI Design ---
 
 
 @click.command()
 @click.option(
-    "--kubeconfig",
+    "--input",
     type=click.Path(exists=True, dir_okay=False),
-    help="Path to the kubeconfig file. If not provided, uses default lookup.",
-    envvar="KUBECONFIG",
+    required=True,
+    help="Path to the exported JSON file.",
 )
 @click.option(
-    "--px-namespace",
-    default=DEFAULT_PX_NAMESPACE,
-    show_default=True,
-    help="Namespace for Portworx and where to look for Vault credential secrets.",
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Simulate all actions without changes.",
 )
 @click.option(
-    "--output-file",
-    default="px_pvc_export",
+    "--pxctl-path",
+    default="pxctl",
     show_default=True,
-    required=False,
-    type=str,
-    help="Base name for the output JSON file (no path, .json will be added, file will be written to tmp/ with a timestamp).",
+    help="Path to the pxctl binary.",
 )
-@click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
-def main(kubeconfig: Optional[str], px_namespace: str, output_file: str, debug: bool):
-    """Exports Portworx PVC data (PV, annotations, volume labels) to a JSON file in tmp/ with a timestamped filename."""
-    import datetime
-
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Enable verbose logging.",
+)
+def main(input: str, dry_run: bool, pxctl_path: str, debug: bool) -> None:
+    """Migrates Portworx volume encryption keys from Vault to Kubernetes Secrets."""
     log_level = logging.DEBUG if debug else logging.INFO
     setup_logging(level=log_level, script_name=os.path.basename(__file__).replace(".py", ""))
 
     logger.info("Script started.")
 
-    if not load_kube_config_auto(config_file=kubeconfig):
-        console.print("[bold red]Error: Failed to load Kubernetes configuration.[/bold red]")
+    try:
+        with open(input, "r") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        logger.error(f"Input file not found: {input}")
+        console.print(f"[bold red]Error: Input file not found: {input}[/bold red]")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        logger.error(f"Error decoding JSON in file {input}: {e}", exc_info=True)
+        console.print(f"[bold red]Error decoding JSON in file '{input}': {e}[/bold red]")
         sys.exit(1)
 
     try:
@@ -223,21 +317,9 @@ def main(kubeconfig: Optional[str], px_namespace: str, output_file: str, debug: 
         console.print(f"[bold red]Error initializing Kubernetes clients: {e}[/bold red]")
         sys.exit(1)
 
-    exported_data = gather_pvc_data(core_v1, storage_v1, px_namespace)
-
-    # Ensure tmp/ directory exists
-    tmp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "tmp")
-    os.makedirs(tmp_dir, exist_ok=True)
-
-    # Create timestamped output filename
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_name = os.path.splitext(os.path.basename(output_file))[0]
-    final_output_file = os.path.join(tmp_dir, f"{base_name}_{timestamp}.json")
-
-    if exported_data:
-        write_json_output(exported_data, final_output_file)
-    else:
-        console.print("[yellow]No data was gathered to export.[/yellow]")
+    for namespace, pvc_data_list in data.items():
+        for pvc_data in pvc_data_list:
+            migrate_key(namespace, pvc_data, pxctl_path, dry_run)
 
     logger.info("Script finished.")
 

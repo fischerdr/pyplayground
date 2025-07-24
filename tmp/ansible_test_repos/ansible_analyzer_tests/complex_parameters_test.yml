@@ -1,0 +1,41 @@
+---
+- name: Test Complex Task Parameters
+  hosts: localhost
+  vars:
+    working_dir: "/opt/tools"
+    install_dir: "/opt/openshift"
+    network:
+      master:
+        cname: "api.cluster.example.com"
+  
+  tasks:
+    - name: Get cluster version
+      shell: "{{ working_dir }}/oc version"
+      environment:
+        KUBECONFIG: "{{ install_dir }}/auth/kubeconfig"
+      register: cluster_version
+
+    - debug:
+        var: cluster_version
+
+    - name: Check cluster info
+      shell: "{{ working_dir }}/oc cluster-info"
+      environment:
+        KUBECONFIG: "{{ install_dir }}/auth/kubeconfig"
+      register: cluster_info
+      failed_when: "'https://{{ network.master.cname }}:6443' not in cluster_info.stdout_lines[0]"
+
+    - debug:
+        var: cluster_info
+
+    - name: Test command with complex parameters
+      command: "kubectl get pods -n kube-system"
+      register: pod_list
+      changed_when: false
+      ignore_errors: true
+
+    - name: Test ansible.builtin with environment
+      ansible.builtin.shell: "echo $KUBECONFIG"
+      environment:
+        KUBECONFIG: "/tmp/kubeconfig"
+      register: kubeconfig_test 

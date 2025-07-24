@@ -1,0 +1,32 @@
+---
+- name: Test FQCN Detection
+  hosts: localhost
+  vars:
+    working_dir: "/opt/tools"
+    namespace: "portworx"
+    workdir_temp_folder: "/tmp/px-install"
+  
+  tasks:
+    - name: Deploy Portworx Subscription
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ working_dir }}/oc -n {{ namespace }} apply -f {{ workdir_temp_folder }}/px-subscription.yaml
+
+    - name: Check cluster status
+      shell: kubectl get nodes
+
+    - name: Run complex command with pipes
+      ansible.builtin.command: |
+        curl -s https://api.example.com/status | jq '.health' | grep -q "healthy"
+
+    - name: Simple raw task
+      raw: whoami
+
+    - name: FQCN raw task
+      ansible.builtin.raw: uptime
+
+    - name: Run script
+      script: /path/to/cleanup.sh
+
+    - name: FQCN script task
+      ansible.builtin.script: /path/to/deploy.sh 

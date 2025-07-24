@@ -1,0 +1,47 @@
+---
+- name: Test Advanced Jinja2 Expressions
+  hosts: localhost
+  vars:
+    working_dir: "/opt/tools"
+    install_dir: "/opt/openshift-install"
+    http_proxy_orch: "http://proxy.company.com:8080"
+    vault_parameters: "url=https://vault.company.com:8200 auth_method=userpass username=ansible"
+    cluster_user: "prod-user"
+    network:
+      server_vlan: "192.168.1.0/24"
+  
+  tasks:
+    - name: Ocm login
+      shell: "ocm login --token={{ lookup('hashi_vault', '{{ vault_parameters }} secret=static_secrets/data/env/{{ cluster_user }}/redhat/serviceaccount:data')['svc.token'] }}"
+      environment:
+        HTTP_PROXY: "{{ http_proxy_orch }}"
+        HTTPS_PROXY: "{{ http_proxy_orch }}"
+        NO_PROXY: ".aexp.com,{{ network.server_vlan }}"
+
+    - name: Get cluster display name
+      shell: "{{ working_dir }}/oc get clusterversion -o jsonpath='{.items[].spec.clusterID}'"
+      register: cluster_display_name
+      environment:
+        KUBECONFIG: "{{ install_dir }}/auth/kubeconfig"
+
+    - debug:
+        var: cluster_display_name.stdout_lines[0]
+
+    - name: Get cluster details
+      shell: ocm get /api/clusters_mgmt/v1/clusters --parameter search="name like '{{ cluster_display_name.stdout_lines[0] }}'"
+      register: cluster_details
+      environment:
+        HTTP_PROXY: "{{ http_proxy_orch }}"
+        HTTPS_PROXY: "{{ http_proxy_orch }}"
+        NO_PROXY: ".aexp.com,{{ network.server_vlan }}"
+
+    - name: Create manifests
+      shell: "{{ working_dir }}/openshift-install create manifests --dir={{ install_dir }} --log-level=debug"
+      environment:
+        HTTP_PROXY: "{{ http_proxy_orch }}"
+        HTTPS_PROXY: "{{ http_proxy_orch }}"
+        NO_PROXY: ".aexp.com,{{ network.server_vlan }}"
+        
+    - shell: "ls {{ install_dir }}/openshift/99_openshift-cluster-api_worker-machineset*"
+      register: worker_machineset_result
+      failed_when: worker_machineset_result.stdout_lines | length != cluster.spec.compute[0].minNode 

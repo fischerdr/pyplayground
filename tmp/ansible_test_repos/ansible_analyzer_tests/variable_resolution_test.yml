@@ -1,0 +1,51 @@
+---
+- name: Test Variable Resolution
+  hosts: all
+  vars_files:
+    - vars/main.yml
+  vars:
+    environment: "production"
+    app_name: "myapp"
+    version: "1.0"
+  tasks:
+    - name: Set facts dynamically
+      set_fact:
+        dynamic_user: "webapp"
+        static_path: "/opt/app"
+        complex_var: "{{ environment }}_config"
+
+    - name: Get system info
+      command: uname -a
+      register: system_info
+
+    - name: Use set_fact variables
+      shell: "chown {{ dynamic_user }}:{{ dynamic_user }} {{ static_path }}"
+
+    - name: Use vars_files variables  
+      command: "systemctl restart {{ service_name }}"
+
+    - name: Task with inline vars
+      vars:
+        temp_file: "/tmp/backup.sql"
+      shell: "mysqldump database > {{ temp_file }}"
+
+    - name: Use register variable (should be unresolved)
+      shell: "echo {{ system_info.stdout }}" 
+
+    - name: Install curl
+      shell: curl -o /tmp/installer.sh https://example.com/install.sh
+
+    - name: Run application with variables
+      command: "{{ app_name }} --version {{ version }} --check"
+
+    - name: Complex shell command
+      shell: |
+        echo "Starting deployment" && \
+        /usr/bin/docker run -d --name {{ app_name }} nginx:latest && \
+        sleep 5
+
+    - name: Raw command example
+      raw: systemctl status nginx
+
+    - name: Script execution
+      script: /path/to/script.sh 

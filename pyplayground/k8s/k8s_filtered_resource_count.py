@@ -1,50 +1,42 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Counts Kubernetes resources in namespaces filtered by label and storage type (NFS vs non-NFS)."""
+"""Kubernetes Resource Count and Size Analysis with Storage Filtering.
+
+This script counts Kubernetes resources and calculates their storage sizes,
+with filtering capabilities based on storage types (NFS vs non-NFS).
+It supports scanning all namespaces or filtering by labels, and can include
+custom resources (CRDs) in the analysis.
+"""
 
 import concurrent.futures
 import csv
-import datetime
 import json
 import logging
 import os
 import re
 import sys
-import time
-from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple, Union
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import click
-from filelock import FileLock
 from kubernetes import client
-from kubernetes.client import ApiClient
-from kubernetes.client.rest import ApiException
+from kubernetes.client.rest import ApiClient, ApiException
+from rich.console import Console
 
-# Import utilities from k8s_utils
-from pyplayground.utils.k8s_utils import (
-    format_duration,
-    list_all_namespaces,
-    load_kube_config_auto,
-    parse_storage_string,
-)
-from pyplayground.utils.logging_utils import get_logger, setup_logging
+# Add parent directories to path for imports
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+from pyplayground.utils.logging_utils import get_project_root
 
-# --- Logging Setup ---
-# Logger will be initialized in main after setup_logging
-logger = logging.getLogger(__name__)
-
-# --- Constants ---
-# Define default output directory relative to project root
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Get the project root directory
+PROJECT_ROOT = get_project_root()
 DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "tmp")
 
-
-# === Helper Functions (Combined & Adapted) ===
+console = Console()
 
 
 def handle_datetime(obj):
     """JSON serializer for objects not serializable by default json code."""
-    if isinstance(obj, datetime.datetime):
+    if isinstance(obj, datetime):
         return obj.isoformat()
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
@@ -1282,7 +1274,7 @@ def main(
 
     """
     # --- Setup Timestamp & Logging ---
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     script_base_name = os.path.basename(__file__).replace(".py", "")
     log_level = logging.DEBUG if debug else logging.INFO
     # Use setup_logging from utils, ensuring logs go to output_dir/logs if possible

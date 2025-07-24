@@ -45,7 +45,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fi
 # Import utility functions
 from pyplayground.utils.config_utils import get_env_var, load_env_file
 from pyplayground.utils.k8s_utils import extract_cluster_name_from_api_url, get_custom_objects_api
-from pyplayground.utils.logging_utils import get_logger, setup_logging
+from pyplayground.utils.logging_utils import get_logger, get_project_root, setup_logging
 from pyplayground.utils.vmware_utils import VSphereConnectionParams
 
 # SSL Certs location
@@ -786,7 +786,7 @@ def _save_report_to_file(
         Path to the saved file
     """
     # Get the project root directory
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    project_root = get_project_root()
     tmp_dir = os.path.join(project_root, "tmp")
 
     # Create tmp directory if it doesn't exist

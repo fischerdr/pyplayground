@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Clean and consolidate Kubernetes configuration contexts.
+
+This script helps clean up kubeconfig files by removing unused contexts,
+clusters, and users, and can optionally consolidate multiple contexts
+into a single one.
+"""
+
 import logging
 import os
 import sys
@@ -12,8 +21,12 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+# Add parent directories to path for imports
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+from pyplayground.utils.logging_utils import get_project_root
+
 # Get the project root directory
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = get_project_root()
 
 # Ensure logs directory exists
 logs_dir = os.path.join(PROJECT_ROOT, "logs")
@@ -59,6 +72,8 @@ def display_contexts(
 
     Args:
         verbose: If True, show additional details for each context
+        config_file: Path to the kubeconfig file
+        context_name: Name of the context to delete
     """
     try:
         config_dict = get_kube_config_data(config_file)
@@ -305,7 +320,7 @@ def delete_unused_user(
 @click.option(
     "--show-current-context", is_flag=True, help="Show the current context and its details."
 )
-def clean_kubeconfig(
+def clean_kubeconfig(  # noqa: C901
     kubeconfig: str,
     namespace: str,
     context_name: str,

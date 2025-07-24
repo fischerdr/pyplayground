@@ -1,33 +1,33 @@
 #!/usr/bin/env python3
-"""Kubernetes PV and PVC Storage Type Analyzer.
+# -*- coding: utf-8 -*-
+"""Kubernetes PV/PVC Volume Type Analysis Script.
 
-This script analyzes PVs and PVCs in the cluster and categorizes namespaces based on their
-storage types (NFS vs non-NFS). It provides a clear overview of which namespaces use
-different storage types.
+This script analyzes PersistentVolumes and PersistentVolumeClaims in a Kubernetes cluster
+to categorize namespaces based on their storage types (NFS-only, Non-NFS only, or Mixed).
 """
 
-import csv  # Add import
-import json  # Add import
+import csv
+import json
 import logging
 import os
-from datetime import datetime  # Add import
-from typing import Dict, List, Set, Tuple
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
 
-import click  # Import click
-from kubernetes import client
-from kubernetes.client.rest import ApiException
-from rich import box
+import click
+from kubernetes import client, config
 from rich.console import Console
 from rich.table import Table
 
-from pyplayground.utils.k8s_utils import load_kube_config_auto  # Import k8s util
-from pyplayground.utils.logging_utils import get_logger, setup_logging  # Import logging utils
+# Add parent directories to path for imports
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+from pyplayground.utils.logging_utils import get_project_root
+
+# Get the project root directory
+PROJECT_ROOT = get_project_root()
+DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "tmp")
 
 console = Console()
-
-# Define default output directory relative to project root
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "tmp")
 
 
 class K8sStorageAnalyzer:

@@ -226,7 +226,9 @@ def main(kubeconfig: Optional[str], px_namespace: str, output_file: str, debug: 
     exported_data = gather_pvc_data(core_v1, storage_v1, px_namespace)
 
     # Ensure tmp/ directory exists
-    tmp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "tmp")
+    from pyplayground.utils.logging_utils import get_project_root
+
+    tmp_dir = os.path.join(get_project_root(), "tmp")
     os.makedirs(tmp_dir, exist_ok=True)
 
     # Create timestamped output filename

@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""Script to export Tower job templates and workflows to JSON.
 
-"""Script to export Tower job templates and workflows to JSON."""
-import json
+This script exports job templates and workflows from Tower to a JSON file.
+It also displays the data in a rich formatted table.
+
+Usage:
+    python tower_export_job_templates_rich.py --include-workflows --verify --search "my_search_term" --order-by "name"
+
+"""
 import os
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import typer
@@ -14,6 +19,8 @@ from rich.table import Table
 from pyplayground.utils.ansible_tower_utils import (
     export_all_resources,
     get_awx_or_tower_client,
+    find_resource_by_id,
+    find_resource_by_attribute_name,
 )
 from pyplayground.utils.logging_utils import get_logger, setup_logging
 
@@ -54,14 +61,8 @@ def get_dependency_names(jt: Dict[str, Any]) -> str:
 
 @app.command()
 def export(  # noqa: C901
-    output: Path = typer.Option(
-        "job_templates.json",
-        help="Output JSON file path",
-        exists=False,
-        dir_okay=False,
-        writable=True,
-    ),
-    include_workflows: bool = typer.Option(True, help="Include workflow job templates in export"),
+
+    include_workflows: bool = typer.Option(False, help="Include workflow job templates in export"),
     verify: bool = typer.Option(False, help="Verify the connection to Tower"),
     search: Optional[str] = typer.Option(None, help="Search term for filtering workflows"),
     order_by: Optional[str] = typer.Option(
@@ -87,8 +88,8 @@ def export(  # noqa: C901
             console.print("[red]Failed to fetch job templates from Tower[/red]")
             return
 
-        workflows: List[Dict[str, Any]] = []
         if include_workflows:
+            workflows: List[Dict[str, Any]] = []
             logger.info("Fetching workflow job templates from Tower...")
 
             # Build query parameters for workflow API
@@ -107,50 +108,95 @@ def export(  # noqa: C901
             else:
                 workflows = workflows_result
 
-        if not job_templates and not workflows:
+        if not job_templates and not include_workflows:
             logger.warning("No job templates or workflows found in Tower.")
             console.print("[yellow]No job templates or workflows found in Tower.[/yellow]")
             return
 
         # Sort job templates and workflows by name (case-insensitive)
         sorted_job_templates = sorted(job_templates, key=lambda x: x.get("name", "").lower())
-        sorted_workflows = sorted(workflows, key=lambda x: x.get("name", "").lower())
+        if include_workflows:
+            sorted_workflows = sorted(workflows, key=lambda x: x.get("name", "").lower())
 
         # Create table for job templates
         job_table = Table(title="Job Templates")
         job_table.add_column("ID", style="bold", width=5)
         job_table.add_column("Name", style="bold")
-        job_table.add_column("Description", style="italic")
-        job_table.add_column("Dependencies", style="dim")
+        job_table.add_column(
+            "Description",
+            style="italic",
+            width=80,  # Set a fixed width for the description column
+            justify="left",  # Align text to the left
+        )
+        job_table.add_column(
+            "Owner",
+            style="bold",
+            width=15,  # Set a fixed width for the owner column
+            justify="left",  # Align text to the left
+        )
+        job_table.add_column(
+            "Created",
+            style="bold",
+            width=15,  # Set a fixed width for the created column
+            justify="left",  # Align text to the left
+        )
+        job_table.add_column(
+            "Modified",
+            style="bold",
+            width=15,  # Set a fixed width for the modified column
+            justify="left",  # Align text to the left
+        )
+        job_table.add_column(
+            "Last Modified",
+            style="bold",
+            width=15,  # Set a fixed width for the last modified by column
+            justify="left",  # Align text to the left
+        )
+        job_table.add_column("Job Runs", style="bold", width=15, justify="left")
 
         for jt in sorted_job_templates:
+            create_id = str(dict(jt["related"]).get("created_by", "1")).rstrip("/").split("/")[-1]
+            create_by = find_resource_by_id(tower_url, headers, "users", create_id, verify)
+            create_by_name = create_by.get("results", [])[0].get("username", "N/A")
+            create_datetime = jt.get("created", "N/A")
+            modified_id = str(dict(jt["related"]).get("modified_by", "1")).rstrip("/").split("/")[-1]
+            modified_by = find_resource_by_id(tower_url, headers, "users", modified_id, verify)
+            modified_by_name = modified_by.get("results", [])[0].get("username", "N/A")
+            modify_datetime = jt.get("modified", "N/A")
+            count_job_runs = find_resource_by_attribute_name(tower_url, headers, "jobs", "job_template", jt["id"], verify)
+            job_runs = count_job_runs.get("count", 0)
+
             job_table.add_row(
-                str(jt["id"]), jt["name"], jt.get("description", "N/A"), get_dependency_names(jt)
+                str(jt["id"]),
+                jt["name"],
+                jt.get("description", "N/A"),
+                create_by_name,
+                create_datetime,
+                modify_datetime,
+                modified_by_name,
+                job_runs,
             )
 
-        # Create table for workflows
-        workflow_table = Table(title="Workflows")
-        workflow_table.add_column("ID", style="bold", width=5)
-        workflow_table.add_column("Name", style="bold")
-        workflow_table.add_column("Description", style="italic")
-
-        for wf in sorted_workflows:
-            workflow_table.add_row(str(wf["id"]), wf["name"], wf.get("description", "N/A"))
-
-        # Display tables
+        # Display job templates table
         console.print(job_table)
-        console.print(workflow_table)
 
-        if output:
-            with open(output, "w") as f:
-                json.dump(
-                    {"job_templates": sorted_job_templates, "workflows": sorted_workflows},
-                    f,
-                    indent=2,
-                )
-            logger.info(
-                f"Successfully exported {len(sorted_job_templates)} job templates and {len(sorted_workflows)} workflows to {output}"
+        if include_workflows:
+            # Create table for workflows
+            workflow_table = Table(title="Workflows")
+            workflow_table.add_column("ID", style="bold", width=5)
+            workflow_table.add_column("Name", style="bold")
+            workflow_table.add_column(
+                "Description",
+                style="italic",
+                width=80,  # Set a fixed width for the description column
+                justify="left",  # Align text to the left
             )
+
+            for wf in sorted_workflows:
+                workflow_table.add_row(str(wf["id"]), wf["name"], wf.get("description", "N/A"))
+
+            # Display workflows table
+            console.print(workflow_table)
 
     except Exception as e:
         logger.error(f"Failed to export job templates: {e}", exc_info=True)

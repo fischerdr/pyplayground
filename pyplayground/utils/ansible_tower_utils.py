@@ -4,8 +4,8 @@ import json
 import logging
 import os
 import sys
-from time import sleep
-from typing import Any, Dict, List, Optional
+from time import sleep, time
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
 import requests
@@ -18,6 +18,175 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # It's better to get a logger instance per module
 logger = logging.getLogger(__name__)
+
+# Cache configuration
+_CACHE_TTL = 300  # 5 minutes in seconds
+_CACHE_MAX_SIZE = 1000  # Maximum number of cached entries
+
+# Global cache for resource lookups
+_resource_cache: Dict[Tuple[str, str, str, str, str], Tuple[Dict[str, Any], float]] = {}
+
+
+def _get_cache_key(
+    tower_url: str, endpoint: str, attribute_name: str, value: str, verify: bool
+) -> Tuple[str, str, str, str, str]:
+    """Generate a cache key for resource lookups.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        endpoint: API endpoint
+        attribute_name: Name of the attribute to search by
+        value: Value of the attribute to search for
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        Tuple representing the cache key
+    """
+    return (tower_url, endpoint, attribute_name, value, str(verify))
+
+
+def _is_cache_valid(cache_entry: Tuple[Dict[str, Any], float]) -> bool:
+    """Check if a cache entry is still valid based on TTL.
+
+    Args:
+        cache_entry: Tuple of (data, timestamp)
+
+    Returns:
+        True if cache entry is still valid, False otherwise
+    """
+    data, timestamp = cache_entry
+    return (time() - timestamp) < _CACHE_TTL
+
+
+def _cleanup_expired_cache() -> None:
+    """Remove expired cache entries to prevent memory bloat."""
+    current_time = time()
+    expired_keys = [
+        key
+        for key, (_, timestamp) in _resource_cache.items()
+        if (current_time - timestamp) >= _CACHE_TTL
+    ]
+    for key in expired_keys:
+        del _resource_cache[key]
+
+    if expired_keys:
+        logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
+
+
+def _manage_cache_size() -> None:
+    """Manage cache size by removing oldest entries if cache exceeds maximum size."""
+    if len(_resource_cache) > _CACHE_MAX_SIZE:
+        # Sort by timestamp and remove oldest entries
+        sorted_entries = sorted(_resource_cache.items(), key=lambda x: x[1][1])
+        entries_to_remove = len(_resource_cache) - _CACHE_MAX_SIZE
+        for key, _ in sorted_entries[:entries_to_remove]:
+            del _resource_cache[key]
+        logger.debug(f"Removed {entries_to_remove} oldest cache entries to maintain size limit")
+
+
+def clear_resource_cache() -> None:
+    """Clear the entire resource cache.
+
+    This function can be called to manually clear the cache if needed,
+    for example when you know the data has changed on the server.
+    """
+    _resource_cache.clear()
+    logger.info("Resource cache cleared")
+
+
+def get_cache_stats() -> Dict[str, Any]:
+    """Get statistics about the current cache state.
+
+    Returns:
+        Dictionary containing cache statistics
+    """
+    current_time = time()
+    valid_entries = sum(
+        1 for _, timestamp in _resource_cache.values() if (current_time - timestamp) < _CACHE_TTL
+    )
+    expired_entries = len(_resource_cache) - valid_entries
+
+    return {
+        "total_entries": len(_resource_cache),
+        "valid_entries": valid_entries,
+        "expired_entries": expired_entries,
+        "cache_size_limit": _CACHE_MAX_SIZE,
+        "ttl_seconds": _CACHE_TTL,
+    }
+
+
+def invalidate_cache_entry(
+    tower_url: str, endpoint: str, attribute_name: str, value: str, verify: bool = True
+) -> bool:
+    """Invalidate a specific cache entry.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        endpoint: API endpoint
+        attribute_name: Name of the attribute
+        value: Value of the attribute
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        True if entry was found and removed, False otherwise
+    """
+    cache_key = _get_cache_key(tower_url, endpoint, attribute_name, value, verify)
+    if cache_key in _resource_cache:
+        del _resource_cache[cache_key]
+        logger.debug(
+            f"Invalidated cache entry for {endpoint} with attribute '{attribute_name}' and value '{value}'"
+        )
+        return True
+    return False
+
+
+def invalidate_cache_by_endpoint(tower_url: str, endpoint: str, verify: bool = True) -> int:
+    """Invalidate all cache entries for a specific endpoint.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        endpoint: API endpoint to invalidate
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        Number of cache entries removed
+    """
+    removed_count = 0
+    keys_to_remove = []
+
+    for key in _resource_cache.keys():
+        if key[0] == tower_url and key[1] == endpoint and key[4] == str(verify):
+            keys_to_remove.append(key)
+
+    for key in keys_to_remove:
+        del _resource_cache[key]
+        removed_count += 1
+
+    if removed_count > 0:
+        logger.debug(f"Invalidated {removed_count} cache entries for endpoint '{endpoint}'")
+
+    return removed_count
+
+
+def cleanup_cache() -> Dict[str, int]:
+    """Clean up expired cache entries and return statistics.
+
+    Returns:
+        Dictionary with cleanup statistics
+    """
+    initial_count = len(_resource_cache)
+
+    _cleanup_expired_cache()
+    _manage_cache_size()
+
+    final_count = len(_resource_cache)
+    removed_count = initial_count - final_count
+
+    return {
+        "initial_entries": initial_count,
+        "final_entries": final_count,
+        "removed_entries": removed_count,
+    }
 
 
 def get_awx_or_tower_client(prefix: str, verify: bool = False) -> Dict[str, Any]:
@@ -422,8 +591,13 @@ def list_resources(
     return list_resources_with_params(tower_url, headers, endpoint, verify)
 
 
-def find_resource_by_name(
-    tower_url: str, headers: Dict[str, str], endpoint: str, name: str, verify: bool = True
+def find_resource_by_attribute_name(
+    tower_url: str,
+    headers: Dict[str, str],
+    endpoint: str,
+    attribute_name: str,
+    value: str,
+    verify: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """Find a specific resource by exact name.
 
@@ -431,25 +605,63 @@ def find_resource_by_name(
         tower_url: The base URL of the AWX/Tower instance
         headers: HTTP headers for authentication
         endpoint: API endpoint (e.g., 'credentials', 'inventories', 'projects')
-        name: Exact name of the resource to find
+        attribute_name: Name of the attribute to search by
+        value: Value of the attribute to search for
         verify: Whether to verify SSL certificates
 
     Returns:
-        Resource dictionary if found, None otherwise
+        Resource dictionary of results and count of results
     """
-    url = f"{tower_url}/api/v2/{endpoint}/?name={name}"
+    cache_key = _get_cache_key(tower_url, endpoint, attribute_name, value, verify)
+
+    # Check cache first
+    if cache_key in _resource_cache:
+        cached_data, timestamp = _resource_cache[cache_key]
+        if _is_cache_valid((cached_data, timestamp)):
+            logger.debug(
+                f"Returning cached data for {endpoint} with attribute '{attribute_name}' and value '{value}'"
+            )
+            return cached_data
+        else:
+            logger.debug(
+                f"Cache expired for {endpoint} with attribute '{attribute_name}' and value '{value}'. Refreshing."
+            )
+            del _resource_cache[cache_key]  # Remove expired entry
+
+    url = f"{tower_url}/api/v2/{endpoint}/?{attribute_name}={value}"
     try:
         response = requests.get(url, headers=headers, verify=verify, timeout=30)
         response.raise_for_status()
         data = response.json()
-        results = data.get("results", [])
-        return results[0] if results else None
+        results = {"results": data.get("results", []), "count": data.get("count", 0)}
+
+        # Add to cache
+        _manage_cache_size()
+        _resource_cache[cache_key] = (results, time())
+
+        return results
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to find {endpoint} with name '{name}': {e}")
+        logger.error(
+            f"Failed to find {endpoint} with attribute '{attribute_name}' and value '{value}': {e}"
+        )
         return None
     except json.JSONDecodeError as e:
         logger.error(f"Failed to decode JSON response when finding {endpoint}: {e}")
         return None
+
+
+def find_resource_by_name(
+    tower_url: str, headers: Dict[str, str], endpoint: str, name: str, verify: bool = True
+) -> Optional[Dict[str, Any]]:
+    """Find a specific resource by exact name."""
+    return find_resource_by_attribute_name(tower_url, headers, endpoint, "name", name, verify)
+
+
+def find_resource_by_id(
+    tower_url: str, headers: Dict[str, str], endpoint: str, id: int, verify: bool = True
+) -> Optional[Dict[str, Any]]:
+    """Find a specific resource by exact ID."""
+    return find_resource_by_attribute_name(tower_url, headers, endpoint, "id", str(id), verify)
 
 
 def create_resource(

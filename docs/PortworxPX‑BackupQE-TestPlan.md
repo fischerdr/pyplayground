@@ -1,193 +1,307 @@
-# Portworx PX‑Backup QE Test Plan
+# Portworx PX-Backup QA Test Plan
+
+**Version:** 2.9.0  
+**Environment:** OpenShift  
+**Storage Backend:** S3 (pre-configured)  
+**Test Scope:** Final validation before production deployment  
+
+## Prerequisites
+
+- Portworx PX-Backup 2.9.0 installed and configured
+- OpenShift cluster access with appropriate permissions
+- S3 storage backend configured and accessible
+- Test namespace(s) available for backup operations
+- ConfigMap resources deployed in test namespace
+
+## 1. Scheduled Backups
+
+### 1.1 Create 15-Minute Backup Schedule
+
+1. **Access PX-Backup Web Console**
+   - Navigate to the Portworx Backup web interface
+   - Authenticate with administrative credentials
+
+2. **Create Schedule Policy**
+   - Navigate to Settings → Schedule Policies
+   - Click "Create Schedule Policy"
+   - Configure schedule policy:
+     - **Name:** `qa-15min-schedule`
+     - **Type:** Interval
+     - **Interval:** 15 minutes
+     - **Retain:** 5 copies
+   - Save the schedule policy
+
+3. **Create Scheduled Backup**
+   - Navigate to Backup → Create Backup
+   - Configure backup parameters:
+     - **Backup Name:** `qa-scheduled-backup`
+     - **Cluster:** Select target cluster
+     - **Namespaces:** Select test namespace
+     - **Backup Location:** Select configured S3 location
+     - **Schedule Policy:** Select `qa-15min-schedule`
+   - Create the backup
+
+4. **Verify Schedule Creation**
+   - Confirm backup appears in backup list
+   - Verify schedule policy is associated
+   - Wait for initial backup completion (15 minutes)
+
+### 1.2 Delete and Restore ConfigMap
+
+1. **Prepare Test ConfigMap**
+   - Create test ConfigMap in target namespace:
+
+     ```bash
+     kubectl create configmap qa-test-config --from-literal=test-key=original-value -n <test-namespace>
+     ```
+
+2. **Wait for Scheduled Backup**
+   - Monitor backup completion in PX-Backup console
+   - Verify ConfigMap is included in backup
+
+3. **Delete ConfigMap**
+   - Remove the ConfigMap:
+
+     ```bash
+     kubectl delete configmap qa-test-config -n <test-namespace>
+     ```
+
+   - Verify deletion:
+
+     ```bash
+     kubectl get configmap qa-test-config -n <test-namespace>
+     ```
+
+4. **Restore ConfigMap**
+   - Navigate to Restore → Create Restore
+   - Configure restore:
+     - **Restore Name:** `qa-configmap-restore`
+     - **Backup:** Select latest scheduled backup
+     - **Replace Policy:** Delete
+     - **Include Resources:** ConfigMap only
+   - Execute restore operation
+
+5. **Verify Restoration**
+   - Confirm ConfigMap exists:
+
+     ```bash
+     kubectl get configmap qa-test-config -n <test-namespace>
+     kubectl describe configmap qa-test-config -n <test-namespace>
+     ```
+
+### 1.3 Restore Specific Historical Version
+
+1. **Modify ConfigMap**
+   - Update the existing ConfigMap:
+
+     ```bash
+     kubectl patch configmap qa-test-config -n <test-namespace> --patch '{"data":{"test-key":"modified-value"}}'
+     ```
+
+2. **Wait for Next Scheduled Backup**
+   - Allow 15-minute schedule to create new backup with modified data
+   - Verify backup completion
+
+3. **Restore Historical Version**
+   - Navigate to Restore → Create Restore
+   - Configure historical restore:
+     - **Restore Name:** `qa-historical-restore`
+     - **Backup:** Select previous backup (not latest)
+     - **Replace Policy:** Delete
+     - **Include Resources:** ConfigMap only
+   - Execute restore
+
+4. **Verify Historical Restoration**
+   - Confirm ConfigMap contains original value:
 
-This test plan provides clear instructions for testing **scheduled** and **ad‑hoc namespace backups** in PX‑Backup, including backups by **namespace label** and restores of config maps. Each step points to Portworx documentation for context.
+     ```bash
+     kubectl get configmap qa-test-config -o yaml -n <test-namespace>
+     ```
+
+   - Verify `test-key` shows `original-value`
+
+## 2. Ad-Hoc Backups
+
+### 2.1 Manual Namespace Backup
+
+1. **Create Manual Backup**
+   - Navigate to Backup → Create Backup
+   - Configure manual backup:
+     - **Backup Name:** `qa-manual-backup`
+     - **Cluster:** Select target cluster
+     - **Namespaces:** Select test namespace
+     - **Backup Location:** Select S3 location
+     - **Schedule Policy:** None (manual)
+   - Create backup immediately
+
+2. **Monitor Backup Progress**
+   - Track backup status in console
+   - Verify successful completion
+   - Note backup size and duration
+
+### 2.2 ConfigMap Delete and Restore
+
+1. **Delete ConfigMap**
+   - Remove test ConfigMap:
+
+     ```bash
+     kubectl delete configmap qa-test-config -n <test-namespace>
+     ```
+
+2. **Restore from Manual Backup**
+   - Navigate to Restore → Create Restore
+   - Configure restore:
+     - **Restore Name:** `qa-manual-restore`
+     - **Backup:** Select manual backup
+     - **Replace Policy:** Delete
+     - **Include Resources:** ConfigMap only
+   - Execute restore
+
+3. **Verify Restoration**
+   - Confirm ConfigMap restoration:
+
+     ```bash
+     kubectl get configmap qa-test-config -n <test-namespace>
+     ```
+
+### 2.3 Full Namespace Overwrite Restore
+
+1. **Modify Namespace Resources**
+   - Create additional test resources:
+
+     ```bash
+     kubectl create secret generic qa-test-secret --from-literal=password=secret123 -n <test-namespace>
+     kubectl create deployment qa-test-app --image=nginx -n <test-namespace>
+     ```
+
+2. **Execute Full Namespace Restore**
+   - Navigate to Restore → Create Restore
+   - Configure full restore:
+     - **Restore Name:** `qa-full-namespace-restore`
+     - **Backup:** Select manual backup
+     - **Replace Policy:** Delete
+     - **Include Resources:** All resources
+   - Execute restore operation
+
+3. **Verify Complete Restoration**
+   - Confirm namespace state matches backup:
+
+     ```bash
+     kubectl get all,configmaps,secrets -n <test-namespace>
+     ```
 
----
+   - Verify additional resources are removed
+   - Confirm original resources are restored
 
-## 1. Scheduled Backup Testing
+## 3. Label-Based Backups
 
-### 1.1 Create a 15‑Minute Backup Schedule for a Namespace
+### 3.1 Label Namespace
 
-1. In the PX‑Backup UI, go to **Settings → Schedule Policy**.
-2. Create a new schedule policy (e.g. `ns‑15min‑sched`), type **Periodic**, interval = **15 minutes**.
-3. Save.
-4. Navigate to **Settings → Rules**, define a rule targeting your namespace under “Applications → NS”.
-5. Go to **Backups → Create Scheduled Backup**, select namespace, associate the new schedule policy and rule, choose backup location and snapshot class, and **Create**.
+1. **Apply Label to Test Namespace**
+   - Add backup label:
 
-### 1.2 Delete a ConfigMap
+     ```bash
+     kubectl label namespace <test-namespace> backup-enabled=true
+     ```
 
-```bash
-kubectl delete configmap <configmap-name> -n <namespace>
-```
+2. **Verify Label Application**
+   - Confirm label exists:
 
-### 1.3 Restore from Scheduled Backup
+     ```bash
+     kubectl get namespace <test-namespace> --show-labels
+     ```
 
-1. Wait up to 15 minutes for backup to complete.
-2. Under Backups, locate the latest namespace backup.
-3. Click ⋮ → Restore; use default namespace mapping and enable Replace existing resources if needed.
-4. After completion, verify:
+### 3.2 Trigger Label-Filtered Backup
 
-    ```bash
-    kubectl get configmap <configmap-name> -n <namespace>
-    kubectl describe configmap <configmap-name> -n <namespace>
-    ```
+1. **Create Label-Based Backup**
+   - Navigate to Backup → Create Backup
+   - Configure label-filtered backup:
+     - **Backup Name:** `qa-label-backup`
+     - **Cluster:** Select target cluster
+     - **Label Selector:** `backup-enabled=true`
+     - **Backup Location:** Select S3 location
+     - **Schedule Policy:** None (manual)
+   - Create backup
 
-### 1.4 Vary ConfigMap Across Intervals & Restore Specific Version
+2. **Verify Label Filtering**
+   - Confirm only labeled namespace is included
+   - Monitor backup completion
 
-1. During successive 15‑min intervals, update the ConfigMap value (e.g. v2, v3).
-2. Confirm backups are created for each version.
-3. Select a backup corresponding to a specific version and restore.
-4. Confirm correct version content via kubectl describe.
+### 3.3 Verify Auto-Inclusion of Newly Labeled Namespaces
 
-## 2. Ad‑Hoc Backup Testing
+1. **Create New Namespace**
+   - Create additional test namespace:
 
-### 2.1 Create Ad‑Hoc Namespace Backup
+     ```bash
+     kubectl create namespace qa-test-namespace-2
+     ```
 
-1. In PX‑Backup UI, go to Backups → Create Backup.
-2. Select the namespace, backup location, CSI snapshot class.
-3. Ensure scheduling is disabled (manual backup).
-4. Create the backup.
+2. **Apply Same Label**
+   - Label new namespace:
 
-### 2.2 Delete a ConfigMap
+     ```bash
+     kubectl label namespace qa-test-namespace-2 backup-enabled=true
+     ```
 
-```bash
-kubectl delete configmap <configmap-name> -n <namespace>
-```
+3. **Create Resources in New Namespace**
+   - Add test resources:
 
-### 2.3 Restore ConfigMap from Ad‑Hoc Backup
+     ```bash
+     kubectl create configmap qa-test-config-2 --from-literal=env=production -n qa-test-namespace-2
+     ```
 
-1. Locate manual backup in UI under Backups.
-2. Click restore; choose same namespace, enable Replace existing resources.
-3. Verify recovery:
+4. **Execute Label-Based Backup**
+   - Create new label-filtered backup:
+     - **Backup Name:** `qa-label-backup-multi`
+     - **Label Selector:** `backup-enabled=true`
+   - Execute backup
 
-    ```bash
-    kubectl get configmap <configmap-name> -n <namespace>
-    kubectl describe configmap <configmap-name> -n <namespace>
-    ```
+5. **Verify Multi-Namespace Inclusion**
+   - Confirm both namespaces are backed up
+   - Verify backup includes resources from both namespaces
 
-### 2.4 Full Namespace Restore with Overwriting
+## 4. Validation Checklist
 
-Delete additional resources (e.g. Secrets, Deployments).
+| Test Scenario | Reference Section | Status | Notes |
+|---------------|-------------------|---------|-------|
+| 15-minute scheduled backup creation | 1.1 | [ ] | Schedule policy and backup configured |
+| ConfigMap delete/restore from scheduled backup | 1.2 | [ ] | Data integrity verified |
+| Historical version restoration | 1.3 | [ ] | Previous backup version restored |
+| Manual namespace backup | 2.1 | [ ] | Ad-hoc backup completed |
+| ConfigMap restore from manual backup | 2.2 | [ ] | Manual backup restoration verified |
+| Full namespace overwrite restore | 2.3 | [ ] | Complete namespace state restored |
+| Namespace labeling | 3.1 | [ ] | Labels applied correctly |
+| Label-filtered backup execution | 3.2 | [ ] | Only labeled resources backed up |
+| Auto-inclusion of newly labeled namespaces | 3.3 | [ ] | Multiple labeled namespaces included |
 
-Trigger full restore from backup with Overwrite existing resources enabled.
+## 5. Documentation References
 
-Verify all deleted objects are restored and state matches snapshot.
+### 5.1 Backup Creation and Scheduling
 
-## 3. Ad‑Hoc Backup by Namespace Label
+- **Create Backup:** <https://docs.portworx.com/portworx-backup-on-prem/use-px-backup/backup-restore/create-backup>
+- **Manual Backup:** <https://docs.portworx.com/portworx-backup-on-prem/use-px-backup/backup-restore/create-backup/perform-backup/manual-backup>
+- **Schedule Policies:** <https://docs.portworx.com/portworx-backup-on-prem/use-px-backup/schedule>
 
-### 3.1 Purpose
+### 5.2 Backup and Restore Operations
 
-Verify that PX‑Backup correctly performs ad‑hoc backups by namespace labels, selecting all namespaces matching specified label filters
-.
+- **Backup and Restore Guide:** <https://docs.portworx.com/portworx-backup-on-prem/use-px-backup/backup-restore>
+- **Perform Backup:** <https://docs.portworx.com/portworx-backup-on-prem/use-px-backup/backup-restore/create-backup/perform-backup>
 
-### 3.2 Prerequisites
+### 5.3 Label-Based Operations
 
-Stork version ≥ 23.9.1 installed on your cluster for label filtering in UI
+- **Label Backups:** <https://docs.portworx.com/portworx-backup-on-prem/use-px-backup/labels/backup-labels>
+- **Concepts (Labels):** <https://docs.portworx.com/portworx-backup-on-prem/concepts>
 
-### 3.3 Create namespace and apply labels
+### 5.4 General Documentation
 
-```bash
-kubectl create namespace labtest
-kubectl label namespace labtest env=qa team=testing
-kubectl get namespaces --show-labels
-```
+- **PX-Backup Documentation:** <https://docs.portworx.com/portworx-backup-on-prem>
+- **Use PX-Backup:** <https://docs.portworx.com/portworx-backup-on-prem/use-px-backup>
 
-### 3.4 Steps
+## Test Execution Notes
 
-1. In PX‑Backup UI, go to Clusters → select cluster → Applications → NS tab.
-
-2. In Search by backup label field, enter (for example): env=qa,team=testing and press Enter.
-
-3. UI auto-selects namespaces matching all labels using AND semantics
-
-4. Click Backup.
-
-5. In the Create Backup dialog:
-
-6. Enter backup name (e.g. label‑based‑backup‑<timestamp>)
-
-7. Select backup location and snapshot class
-
-8. Confirm manual backup (schedule disabled)
-
-9. Click Create.
-
-10. Monitor progress in Backups tab.
-
-11. Validate the backup entry includes the namespace and all its resources.
-
-### 3.5 Optional: Delete & Restore
-
-1. Delete a resource (e.g. config map) in labtest.
-
-2. Find the backup in UI → ⋮ → Restore, restoring to same namespace, enable overwrite.
-
-3. Validate resource recovery via:
-
-```bash
-kubectl get configmap -n labtest
-kubectl describe configmap <name> -n labtest
-```
-
-### 3.6 Validation Checklist
-
-Test Scenario Expected Result
-15‑min scheduled backup triggers Backup record appears after 15 min
-Scheduled restore recovers deleted config ConfigMap restored with correct version
-Versioned config map restores correctly Restored content matches selected backup
-Manual backup created ad‑hoc Backup appears immediately in UI
-Restore from manual backup works correctly Deleted resources restored
-Label‑based manual backup selects namespace Only labeled namespace is backed up and shown
-Label‑based restore works as expected Deleted item in labeled namespace is recovered
-
-### 3.7 References
-
-### 3.7.1 Documentation Sources
-
-#### 3.7.1.1 Schedule Policies & Scheduled Backups
-
-#### 3.7.1.2 Create schedule policies: Explains how to define periodic, daily, weekly, and locked/unlocked schedule policies through the PX‑Backup UI under Settings → Schedule Policies
-
-#### 3.7.1.3 Create a scheduled backup: Guides selecting namespaces (with label filters), associating schedule policies, specifying backup location, CSI snapshot class, and clicking “Backup” to create a scheduled job
-
-#### 3.7.1.4 Namespace Label Filtering & Ad‑Hoc Label‑Based Backups
-
-#### 3.7.1.5 Backup labeled namespaces: Details applying namespace labels via CLI (kubectl label namespace …), filtering namespaces using the UI Search by backup label field (AND semantics), and initiating backups based on labels
-
-#### 3.7.1.6 Labels in Portworx Backup: Describes label usage for automation and inclusion of future namespaces matching labels in scheduled backups
-
-#### 3.7.1.7 General Backup Types
-
-#### 3.7.1.8 Backup overview: Covers various backup modes supported by Portworx Backup, including manual (ad‑hoc) and scheduled options for namespaces and VMs, including dependency on storage provisioners and rules
-
-| Topic                            | Description                                                                | Docs Reference                                             |
-| -------------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| **Add Schedule Policies**        | How to create and manage periodic/unlocked schedule policies               | ([Portworx Documentation][1])                              |
-| **Create Scheduled Backup**      | UI process for scheduled namespace backup with filtering and settings      | ([Portworx Documentation][2], [Portworx Documentation][3]) |
-| **Label-Based Namespace Backup** | CLI label apply + UI filter behavior with VLAN AND filtering semantics     | ([Portworx Documentation][4], [Portworx Documentation][5]) |
-| **Label Automation Behavior**    | Future namespace inclusion in scheduled backups and behavior with labeling | ([Portworx Documentation][5], [Portworx Documentation][6]) |
-| **Manual / Ad‑Hoc Backups**      | How to create one-time backups and manage backup types via UI              | ([Portworx Documentation][7], [Portworx Documentation][3]) |
-
-[1]: https://docs.portworx.com/portworx-backup-on-prem/use-px-backup/schedule?utm_source=chatgpt.com "Add schedule policies"
-[2]: https://docs.portworx.com/portworx-backup-on-prem/use-px-backup/backup-restore/create-backup/scheduled-backup?utm_source=chatgpt.com "Create a scheduled backup"
-[3]: https://docs.portworx.com/portworx-backup-on-prem/2.6/use-px-backup/backup-restore/create-backup/perform-backup/scheduled-backup?utm_source=chatgpt.com "Create a scheduled backup"
-[4]: https://docs.portworx.com/portworx-backup-on-prem/use-px-backup/labels/namespace-labels?utm_source=chatgpt.com "Backup labeled namespaces"
-[5]: https://docs.portworx.com/portworx-backup-on-prem/use-px-backup/labels?utm_source=chatgpt.com "Labels in Portworx Backup"
-[6]: https://docs.portworx.com/portworx-backup-on-prem/concepts?utm_source=chatgpt.com "Concepts - Portworx Documentation"
-[7]: https://docs.portworx.com/portworx-backup-on-prem/use-px-backup/backup-restore/create-backup?utm_source=chatgpt.com "Backup"
-
-### 3.7.2 Namespace‑label backup filtering UI and CLI label application
-
-#### 3.7.2.1 Requirements for Stork v23.9.1 to support label filtering
-
-#### 3.7.2.2 Use of label filters (“AND” semantics) in namespace selection UI
-
-#### 3.7.2.3 Overview of labels in Portworx Backup UI and backup creation flows
-
-### 3.8 Notes
-
-#### 3.8.1 Any unspecified values (e.g. backup location, snapshot class) should align with your team’s standard configuration
-
-#### 3.8.2 Where UI steps are ambiguous, refer directly to Portworx documentation linked above
-
-#### 3.8.3 Automation recommendation: integrate CLI/API for backup creation, status polling, and restore triggering for repeatable validation
+- Execute tests in sequence to maintain data integrity
+- Document any deviations from expected behavior
+- Capture screenshots of critical operations
+- Record backup/restore times for performance validation
+- Verify all operations through both web console and CLI
+- Confirm S3 storage utilization and retention policies

@@ -9,8 +9,6 @@ You are given a question and a response.
 
 You are to review the question and response and provide a detailed breakdown of the question and response.
 
-You are to provide a detailed breakdown of the question and response.
-
 **What is the logical flow of communication between NetApp Trident and the Kubernetes cluster using CSI and NFS? What networking and firewall configurations are required for high availability?**
 
 **Is there a need for a dedicated network connection to the worker nodes (e.g., a separate VLAN or NIC) to allow storage access outside of routed networks and avoid firewalls?**
@@ -31,7 +29,7 @@ Here is a detailed breakdown of the **logical communication flow**, **networking
 
 ---
 
-## 🔄 Logical Flow of Communication: NetApp Trident + CSI + NFS
+## Logical Flow of Communication: NetApp Trident + CSI + NFS
 
 ### Overview
 
@@ -69,7 +67,7 @@ Trident operates as a CSI-compliant storage orchestrator that integrates directl
 
 ---
 
-## 🔐 Networking & Firewall Requirements for High Availability
+## Networking & Firewall Requirements for High Availability
 
 ### Required Conditions
 
@@ -97,7 +95,7 @@ Trident operates as a CSI-compliant storage orchestrator that integrates directl
 
 ---
 
-## 🔌 Is a Dedicated VLAN or NIC Required?
+## Is a Dedicated VLAN or NIC Required?
 
 **Not strictly required, but recommended in high-security or high-performance environments.**
 
@@ -112,7 +110,7 @@ Trident operates as a CSI-compliant storage orchestrator that integrates directl
 
 ---
 
-## 🔁 Failover Options for NFS Served via Worker Node Interface
+## Failover Options for NFS Served via Worker Node Interface
 
 If you route NFS through interfaces exposed to worker nodes:
 
@@ -173,7 +171,7 @@ Certainly, David. Let's break this down from the **perspective of how Trident co
 
 ---
 
-## 🔧 What Happens When Trident Provisions an NFS Volume on ONTAP?
+## What Happens When Trident Provisions an NFS Volume on ONTAP?
 
 When a Kubernetes workload creates a PersistentVolumeClaim (PVC), Trident provisions a volume and configures access using the ONTAP API. The core flow looks like this:
 
@@ -193,7 +191,7 @@ When a Kubernetes workload creates a PersistentVolumeClaim (PVC), Trident provis
 
 ---
 
-## 📜 Export Policy Management: Worker Node IPs
+## Export Policy Management: Worker Node IPs
 
 ### How Trident Handles Access Control
 
@@ -223,9 +221,9 @@ Rules:
 
 ---
 
-## 🧠 Important Behavior Notes
+## Important Behavior Notes
 
-### ➤ Does ONTAP Automatically Update the Export Policy?
+### Does ONTAP Automatically Update the Export Policy?
 
 * **No**, ONTAP is passive. Trident is responsible for:
 
@@ -241,7 +239,7 @@ This means:
   * Use one export policy for many PVCs (more scalable)
   * Or create per-PVC policies (higher isolation, more overhead)
 
-### ➤ What If a Worker IP Changes?
+### What If a Worker IP Changes?
 
 * **Dynamic updates do not occur automatically** unless Trident is restarted or the PVC is re-provisioned.
 * For environments with frequently changing IPs or node pools (e.g., cloud auto-scaling), this is a limitation.
@@ -250,7 +248,7 @@ This means:
 
 ---
 
-## 🔄 Trident Backend Configuration That Affects This
+## Trident Backend Configuration That Affects This
 
 ```json
 {
@@ -272,7 +270,7 @@ This means:
 
 ---
 
-## 🔄 Control Path vs. Data Path
+## Control Path vs. Data Path
 
 | Path        | Description                                                              |
 | ----------- | ------------------------------------------------------------------------ |
@@ -284,7 +282,7 @@ This means:
 
 ---
 
-## ✅ Summary: Export Policy Behavior
+## Summary: Export Policy Behavior
 
 | Aspect                          | Behavior                                                    |
 | ------------------------------- | ----------------------------------------------------------- |
@@ -305,9 +303,9 @@ Let’s break this down from a systems engineering perspective.
 
 ---
 
-## ✅ Can Trident Manage Existing NFS Exports?
+## Can Trident Manage Existing NFS Exports?
 
-### ✔️ **Yes, but with strong caveats.**
+### Yes, but with strong caveats
 
 While Trident is designed primarily for **dynamic provisioning** of volumes specifically for Kubernetes, it **can be configured to work with pre-existing ONTAP NFS volumes**, **as long as**:
 
@@ -317,7 +315,7 @@ While Trident is designed primarily for **dynamic provisioning** of volumes spec
 
 ---
 
-## ⚠️ Use Case Scenarios
+## Use Case Scenarios
 
 | Scenario                                                         | Trident Support       | Notes                                      |
 | ---------------------------------------------------------------- | --------------------- | ------------------------------------------ |
@@ -328,7 +326,7 @@ While Trident is designed primarily for **dynamic provisioning** of volumes spec
 
 ---
 
-## 🛠️ Implementation Pattern: Pre-Provisioned PVs
+## Implementation Pattern: Pre-Provisioned PVs
 
 The **correct way to use existing NFS volumes** in Kubernetes is to create **static PersistentVolumes** manually, referencing the NFS export path and IP.
 
@@ -370,7 +368,7 @@ spec:
 
 ---
 
-## 🚫 Why You *Should Not* Use Trident to Manage Pre-Provisioned Volumes
+## Why You *Should Not* Use Trident to Manage Pre-Provisioned Volumes
 
 Trident assumes full ownership of any volume it provisions:
 
@@ -380,7 +378,7 @@ Trident assumes full ownership of any volume it provisions:
 
 ---
 
-## 🧠 Alternative Option: Reference-Only Mount (Sidecar or Init)
+## Alternative Option: Reference-Only Mount (Sidecar or Init)
 
 If you want to **access existing NFS exports from within a Kubernetes pod without touching lifecycle**, you can mount it via:
 
@@ -390,7 +388,7 @@ If you want to **access existing NFS exports from within a Kubernetes pod withou
 
 ---
 
-## 🔒 Risks in Mixed Access (K8s + Non-K8s)
+## Risks in Mixed Access (K8s + Non-K8s)
 
 | Risk                        | Impact                                                          |
 | --------------------------- | --------------------------------------------------------------- |
@@ -402,7 +400,7 @@ If you want to **access existing NFS exports from within a Kubernetes pod withou
 
 ---
 
-## 🧭 Systems Engineering Recommendation
+## Systems Engineering Recommendation
 
 | Deployment Phase         | Recommended Approach                                                    |
 | ------------------------ | ----------------------------------------------------------------------- |
@@ -424,7 +422,7 @@ Here’s a breakdown of how this design would work, why it’s better, and how t
 
 ---
 
-## ✅ Architectural Model: Central "Control Pod" as Export Policy Registrar
+## Architectural Model: Central "Control Pod" as Export Policy Registrar
 
 ### Key Idea
 
@@ -432,7 +430,7 @@ Instead of each pod directly modifying ONTAP export policies, each pod's **init 
 
 ---
 
-## 🧩 Architecture Overview
+## Architecture Overview
 
 ```text
 +--------------------+       +-------------------------+       +------------------------+
@@ -451,7 +449,7 @@ IP list and policy state ----------+
 
 ---
 
-## 🎯 Benefits Over Init-Container Direct Access
+## Benefits Over Init-Container Direct Access
 
 | Feature                       | Init-Container Direct        | Central Control Pod                     |
 | ----------------------------- | ---------------------------- | --------------------------------------- |
@@ -464,7 +462,7 @@ IP list and policy state ----------+
 
 ---
 
-## 🛠️ Implementation Pattern
+## Implementation Pattern
 
 ### 1. **Init Container Registration (per pod)**
 
@@ -500,7 +498,7 @@ Every 30s (or on registration), it:
 
 ---
 
-## 🧱 Example: Lightweight Flask Controller (Python)
+## Example: Lightweight Flask Controller (Python)
 
 ```python
 from flask import Flask, request, jsonify
@@ -533,7 +531,7 @@ if __name__ == '__main__':
 
 ---
 
-## 🔐 Additional Hardening and Considerations
+## Additional Hardening and Considerations
 
 | Concern                  | Recommendation                                                      |
 | ------------------------ | ------------------------------------------------------------------- |
@@ -544,7 +542,7 @@ if __name__ == '__main__':
 
 ---
 
-## 🧭 Strategic Systems Engineering Notes
+## Strategic Systems Engineering Notes
 
 * ✅ Aligns well with **least privilege** and **centralized control** models in enterprise change-managed environments
 * 🛡️ Provides a **security envelope** between application namespaces and storage backends

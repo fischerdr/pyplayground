@@ -36,6 +36,7 @@ dependencies = [
     "markdown>=3.0.0",
     "pick>=2.4.0",
     "pint>=0.24.0",
+    "psycopg2-binary>=2.9.10",
     "pyOpenSSL>=25.0.0",
     "python-dotenv>=1.0.0",
     "pyvmomi>=8.0.3.0.1",

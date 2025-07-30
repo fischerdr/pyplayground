@@ -232,66 +232,96 @@ class TowerCredentialExtractor:
 
         return decrypted
 
-    def extract_credential_types(self) -> List[CredentialTypeData]:
-        """Extract all credential types from Tower database.
+    def _get_credential_type_rows(self) -> List[psycopg2.extras.DictRow]:
+        """Fetches credential type rows from the database.
 
-        Returns:
-            List of credential type definitions
+        This method tries different queries to ensure compatibility with various
+        Tower versions.
         """
         if not self._db_connection:
             raise RuntimeError("Database connection not established")
 
         cursor = self._db_connection.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-        # Query credential types
-        query = """
-        SELECT
-            id, name, description, kind, namespace, managed,
-            inputs, injectors, created, modified
-        FROM main_credentialtype
-        ORDER BY name
-        """
+        queries_to_try = [
+            (
+                """
+                SELECT id, name, description, kind, namespace, managed_by_tower as managed,
+                       inputs, injectors, created, modified
+                FROM main_credentialtype ORDER BY name
+                """,
+                "managed_by_tower",
+                "Column 'managed_by_tower' not found, trying 'managed'.",
+            ),
+            (
+                """
+                SELECT id, name, description, kind, namespace, managed,
+                       inputs, injectors, created, modified
+                FROM main_credentialtype ORDER BY name
+                """,
+                "managed",
+                "Column 'managed' not found, falling back to default.",
+            ),
+            (
+                """
+                SELECT id, name, description, kind, namespace, false as managed,
+                       inputs, injectors, created, modified
+                FROM main_credentialtype ORDER BY name
+                """,
+                None,
+                None,
+            ),
+        ]
 
         try:
-            cursor.execute(query)
-        except psycopg2.errors.UndefinedColumn as e:
-            if "managed" in str(e):
-                logger.warning(
-                    "Column 'managed' not found, falling back to default. This is common on older Tower versions."
-                )
-                if self._db_connection:
-                    self._db_connection.rollback()  # Rollback the failed transaction
-                fallback_query = """
-                SELECT
-                    id, name, description, kind, namespace, false as managed,
-                    inputs, injectors, created, modified
-                FROM main_credentialtype
-                ORDER BY name
-                """
-                cursor.execute(fallback_query)
-            else:
-                raise  # Re-raise if it's a different undefined column
+            for query, error_keyword, warning_message in queries_to_try:
+                try:
+                    cursor.execute(query)
+                    return cursor.fetchall()
+                except psycopg2.errors.UndefinedColumn as e:
+                    if error_keyword and error_keyword in str(e):
+                        if warning_message:
+                            logger.warning(
+                                f"{warning_message} This is common on older Tower versions."
+                            )
+                        if self._db_connection:
+                            self._db_connection.rollback()
+                        continue
+                    else:
+                        raise  # Re-raise if it's a different undefined column
+            # This should not be reached if the last query is a guaranteed fallback
+            raise RuntimeError("Could not fetch credential types with any query strategy.")
+        finally:
+            cursor.close()
 
-        results = cursor.fetchall()
-        cursor.close()
-
+    def _process_credential_type_rows(
+        self, rows: List[psycopg2.extras.DictRow]
+    ) -> List[CredentialTypeData]:
+        """Processes a list of database rows into CredentialTypeData objects."""
         credential_types = []
-
         with Progress(console=console) as progress:
-            task = progress.add_task("Extracting credential types...", total=len(results))
-
-            for row in results:
+            task = progress.add_task("Extracting credential types...", total=len(rows))
+            for row in rows:
                 try:
                     credential_type = self._process_credential_type_row(row)
                     credential_types.append(credential_type)
                     progress.update(task, advance=1)
-
                 except Exception as e:
                     logger.error(f"Failed to process credential type '{row['name']}': {e}")
                     console.print(
                         f"[red]Error processing credential type '{row['name']}': {e}[/red]"
                     )
                     continue
+        return credential_types
+
+    def extract_credential_types(self) -> List[CredentialTypeData]:
+        """Extract all credential types from Tower database.
+
+        Returns:
+            List of credential type definitions
+        """
+        rows = self._get_credential_type_rows()
+        credential_types = self._process_credential_type_rows(rows)
 
         logger.info(f"Successfully extracted {len(credential_types)} credential types")
         return credential_types

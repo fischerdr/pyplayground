@@ -19,6 +19,7 @@ import base64
 import datetime
 import hashlib
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -40,11 +41,12 @@ from rich.table import Table
 # Import project utilities
 sys.path.append(str(Path(__file__).parent.parent))
 from pyplayground.utils.config_utils import get_env_var, load_env_file
-from pyplayground.utils.logging_utils import setup_logging
+from pyplayground.utils.logging_utils import get_logger, setup_logging
 
 # Initialize Rich console for output
 console = Console()
-logger = None  # Will be initialized in main
+# Setup logging
+logger = get_logger(__name__)
 
 
 def get_env_override(key: str, default: Optional[str] = None) -> Optional[str]:
@@ -250,7 +252,26 @@ class TowerCredentialExtractor:
         ORDER BY name
         """
 
-        cursor.execute(query)
+        try:
+            cursor.execute(query)
+        except psycopg2.errors.UndefinedColumn as e:
+            if "managed" in str(e):
+                logger.warning(
+                    "Column 'managed' not found, falling back to default. This is common on older Tower versions."
+                )
+                if self._db_connection:
+                    self._db_connection.rollback()  # Rollback the failed transaction
+                fallback_query = """
+                SELECT
+                    id, name, description, kind, namespace, false as managed,
+                    inputs, injectors, created, modified
+                FROM main_credentialtype
+                ORDER BY name
+                """
+                cursor.execute(fallback_query)
+            else:
+                raise  # Re-raise if it's a different undefined column
+
         results = cursor.fetchall()
         cursor.close()
 
@@ -740,10 +761,8 @@ def main(  # noqa: C901
         dry_run = dry_run_env.lower() in ("true", "1", "yes", "on")
 
     # Setup logging
-    script_name = Path(__file__).stem
-    log_level = "DEBUG" if debug else "INFO"
-    setup_logging(level=log_level, script_name=script_name)
-    logger = setup_logging(level=log_level, script_name=script_name)
+    log_level = logging.DEBUG if debug else logging.INFO
+    setup_logging(level=log_level, script_name=os.path.basename(__file__).replace(".py", ""))
 
     # Display banner
     console.print(

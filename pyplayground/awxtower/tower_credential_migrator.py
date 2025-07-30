@@ -26,7 +26,7 @@ import re
 import shutil
 import sys
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -103,6 +103,7 @@ class CredentialData:
     credential_type_id: int
     credential_type_name: str
     inputs: Dict[str, Any]
+    encrypted_input_fields: List[str] = field(default_factory=list)
     created: Optional[str] = None
     modified: Optional[str] = None
 
@@ -436,8 +437,10 @@ class TowerCredentialExtractor:
 
         # Decrypt encrypted input fields
         decrypted_inputs = {}
+        encrypted_fields = []
         for field_name, field_value in inputs.items():
             if isinstance(field_value, str) and field_value.startswith("$encrypted$"):
+                encrypted_fields.append(field_name)
                 try:
                     encryption_key = self.get_encryption_key(field_name, row["id"])
                     decrypted_value = self.decrypt_value(encryption_key, field_value)
@@ -464,6 +467,7 @@ class TowerCredentialExtractor:
             credential_type_id=row["credential_type_id"],
             credential_type_name=row["credential_type_name"] or "Unknown",
             inputs=decrypted_inputs,
+            encrypted_input_fields=encrypted_fields,
             created=row["created"].isoformat() if row["created"] else None,
             modified=row["modified"].isoformat() if row["modified"] else None,
         )
@@ -644,20 +648,12 @@ def display_credentials_summary(credentials: List[CredentialData]) -> None:
     table.add_column("Encrypted Fields", style="yellow")
 
     for cred in credentials:
-        encrypted_fields = []
-        for field_name, field_value in cred.inputs.items():
-            if isinstance(field_value, str) and (
-                field_value.startswith("$encrypted$")
-                or field_value in ["[DECRYPTION_FAILED]", "[DECRYPTION_ERROR]"]
-            ):
-                encrypted_fields.append(field_name)
-
         table.add_row(
             str(cred.id),
             cred.name[:30] + "..." if len(cred.name) > 30 else cred.name,
             cred.credential_type_name,
             str(cred.organization_id) if cred.organization_id else "None",
-            ", ".join(encrypted_fields) if encrypted_fields else "None",
+            ", ".join(cred.encrypted_input_fields) if cred.encrypted_input_fields else "None",
         )
 
     console.print(table)
@@ -763,6 +759,17 @@ def main(  # noqa: C901
     # Setup logging
     log_level = logging.DEBUG if debug else logging.INFO
     setup_logging(level=log_level, script_name=os.path.basename(__file__).replace(".py", ""))
+
+    if debug:
+        console.print(
+            Panel(
+                "[bold yellow]DEBUG MODE ENABLED[/bold yellow]\n\n"
+                "This will log sensitive cryptographic material, including the derived "
+                "encryption key. Do not use in a production environment or share the output.",
+                border_style="yellow",
+                title="Security Warning",
+            )
+        )
 
     # Display banner
     console.print(

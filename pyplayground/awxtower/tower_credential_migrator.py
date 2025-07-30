@@ -39,11 +39,25 @@ from rich.table import Table
 
 # Import project utilities
 sys.path.append(str(Path(__file__).parent.parent))
+from pyplayground.utils.config_utils import get_env_var, load_env_file
 from pyplayground.utils.logging_utils import setup_logging
 
 # Initialize Rich console for output
 console = Console()
 logger = None  # Will be initialized in main
+
+
+def get_env_override(key: str, default: Optional[str] = None) -> Optional[str]:
+    """Get environment variable override for Tower configuration.
+
+    Args:
+        key: Environment variable name
+        default: Default value if not found
+
+    Returns:
+        Environment variable value or default
+    """
+    return get_env_var(key, default=default)
 
 
 @dataclass
@@ -399,6 +413,8 @@ def discover_tower_secret_key(config_path: str = "/etc/tower/conf.d") -> Optiona
         os.path.join(config_path, "secrets.py"),
         os.path.join(config_path, "secret_key.py"),
         "/etc/tower/SECRET_KEY",
+        "/etc/tower/settings.py",  # Main settings file
+        "/etc/tower/conf.d/settings.py",  # Settings in conf.d
     ]
 
     for secret_file in secret_files:
@@ -426,6 +442,122 @@ def discover_tower_secret_key(config_path: str = "/etc/tower/conf.d") -> Optiona
 
     logger.warning("Could not automatically discover Tower SECRET_KEY")
     return None
+
+
+def _parse_django_databases_config(content: str) -> Optional[dict]:  # noqa: C901
+    """Parse Django DATABASES configuration from postgres.py content.
+
+    Args:
+        content: Content of the postgres.py file
+
+    Returns:
+        Database configuration dict if found, None otherwise
+    """
+    db_config = {}
+    in_databases = False
+    in_default = False
+    current_key = None
+
+    for line in content.split("\n"):
+        line = line.strip()
+
+        # Skip comments and empty lines
+        if not line or line.startswith("#"):
+            continue
+
+        # Check for DATABASES = {
+        if "DATABASES" in line and "=" in line and "{" in line:
+            in_databases = True
+            continue
+
+        # Check for 'default': {
+        if in_databases and "'default'" in line and "{" in line:
+            in_default = True
+            continue
+
+        # Check for closing braces
+        if in_default and "}" in line:
+            in_default = False
+            if "}" in line and line.count("}") > line.count("{"):
+                in_databases = False
+            continue
+
+        # Parse database settings
+        if in_default and ":" in line:
+            parts = line.split(":", 1)
+            if len(parts) == 2:
+                key = parts[0].strip().strip("'\"")
+                value = parts[1].strip().rstrip(",").strip("'\"")
+
+                # Handle multi-line string values
+                if value == '""""""':
+                    current_key = key
+                    continue
+                elif current_key and value == '""':
+                    db_config[current_key] = ""
+                    current_key = None
+                    continue
+                elif current_key:
+                    db_config[current_key] = value
+                    current_key = None
+                    continue
+
+                # Handle regular values
+                if key in ["NAME", "USER", "PASSWORD", "HOST", "PORT"]:
+                    db_config[key.lower()] = value
+
+    return db_config if db_config else None
+
+
+def discover_tower_database_config(
+    config_path: str = "/etc/tower/conf.d",
+) -> Optional[TowerConnection]:
+    """Discover Tower database connection from postgres.py configuration file.
+
+    Args:
+        config_path: Path to Tower configuration directory
+
+    Returns:
+        TowerConnection object if found, None otherwise
+    """
+    postgres_file = os.path.join(config_path, "postgres.py")
+
+    if not os.path.exists(postgres_file):
+        logger.warning(f"Database config file not found: {postgres_file}")
+        return None
+
+    try:
+        with open(postgres_file, "r") as f:
+            content = f.read()
+
+        # Parse Django DATABASES configuration
+        db_config = _parse_django_databases_config(content)
+
+        if not db_config:
+            logger.warning(f"Could not parse database configuration from {postgres_file}")
+            return None
+
+        # Check if we found the essential database info
+        if "name" in db_config and "user" in db_config:
+            connection = TowerConnection(
+                host=db_config.get("host", "127.0.0.1"),
+                port=db_config.get("port", "5432"),
+                database=db_config["name"],
+                username=db_config["user"],
+                password=db_config.get("password", ""),
+            )
+            logger.info(
+                f"Found database config: {connection.host}:{connection.port}/"
+                f"{connection.database}"
+            )
+            return connection
+        else:
+            logger.warning(f"Incomplete database config found in {postgres_file}")
+            return None
+
+    except Exception as e:
+        logger.warning(f"Could not read database config from {postgres_file}: {e}")
+        return None
 
 
 def export_data_to_file(
@@ -586,6 +718,27 @@ def main(  # noqa: C901
     """
     global logger
 
+    # Load environment variables from .env file
+    load_env_file()
+
+    # Override command line options with environment variables
+    tower_host = get_env_override("TOWER_HOST", tower_host)
+    tower_port = get_env_override("TOWER_PORT", tower_port)
+    tower_db = get_env_override("TOWER_DB", tower_db)
+    tower_user = get_env_override("TOWER_USER", tower_user)
+    tower_password = get_env_override("TOWER_PASSWORD", tower_password)
+    secret_key = get_env_override("TOWER_SECRET_KEY", secret_key)
+    config_path = get_env_override("TOWER_CONFIG_PATH", config_path)
+    output_file = get_env_override("TOWER_OUTPUT_FILE", output_file)
+    # Handle boolean flags
+    debug_env = get_env_override("TOWER_DEBUG")
+    if debug_env:
+        debug = debug_env.lower() in ("true", "1", "yes", "on")
+
+    dry_run_env = get_env_override("TOWER_DRY_RUN")
+    if dry_run_env:
+        dry_run = dry_run_env.lower() in ("true", "1", "yes", "on")
+
     # Setup logging
     script_name = Path(__file__).stem
     log_level = "DEBUG" if debug else "INFO"
@@ -624,22 +777,43 @@ def main(  # noqa: C901
         if not secret_key:
             raise click.ClickException("SECRET_KEY is required for credential decryption")
 
-        # Prompt for database password if not provided
-        if not tower_password:
-            tower_password = Prompt.ask(
-                f"Enter password for database user '{tower_user}'",
-                password=True,
-                show_default=False,
-            )
+        # Discover or create database connection
+        connection = None
 
-        # Create database connection
-        connection = TowerConnection(
-            host=tower_host,
-            port=tower_port,
-            database=tower_db,
-            username=tower_user,
-            password=tower_password,
-        )
+        # Try to discover database config from postgres.py
+        console.print("[yellow]Attempting to discover Tower database configuration...[/yellow]")
+        discovered_connection = discover_tower_database_config(config_path)
+
+        if discovered_connection:
+            # Use discovered config, but allow password override
+            connection = discovered_connection
+            if tower_password:
+                connection.password = tower_password
+            elif not connection.password:
+                connection.password = Prompt.ask(
+                    f"Enter password for database user '{connection.username}'",
+                    password=True,
+                    show_default=False,
+                )
+        else:
+            # Fall back to command line parameters
+            console.print("[yellow]Using command line database parameters...[/yellow]")
+
+            # Prompt for database password if not provided
+            if not tower_password:
+                tower_password = Prompt.ask(
+                    f"Enter password for database user '{tower_user}'",
+                    password=True,
+                    show_default=False,
+                )
+
+            connection = TowerConnection(
+                host=tower_host,
+                port=tower_port,
+                database=tower_db,
+                username=tower_user,
+                password=tower_password,
+            )
 
         # Extract credentials
         extractor = TowerCredentialExtractor(connection, secret_key)

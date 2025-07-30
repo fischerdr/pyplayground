@@ -148,6 +148,7 @@ class TowerCredentialExtractor:
         """
         self.connection = connection
         self.secret_key = secret_key.encode("utf-8") if isinstance(secret_key, str) else secret_key
+        logger.debug(f"SECRET_KEY loaded. Starts with: {self.secret_key[:8]}...")
         self._db_connection: Optional[psycopg2.connection] = None
 
     def connect(self) -> None:
@@ -187,8 +188,15 @@ class TowerCredentialExtractor:
         if pk is not None:
             h.update(str(pk).encode("utf-8"))
         h.update(field_name.encode("utf-8"))
-        key = base64.urlsafe_b64encode(h.digest())
-        logger.debug(f"Generated key (first 16 bytes): {key[:16]}...")
+        
+        # Security Note: The following logs are for deep debugging and can expose
+        # sensitive cryptographic material. Do not enable in production.
+        raw_digest = h.digest()
+        logger.debug(f"SHA512 Digest (hex): {raw_digest.hex()}")
+        
+        key = base64.urlsafe_b64encode(raw_digest)
+        logger.debug(f"Full Base64 Encoded Key: {key.decode('utf-8')}")
+        
         return key
 
     def decrypt_value(self, encryption_key: bytes, encrypted_value: str) -> str:

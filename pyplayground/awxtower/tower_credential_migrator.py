@@ -181,12 +181,15 @@ class TowerCredentialExtractor:
         Returns:
             Base64-encoded encryption key
         """
+        logger.debug(f"Generating encryption key for field='{field_name}' with pk={pk}")
         h = hashlib.sha512()
         h.update(self.secret_key)
         if pk is not None:
             h.update(str(pk).encode("utf-8"))
         h.update(field_name.encode("utf-8"))
-        return base64.urlsafe_b64encode(h.digest())
+        key = base64.urlsafe_b64encode(h.digest())
+        logger.debug(f"Generated key (first 16 bytes): {key[:16]}...")
+        return key
 
     def decrypt_value(self, encryption_key: bytes, encrypted_value: str) -> str:
         """Decrypt a single encrypted value.
@@ -202,6 +205,7 @@ class TowerCredentialExtractor:
             ValueError: If encryption format is unsupported
             InvalidToken: If decryption fails
         """
+        logger.debug(f"Attempting to decrypt value: {encrypted_value[:30]}...")
         if not encrypted_value.startswith("$encrypted$"):
             return encrypted_value
 
@@ -217,6 +221,7 @@ class TowerCredentialExtractor:
         except ValueError:
             raise ValueError(f"Invalid encryption format: {encrypted_value}")
 
+        logger.debug(f"Decryption algorithm: {algo}, UTF8: {utf8}")
         if algo != "AESCBC":
             raise ValueError(f"Unsupported encryption algorithm: {algo}")
 
@@ -230,6 +235,7 @@ class TowerCredentialExtractor:
         else:
             decrypted = decrypted.decode("utf-8", errors="replace")
 
+        logger.debug("Value decrypted successfully.")
         return decrypted
 
     def _get_credential_type_rows(self) -> List[psycopg2.extras.DictRow]:
@@ -428,8 +434,9 @@ class TowerCredentialExtractor:
                     logger.debug(f"Decrypted field '{field_name}' for credential '{row['name']}'")
                 except InvalidToken:
                     logger.warning(
-                        f"Failed to decrypt field '{field_name}' for credential '{row['name']}'"
-                        " - invalid encryption key"
+                        f"Failed to decrypt field '{field_name}' for credential ID "
+                        f"{row['id']} ('{row['name']}') - invalid encryption key. "
+                        f"Encrypted value starts with: {field_value[:40]}..."
                     )
                     decrypted_inputs[field_name] = "[DECRYPTION_FAILED]"
                 except Exception as e:

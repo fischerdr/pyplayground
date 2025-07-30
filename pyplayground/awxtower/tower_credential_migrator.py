@@ -22,6 +22,8 @@ import importlib.util
 import json
 import logging
 import os
+import re
+import shutil
 import sys
 import tempfile
 from dataclasses import asdict, dataclass
@@ -467,8 +469,8 @@ class TowerCredentialExtractor:
         )
 
 
-def discover_tower_secret_key(config_path: str = "/etc/tower/conf.d") -> Optional[str]:
-    """Discover Tower SECRET_KEY by dynamically loading settings files."""
+def discover_tower_secret_key(config_path: str = "/etc/tower/conf.d") -> Optional[str]:  # noqa: C901
+    """Discover Tower SECRET_KEY by parsing settings files."""
     settings_files = [
         os.path.join(config_path, "secrets.py"),
         "/etc/tower/settings.py",
@@ -477,12 +479,23 @@ def discover_tower_secret_key(config_path: str = "/etc/tower/conf.d") -> Optiona
         "/etc/tower/SECRET_KEY",
     ]
 
+    # Regex to find SECRET_KEY assignment, including the file-read pattern
+    key_pattern = re.compile(
+        r"""
+        ^\s*SECRET_KEY\s*=\s*(?:
+            ["'](?P<key_str>.*?)["'] |
+            open\(['"](?P<key_file>.*?)['"]
+        )
+        """,
+        re.VERBOSE,
+    )
+
     for file_path in settings_files:
         if not os.path.exists(file_path):
             continue
 
         try:
-            # If it's a raw key file, just read it
+            # Handle the raw SECRET_KEY file directly
             if os.path.basename(file_path) == "SECRET_KEY":
                 with open(file_path, "r") as f:
                     key = f.read().strip()
@@ -491,20 +504,40 @@ def discover_tower_secret_key(config_path: str = "/etc/tower/conf.d") -> Optiona
                         return key
                 continue
 
-            # Dynamically load the python settings file as a module
-            spec = importlib.util.spec_from_file_location("tower_settings", file_path)
-            if spec and spec.loader:
-                settings_module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(settings_module)
+            # Parse Python config files for the key
+            with open(file_path, "r") as f:
+                for line in f:
+                    match = key_pattern.match(line)
+                    if not match:
+                        continue
 
-                if hasattr(settings_module, "SECRET_KEY"):
-                    secret_key = getattr(settings_module, "SECRET_KEY")
-                    if isinstance(secret_key, bytes):
-                        secret_key = secret_key.decode("utf-8")
-                    logger.info(f"Found SECRET_KEY in settings file: {file_path}")
-                    return secret_key
+                    # Case 1: SECRET_KEY = '...'
+                    if match.group("key_str"):
+                        key = match.group("key_str")
+                        logger.info(f"Found SECRET_KEY string in settings file: {file_path}")
+                        return key
+
+                    # Case 2: SECRET_KEY = open('...')
+                    elif match.group("key_file"):
+                        secret_file_path = match.group("key_file")
+                        if not os.path.isabs(secret_file_path):
+                            secret_file_path = os.path.join(
+                                os.path.dirname(file_path), secret_file_path
+                            )
+
+                        logger.debug(f"Found SECRET_KEY defined as a file: {secret_file_path}")
+                        if os.path.exists(secret_file_path):
+                            with open(secret_file_path, "rb") as kf:
+                                key = kf.read().strip().decode("utf-8")
+                                logger.info(
+                                    f"Successfully read SECRET_KEY from: {secret_file_path}"
+                                )
+                                return key
+                        else:
+                            logger.warning(f"SECRET_KEY file not found at path: {secret_file_path}")
+
         except Exception as e:
-            logger.warning(f"Could not load SECRET_KEY from {file_path}: {e}")
+            logger.warning(f"Could not parse SECRET_KEY from {file_path}: {e}")
             continue
 
     logger.warning("Could not automatically discover Tower SECRET_KEY from any known location.")
@@ -580,7 +613,7 @@ def export_data_to_file(
         os.chmod(temp_path, 0o600)
 
         # Move to final location
-        os.rename(temp_path, output_file)
+        shutil.move(temp_path, output_file)
         os.chmod(output_file, 0o600)
 
         logger.info(

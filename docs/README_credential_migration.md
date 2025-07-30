@@ -25,20 +25,83 @@ Standard Tower export/import tools cannot handle encrypted credential data becau
 │   Tower Instance    │    │   Export File       │    │   AAP Instance      │
 │                     │    │                     │    │                     │
 │ ┌─────────────────┐ │    │ ┌─────────────────┐ │    │ ┌─────────────────┐ │
-│ │ Encrypted       │ │───▶│ │ Decrypted       │ │───▶│ │ Re-encrypted    │ │
-│ │ Credentials     │ │    │ │ Credentials     │ │    │ │ Credentials     │ │
-│ │ (Database)      │ │    │ │ (JSON)          │ │    │ │ (via API)       │ │
+│ │   Database      │ │    │ │   JSON Export   │ │    │ │   REST API      │ │
+│ │   (PostgreSQL)  │ │    │ │                 │ │    │ │                 │ │
+│ │                 │ │    │ │ • Credential    │ │    │ │ • Create        │ │
+│ │ • Encrypted     │ │    │ │   Types         │ │    │ │   Credential    │ │
+│ │   Credentials   │ │    │ │ • Credentials   │ │    │ │   Types         │ │
+│ │ • Credential    │ │    │ │ • Metadata      │ │    │ │ • Import        │ │
+│ │   Types         │ │    │ │                 │ │    │ │   Credentials   │ │
 │ └─────────────────┘ │    │ └─────────────────┘ │    │ └─────────────────┘ │
 │                     │    │                     │    │                     │
-│ SECRET_KEY_TOWER    │    │  Secure Transfer    │    │ SECRET_KEY_AAP      │
+│ ┌─────────────────┐ │    │                     │    │                     │
+│ │   SECRET_KEY    │ │    │                     │    │                     │
+│ │   (Config)      │ │    │                     │    │                     │
+│ └─────────────────┘ │    │                     │    │                     │
+└─────────────────────┘    └─────────────────────┘    └─────────────────────┘
+         │                           │                           │
+         │                           │                           │
+         ▼                           ▼                           ▼
+┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
+│   tower_credential_ │    │   Secure Transfer   │    │   aap_credential_   │
+│   migrator.py       │    │   (SCP/SFTP/etc.)   │    │   importer.py       │
+│                     │    │                     │    │                     │
+│ • Extract from DB   │    │ • Encrypted file    │    │ • Create credential │
+│ • Decrypt secrets   │    │ • Restricted perms  │    │   types first       │
+│ • Export to JSON    │    │ • Secure transfer   │    │ • Import credentials│
 └─────────────────────┘    └─────────────────────┘    └─────────────────────┘
 ```
 
-## Script 1: Tower Credential Extractor
+## Technical Background: Tower Encryption
 
-### Purpose
+### 🔐 Encryption & Decryption Mechanism
 
-Extracts and decrypts all credentials from a Tower instance for migration.
+#### 1. The Role of SECRET_KEY
+
+- The `SECRET_KEY` can be defined in multiple locations:
+  - `/etc/tower/settings.py` (main settings file)
+  - `/etc/tower/conf.d/secrets.py` or `/etc/tower/conf.d/secret_key.py`
+  - `/etc/tower/SECRET_KEY` (standalone file)
+- This key is critical for encrypting and decrypting sensitive fields (like credential passwords)
+- It must remain stable across system upgrades and reboots, or Tower will not be able to decrypt existing credential data
+
+#### 2. Encryption Backend
+
+- Tower uses Django's Fernet symmetric encryption, provided via the `cryptography` Python package
+- This mechanism is invoked through a custom field wrapper used for sensitive model fields (`EncryptedCharField`, etc.)
+- The encryption/decryption logic is embedded in the Tower/Controller codebase
+
+#### 3. Key Derivation Process
+
+Our implementation correctly follows Tower's key derivation:
+
+```python
+def get_encryption_key(self, field_name: str, pk: Optional[int] = None) -> bytes:
+    """Generate encryption key for a specific field."""
+    h = hashlib.sha512()
+    h.update(self.secret_key)                    # Start with SECRET_KEY
+    if pk is not None:
+        h.update(str(pk).encode("utf-8"))        # Add credential ID
+    h.update(field_name.encode("utf-8"))         # Add field name
+    return base64.urlsafe_b64encode(h.digest())  # Generate Fernet key
+```
+
+#### 4. Storage Format
+
+- Encrypted fields in the database are stored with the format: `$encrypted$UTF8$AESCBC$<base64_data>`
+- These are opaque blobs that can only be decrypted with the correct derived key from `SECRET_KEY`
+
+### 🔄 Decrypting Data (Our Implementation)
+
+When our tool needs to decrypt a credential:
+
+1. **Fetch encrypted string** from the database
+2. **Derive the correct key** using the same algorithm as Tower
+3. **Parse the encryption format** (`$encrypted$UTF8$AESCBC$...`)
+4. **Decrypt using Fernet256** (our AES-256-CBC implementation)
+5. **Return plaintext** for export
+
+## Tool 1: Tower Credential Extractor
 
 ### Requirements
 
@@ -49,10 +112,10 @@ Extracts and decrypts all credentials from a Tower instance for migration.
 ### Usage
 
 ```bash
-# Run on Tower instance as root
+# Run on Tower instance as root (auto-discovers SECRET_KEY and database config)
 sudo python tower_credential_migrator.py
 
-# With custom options
+# With custom database options (overrides auto-discovery)
 sudo python tower_credential_migrator.py \
     --tower-host db.example.com \
     --tower-password mypass \
@@ -62,9 +125,40 @@ sudo python tower_credential_migrator.py \
 sudo python tower_credential_migrator.py --dry-run
 ```
 
+### Environment Variable Configuration
+
+The tool supports `.env` file configuration to override command line options. Create a `.env` file in the same directory as the script:
+
+```bash
+# Database Connection (overrides command line options)
+TOWER_HOST=localhost
+TOWER_PORT=5432
+TOWER_DB=awx
+TOWER_USER=awx
+TOWER_PASSWORD=your_database_password_here
+
+# Tower Configuration
+TOWER_SECRET_KEY=your_tower_secret_key_here
+TOWER_CONFIG_PATH=/etc/tower/conf.d
+
+# Output Configuration
+TOWER_OUTPUT_FILE=tower_credentials_export.json
+
+# Debug and Testing
+TOWER_DEBUG=false
+TOWER_DRY_RUN=false
+```
+
+**Environment variables take precedence over command line options.**
+
 ### Features
 
-- **Automatic SECRET_KEY discovery** from `/etc/tower/conf.d/`
+- **Automatic SECRET_KEY discovery** from multiple Tower config locations:
+  - `/etc/tower/settings.py`
+  - `/etc/tower/conf.d/secrets.py` or `/etc/tower/conf.d/secret_key.py`
+  - `/etc/tower/SECRET_KEY`
+- **Automatic database configuration discovery** from `/etc/tower/conf.d/postgres.py`
+- **Environment variable configuration** via `.env` file support
 - **Credential type extraction** - Exports custom credential type definitions
 - **Database connection with retry logic**
 - **Progress bars** and rich console output
@@ -112,27 +206,25 @@ Creates a JSON file with decrypted credential data and credential types:
       "credential_type_name": "Machine",
       "inputs": {
         "username": "ansible",
-        "ssh_private_key": "-----BEGIN RSA PRIVATE KEY-----\n...",
-        "become_password": "decrypted_sudo_password"
+        "password": "decrypted_password_here",
+        "ssh_key_data": "-----BEGIN RSA PRIVATE KEY-----\n..."
       }
     }
   ]
 }
 ```
 
-## Script 2: AAP Credential Importer
-
-### Purpose of AAP Credential Importer
+## Tool 2: AAP Credential Importer
 
 Imports decrypted credentials into AAP using the REST API.
 
-### Requirements for AAP Credential Importer
+### Requirements AAP Credential Importer
 
 - Network access to target AAP instance
 - AAP admin credentials
 - Exported credentials JSON file
 
-### Usage of AAP Credential Importer
+### Usage AAP Credential Importer
 
 ```bash
 # Basic import
@@ -156,7 +248,7 @@ python aap_credential_importer.py \
     --dry-run
 ```
 
-### Features of AAP Credential Importer
+### Features AAP Credential Importer
 
 - **REST API-based import** - lets AAP handle encryption
 - **Credential type creation** - creates missing custom credential types first
@@ -167,186 +259,161 @@ python aap_credential_importer.py \
 - **Comprehensive validation** and error reporting
 - **Retry logic** for API calls
 
-## Migration Process of AAP Credential Importer
+## Migration Process AAP Credential Importer
 
 ### Step 1: Extract from Tower
 
 ```bash
 # On Tower instance
 sudo python tower_credential_migrator.py \
-    --output-file /tmp/tower_credentials.json
+    --output-file tower_migration_export.json \
+    --debug
 ```
 
-### Step 2: Secure Transfer
+This will:
+
+- Discover the Tower `SECRET_KEY` automatically
+- Discover database configuration from `/etc/tower/conf.d/postgres.py`
+- Connect to the Tower database
+- Extract all credential types (including custom ones)
+- Extract all credentials and decrypt their secrets
+- Create a secure JSON export file
+
+### Step 2: Transfer Securely
 
 ```bash
-# Copy file to AAP-accessible machine
-scp /tmp/tower_credentials.json admin@migration-host:/secure/path/
+# Transfer the export file to your AAP instance or management machine
+scp tower_migration_export.json user@aap-server:/tmp/
 ```
 
 ### Step 3: Import to AAP
 
 ```bash
-# On machine with AAP access
+# On AAP instance or management machine
 python aap_credential_importer.py \
-    --aap-url https://new-aap.example.com \
+    --aap-url https://aap.example.com \
     --aap-username admin \
-    --credentials-file /secure/path/tower_credentials.json
+    --credentials-file /tmp/tower_migration_export.json \
+    --dry-run  # First run dry-run to validate
 ```
 
-## Security Considerations of AAP Credential Importer
+This will:
 
-### Export File Security of AAP Credential Importer
+- Connect to AAP using REST API
+- Create missing custom credential types first
+- Import all credentials with proper type mapping
+- Let AAP handle re-encryption with its own `SECRET_KEY`
 
-- Export files contain **decrypted credentials**
-- Files have restrictive permissions (600)
-- **Delete export files** after successful import
-- Use secure transfer methods (SCP, encrypted storage)
+## Security Considerations
 
-### Network Security of AAP Credential Importer
+### 🔒 SECRET_KEY Management
 
-- Use HTTPS for AAP connections
-- Consider VPN/private networks for API access
-- Validate SSL certificates in production
+- **Never share** the Tower `SECRET_KEY` - it's used to decrypt all credentials
+- **Secure transfer** of the export file - it contains decrypted secrets
+- **Restrict file permissions** - export files have 600 permissions by default
+- **Clean up** export files after successful migration
 
-### Access Controls of AAP Credential Importer
+### 🔐 Encryption Handling
 
-- Tower extraction requires root access
-- AAP import requires admin privileges
-- Use dedicated service accounts when possible
+- Our tools **never re-encrypt** data - we let AAP handle encryption
+- **Direct database access** is required to bypass API limitations
+- **Root privileges** are needed to access Tower's `SECRET_KEY`
+- **Temporary decryption** - secrets are only decrypted during export
 
-## Credential Type Mapping of AAP Credential Importer
+### 🛡️ Best Practices
 
-The importer automatically maps Tower credential types to AAP equivalents:
-
-| Tower Type | AAP Type |
-|------------|----------|
-| Machine | Machine |
-| SSH | Machine |
-| SCM | Source Control |
-| AWS | Amazon Web Services |
-| GCE | Google Compute Engine |
-| Azure | Microsoft Azure |
-| VMware | VMware vCenter |
-| OpenStack | OpenStack |
-| Vault | Vault |
-
-## Error Handling of AAP Credential Importer
-
-### Common Issues and Solutions of AAP Credential Importer
-
-#### Could not auto-discover SECRET_KEY"
-
-- Verify running as root
-- Check `/etc/tower/conf.d/secrets.py` exists
-- Manually provide `--secret-key` parameter
-
-#### Database connection failed
-
-- Verify database connection parameters
-- Check network connectivity
-- Ensure database user has read permissions
-
-#### Unsupported credential type
-
-- Check credential type mapping
-- Verify credential type exists in target AAP
-- Update type mapping if needed
-
-#### AAP API authentication failed
-
-- Verify AAP credentials
-- Check AAP URL and connectivity
-- Ensure user has admin privileges
-
-## Dependencies of AAP Credential Importer
-
-### Python Packages of AAP Credential Importer
-
-```bash
-pip install click rich psycopg2-binary cryptography requests
-```
-
-### System Requirements of AAP Credential Importer
-
-- Python 3.9+
-- PostgreSQL client libraries
-- Network access to databases and APIs
-
-## Logging of AAP Credential Importer
-
-Both scripts provide comprehensive logging:
-
-- **INFO level**: Progress and success messages  
-- **DEBUG level**: Detailed operation information
-- **ERROR level**: Failure details and stack traces
-
-Use `--debug` flag for troubleshooting.
-
-## Validation
-
-### Pre-Migration Checks
-
-1. **Database connectivity** to Tower instance
-2. **SECRET_KEY accessibility** on Tower host  
-3. **AAP API connectivity** and authentication
-4. **Credential type compatibility** between instances
-
-### Post-Migration Verification
-
-1. **Credential count** matches between Tower and AAP
-2. **Credential types** are correctly mapped
-3. **Test sample credentials** in AAP job templates
-4. **Verify encrypted fields** are accessible in AAP
+1. **Run extraction on Tower instance** - minimizes exposure of `SECRET_KEY`
+2. **Use secure transfer** - SCP/SFTP for moving export files
+3. **Validate before import** - always run dry-run first
+4. **Monitor import process** - check logs for any failures
+5. **Clean up after migration** - remove export files from all systems
 
 ## Troubleshooting
 
+### Common Issues
+
+#### SECRET_KEY Not Found
+
+```text
+Error: Could not auto-discover SECRET_KEY
+```
+
+**Solution**: Check if running as root and verify the config paths:
+
+```bash
+sudo ls -la /etc/tower/
+sudo ls -la /etc/tower/conf.d/
+```
+
+#### Database Connection Failed
+
+```text
+Error: Database connection failed
+```
+
+**Solution**: Verify database credentials and connectivity:
+
+```bash
+psql -h localhost -U awx -d awx
+```
+
+#### Credential Type Mapping Issues
+
+```text
+Warning: Could not map credential type 'Custom Type'
+```
+
+**Solution**: The importer will create missing credential types automatically.
+
+#### Import Failures
+
+```text
+Error: API error 400: Invalid credential type
+```
+
+**Solution**: Run with `--debug` to see detailed error messages and check AAP logs.
+
 ### Debug Mode
 
-Enable debug logging for detailed information:
+Both tools support debug mode for troubleshooting:
 
 ```bash
-python tower_credential_migrator.py --debug
-python aap_credential_importer.py --debug
+# Tower extractor
+sudo python tower_credential_migrator.py --debug
+
+# AAP importer  
+python aap_credential_importer.py --debug --credentials-file export.json
 ```
 
-### Dry Run Mode
+## Engineering Notes
 
-Test operations without making changes:
+### Cluster Considerations
 
-```bash
-python tower_credential_migrator.py --dry-run
-python aap_credential_importer.py --dry-run
-```
+- **All Tower nodes** must share the same `SECRET_KEY`
+- **Database access** should be to the primary Tower database
+- **Export once** from the primary Tower instance
 
-### Manual Verification
+### Backup and Restore
 
-Query credentials directly in AAP:
+- **SECRET_KEY preservation** is critical for credential access
+- **Export before upgrades** to ensure credential recovery
+- **Test migration** in a non-production environment first
 
-```bash
-curl -k -u admin:password https://aap.example.com/api/v2/credentials/
-```
+### Custom Credential Types
 
-## Best Practices
-
-1. **Test in non-production** environment first
-2. **Backup AAP database** before import
-3. **Validate sample credentials** after import
-4. **Delete export files** after successful migration
-5. **Document any custom mappings** required
-6. **Plan for credential rotation** post-migration
+- **Custom types are preserved** through the migration process
+- **Namespace handling** ensures proper organization in AAP
+- **Input/Injector definitions** are maintained exactly as defined
 
 ## Support
 
-For issues related to these migration tools:
+For issues or questions:
 
-1. Check logs with `--debug` flag
-2. Verify all prerequisites are met
-3. Test with `--dry-run` mode first
-4. Consult error handling section above
+1. Check the troubleshooting section above
+2. Run with `--debug` flag for detailed logging
+3. Review the error messages and logs
+4. Ensure all prerequisites are met
 
-## References
+## License
 
-- [Ansible Tower Documentation](https://docs.ansible.com/ansible-tower/)
-- [AAP REST API Guide](https://docs.ansible.com/automation-controller/latest/html/controllerapi/)
-- [AAP Credential Management](https://access.redhat.com/documentation/en-us/red_hat_ansible_automation_platform/)
+Apache 2.0 License - see LICENSE file for details.

@@ -14,18 +14,17 @@ import sys
 from datetime import datetime
 from typing import Dict, List, Set, Tuple
 
-from rich import box
-from rich.console import Console
-from rich.table import Table
 import click
 from kubernetes import client
 from kubernetes.client.rest import ApiException
+from rich import box
+from rich.console import Console
+from rich.table import Table
 
 # Add parent directories to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
-from pyplayground.utils.logging_utils import get_logger, get_project_root, setup_logging
-
 from pyplayground.utils.k8s_utils import load_kube_config_auto
+from pyplayground.utils.logging_utils import get_logger, get_project_root, setup_logging
 
 # Get the project root directory
 PROJECT_ROOT = get_project_root()

@@ -18,6 +18,7 @@ License: Apache 2.0
 import base64
 import datetime
 import hashlib
+import importlib.util
 import json
 import logging
 import os
@@ -188,15 +189,15 @@ class TowerCredentialExtractor:
         if pk is not None:
             h.update(str(pk).encode("utf-8"))
         h.update(field_name.encode("utf-8"))
-        
+
         # Security Note: The following logs are for deep debugging and can expose
         # sensitive cryptographic material. Do not enable in production.
         raw_digest = h.digest()
         logger.debug(f"SHA512 Digest (hex): {raw_digest.hex()}")
-        
+
         key = base64.urlsafe_b64encode(raw_digest)
         logger.debug(f"Full Base64 Encoded Key: {key.decode('utf-8')}")
-        
+
         return key
 
     def decrypt_value(self, encryption_key: bytes, encrypted_value: str) -> str:
@@ -467,125 +468,53 @@ class TowerCredentialExtractor:
 
 
 def discover_tower_secret_key(config_path: str = "/etc/tower/conf.d") -> Optional[str]:
-    """Discover Tower SECRET_KEY from configuration files.
-
-    Args:
-        config_path: Path to Tower configuration directory
-
-    Returns:
-        Tower SECRET_KEY if found, None otherwise
-    """
-    secret_files = [
+    """Discover Tower SECRET_KEY by dynamically loading settings files."""
+    settings_files = [
         os.path.join(config_path, "secrets.py"),
+        "/etc/tower/settings.py",
+        "/etc/tower/conf.d/settings.py",
         os.path.join(config_path, "secret_key.py"),
         "/etc/tower/SECRET_KEY",
-        "/etc/tower/settings.py",  # Main settings file
-        "/etc/tower/conf.d/settings.py",  # Settings in conf.d
     ]
 
-    for secret_file in secret_files:
-        if os.path.exists(secret_file):
-            try:
-                with open(secret_file, "r") as f:
-                    content = f.read()
+    for file_path in settings_files:
+        if not os.path.exists(file_path):
+            continue
 
-                # Look for SECRET_KEY assignment
-                for line in content.split("\n"):
-                    line = line.strip()
-                    if line.startswith("SECRET_KEY"):
-                        # Extract the key value
-                        if "=" in line:
-                            key_part = line.split("=", 1)[1].strip()
-                            # Remove quotes and spaces
-                            key_part = key_part.strip("'\"").strip()
-                            if key_part:
-                                logger.info(f"Found SECRET_KEY in {secret_file}")
-                                return key_part
-
-            except Exception as e:
-                logger.warning(f"Could not read {secret_file}: {e}")
+        try:
+            # If it's a raw key file, just read it
+            if os.path.basename(file_path) == "SECRET_KEY":
+                with open(file_path, "r") as f:
+                    key = f.read().strip()
+                    if key:
+                        logger.info(f"Found SECRET_KEY in raw file: {file_path}")
+                        return key
                 continue
 
-    logger.warning("Could not automatically discover Tower SECRET_KEY")
+            # Dynamically load the python settings file as a module
+            spec = importlib.util.spec_from_file_location("tower_settings", file_path)
+            if spec and spec.loader:
+                settings_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(settings_module)
+
+                if hasattr(settings_module, "SECRET_KEY"):
+                    secret_key = getattr(settings_module, "SECRET_KEY")
+                    if isinstance(secret_key, bytes):
+                        secret_key = secret_key.decode("utf-8")
+                    logger.info(f"Found SECRET_KEY in settings file: {file_path}")
+                    return secret_key
+        except Exception as e:
+            logger.warning(f"Could not load SECRET_KEY from {file_path}: {e}")
+            continue
+
+    logger.warning("Could not automatically discover Tower SECRET_KEY from any known location.")
     return None
-
-
-def _parse_django_databases_config(content: str) -> Optional[dict]:  # noqa: C901
-    """Parse Django DATABASES configuration from postgres.py content.
-
-    Args:
-        content: Content of the postgres.py file
-
-    Returns:
-        Database configuration dict if found, None otherwise
-    """
-    db_config = {}
-    in_databases = False
-    in_default = False
-    current_key = None
-
-    for line in content.split("\n"):
-        line = line.strip()
-
-        # Skip comments and empty lines
-        if not line or line.startswith("#"):
-            continue
-
-        # Check for DATABASES = {
-        if "DATABASES" in line and "=" in line and "{" in line:
-            in_databases = True
-            continue
-
-        # Check for 'default': {
-        if in_databases and "'default'" in line and "{" in line:
-            in_default = True
-            continue
-
-        # Check for closing braces
-        if in_default and "}" in line:
-            in_default = False
-            if "}" in line and line.count("}") > line.count("{"):
-                in_databases = False
-            continue
-
-        # Parse database settings
-        if in_default and ":" in line:
-            parts = line.split(":", 1)
-            if len(parts) == 2:
-                key = parts[0].strip().strip("'\"")
-                value = parts[1].strip().rstrip(",").strip("'\"")
-
-                # Handle multi-line string values
-                if value == '""""""':
-                    current_key = key
-                    continue
-                elif current_key and value == '""':
-                    db_config[current_key] = ""
-                    current_key = None
-                    continue
-                elif current_key:
-                    db_config[current_key] = value
-                    current_key = None
-                    continue
-
-                # Handle regular values
-                if key in ["NAME", "USER", "PASSWORD", "HOST", "PORT"]:
-                    db_config[key.lower()] = value
-
-    return db_config if db_config else None
 
 
 def discover_tower_database_config(
     config_path: str = "/etc/tower/conf.d",
 ) -> Optional[TowerConnection]:
-    """Discover Tower database connection from postgres.py configuration file.
-
-    Args:
-        config_path: Path to Tower configuration directory
-
-    Returns:
-        TowerConnection object if found, None otherwise
-    """
+    """Discover Tower database connection by dynamically loading postgres.py."""
     postgres_file = os.path.join(config_path, "postgres.py")
 
     if not os.path.exists(postgres_file):
@@ -593,37 +522,30 @@ def discover_tower_database_config(
         return None
 
     try:
-        with open(postgres_file, "r") as f:
-            content = f.read()
+        spec = importlib.util.spec_from_file_location("postgres_settings", postgres_file)
+        if spec and spec.loader:
+            db_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(db_module)
 
-        # Parse Django DATABASES configuration
-        db_config = _parse_django_databases_config(content)
-
-        if not db_config:
-            logger.warning(f"Could not parse database configuration from {postgres_file}")
-            return None
-
-        # Check if we found the essential database info
-        if "name" in db_config and "user" in db_config:
-            connection = TowerConnection(
-                host=db_config.get("host", "127.0.0.1"),
-                port=db_config.get("port", "5432"),
-                database=db_config["name"],
-                username=db_config["user"],
-                password=db_config.get("password", ""),
-            )
-            logger.info(
-                f"Found database config: {connection.host}:{connection.port}/"
-                f"{connection.database}"
-            )
-            return connection
-        else:
-            logger.warning(f"Incomplete database config found in {postgres_file}")
-            return None
-
+            if hasattr(db_module, "DATABASES") and "default" in db_module.DATABASES:
+                db_config = db_module.DATABASES["default"]
+                connection = TowerConnection(
+                    host=db_config.get("HOST", "127.0.0.1"),
+                    port=db_config.get("PORT", "5432"),
+                    database=db_config.get("NAME"),
+                    username=db_config.get("USER"),
+                    password=db_config.get("PASSWORD", ""),
+                )
+                logger.info(
+                    f"Found database config via dynamic import: {connection.host}:{connection.port}/"
+                    f"{connection.database}"
+                )
+                return connection
     except Exception as e:
-        logger.warning(f"Could not read database config from {postgres_file}: {e}")
-        return None
+        logger.warning(f"Could not load database config from {postgres_file}: {e}")
+
+    logger.warning(f"Could not parse database configuration from {postgres_file}")
+    return None
 
 
 def export_data_to_file(

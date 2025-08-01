@@ -26,7 +26,7 @@ import re
 import shutil
 import sys
 import tempfile
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -100,8 +100,10 @@ class CredentialData:
     name: str
     description: str
     organization_id: Optional[int]
+    organization_name: Optional[str]
     credential_type_id: int
     credential_type_name: str
+    credential_type_kind: str
     inputs: Dict[str, Any]
     encrypted_input_fields: List[str] = field(default_factory=list)
     created: Optional[str] = None
@@ -391,9 +393,12 @@ class TowerCredentialExtractor:
         SELECT
             c.id, c.name, c.description, c.organization_id,
             c.credential_type_id, c.inputs, c.created, c.modified,
-            ct.name as credential_type_name
+            ct.name as credential_type_name,
+            ct.kind as credential_type_kind,
+            o.name as organization_name
         FROM main_credential c
         LEFT JOIN main_credentialtype ct ON c.credential_type_id = ct.id
+        LEFT JOIN main_organization o ON c.organization_id = o.id
         ORDER BY c.name
         """
 
@@ -464,8 +469,10 @@ class TowerCredentialExtractor:
             name=row["name"],
             description=row["description"] or "",
             organization_id=row["organization_id"],
+            organization_name=row["organization_name"],
             credential_type_id=row["credential_type_id"],
             credential_type_name=row["credential_type_name"] or "Unknown",
+            credential_type_kind=row["credential_type_kind"] or "unknown",
             inputs=decrypted_inputs,
             encrypted_input_fields=encrypted_fields,
             created=row["created"].isoformat() if row["created"] else None,
@@ -473,7 +480,9 @@ class TowerCredentialExtractor:
         )
 
 
-def discover_tower_secret_key(config_path: str = "/etc/tower/conf.d") -> Optional[str]:  # noqa: C901
+def discover_tower_secret_key(  # noqa: C901
+    config_path: str = "/etc/tower/conf.d",
+) -> Optional[str]:
     """Discover Tower SECRET_KEY by parsing settings files."""
     settings_files = [
         os.path.join(config_path, "secrets.py"),
@@ -585,33 +594,62 @@ def discover_tower_database_config(
     return None
 
 
-def export_data_to_file(
-    credentials: List[CredentialData], credential_types: List[CredentialTypeData], output_file: str
-) -> None:
-    """Export credentials and credential types to secure JSON file.
+def export_data_to_file(credentials: List[CredentialData], output_file: str) -> None:
+    """Export credentials to secure JSON file.
 
     Args:
         credentials: List of credential data to export
-        credential_types: List of credential type definitions to export
         output_file: Path to output file
     """
+
+    def format_credential(cred: CredentialData) -> Dict[str, Any]:
+        """Format a single credential for export."""
+        organization = (
+            {
+                "name": cred.organization_name,
+                "type": "organization",
+            }
+            if cred.organization_name
+            else None
+        )
+
+        credential_type = {
+            "name": cred.credential_type_name,
+            "kind": cred.credential_type_kind,
+            "type": "credential_type",
+        }
+
+        natural_key = {
+            "organization": organization,
+            "name": cred.name,
+            "credential_type": credential_type,
+            "type": "credential",
+        }
+
+        return {
+            "name": cred.name,
+            "description": cred.description,
+            "inputs": cred.inputs,
+            "organization": organization,
+            "credential_type": credential_type,
+            "natural_key": natural_key,
+        }
+
     export_data = {
         "metadata": {
             "export_date": datetime.datetime.now().isoformat(),
             "export_tool": "tower_credential_migrator",
-            "version": "2.0",
+            "version": "2.1",
             "total_credentials": len(credentials),
-            "total_credential_types": len(credential_types),
         },
-        "credential_types": [asdict(cred_type) for cred_type in credential_types],
-        "credentials": [asdict(cred) for cred in credentials],
+        "credentials": [format_credential(cred) for cred in credentials],
     }
 
     # Create secure temporary file first
     temp_fd, temp_path = tempfile.mkstemp(suffix=".json", prefix="tower_creds_")
     try:
         with os.fdopen(temp_fd, "w") as f:
-            json.dump(export_data, f, indent=2, default=str)
+            json.dump(export_data, f, indent=4, default=str)
 
         # Set restrictive permissions (owner read/write only)
         os.chmod(temp_path, 0o600)
@@ -620,10 +658,7 @@ def export_data_to_file(
         shutil.move(temp_path, output_file)
         os.chmod(output_file, 0o600)
 
-        logger.info(
-            f"Exported {len(credentials)} credentials and "
-            f"{len(credential_types)} credential types to {output_file}"
-        )
+        logger.info(f"Exported {len(credentials)} credentials to {output_file}")
 
     except Exception as e:
         # Clean up temp file on error
@@ -848,9 +883,6 @@ def main(  # noqa: C901
         extractor.connect()
 
         try:
-            console.print("[green]Extracting credential types...[/green]")
-            credential_types = extractor.extract_credential_types()
-
             console.print("[green]Extracting and decrypting credentials...[/green]")
             credentials = extractor.extract_credentials()
 
@@ -859,34 +891,27 @@ def main(  # noqa: C901
                 return
 
             # Display summaries
-            if credential_types:
-                display_credential_types_summary(credential_types)
             display_credentials_summary(credentials)
 
             if dry_run:
                 console.print(
-                    f"[yellow]Dry run complete. Found {len(credential_types)} credential types "
-                    f"and {len(credentials)} credentials.[/yellow]"
+                    f"[yellow]Dry run complete. Found {len(credentials)} credentials.[/yellow]"
                 )
                 return
 
             # Confirm export
-            if not Confirm.ask(
-                f"Export {len(credential_types)} credential types and "
-                f"{len(credentials)} credentials to {output_file}?"
-            ):
+            if not Confirm.ask(f"Export {len(credentials)} credentials to {output_file}?"):
                 console.print("[yellow]Export cancelled.[/yellow]")
                 return
 
             # Export to file
             console.print(f"[green]Exporting data to {output_file}...[/green]")
-            export_data_to_file(credentials, credential_types, output_file)
+            export_data_to_file(credentials, output_file)
 
             console.print(
                 Panel.fit(
                     f"[bold green]Success![/bold green]\n\n"
-                    f"Exported {len(credential_types)} credential types and "
-                    f"{len(credentials)} credentials to:\n"
+                    f"Exported {len(credentials)} credentials to:\n"
                     f"[cyan]{os.path.abspath(output_file)}[/cyan]\n\n"
                     f"[yellow]Security Note:[/yellow] File has restricted permissions (600).\n"
                     f"Transfer securely to your AAP instance for import.",

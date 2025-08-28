@@ -19,6 +19,83 @@ This script provides a comprehensive review of Vault Enterprise namespaces, incl
 - Access to a Vault Enterprise cluster
 - Valid Vault token with appropriate permissions
 
+## Required Permissions
+
+The scripts require specific Vault permissions to access system APIs and identity information. The token must have the following capabilities:
+
+### System API Permissions
+
+```hcl
+# For listing and reading policies
+path "sys/policies/*" {
+  capabilities = ["read", "list"]
+}
+
+# For listing and reading auth methods
+path "sys/auth" {
+  capabilities = ["read", "list"]
+}
+
+# For reading namespace information (if available)
+path "sys/namespaces/*" {
+  capabilities = ["read", "list"]
+}
+```
+
+### Identity API Permissions
+
+```hcl
+# For listing and reading identity groups
+path "identity/group/*" {
+  capabilities = ["read", "list"]
+}
+
+# For listing and reading identity entities (if needed)
+path "identity/entity/*" {
+  capabilities = ["read", "list"]
+}
+```
+
+### Complete Policy Example
+
+```hcl
+# Vault Namespace Review Policy
+path "sys/policies/*" {
+  capabilities = ["read", "list"]
+}
+
+path "sys/auth" {
+  capabilities = ["read", "list"]
+}
+
+path "sys/namespaces/*" {
+  capabilities = ["read", "list"]
+}
+
+path "identity/group/*" {
+  capabilities = ["read", "list"]
+}
+
+path "identity/entity/*" {
+  capabilities = ["read", "list"]
+}
+```
+
+### Testing Permissions
+
+You can verify your token has the required permissions by running:
+
+```bash
+# Test policy access
+vault policy list
+
+# Test auth method access  
+vault auth list
+
+# Test identity access
+vault identity group list
+```
+
 ## Installation
 
 1. Ensure you have the required dependencies:
@@ -99,7 +176,7 @@ The script outputs structured JSON data with the following structure:
       }
     ],
     "errors": []
-  },
+  },@
   "auth_methods": {
     "auth_methods": [
       {
@@ -211,6 +288,14 @@ for policy in results["policies"]["policies"]:
 - **Permission Principle**: Use tokens with minimal required permissions
 - **Output Security**: Be careful with JSON output as it may contain sensitive information
 
+### Permission Security Best Practices
+
+- **Least Privilege**: Only grant the minimum permissions needed for namespace review
+- **Namespace Isolation**: Ensure tokens can only access intended namespaces
+- **Audit Logging**: Monitor access to sensitive system APIs
+- **Token Expiration**: Use short-lived tokens for review operations
+- **Policy Review**: Regularly audit token policies to ensure they haven't been over-privileged
+
 ## Troubleshooting
 
 ### Common Issues
@@ -229,6 +314,20 @@ for policy in results["policies"]["policies"]:
    - Token may not have sufficient permissions
    - Check token policies for required capabilities
    - Some operations may require admin privileges
+
+### Permission-Specific Issues
+
+1. **Missing System Permissions**
+   - **Error**: `403 Forbidden` when trying to list policies
+   - **Solution**: Add `sys/policies/*` with `read` and `list` capabilities
+
+2. **Missing Identity Permissions**
+   - **Error**: `403 Forbidden` when trying to list groups
+   - **Solution**: Add `identity/group/*` with `read` and `list` capabilities
+
+3. **Namespace-Specific Permissions**
+   - **Error**: Can't access namespace information
+   - **Solution**: Ensure the token has permissions in the target namespace, not just the parent
 
 ### Debug Mode
 

@@ -512,3 +512,249 @@ def normalize_vault_path(path: str) -> tuple[str, str]:
         mount_point = "secret"
 
     return mount_point, path
+
+
+def get_policies(client: hvac.Client) -> Dict[str, Any]:
+    """Retrieve all policies in the current namespace.
+
+    Args:
+        client: The Vault client instance
+
+    Returns:
+        Dict containing policy information
+    """
+    policies_data = {"policies": [], "errors": []}
+
+    try:
+        # List all policies
+        policies_response = client.sys.list_policies()
+        if not policies_response or "data" not in policies_response:
+            logger.warning("No policies found or unable to list policies")
+            return policies_data
+
+        policies = policies_response["data"]["policies"]
+        logger.info(f"Found {len(policies)} policies")
+
+        # Get details for each policy
+        for policy_name in policies:
+            try:
+                policy_response = client.sys.read_policy(name=policy_name)
+                if policy_response and "data" in policy_response:
+                    policy_info = {
+                        "name": policy_name,
+                        "rules": policy_response["data"]["rules"],
+                        "type": policy_response["data"].get("type", "unknown"),
+                    }
+                    policies_data["policies"].append(policy_info)
+                else:
+                    logger.warning(f"Could not retrieve details for policy: {policy_name}")
+                    policies_data["errors"].append(f"Failed to retrieve policy: {policy_name}")
+            except Exception as e:
+                logger.error(f"Error retrieving policy '{policy_name}': {e}")
+                policies_data["errors"].append(f"Error retrieving policy '{policy_name}': {str(e)}")
+
+    except Exception as e:
+        logger.error(f"Error listing policies: {e}")
+        policies_data["errors"].append(f"Error listing policies: {str(e)}")
+
+    return policies_data
+
+
+def get_groups(client: hvac.Client) -> Dict[str, Any]:
+    """Retrieve all identity groups in the current namespace.
+
+    Args:
+        client: The Vault client instance
+
+    Returns:
+        Dict containing group information
+    """
+    groups_data = {"groups": [], "errors": []}
+
+    try:
+        # List all groups
+        groups_response = client.identity.list_groups()
+        if not groups_response or "data" not in groups_response:
+            logger.warning("No groups found or unable to list groups")
+            return groups_data
+
+        groups = groups_response["data"]["keys"]
+        logger.info(f"Found {len(groups)} groups")
+
+        # Get details for each group
+        for group_id in groups:
+            try:
+                group_response = client.identity.read_group(group_id=group_id)
+                if group_response and "data" in group_response:
+                    group_info = {
+                        "id": group_id,
+                        "name": group_response["data"].get("name", "Unknown"),
+                        "type": group_response["data"].get("type", "unknown"),
+                        "member_entity_ids": group_response["data"].get("member_entity_ids", []),
+                        "member_group_ids": group_response["data"].get("member_group_ids", []),
+                        "policies": group_response["data"].get("policies", []),
+                        "metadata": group_response["data"].get("metadata", {}),
+                    }
+                    groups_data["groups"].append(group_info)
+                else:
+                    logger.warning(f"Could not retrieve details for group: {group_id}")
+                    groups_data["errors"].append(f"Failed to retrieve group: {group_id}")
+            except Exception as e:
+                logger.error(f"Error retrieving group '{group_id}': {e}")
+                groups_data["errors"].append(f"Error retrieving group '{group_id}': {str(e)}")
+
+    except Exception as e:
+        logger.error(f"Error listing groups: {e}")
+        groups_data["errors"].append(f"Error listing groups: {str(e)}")
+
+    return groups_data
+
+
+def get_auth_methods(client: hvac.Client) -> Dict[str, Any]:
+    """Retrieve all enabled authentication methods in the current namespace.
+
+    Args:
+        client: The Vault client instance
+
+    Returns:
+        Dict containing auth method information
+    """
+    auth_methods_data = {"auth_methods": [], "errors": []}
+
+    try:
+        # List all auth methods
+        auth_methods_response = client.sys.list_auth_methods()
+        if not auth_methods_response or "data" not in auth_methods_response:
+            logger.warning("No auth methods found or unable to list auth methods")
+            return auth_methods_data
+
+        auth_methods = auth_methods_response["data"]
+        logger.info(f"Found {len(auth_methods)} auth methods")
+
+        # Get details for each auth method
+        for path, auth_info in auth_methods.items():
+            try:
+                auth_method_info = {
+                    "path": path,
+                    "type": auth_info.get("type", "unknown"),
+                    "description": auth_info.get("description", ""),
+                    "accessor": auth_info.get("accessor", ""),
+                    "config": auth_info.get("config", {}),
+                }
+                auth_methods_data["auth_methods"].append(auth_method_info)
+            except Exception as e:
+                logger.error(f"Error processing auth method '{path}': {e}")
+                auth_methods_data["errors"].append(
+                    f"Error processing auth method '{path}': {str(e)}"
+                )
+
+    except Exception as e:
+        logger.error(f"Error listing auth methods: {e}")
+        auth_methods_data["errors"].append(f"Error listing auth methods: {str(e)}")
+
+    return auth_methods_data
+
+
+def get_namespace_info(client: hvac.Client, namespace: str) -> Dict[str, Any]:
+    """Get basic information about the namespace.
+
+    Args:
+        client: The Vault client instance
+        namespace: The namespace name
+
+    Returns:
+        Dict containing namespace information
+    """
+    namespace_info = {"name": namespace, "timestamp": None, "errors": []}
+
+    try:
+        # Get current time for timestamp
+        from datetime import datetime
+
+        namespace_info["timestamp"] = datetime.now().isoformat()
+
+        # Try to get namespace metadata if available
+        try:
+            # This might not be available in all Vault versions
+            namespace_response = client.sys.read_namespace(namespace=namespace)
+            if namespace_response and "data" in namespace_response:
+                namespace_info["metadata"] = namespace_response["data"]
+        except Exception as e:
+            logger.debug(f"Could not retrieve namespace metadata: {e}")
+            # This is not critical, so we don't add to errors
+
+    except Exception as e:
+        logger.error(f"Error getting namespace info: {e}")
+        namespace_info["errors"].append(f"Error getting namespace info: {str(e)}")
+
+    return namespace_info
+
+
+def perform_namespace_review(namespace: str, debug: bool = False) -> Dict[str, Any]:
+    """Perform a comprehensive review of the specified Vault namespace.
+
+    Args:
+        namespace: The namespace to review
+        debug: Whether to enable debug logging
+
+    Returns:
+        Dict containing the complete review results
+    """
+    logger.info(f"Starting Vault namespace review for: {namespace}")
+
+    review_results = {
+        "namespace_info": {},
+        "policies": {},
+        "groups": {},
+        "auth_methods": {},
+        "summary": {"total_policies": 0, "total_groups": 0, "total_auth_methods": 0, "errors": []},
+    }
+
+    try:
+        # Create and authenticate client using vault_utils
+        client = create_vault_client(namespace=namespace, verify=False)
+
+        # Get namespace information
+        review_results["namespace_info"] = get_namespace_info(client, namespace)
+
+        # Get policies
+        logger.info("Retrieving policies...")
+        policies_data = get_policies(client)
+        review_results["policies"] = policies_data
+        review_results["summary"]["total_policies"] = len(policies_data.get("policies", []))
+
+        # Get groups
+        logger.info("Retrieving groups...")
+        groups_data = get_groups(client)
+        review_results["groups"] = groups_data
+        review_results["summary"]["total_groups"] = len(groups_data.get("groups", []))
+
+        # Get auth methods
+        logger.info("Retrieving authentication methods...")
+        auth_methods_data = get_auth_methods(client)
+        review_results["auth_methods"] = auth_methods_data
+        review_results["summary"]["total_auth_methods"] = len(
+            auth_methods_data.get("auth_methods", [])
+        )
+
+        # Collect all errors
+        all_errors = []
+        all_errors.extend(policies_data.get("errors", []))
+        all_errors.extend(groups_data.get("errors", []))
+        all_errors.extend(auth_methods_data.get("errors", []))
+        review_results["summary"]["errors"] = all_errors
+
+        logger.info(
+            f"Namespace review completed. Found {review_results['summary']['total_policies']} policies, "
+            f"{review_results['summary']['total_groups']} groups, "
+            f"{review_results['summary']['total_auth_methods']} auth methods"
+        )
+
+        if all_errors:
+            logger.warning(f"Completed with {len(all_errors)} errors")
+
+    except Exception as e:
+        logger.error(f"Fatal error during namespace review: {e}")
+        review_results["summary"]["errors"].append(f"Fatal error: {str(e)}")
+
+    return review_results

@@ -64,7 +64,14 @@ def get_env_var(
     if value is not None:
         try:
             if as_type is bool:
-                return value.lower() in ("true", "1", "yes", "on")
+                # Handle case where value is already a boolean (from default)
+                if isinstance(value, bool):
+                    return value
+                # Handle string conversion to boolean
+                if isinstance(value, str):
+                    return value.lower() in ("true", "1", "yes", "on")
+                # Handle other types that can be converted to bool
+                return bool(value)
             return as_type(value)
         except (ValueError, TypeError) as e:
             logger.error(f"Failed to convert {key}={value} to type {as_type.__name__}: {e}")

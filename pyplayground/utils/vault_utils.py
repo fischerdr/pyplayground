@@ -23,6 +23,36 @@ logger = logging.getLogger(__name__)
 # mypy: disable-error-code="no-any-return"
 
 
+def _read_vault_token_file() -> Optional[str]:
+    """Read Vault token from the default CLI token file location.
+
+    The Vault CLI stores tokens in ~/.vault-token after successful login.
+    This function attempts to read from that file as a fallback when
+    VAULT_TOKEN environment variable is not set.
+
+    Returns:
+        The token string if file exists and is readable, None otherwise
+    """
+    try:
+        vault_token_file = os.path.expanduser("~/.vault-token")
+        if os.path.exists(vault_token_file) and os.path.isfile(vault_token_file):
+            with open(vault_token_file, "r") as f:
+                token = f.read().strip()
+                if token:
+                    logger.debug("Successfully read token from ~/.vault-token")
+                    return token
+                else:
+                    logger.debug("~/.vault-token file exists but is empty")
+        else:
+            logger.debug("~/.vault-token file does not exist")
+    except (IOError, OSError) as e:
+        logger.debug(f"Could not read ~/.vault-token file: {e}")
+    except Exception as e:
+        logger.debug(f"Unexpected error reading ~/.vault-token file: {e}")
+
+    return None
+
+
 def create_vault_client(
     url: Optional[str] = None,
     token: Optional[str] = None,
@@ -38,7 +68,7 @@ def create_vault_client(
 
     Args:
         url: Vault server URL. If None, uses VAULT_ADDR environment variable
-        token: Vault authentication token. If None, uses VAULT_TOKEN environment variable
+        token: Vault authentication token. If None, tries VAULT_TOKEN env var, then ~/.vault-token file
         namespace: Vault Enterprise namespace. If None, uses VAULT_NAMESPACE environment variable
         verify: Path to SSL certificate (PEM) for verification. If None, uses system CA certificates
         load_env: Whether to load environment variables from .env file. Defaults to True
@@ -65,13 +95,16 @@ def create_vault_client(
         load_dotenv()
 
     vault_url = url or os.environ.get("VAULT_ADDR")
-    vault_token = token or os.environ.get("VAULT_TOKEN")
+    vault_token = token or os.environ.get("VAULT_TOKEN") or _read_vault_token_file()
     vault_namespace = namespace or os.environ.get("VAULT_NAMESPACE")
 
     if not vault_url:
         raise ValueError("Vault URL not provided and VAULT_ADDR env var not set")
     if not vault_token:
-        raise ValueError("Vault token not provided and VAULT_TOKEN env var not set")
+        raise ValueError(
+            "Vault token not provided. Set VAULT_TOKEN env var, create ~/.vault-token file, "
+            "or use 'vault login' command"
+        )
 
     logger.debug(
         "Creating hvac.Client with resolved params: url=%s, token=%s, namespace=%s, verify=%s",

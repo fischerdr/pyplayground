@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import time
+import urllib3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -58,38 +59,72 @@ def load_kubeconfig_from_string(kubeconfig_str: str) -> None:
         raise ValueError(f"Invalid YAML format in kubeconfig: {e}")
 
 
-def load_kube_config_auto(config_file: Optional[str] = None, context: Optional[str] = None) -> bool:
+def load_kube_config_auto(
+    config_file: Optional[str] = None,
+    context: Optional[str] = None,
+    verify_ssl: bool = True,
+    ssl_ca_cert: Optional[str] = None,
+) -> bool:
     """Attempts to load Kubernetes config from default/specified file,falling back to in-cluster config.
 
     Args:
         config_file: Optional path to kubeconfig file.
         context: Optional context to use if loading from file.
+        verify_ssl: Whether to verify SSL. Defaults to True.
+        ssl_ca_cert: Path to CA cert file.
 
     Returns:
         True if configuration was loaded successfully, False otherwise.
     """
+    loaded = False
     try:
         # Try loading from file first
         config.load_kube_config(config_file=config_file, context=context)
         logger.info(
             f"Loaded kubeconfig from file/context (file='{config_file}', context='{context}')."
         )
-        return True
+        loaded = True
     except config.ConfigException:
         logger.debug("Could not load kubeconfig from file, attempting in-cluster config.")
         try:
             # Fallback to in-cluster config
             config.load_incluster_config()
             logger.info("Loaded in-cluster kubeconfig.")
-            return True
+            loaded = True
         except config.ConfigException:
             logger.error(
                 "Could not load Kubernetes configuration (neither from file/context nor in-cluster)."
             )
-            return False
+            loaded = False
     except Exception as e:
         logger.error(f"An unexpected error occurred during kubeconfig loading: {e}")
-        return False
+        loaded = False
+
+    if loaded:
+        # After loading the config, let's modify the SSL settings if needed.
+        # This will affect all subsequent client creations.
+        configuration = client.Configuration.get_default_copy()
+
+        configuration.verify_ssl = verify_ssl
+        if not verify_ssl:
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            logger.warning(
+                "SSL verification is disabled for Kubernetes client. "
+                "This is not recommended for production."
+            )
+
+        if ssl_ca_cert:
+            if not verify_ssl:
+                logger.warning(
+                    "`ssl_ca_cert` is provided but `verify_ssl` is False. The CA will not be used."
+                )
+            else:
+                configuration.ssl_ca_cert = ssl_ca_cert
+                logger.info(f"Using custom CA for Kubernetes client from: {ssl_ca_cert}")
+
+        client.Configuration.set_default(configuration)
+
+    return loaded
 
 
 def get_k8s_client(api_version: str = "CoreV1Api") -> Any:

@@ -1042,6 +1042,11 @@ def get_auth_role_bindings(  # noqa: C901
                     f"Token auth method '{auth_path}' - roles managed through policies, not role bindings"
                 )
                 roles_data["roles"] = []  # Token auth doesn't have traditional roles
+            elif auth_type == "ns_token":
+                logger.debug(
+                    f"Namespace token auth method '{auth_path}' - roles managed through policies, not role bindings"
+                )
+                roles_data["roles"] = []  # NS token auth doesn't have traditional roles
             else:
                 logger.debug(
                     f"Unknown auth method type '{auth_type}' - skipping role binding retrieval"
@@ -1173,8 +1178,10 @@ def _get_ldap_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, An
 
     try:
         # LDAP uses groups and users, not traditional roles
-        # Try to get LDAP groups
-        groups_response = client.read(f"auth/{auth_path.rstrip('/')}/groups")
+        # Try to get LDAP groups using LIST operation
+        groups_list_path = f"auth/{auth_path.rstrip('/')}/groups"
+        logger.debug(f"Listing LDAP groups at path: {groups_list_path}")
+        groups_response = client.list(groups_list_path)
         logger.debug(f"Raw LDAP groups list response: {groups_response}")
 
         if groups_response and "data" in groups_response and "keys" in groups_response["data"]:
@@ -1206,8 +1213,10 @@ def _get_ldap_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, An
                         f"Error retrieving LDAP group '{group_name}': {str(e)}"
                     )
 
-        # Try to get LDAP users
-        users_response = client.read(f"auth/{auth_path.rstrip('/')}/users")
+        # Try to get LDAP users using LIST operation
+        users_list_path = f"auth/{auth_path.rstrip('/')}/users"
+        logger.debug(f"Listing LDAP users at path: {users_list_path}")
+        users_response = client.list(users_list_path)
         logger.debug(f"Raw LDAP users list response: {users_response}")
 
         if users_response and "data" in users_response and "keys" in users_response["data"]:
@@ -1240,8 +1249,26 @@ def _get_ldap_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, An
                     )
 
     except Exception as e:
-        logger.error(f"Error listing LDAP groups/users: {e}")
-        roles_data["errors"].append(f"Error listing LDAP groups/users: {str(e)}")
+        error_msg = str(e)
+        if "unsupported operation" in error_msg.lower():
+            logger.warning(
+                f"LDAP auth method at '{auth_path}' doesn't support groups/users listing: {e}"
+            )
+            logger.info("This may be normal for certain LDAP auth configurations or permissions")
+            roles_data["errors"].append(
+                f"Groups/users listing not supported for {auth_path}: {str(e)}"
+            )
+        elif "permission denied" in error_msg.lower():
+            logger.warning(f"Permission denied listing LDAP groups/users at '{auth_path}': {e}")
+            logger.info(
+                "This may be normal if your token doesn't have LDAP auth method permissions"
+            )
+            roles_data["errors"].append(
+                f"Permission denied listing LDAP groups/users for {auth_path}: {str(e)}"
+            )
+        else:
+            logger.error(f"Error listing LDAP groups/users: {e}")
+            roles_data["errors"].append(f"Error listing LDAP groups/users: {str(e)}")
 
     return roles_data
 

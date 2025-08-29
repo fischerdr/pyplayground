@@ -18,6 +18,7 @@ import base64
 import logging
 import os
 import sys
+import urllib3
 from typing import Any, Dict, Optional
 
 import click
@@ -49,6 +50,9 @@ VAULT_SA_NAME = "portworx"
 console = Console()
 logger = get_logger(__name__)
 
+
+# Disable SSL warnings - due to self-signed certs
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Helper Functions (Reused from the main script) ---
 
@@ -186,6 +190,19 @@ def check_vault_secret(
     help="Mask/unmask sensitive values in the output. Defaults to not masking.",
     show_default=True,
 )
+@click.option(
+    "--k8s-verify-ssl/--k8s-no-verify-ssl",
+    "k8s_verify_ssl",
+    default=True,
+    help="Enable/disable SSL verification for Kubernetes API.",
+    show_default=True,
+)
+@click.option(
+    "--k8s-ssl-ca-cert",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to a custom CA certificate file for Kubernetes API.",
+    default=None,
+)
 def main(
     secret_path: str,
     vault_namespace: str,
@@ -193,13 +210,17 @@ def main(
     px_namespace: str,
     debug: bool,
     mask_values: bool,
+    k8s_verify_ssl: bool,
+    k8s_ssl_ca_cert: Optional[str],
 ):
     """A targeted script to test access to a single Vault secret path."""
     log_level = logging.DEBUG if debug else logging.INFO
     setup_logging(level=log_level, script_name=os.path.basename(__file__).replace(".py", ""))
     logger.info("Starting Vault secret access test script.")
 
-    if not load_kube_config_auto(config_file=kubeconfig):
+    if not load_kube_config_auto(
+        config_file=kubeconfig, verify_ssl=k8s_verify_ssl, ssl_ca_cert=k8s_ssl_ca_cert
+    ):
         console.print("[bold red]Error: Failed to load Kubernetes configuration.[/bold red]")
         sys.exit(1)
 

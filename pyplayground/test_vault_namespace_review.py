@@ -99,7 +99,7 @@ def main(namespace: Optional[str], debug: bool, output: Optional[str]):
 
     # Get configuration from environment variables with defaults
     namespace = namespace or get_env_var("VAULT_NAMESPACE", default="root")
-    
+
     # Set log level based on debug flag or environment variable
     if debug:
         log_level = logging.DEBUG

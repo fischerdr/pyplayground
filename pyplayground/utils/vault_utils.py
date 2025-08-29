@@ -1064,9 +1064,9 @@ def get_auth_role_bindings(  # noqa: C901
     return role_bindings_data
 
 
-def _get_kubernetes_role_bindings(
+def _get_kubernetes_role_bindings(   # noqa: C901
     client: hvac.Client, auth_path: str
-) -> Dict[str, Any]:  # noqa: C901
+) -> Dict[str, Any]:
     """Retrieve Kubernetes auth method role bindings."""
     roles_data = {"roles": [], "errors": []}
 

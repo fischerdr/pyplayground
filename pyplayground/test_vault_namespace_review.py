@@ -76,15 +76,15 @@ def run_review(namespace: str, debug: bool) -> Dict[str, Any]:
 @click.option(
     "--debug",
     is_flag=True,
-    default=None,
-    help="Enable debug logging. Overrides VAULT_DEBUG env var.",
+    default=False,
+    help="Enable debug logging.",
 )
 @click.option(
     "--output",
     type=click.Path(dir_okay=False, writable=True),
     help="Output file for results (JSON). If not provided, uses VAULT_OUTPUT_DIR env var.",
 )
-def main(namespace: Optional[str], debug: Optional[bool], output: Optional[str]):
+def main(namespace: Optional[str], debug: bool, output: Optional[str]):
     """A CLI tool to perform a comprehensive review of a HashiCorp Vault namespace.
 
     Prerequisites:
@@ -99,18 +99,21 @@ def main(namespace: Optional[str], debug: Optional[bool], output: Optional[str])
 
     # Get configuration from environment variables with defaults
     namespace = namespace or get_env_var("VAULT_NAMESPACE", default="root")
-    debug = debug if debug is not None else get_env_var("VAULT_DEBUG", default=False, as_type=bool)
-    log_level_str = get_env_var("VAULT_LOG_LEVEL", default="INFO")
-
-    # Convert log level string to logging constant
-    log_level_map = {
-        "DEBUG": logging.DEBUG,
-        "INFO": logging.INFO,
-        "WARNING": logging.WARNING,
-        "ERROR": logging.ERROR,
-        "CRITICAL": logging.CRITICAL,
-    }
-    log_level = log_level_map.get(log_level_str.upper(), logging.INFO)
+    
+    # Set log level based on debug flag or environment variable
+    if debug:
+        log_level = logging.DEBUG
+    else:
+        log_level_str = get_env_var("VAULT_LOG_LEVEL", default="INFO")
+        # Convert log level string to logging constant
+        log_level_map = {
+            "DEBUG": logging.DEBUG,
+            "INFO": logging.INFO,
+            "WARNING": logging.WARNING,
+            "ERROR": logging.ERROR,
+            "CRITICAL": logging.CRITICAL,
+        }
+        log_level = log_level_map.get(log_level_str.upper(), logging.INFO)
 
     # Setup Logging
     script_name = os.path.basename(__file__).replace(".py", "")

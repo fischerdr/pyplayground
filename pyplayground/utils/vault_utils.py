@@ -126,7 +126,7 @@ def create_vault_client(
         # Test authentication by checking if we can read our own token info
         logger.debug("Verifying token authentication...")
         try:
-            token_lookup = client.token.lookup_self()
+            token_lookup = client.lookup_token()
             if token_lookup and "data" in token_lookup:
                 token_data = token_lookup["data"]
                 logger.debug("Authentication verification successful:")
@@ -464,8 +464,8 @@ def get_token_info(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
     )
 
     try:
-        logger.debug("Calling client.token.lookup_self()...")
-        token_info = client.token.lookup_self()
+        logger.debug("Calling client.lookup_token() to get self token info...")
+        token_info = client.lookup_token()
         logger.debug(f"Raw token info response: {token_info}")
 
         if not token_info or "data" not in token_info:
@@ -859,9 +859,15 @@ def get_groups(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
                 groups_data["errors"].append(f"Error retrieving group '{group_id}': {str(e)}")
 
     except Exception as e:
-        logger.error(f"Error listing groups: {e}")
-        logger.debug(f"Exception details for listing groups: {type(e).__name__}: {str(e)}")
-        groups_data["errors"].append(f"Error listing groups: {str(e)}")
+        error_msg = str(e)
+        if "permission denied" in error_msg.lower():
+            logger.warning(f"Permission denied listing identity groups: {e}")
+            logger.info("This may be normal if your token doesn't have identity group permissions")
+            groups_data["errors"].append(f"Permission denied listing groups: {str(e)}")
+        else:
+            logger.error(f"Error listing groups: {e}")
+            logger.debug(f"Exception details for listing groups: {type(e).__name__}: {str(e)}")
+            groups_data["errors"].append(f"Error listing groups: {str(e)}")
 
     logger.debug(
         f"Groups retrieval completed. Total groups: {len(groups_data['groups'])}, Errors: {len(groups_data['errors'])}"
@@ -1064,7 +1070,7 @@ def get_auth_role_bindings(  # noqa: C901
     return role_bindings_data
 
 
-def _get_kubernetes_role_bindings(   # noqa: C901
+def _get_kubernetes_role_bindings(  # noqa: C901
     client: hvac.Client, auth_path: str
 ) -> Dict[str, Any]:
     """Retrieve Kubernetes auth method role bindings."""
@@ -1073,8 +1079,10 @@ def _get_kubernetes_role_bindings(   # noqa: C901
     logger.debug(f"Retrieving Kubernetes roles for auth path: {auth_path}")
 
     try:
-        # List roles for Kubernetes auth method
-        roles_response = client.read(f"auth/{auth_path.rstrip('/')}/role")
+        # List roles for Kubernetes auth method using the correct LIST operation
+        roles_list_path = f"auth/{auth_path.rstrip('/')}/role"
+        logger.debug(f"Listing Kubernetes roles at path: {roles_list_path}")
+        roles_response = client.list(roles_list_path)
         logger.debug(f"Raw Kubernetes roles list response: {roles_response}")
 
         if roles_response and "data" in roles_response and "keys" in roles_response["data"]:
@@ -1137,8 +1145,22 @@ def _get_kubernetes_role_bindings(   # noqa: C901
             logger.debug("No Kubernetes roles found or unable to list roles")
 
     except Exception as e:
-        logger.error(f"Error listing Kubernetes roles: {e}")
-        roles_data["errors"].append(f"Error listing Kubernetes roles: {str(e)}")
+        error_msg = str(e)
+        if "unsupported operation" in error_msg.lower():
+            logger.warning(
+                f"Kubernetes auth method at '{auth_path}' doesn't support role listing: {e}"
+            )
+            logger.info("This may be normal for certain Kubernetes auth configurations")
+            roles_data["errors"].append(f"Role listing not supported for {auth_path}: {str(e)}")
+        elif "permission denied" in error_msg.lower():
+            logger.warning(f"Permission denied listing Kubernetes roles at '{auth_path}': {e}")
+            logger.info("This may be normal if your token doesn't have auth method permissions")
+            roles_data["errors"].append(
+                f"Permission denied listing roles for {auth_path}: {str(e)}"
+            )
+        else:
+            logger.error(f"Error listing Kubernetes roles: {e}")
+            roles_data["errors"].append(f"Error listing Kubernetes roles: {str(e)}")
 
     return roles_data
 
@@ -1416,7 +1438,9 @@ def _get_oidc_jwt_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str
 
     try:
         # List roles for OIDC/JWT auth method
-        roles_response = client.read(f"auth/{auth_path.rstrip('/')}/role")
+        roles_list_path = f"auth/{auth_path.rstrip('/')}/role"
+        logger.debug(f"Listing OIDC/JWT roles at path: {roles_list_path}")
+        roles_response = client.list(roles_list_path)
         logger.debug(f"Raw OIDC/JWT roles list response: {roles_response}")
 
         if roles_response and "data" in roles_response and "keys" in roles_response["data"]:
@@ -1475,7 +1499,9 @@ def _get_approle_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str,
 
     try:
         # List roles for AppRole auth method
-        roles_response = client.read(f"auth/{auth_path.rstrip('/')}/role")
+        roles_list_path = f"auth/{auth_path.rstrip('/')}/role"
+        logger.debug(f"Listing AppRole roles at path: {roles_list_path}")
+        roles_response = client.list(roles_list_path)
         logger.debug(f"Raw AppRole roles list response: {roles_response}")
 
         if roles_response and "data" in roles_response and "keys" in roles_response["data"]:

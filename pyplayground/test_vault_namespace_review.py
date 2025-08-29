@@ -5,55 +5,46 @@
 This script demonstrates how to use the vault_namespace_review module
 and provides a simple way to test the functionality.
 """
-
+import json
+import logging
 import os
 import sys
 from typing import Any, Dict
 
+import click
+from rich.console import Console
+from rich.json import JSON
+
 from pyplayground.utils.logging_utils import get_logger, setup_logging
 from pyplayground.utils.vault_utils import perform_namespace_review
 
+logger = get_logger(__name__)
 
-def test_namespace_review(namespace: str = "root", debug: bool = True) -> Dict[str, Any]:
-    """Test the namespace review functionality.
+
+def run_review(namespace: str, debug: bool) -> Dict[str, Any]:
+    """Executes the namespace review against a target Vault namespace.
 
     Args:
-        namespace: The namespace to review
-        debug: Whether to enable debug logging
+        namespace: The Vault namespace to review (e.g., "root").
+        debug: A flag to enable verbose debug logging.
 
     Returns:
-        Dict containing the review results
+        A dictionary containing the complete review results or an error message.
     """
-    logger = get_logger(__name__)
-
-    # Setup logging
-    import logging
-
-    log_level = logging.DEBUG if debug else logging.INFO
-    script_name = "test_vault_namespace_review"
-    setup_logging(level=log_level, script_name=script_name)
-
-    logger.info(f"Testing namespace review for: {namespace}")
-
+    logger.info(f"Starting namespace review for: '{namespace}'")
     try:
         # Check environment variables
-        vault_addr = os.getenv("VAULT_ADDR")
-        vault_token = os.getenv("VAULT_TOKEN")
+        if not os.getenv("VAULT_ADDR") or not os.getenv("VAULT_TOKEN"):
+            msg = "VAULT_ADDR and VAULT_TOKEN environment variables must be set."
+            logger.error(msg)
+            return {"error": msg}
 
-        if not vault_addr:
-            logger.error("VAULT_ADDR environment variable not set")
-            return {"error": "VAULT_ADDR not set"}
-
-        if not vault_token:
-            logger.error("VAULT_TOKEN environment variable not set")
-            return {"error": "VAULT_TOKEN not set"}
-
-        logger.info(f"Using Vault at: {vault_addr}")
+        logger.info(f"Using Vault at: {os.getenv('VAULT_ADDR')}")
 
         # Perform the review
         results = perform_namespace_review(namespace, debug)
 
-        # Print summary
+        # Log summary
         summary = results.get("summary", {})
         logger.info("Review completed successfully!")
         logger.info(f"  Policies: {summary.get('total_policies', 0)}")
@@ -64,38 +55,53 @@ def test_namespace_review(namespace: str = "root", debug: bool = True) -> Dict[s
         return results
 
     except Exception as e:
-        logger.error(f"Test failed: {e}")
+        logger.error(f"Test failed with an unexpected error: {e}", exc_info=debug)
         return {"error": str(e)}
 
 
-def main():
-    """Main test function."""
-    import argparse
+@click.command()
+@click.option(
+    "--namespace", default="root", help="The Vault namespace to review.", show_default=True
+)
+@click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, writable=True),
+    help="Output file for results (JSON).",
+)
+def main(namespace: str, debug: bool, output: str):
+    """A CLI tool to perform a comprehensive review of a HashiCorp Vault namespace.
 
-    parser = argparse.ArgumentParser(description="Test Vault Namespace Review")
-    parser.add_argument("--namespace", default="root", help="Namespace to test")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--output", help="Output file for results")
-
-    args = parser.parse_args()
+    Prerequisites:
+    - The VAULT_ADDR and VAULT_TOKEN environment variables must be set.
+    - The script requires read permissions on policies, groups, and auth methods
+      within the target namespace.
+    """
+    # Setup Logging
+    log_level = logging.DEBUG if debug else logging.INFO
+    script_name = os.path.basename(__file__).replace(".py", "")
+    setup_logging(level=log_level, script_name=script_name)
 
     # Run the test
-    results = test_namespace_review(args.namespace, args.debug)
+    results = run_review(namespace, debug)
 
     # Output results
-    import json
-
     json_output = json.dumps(results, indent=2, default=str)
 
-    if args.output:
-        with open(args.output, "w") as f:
-            f.write(json_output)
-        print(f"Results written to: {args.output}")
+    if output:
+        try:
+            with open(output, "w") as f:
+                f.write(json_output)
+            logger.info(f"Results written to: {output}")
+        except IOError as e:
+            logger.error(f"Failed to write to output file '{output}': {e}")
+            sys.exit(1)
     else:
-        print(json_output)
+        console = Console()
+        console.print(JSON(json_output))
 
     # Exit with error if there was an error
-    if "error" in results:
+    if "error" in results or (results.get("summary", {}).get("errors")):
         sys.exit(1)
     else:
         sys.exit(0)

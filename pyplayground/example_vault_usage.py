@@ -5,36 +5,42 @@
 This script demonstrates how to use the vault namespace review
 functionality programmatically.
 """
-
 import json
+import logging
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
+import click
+from rich.console import Console
 
 from pyplayground.utils.logging_utils import get_logger, setup_logging
-from pyplayground.utils.vault_utils import perform_namespace_review
+from pyplayground.utils.vault_utils import VaultError, perform_namespace_review
+
+logger = get_logger(__name__)
 
 
-def example_basic_usage():
-    """Example of basic usage."""
-    logger = get_logger(__name__)
+def example_basic_usage(namespace: str, debug: bool) -> Optional[Dict[str, Any]]:
+    """Performs a basic namespace review and logs a summary of the findings.
 
-    # Setup logging
-    import logging
+    Args:
+        namespace: The target Vault namespace to review.
+        debug: A flag to enable verbose debug logging.
 
-    setup_logging(level=logging.INFO, script_name="example_vault_usage")
-
+    Returns:
+        A dictionary containing the review results, or None if the review fails.
+    """
     logger.info("Starting basic usage example")
 
     # Check environment
     if not os.getenv("VAULT_ADDR") or not os.getenv("VAULT_TOKEN"):
         logger.error("Please set VAULT_ADDR and VAULT_TOKEN environment variables")
-        return
+        return None
 
     # Perform review
     try:
-        results = perform_namespace_review("root", debug=False)
+        results = perform_namespace_review(namespace, debug=debug)
 
-        # Print summary
+        # Log summary
         summary = results.get("summary", {})
         logger.info(f"Found {summary.get('total_policies', 0)} policies")
         logger.info(f"Found {summary.get('total_groups', 0)} groups")
@@ -42,147 +48,129 @@ def example_basic_usage():
 
         return results
 
+    except VaultError as e:
+        logger.error(f"Example failed due to a Vault API error: {e}", exc_info=debug)
+        return None
     except Exception as e:
-        logger.error(f"Example failed: {e}")
+        logger.error(f"An unexpected error occurred in basic example: {e}", exc_info=debug)
         return None
 
 
 def example_policy_analysis(results: Dict[str, Any]):
-    """Example of analyzing policy results."""
-    logger = get_logger(__name__)
+    """Analyzes and logs details from the 'policies' section of the review results.
 
+    Args:
+        results: The review results to analyze.
+    """
     policies = results.get("policies", {}).get("policies", [])
-
-    logger.info("Policy Analysis:")
+    logger.info(f"Analyzing {len(policies)} policies...")
     for policy in policies:
         name = policy.get("name", "Unknown")
-        policy_type = policy.get("type", "Unknown")
         rules = policy.get("rules", "")
-
-        logger.info(f"  Policy: {name} (Type: {policy_type})")
-        logger.info(f"    Rules length: {len(rules)} characters")
-
-        # Simple rule analysis
+        logger.info(f"  - Policy: {name} (Rules length: {len(rules)} chars)")
         if "secret" in rules.lower():
-            logger.info("    Contains 'secret' references")
-        if "auth" in rules.lower():
-            logger.info("    Contains 'auth' references")
+            logger.info("    Contains 'secret' path references.")
+        if "deny" in rules.lower() or "forbidden" in rules.lower():
+            logger.warning("    Contains 'deny' or 'forbidden' rules.")
 
 
 def example_group_analysis(results: Dict[str, Any]):
-    """Example of analyzing group results."""
-    logger = get_logger(__name__)
+    """Analyzes and logs details from the 'groups' section of the review results.
 
+    Args:
+        results: The review results to analyze.
+    """
     groups = results.get("groups", {}).get("groups", [])
-
-    logger.info("Group Analysis:")
+    logger.info(f"Analyzing {len(groups)} groups...")
     for group in groups:
         name = group.get("name", "Unknown")
-        group_type = group.get("type", "Unknown")
-        member_entities = len(group.get("member_entity_ids", []))
-        member_groups = len(group.get("member_group_ids", []))
         policies = group.get("policies", [])
-
-        logger.info(f"  Group: {name} (Type: {group_type})")
-        logger.info(f"    Member entities: {member_entities}")
-        logger.info(f"    Member groups: {member_groups}")
-        logger.info(f"    Policies: {', '.join(policies) if policies else 'None'}")
+        logger.info(f"  - Group: {name} (Policies: {', '.join(policies) if policies else 'None'})")
 
 
 def example_auth_method_analysis(results: Dict[str, Any]):
-    """Example of analyzing auth method results."""
-    logger = get_logger(__name__)
+    """Analyzes and logs details from the 'auth_methods' section of the review results.
 
+    Args:
+        results: The review results to analyze.
+    """
     auth_methods = results.get("auth_methods", {}).get("auth_methods", [])
-
-    logger.info("Auth Method Analysis:")
+    logger.info(f"Analyzing {len(auth_methods)} auth methods...")
     for auth_method in auth_methods:
         path = auth_method.get("path", "Unknown")
         auth_type = auth_method.get("type", "Unknown")
-        description = auth_method.get("description", "")
-
-        logger.info(f"  Auth Method: {path} (Type: {auth_type})")
-        if description:
-            logger.info(f"    Description: {description}")
+        logger.info(f"  - Auth Method: {path} (Type: {auth_type})")
 
 
-def example_error_handling():
-    """Example of error handling."""
-    logger = get_logger(__name__)
+def example_error_handling(debug: bool):
+    """Demonstrates how errors are captured and reported during a review of a non-existent namespace.
 
-    logger.info("Testing error handling...")
+    Args:
+        debug: A flag to enable verbose debug logging.
+    """
+    logger.info("Testing error handling with a non-existent namespace...")
 
-    # This will likely fail if environment is not set up
-    try:
-        results = perform_namespace_review("non-existent-namespace", debug=False)
-
-        # Check for errors
-        errors = results.get("summary", {}).get("errors", [])
-        if errors:
-            logger.warning(f"Found {len(errors)} errors:")
-            for error in errors:
-                logger.warning(f"  - {error}")
-
-        return results
-
-    except Exception as e:
-        logger.error(f"Error handling example failed: {e}")
-        return None
+    # This will fail because the namespace does not exist.
+    results = perform_namespace_review("non-existent-namespace", debug=debug)
+    errors = results.get("summary", {}).get("errors", [])
+    if errors:
+        logger.warning(f"Successfully captured {len(errors)} errors:")
+        for error in errors:
+            logger.warning(f"  - {error}")
+    else:
+        logger.info("No errors were captured (this may be unexpected).")
 
 
-def main():
-    """Main example function."""
-    logger = get_logger(__name__)
+@click.command()
+@click.option(
+    "--namespace", default="root", help="The target Vault namespace to review.", show_default=True
+)
+@click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
+def main(namespace: str, debug: bool):
+    """Runs a series of examples demonstrating how to use and interpret the results of the `perform_namespace_review` utility.
 
+    Prerequisites:
+        - VAULT_ADDR and VAULT_TOKEN environment variables must be set.
+    """
     # Setup logging
-    import logging
+    log_level = logging.DEBUG if debug else logging.INFO
+    setup_logging(level=log_level, script_name="example_vault_usage")
+    console = Console()
 
-    setup_logging(level=logging.INFO, script_name="example_vault_usage")
-
-    logger.info("Starting Vault Namespace Review examples")
+    console.rule("[bold]Vault Namespace Review Examples[/bold]")
 
     # Example 1: Basic usage
-    logger.info("=" * 50)
-    logger.info("Example 1: Basic Usage")
-    logger.info("=" * 50)
-
-    results = example_basic_usage()
+    console.rule("Example 1: Basic Usage")
+    results = example_basic_usage(namespace, debug)
 
     if results:
         # Example 2: Policy analysis
-        logger.info("=" * 50)
-        logger.info("Example 2: Policy Analysis")
-        logger.info("=" * 50)
+        console.rule("Example 2: Policy Analysis")
         example_policy_analysis(results)
 
         # Example 3: Group analysis
-        logger.info("=" * 50)
-        logger.info("Example 3: Group Analysis")
-        logger.info("=" * 50)
+        console.rule("Example 3: Group Analysis")
         example_group_analysis(results)
 
         # Example 4: Auth method analysis
-        logger.info("=" * 50)
-        logger.info("Example 4: Auth Method Analysis")
-        logger.info("=" * 50)
+        console.rule("Example 4: Auth Method Analysis")
         example_auth_method_analysis(results)
 
         # Example 5: Save results
-        logger.info("=" * 50)
-        logger.info("Example 5: Saving Results")
-        logger.info("=" * 50)
-
-        with open("example_results.json", "w") as f:
-            json.dump(results, f, indent=2, default=str)
-        logger.info("Results saved to example_results.json")
+        console.rule("Example 5: Saving Results")
+        output_file = "example_results.json"
+        try:
+            with open(output_file, "w") as f:
+                json.dump(results, f, indent=2, default=str)
+            logger.info(f"Results saved to '{output_file}'")
+        except IOError as e:
+            logger.error(f"Failed to save results to '{output_file}': {e}")
 
     # Example 6: Error handling
-    logger.info("=" * 50)
-    logger.info("Example 6: Error Handling")
-    logger.info("=" * 50)
-    example_error_handling()
+    console.rule("Example 6: Error Handling")
+    example_error_handling(debug)
 
-    logger.info("Examples completed")
+    logger.info("Examples completed.")
 
 
 if __name__ == "__main__":

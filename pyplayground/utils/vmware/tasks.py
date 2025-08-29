@@ -1,4 +1,5 @@
-"""
+"""Helper module for task operations.
+
 Written by Michael Rice <michael@michaelrice.org>
 
 Github: https://github.com/michaelrice
@@ -7,15 +8,20 @@ Blog: http://www.errr-online.com/
 This code has been released under the terms of the Apache 2 licenses
 http://www.apache.org/licenses/LICENSE-2.0.html
 
-Helper module for task operations.
 """
 
 from pyVmomi import vim, vmodl
 
 
-def wait_for_tasks(si, tasks):
-    """Given the service instance and tasks, it returns after all the
-    tasks are complete
+def wait_for_tasks(si, tasks):  # noqa: C901
+    """Given the service instance and tasks, it returns after all the tasks are complete.
+
+    Args:
+        si: The service instance.
+        tasks: The tasks to wait for.
+
+    Returns:
+        None
     """
     property_collector = si.content.propertyCollector
     task_list = [str(task) for task in tasks]

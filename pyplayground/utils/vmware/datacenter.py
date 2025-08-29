@@ -1,4 +1,5 @@
-"""
+"""Example to show the minimal steps required to create a datacenter in vCenter.
+
 Written by Michael Rice
 Github: https://github.com/michaelrice
 Website: https://michaelrice.github.io/
@@ -16,8 +17,18 @@ from pyVmomi import vim
 
 
 def create_datacenter(dc_name=None, service_instance=None, folder=None):
-    """
-    Creates a new datacenter with the given name.
+    r"""Creates a new datacenter with the given name.
+
+    Args:
+        dc_name: Name for the new datacenter.
+        service_instance: ServiceInstance connection to a given vCenter.
+        folder: Folder object to create DC in. If None it will default to
+            rootFolder.
+
+    Returns:
+        Datacenter MORef
+
+    Notes:
     Any % (percent) character used in this name parameter must be escaped,
     unless it is used to start an escape sequence. Clients may also escape
     any other characters in this name parameter.

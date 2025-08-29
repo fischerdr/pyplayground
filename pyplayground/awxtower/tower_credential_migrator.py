@@ -768,8 +768,6 @@ def main(  # noqa: C901
         # Dry run to test without writing file
         sudo python tower_credential_migrator.py --dry-run
     """
-    global logger
-
     # Load environment variables from .env file
     load_env_file()
 

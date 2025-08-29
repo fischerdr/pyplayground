@@ -1,37 +1,33 @@
-# VMware vSphere Python SDK
-# Copyright (c) 2008-2021 VMware, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""
-Utility functions for the vSphere API
+"""Utility functions for the vSphere API.
 
 See com.vmware.apputils.vim25.ServiceUtil in the java API.
+VMware vSphere Python SDK
+Copyright (c) 2008-2021 VMware, Inc. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
 """
 
 from pyVmomi import vim, vmodl
 
 
 def build_full_traversal():
-    """
-    Builds a traversal spec that will recurse through all objects .. or at
-    least I think it does. additions welcome.
+    """Builds a traversal spec that will recurse through all objects.
 
     See com.vmware.apputils.vim25.ServiceUtil.buildFullTraversal in the java
     API. Extended by Sebastian Tello's examples from pysphere to reach networks
     and datastores.
-    """
 
+    Returns:
+        The full traversal spec.
+    """
     traversal_spec = vmodl.query.PropertyCollector.TraversalSpec
     selection_spec = vmodl.query.PropertyCollector.SelectionSpec
 

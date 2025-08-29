@@ -1,10 +1,17 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""Cloud drive JSON cleanup utility.
+
+This module provides functionality to clean cloud drive configuration JSON files
+by removing entries where 'Configs' is null.
+"""
+
 import json
 
 
 def clean_cloud_drive_json(input_file, output_file):
-    # Load the JSON from the file
-    """
-    Reads a JSON file and removes any entries in the 'cloud-drive' data where 'Configs' is null.
+    """Read a JSON file and remove entries in 'cloud-drive' data where 'Configs' is null.
 
     Args:
         input_file (str): The path to the input JSON file.

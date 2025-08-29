@@ -1,4 +1,5 @@
-"""
+"""Utility functions for working with VMware alarms.
+
 Written by Michael Rice <michael@michaelrice.org>
 Github: https://github.com/michaelrice
 Website: https://michaelrice.github.io/
@@ -14,9 +15,7 @@ import requests
 
 
 def reset_alarm(**kwargs):
-    """
-    Resets an alarm on a given HostSystem in a vCenter to the green state
-    without someone having to log in to do it manually.
+    """Reset an alarm on a given HostSystem in a vCenter to the green state without someone having to log in to do it manually.
 
     This is done by using an unexposed API call. This requires us
     to manually construct the SOAP envelope. We use the session key
@@ -35,10 +34,14 @@ def reset_alarm(**kwargs):
     HOST = SI.content.searchIndex.FindByxxx(xxx)
     alarm.reset_alarm(entity_moref=HOST._moId, entity_type='HostSystem',
                       alarm_moref='alarm-1', service_instance=SI)
-    :param service_instance:
-    :param entity_moref:
-    :param alarm:
-    :return boolean:
+
+    Args:
+        service_instance: The service instance.
+        entity_moref: The entity moref.
+        alarm: The alarm.
+
+    Returns:
+        Boolean: True if the alarm was reset, False otherwise.
     """
     service_instance = kwargs.get("service_instance")
     payload = _build_payload(**kwargs)
@@ -50,13 +53,15 @@ def reset_alarm(**kwargs):
 
 
 def _build_payload(**kwargs):
-    """
-    Builds a SOAP envelope to send to the vCenter hidden API
+    """Builds a SOAP envelope to send to the vCenter hidden API.
 
-    :param entity_moref:
-    :param alarm_moref:
-    :param entity_type:
-    :return:
+    Args:
+        entity_moref: The entity moref.
+        alarm_moref: The alarm moref.
+        entity_type: The entity type.
+
+    Returns:
+        String: The SOAP envelope.
     """
     entity_moref = kwargs.get("entity_moref")
     entity_type = kwargs.get("entity_type")
@@ -90,13 +95,14 @@ def _build_payload(**kwargs):
 
 
 def _send_request(payload=None, session=None):
-    """
-    Using requests we send a SOAP envelope directly to the
-    vCenter API to reset an alarm to the green state.
+    """Using requests we send a SOAP envelope directly to the vCenter API to reset an alarm to the green state.
 
-    :param payload:
-    :param session:
-    :return:
+    Args:
+        payload: The payload.
+        session: The session.
+
+    Returns:
+        Boolean: True if the request was successful, False otherwise.
     """
     stub = session
     host_port = stub.host
@@ -123,10 +129,13 @@ def _send_request(payload=None, session=None):
 
 
 def print_triggered_alarms(entity=None):
-    """
-    This is a useful method if you need to print out the alarm morefs
+    """This is a useful method if you need to print out the alarm morefs.
 
-    :param entity:
+    Args:
+        entity: The entity.
+
+    Returns:
+        None
     """
     alarms = entity.triggeredAlarmState
     for alarm in alarms:
@@ -137,13 +146,13 @@ def print_triggered_alarms(entity=None):
 
 
 def get_alarm_refs(entity=None):
-    """
-    Useful method that will return a list of dict with the moref and alarm
-    status for all triggered alarms on a given entity.
+    """Useful method that will return a list of dict with the moref and alarm status for all triggered alarms on a given entity.
 
+    Args:
+        entity: The entity.
 
-    :param entity:
-    :return list: [{'alarm':'alarm-101', 'status':'red'}]
+    Returns:
+        List: A list of dictionaries with the alarm moref and status.
     """
     alarm_states = entity.triggeredAlarmState
     ret = []

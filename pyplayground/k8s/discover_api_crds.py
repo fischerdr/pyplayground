@@ -1,10 +1,18 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""Kubernetes API resource and CRD discovery utility.
+
+This module provides functionality to discover all available API resources
+and Custom Resource Definitions (CRDs) in a Kubernetes cluster.
+"""
+
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 
 
 def get_all_api_resources_and_crds():
-    """
-    Fetches all API resources and CRDs available in the Kubernetes cluster.
+    """Fetch all API resources and CRDs available in the Kubernetes cluster.
 
     Returns:
         dict: A dictionary with two keys:

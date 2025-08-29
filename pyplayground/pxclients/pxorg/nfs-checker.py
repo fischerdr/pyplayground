@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""NFS checker and node management utility.
+
+This module provides functionality to check NFS mounts on Kubernetes nodes
+and perform cordon-drain-reboot operations for nodes with stale entries.
+"""
+
 import argparse
 import json
 import subprocess
@@ -10,6 +19,17 @@ DRAIN_TIMEOUT = 300  # Timeout for draining the node in seconds
 
 
 def run_command(command):
+    """Run a shell command and return output or raise exception on failure.
+
+    Args:
+        command (str): Shell command to execute.
+
+    Returns:
+        str: Command output stripped of whitespace.
+
+    Raises:
+        Exception: If command returns non-zero exit code.
+    """
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
     if result.returncode != 0:
         raise Exception(result.stderr)
@@ -17,6 +37,18 @@ def run_command(command):
 
 
 def run_command_with_timeout(command, timeout):
+    """Run a shell command with timeout and return output.
+
+    Args:
+        command (str): Shell command to execute.
+        timeout (int): Timeout in seconds.
+
+    Returns:
+        str: Command output stripped of whitespace.
+
+    Raises:
+        Exception: If command returns non-zero exit code or times out.
+    """
     result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise Exception(result.stderr)
@@ -24,6 +56,11 @@ def run_command_with_timeout(command, timeout):
 
 
 def get_nodes():
+    """Get list of Kubernetes nodes with their IP addresses.
+
+    Returns:
+        List[Tuple[str, str]]: List of (node_name, node_ip) tuples.
+    """
     try:
         nodes_output = run_command(f"{KUBE_CLI} get nodes -o wide")
         nodes = []
@@ -40,6 +77,14 @@ def get_nodes():
 
 
 def get_nodes_from_file(file_path):
+    """Load node information from a JSON file.
+
+    Args:
+        file_path (str): Path to JSON file containing node data.
+
+    Returns:
+        List[Tuple[str, str]]: List of (node_name, node_ip) tuples.
+    """
     try:
         with open(file_path, "r") as file:
             nodes = [tuple(line.strip().split(",")) for line in file.readlines()]
@@ -50,6 +95,14 @@ def get_nodes_from_file(file_path):
 
 
 def get_node_ip(node_name):
+    """Get IP address for a specific node.
+
+    Args:
+        node_name (str): Name of the Kubernetes node.
+
+    Returns:
+        str: IP address of the node.
+    """
     node_info = run_command(f"{KUBE_CLI} get node {node_name} -o json")
     node_data = json.loads(node_info)
     for address in node_data["status"]["addresses"]:
@@ -59,6 +112,14 @@ def get_node_ip(node_name):
 
 
 def get_nfs_mounts(node_ip):
+    """Get NFS mounts from a specific node.
+
+    Args:
+        node_ip (str): IP address of the node to check.
+
+    Returns:
+        str: Output from mount command showing NFS mounts.
+    """
     try:
         mount_output = run_command(
             f"ssh -i {SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {SSH_USER}@{node_ip} 'sudo mount | grep nfs | grep px'"
@@ -71,6 +132,14 @@ def get_nfs_mounts(node_ip):
 
 
 def check_nfs_on_node(node_ip):
+    """Check if node has stale NFS entries.
+
+    Args:
+        node_ip (str): IP address of the node to check.
+
+    Returns:
+        bool: True if node has stale NFS entries, False otherwise.
+    """
     nfs_mounts = get_nfs_mounts(node_ip)
     if not nfs_mounts:
         print(f"No PX Sharedv4 mounts found on node {node_ip}.\n")
@@ -106,6 +175,15 @@ def check_nfs_on_node(node_ip):
 
 
 def cordon_drain_reboot_node(node, perform_reboot):
+    """Cordon, drain, and optionally reboot a Kubernetes node.
+
+    Args:
+        node (str): Name of the node to process.
+        perform_reboot (bool): Whether to actually perform the reboot.
+
+    Returns:
+        bool: True if operation was successful, False otherwise.
+    """
     print(f"Performing Cordon-Drain-Reboot operation on node {node}.")
     print(f"Cordoning node {node}")
     try:
@@ -140,8 +218,20 @@ def cordon_drain_reboot_node(node, perform_reboot):
     else:
         print(f"DRY RUN: Would reboot node {node} with IP {node_ip}")
 
+    return wait_for_node_ready_and_uncordon(node)
+
+
+def wait_for_node_ready_and_uncordon(node):
+    """Wait for a node to come back online and uncordon it.
+
+    Args:
+        node (str): Name of the node to wait for.
+
+    Returns:
+        bool: True if node became ready and was uncordoned, False otherwise.
+    """
     print(f"Waiting for node {node} to come back online")
-    print(f"Sleeping 90 seconds before checking node status...")
+    print("Sleeping 90 seconds before checking node status...")
     time.sleep(90)
     start_time = time.time()
     max_wait_time = 1800  # 30 minutes
@@ -164,6 +254,12 @@ def cordon_drain_reboot_node(node, perform_reboot):
 
 
 def main(perform_reboot, nodes_file):
+    """Main function to check NFS mounts and manage nodes.
+
+    Args:
+        perform_reboot (bool): Whether to perform actual reboot operations.
+        nodes_file (str): Optional path to file containing node information.
+    """
     if nodes_file:
         nodes = get_nodes_from_file(nodes_file)
     else:
@@ -183,7 +279,7 @@ def main(perform_reboot, nodes_file):
 
     if perform_reboot:
         print(
-            f"\nPerforming Cordon-Drain-Reboot operation on nodes with stale PX Sharedv4 entries...\n"
+            "\nPerforming Cordon-Drain-Reboot operation on nodes with stale PX Sharedv4 entries...\n"
         )
         for node_name, node_ip in stale_nodes:
             cordon_drain_reboot_node(node_name, perform_reboot)

@@ -1,10 +1,19 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""Ollama token counting utility.
+
+This module provides functionality to count tokens for Ollama models using
+HuggingFace tokenizers. It supports various model types and provides accurate
+token counting for chat completions.
+"""
+
 import copy
 import os
 import sys
 
-from transformers import AutoTokenizer
-
 from llm_tester.logger import log
+from transformers import AutoTokenizer
 
 from .model_mapper import model_mapper
 
@@ -15,7 +24,6 @@ tokenizers = {}
 
 def load_ollama_tokenizers(models: list[str]):
     """Load all tokenizers for the given ollama models."""
-
     # Convert Groq models to Ollama models
     groq_models = model_mapper.filter_models_by_client(models, "groq")
 
@@ -32,7 +40,10 @@ def load_ollama_tokenizers(models: list[str]):
 
 
 class OllamaTokenCounter:
+    """Token counter for Ollama models using HuggingFace tokenizers."""
+
     def __init__(self):
+        """Initialize the OllamaTokenCounter."""
         pass
 
     def _get_tokenizer(self, ollama_model: str):

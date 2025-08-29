@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""Portworx node zone management utility.
+
+This module provides functionality to manage Portworx node zones, including
+labeling nodes and updating ConfigMaps for zone assignments.
+"""
+
 import argparse
 import json
 import time
@@ -6,13 +15,28 @@ from kubernetes import client, config
 
 
 class PortworxNodeManager:
+    """Manager for Portworx node zone operations."""
+
     def __init__(self, zone, dry_run=True, debug_cm=False, v1_client=None):
+        """Initialize the PortworxNodeManager.
+
+        Args:
+            zone (str): Target zone for node assignment.
+            dry_run (bool): Whether to perform dry run (no actual changes).
+            debug_cm (bool): Whether to enable ConfigMap debugging.
+            v1_client: Kubernetes API client instance.
+        """
         self.v1 = v1_client
         self.zone = zone
         self.dry_run = dry_run
         self.debug_cm = debug_cm
 
     def get_px_nodes(self):
+        """Get all Portworx-eligible nodes (excluding masters and disabled nodes).
+
+        Returns:
+            List: List of node objects that can run Portworx.
+        """
         print("Fetching all nodes except master nodes and nodes with px/enabled=false...")
         nodes = self.v1.list_node()
 
@@ -31,6 +55,12 @@ class PortworxNodeManager:
         return filtered_nodes
 
     def label_node(self, node_name, labels):
+        """Apply labels to a Kubernetes node.
+
+        Args:
+            node_name (str): Name of the node to label.
+            labels (dict): Dictionary of labels to apply.
+        """
         print(f"Dry-run: {self.dry_run} - Adding labels {labels} to node {node_name}...")
         if not self.dry_run:
             body = {"metadata": {"labels": labels}}
@@ -38,6 +68,11 @@ class PortworxNodeManager:
             print(f"Node {node_name} labeled successfully with {labels}.")
 
     def update_cm(self, node_name):
+        """Update ConfigMap with node zone information.
+
+        Args:
+            node_name (str): Name of the node to update in ConfigMap.
+        """
         print(f"Fetching ConfigMap for node {node_name}...")
         config_maps = self.v1.list_namespaced_config_map(namespace="kube-system")
         for cm in config_maps.items:
@@ -82,6 +117,11 @@ class PortworxNodeManager:
                     print(f"No changes made to ConfigMap {cm.metadata.name} for {node_name}.")
 
     def label_px_nodes(self, node_names):
+        """Label multiple Portworx nodes with zone information.
+
+        Args:
+            node_names (List[str]): List of node names to label.
+        """
         nodes = self.get_px_nodes()
         node_dict = {node.metadata.name: node for node in nodes}
 
@@ -127,6 +167,14 @@ class PortworxNodeManager:
 
 
 def load_nodes_from_file(file_path):
+    """Load node names from a text file.
+
+    Args:
+        file_path (str): Path to file containing node names (one per line).
+
+    Returns:
+        List[str]: List of node names loaded from the file.
+    """
     try:
         with open(file_path, "r") as f:
             nodes = [line.strip() for line in f.readlines() if line.strip()]

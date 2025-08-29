@@ -1,6 +1,5 @@
 # __init__.py
-"""
-This module provides utility functions for interacting with VMware vSphere.
+"""This module provides utility functions for interacting with VMware vSphere.
 
 It includes functions for:
 

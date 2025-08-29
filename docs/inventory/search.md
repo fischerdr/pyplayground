@@ -92,7 +92,7 @@ Get results in JSON format:
 
 The tool uses the inventory API endpoint:
 
-```
+```text
 {base_url}/v1/inventory/clusters
 ```
 

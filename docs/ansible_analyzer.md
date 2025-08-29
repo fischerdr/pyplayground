@@ -76,12 +76,14 @@ The analyzer searches for Ansible content in these locations:
 The analyzer identifies these modules:
 
 **Short names:**
+
 - `shell`
-- `command` 
+- `command`
 - `raw`
 - `script`
 
 **Fully Qualified Collection Names (FQCN):**
+
 - `ansible.builtin.shell`
 - `ansible.builtin.command`
 - `ansible.builtin.raw`

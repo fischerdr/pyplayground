@@ -1,26 +1,30 @@
-# Written by Chris Arceneaux
-# GitHub: https://github.com/carceneaux
-# Email: carceneaux@thinksis.com
-# Website: http://arsano.ninja
-#
-# This code has been released under the terms of the Apache-2.0 license
-# http://opensource.org/licenses/Apache-2.0
+"""Example to show the minimal steps required to retrieve a first class disk in vCenter.
 
-"""
 This module implements simple helper functions for working with:
 
 - Virtual Machine Disks
 - First Class Disks
+
+Written by Chris Arceneaux
+GitHub: https://github.com/carceneaux
+Email: carceneaux@thinksis.com
+Website: http://arsano.ninja
+
+This code has been released under the terms of the Apache-2.0 license
+http://opensource.org/licenses/Apache-2.0
 """
 
 
 def retrieve_fcd(content, datastore, vdisk):
-    """
-    Retrieves the managed object for the first class disk specified
+    """Retrieves the managed object for the first class disk specified.
 
-    Sample Usage:
+    Args:
+        content: Content object from the vCenter.
+        datastore: Datastore object from the vCenter.
+        vdisk: Name of the first class disk to retrieve.
 
-    retrieve_fcd(content, datastore, "First Class Disk Name")
+    Returns:
+        Managed object for the first class disk.
     """
     # Set vStorageObjectManager
     storage = content.vStorageObjectManager
@@ -38,12 +42,16 @@ def retrieve_fcd(content, datastore, vdisk):
 
 
 def retrieve_fcd_snapshot(content, datastore, vdisk, snapshot_name):
-    """
-    Retrieves the managed object for the fcd snapshot specified
+    """Retrieves the managed object for the fcd snapshot specified.
 
-    Sample Usage:
+    Args:
+        content: Content object from the vCenter.
+        datastore: Datastore object from the vCenter.
+        vdisk: Name of the first class disk to retrieve.
+        snapshot_name: Name of the snapshot to retrieve.
 
-    retrieve_fcd_snapshot(content, datastore, vdisk, "Snapshot Name")
+    Returns:
+        Managed object for the snapshot.
     """
     # Set vStorageObjectManager
     storage = content.vStorageObjectManager

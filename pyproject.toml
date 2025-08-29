@@ -102,3 +102,6 @@ sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
 [tool.hatch.build.targets.wheel]
 # Tell hatch that the code lives directly in 'src' and should be packaged at the root
 packages = ["pyplayground"]
+
+[tool.flake8]
+docstring-convention = "google"

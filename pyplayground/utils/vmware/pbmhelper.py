@@ -1,26 +1,25 @@
-# Written by Chris Arceneaux
-# GitHub: https://github.com/carceneaux
-# Email: carceneaux@thinksis.com
-# Website: http://arsano.ninja
-#
-# This code has been released under the terms of the Apache-2.0 license
-# http://opensource.org/licenses/Apache-2.0
+"""This module implements simple helper functions for working with the VMware Storage Policy (pbm) API.
 
-"""
-This module implements simple helper functions for working with the
-VMware Storage Policy (pbm) API
+Written by Chris Arceneaux
+GitHub: https://github.com/carceneaux
+Email: carceneaux@thinksis.com
+Website: http://arsano.ninja
+
+This code has been released under the terms of the Apache-2.0 license
+http://opensource.org/licenses/Apache-2.0
 """
 
 from pyVmomi import VmomiSupport, pbm
 
 
 def create_pbm_session(stub):
-    """
-    Creates a session with the VMware Storage Policy API
+    """Creates a session with the VMware Storage Policy API.
 
-    Sample Usage:
+    Args:
+        stub: The stub to use to create the session.
 
-    create_pbm_session(service_instance._stub)
+    Returns:
+        The session.
     """
     import ssl
 
@@ -56,13 +55,14 @@ def create_pbm_session(stub):
 
 
 def retrieve_storage_policy(pbm_content, policy):
-    """
-    Retrieves the managed object for the storage policy specified
+    """Retrieves the managed object for the storage policy specified.
 
-    Sample Usage:
+    Args:
+        pbm_content: The content to use to retrieve the storage policy.
+        policy: The name of the storage policy to retrieve.
 
-    pbm_content = pbm_si.RetrieveContent()
-    retrieve_storage_policy(pbm_content, "Policy Name")
+    Returns:
+        The managed object for the storage policy specified.
     """
     # Set PbmQueryProfile
     profile_manager = pbm_content.profileManager

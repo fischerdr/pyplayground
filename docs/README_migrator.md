@@ -126,6 +126,7 @@ Volume labels are updated if:
 - Labels are missing or inconsistent
 
 Updated labels:
+
 - `SECRET_NAME=<normalized-name>`
 - `px/secret-name=<normalized-name>`
 
@@ -196,4 +197,4 @@ This script is designed to work as part of a larger Portworx migration workflow:
 - **Encryption keys are handled securely** (no logging of key values)
 - **Dry-run mode prevents accidental changes** during testing
 - **Existing secrets are never overwritten** to prevent data loss
-- **Access requires appropriate Kubernetes and Portworx permissions** 
+- **Access requires appropriate Kubernetes and Portworx permissions**

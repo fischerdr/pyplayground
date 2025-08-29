@@ -2,7 +2,7 @@
 
 Create a Python script that analyzes Ansible playbooks from cloned git repositories to identify and extract shell and command module calls for AAP Execution Environment migration planning. The script should:
 
-## Core Requirements:
+## Core Requirements
 
 1. **Git Repository and File Scanning:**
    - Recursively scan cloned git repositories for Ansible content
@@ -20,7 +20,7 @@ Create a Python script that analyzes Ansible playbooks from cloned git repositor
 3. **Variable Resolution and Analysis:**
    - Parse and extract variables from:
      - group_vars/ directories (all.yml, specific groups)
-     - host_vars/ directories 
+     - host_vars/ directories
      - vars/ directories in roles
      - defaults/ directories in roles
      - Inline vars: sections in playbooks
@@ -66,7 +66,8 @@ Create a Python script that analyzes Ansible playbooks from cloned git repositor
    - Continue processing if individual files fail
    - Provide meaningful error messages and warnings
 
-## Example Usage:
+## Example Usage
+
 ```bash
 # Scan single git repository
 python ansible_analyzer.py --repo /path/to/cloned/repo --output analysis_report.csv --verbose

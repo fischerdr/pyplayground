@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional
 import click
 from rich.console import Console
 
+from pyplayground.utils.config_utils import get_env_var, load_env_file
 from pyplayground.utils.logging_utils import get_logger, setup_logging
 from pyplayground.utils.vault_utils import VaultError, perform_namespace_review
 
@@ -31,8 +32,14 @@ def example_basic_usage(namespace: str, debug: bool) -> Optional[Dict[str, Any]]
     """
     logger.info("Starting basic usage example")
 
-    # Check environment
-    if not os.getenv("VAULT_ADDR") or not os.getenv("VAULT_TOKEN"):
+    # Load environment variables from .env file
+    load_env_file()
+
+    # Check environment using config utils
+    vault_addr = get_env_var("VAULT_ADDR", required=True)
+    vault_token = get_env_var("VAULT_TOKEN", required=True)
+
+    if not vault_addr or not vault_token:
         logger.error("Please set VAULT_ADDR and VAULT_TOKEN environment variables")
         return None
 
@@ -123,17 +130,41 @@ def example_error_handling(debug: bool):
 
 @click.command()
 @click.option(
-    "--namespace", default="root", help="The target Vault namespace to review.", show_default=True
+    "--namespace",
+    default=None,
+    help="The target Vault namespace to review. If not provided, uses VAULT_NAMESPACE env var or defaults to 'root'.",
+    show_default=False,
 )
-@click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
-def main(namespace: str, debug: bool):
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=None,
+    help="Enable debug logging. Overrides VAULT_DEBUG env var.",
+)
+def main(namespace: Optional[str], debug: Optional[bool]):
     """Runs a series of examples demonstrating how to use and interpret the results of the `perform_namespace_review` utility.
 
     Prerequisites:
         - VAULT_ADDR and VAULT_TOKEN environment variables must be set.
+        - Optional: VAULT_NAMESPACE, VAULT_DEBUG, VAULT_LOG_LEVEL environment variables.
     """
-    # Setup logging
-    log_level = logging.DEBUG if debug else logging.INFO
+    # Load environment variables from .env file
+    load_env_file()
+
+    # Get configuration from environment variables with defaults
+    namespace = namespace or get_env_var("VAULT_NAMESPACE", default="root")
+    debug = debug if debug is not None else get_env_var("VAULT_DEBUG", default=False, as_type=bool)
+    log_level_str = get_env_var("VAULT_LOG_LEVEL", default="INFO")
+
+    # Convert log level string to logging constant
+    log_level_map = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+    }
+    log_level = log_level_map.get(log_level_str.upper(), logging.INFO)
     setup_logging(level=log_level, script_name="example_vault_usage")
     console = Console()
 
@@ -158,7 +189,11 @@ def main(namespace: str, debug: bool):
 
         # Example 5: Save results
         console.rule("Example 5: Saving Results")
-        output_file = "example_results.json"
+        output_dir = get_env_var("VAULT_OUTPUT_DIR", default="./tmp")
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        output_file = os.path.join(output_dir, "example_results.json")
         try:
             with open(output_file, "w") as f:
                 json.dump(results, f, indent=2, default=str)

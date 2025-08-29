@@ -9,12 +9,13 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import click
 from rich.console import Console
 from rich.json import JSON
 
+from pyplayground.utils.config_utils import get_env_var, load_env_file
 from pyplayground.utils.logging_utils import get_logger, setup_logging
 from pyplayground.utils.vault_utils import perform_namespace_review
 
@@ -33,13 +34,19 @@ def run_review(namespace: str, debug: bool) -> Dict[str, Any]:
     """
     logger.info(f"Starting namespace review for: '{namespace}'")
     try:
-        # Check environment variables
-        if not os.getenv("VAULT_ADDR") or not os.getenv("VAULT_TOKEN"):
+        # Load environment variables from .env file
+        load_env_file()
+
+        # Check environment variables using config utils
+        vault_addr = get_env_var("VAULT_ADDR", required=True)
+        vault_token = get_env_var("VAULT_TOKEN", required=True)
+
+        if not vault_addr or not vault_token:
             msg = "VAULT_ADDR and VAULT_TOKEN environment variables must be set."
             logger.error(msg)
             return {"error": msg}
 
-        logger.info(f"Using Vault at: {os.getenv('VAULT_ADDR')}")
+        logger.info(f"Using Vault at: {vault_addr}")
 
         # Perform the review
         results = perform_namespace_review(namespace, debug)
@@ -61,24 +68,50 @@ def run_review(namespace: str, debug: bool) -> Dict[str, Any]:
 
 @click.command()
 @click.option(
-    "--namespace", default="root", help="The Vault namespace to review.", show_default=True
+    "--namespace",
+    default=None,
+    help="The Vault namespace to review. If not provided, uses VAULT_NAMESPACE env var or defaults to 'root'.",
+    show_default=False,
 )
-@click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=None,
+    help="Enable debug logging. Overrides VAULT_DEBUG env var.",
+)
 @click.option(
     "--output",
     type=click.Path(dir_okay=False, writable=True),
-    help="Output file for results (JSON).",
+    help="Output file for results (JSON). If not provided, uses VAULT_OUTPUT_DIR env var.",
 )
-def main(namespace: str, debug: bool, output: str):
+def main(namespace: Optional[str], debug: Optional[bool], output: Optional[str]):
     """A CLI tool to perform a comprehensive review of a HashiCorp Vault namespace.
 
     Prerequisites:
     - The VAULT_ADDR and VAULT_TOKEN environment variables must be set.
+    - Optional: VAULT_NAMESPACE, VAULT_DEBUG, VAULT_LOG_LEVEL, VAULT_OUTPUT_DIR environment variables.
     - The script requires read permissions on policies, groups, and auth methods
       within the target namespace.
     """
+    # Load environment variables from .env file
+    load_env_file()
+
+    # Get configuration from environment variables with defaults
+    namespace = namespace or get_env_var("VAULT_NAMESPACE", default="root")
+    debug = debug if debug is not None else get_env_var("VAULT_DEBUG", default=False, as_type=bool)
+    log_level_str = get_env_var("VAULT_LOG_LEVEL", default="INFO")
+
+    # Convert log level string to logging constant
+    log_level_map = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+    }
+    log_level = log_level_map.get(log_level_str.upper(), logging.INFO)
+
     # Setup Logging
-    log_level = logging.DEBUG if debug else logging.INFO
     script_name = os.path.basename(__file__).replace(".py", "")
     setup_logging(level=log_level, script_name=script_name)
 
@@ -88,15 +121,25 @@ def main(namespace: str, debug: bool, output: str):
     # Output results
     json_output = json.dumps(results, indent=2, default=str)
 
+    # Determine output file
     if output:
-        try:
-            with open(output, "w") as f:
-                f.write(json_output)
-            logger.info(f"Results written to: {output}")
-        except IOError as e:
-            logger.error(f"Failed to write to output file '{output}': {e}")
-            sys.exit(1)
+        output_file = output
     else:
+        output_dir = get_env_var("VAULT_OUTPUT_DIR", default="./tmp")
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        output_file = os.path.join(output_dir, "vault_review_results.json")
+
+    try:
+        with open(output_file, "w") as f:
+            f.write(json_output)
+        logger.info(f"Results written to: {output_file}")
+    except IOError as e:
+        logger.error(f"Failed to write to output file '{output_file}': {e}")
+        sys.exit(1)
+
+    # Display results to console if no specific output file was requested
+    if not output:
         console = Console()
         console.print(JSON(json_output))
 

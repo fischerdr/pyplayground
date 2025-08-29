@@ -56,6 +56,7 @@ def run_review(namespace: str, debug: bool) -> Dict[str, Any]:
         logger.info(f"  Policies: {summary.get('total_policies', 0)}")
         logger.info(f"  Groups: {summary.get('total_groups', 0)}")
         logger.info(f"  Auth Methods: {summary.get('total_auth_methods', 0)}")
+        logger.info(f"  Role Bindings: {summary.get('total_roles', 0)}")
         logger.info(f"  Errors: {len(summary.get('errors', []))}")
 
         return results

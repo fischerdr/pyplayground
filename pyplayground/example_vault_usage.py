@@ -108,6 +108,57 @@ def example_auth_method_analysis(results: Dict[str, Any]):
         logger.info(f"  - Auth Method: {path} (Type: {auth_type})")
 
 
+def example_role_binding_analysis(results: Dict[str, Any]):
+    """Analyzes and logs details from the 'role_bindings' section of the review results.
+
+    Args:
+        results: The review results to analyze.
+    """
+    role_bindings = results.get("role_bindings", {}).get("role_bindings", [])
+    total_roles = results.get("summary", {}).get("total_roles", 0)
+    logger.info(
+        f"Analyzing role bindings for {len(role_bindings)} auth methods ({total_roles} total roles)..."
+    )
+
+    for auth_method_binding in role_bindings:
+        auth_path = auth_method_binding.get("auth_method", "Unknown")
+        auth_type = auth_method_binding.get("auth_type", "Unknown")
+        roles = auth_method_binding.get("roles", [])
+        errors = auth_method_binding.get("errors", [])
+
+        logger.info(f"  - Auth Method: {auth_path} (Type: {auth_type})")
+        logger.info(f"    Roles: {len(roles)}, Errors: {len(errors)}")
+
+        for role in roles:
+            role_name = role.get("name", "Unknown")
+            role_type = role.get("type", "Unknown")
+            policies = role.get("token_policies", role.get("policies", []))
+            logger.info(f"    - Role: {role_name} (Type: {role_type}, Policies: {len(policies)})")
+
+            # Log specific details based on auth type
+            if auth_type == "kubernetes":
+                bound_sa = role.get("bound_service_account_names", [])
+                bound_ns = role.get("bound_service_account_namespaces", [])
+                logger.info(f"      Service Accounts: {bound_sa}")
+                logger.info(f"      Namespaces: {bound_ns}")
+            elif auth_type == "aws":
+                bound_accounts = role.get("bound_account_id", [])
+                bound_arns = role.get("bound_arn", [])
+                logger.info(f"      AWS Accounts: {bound_accounts}")
+                logger.info(f"      Bound ARNs: {len(bound_arns)} configured")
+            elif auth_type == "ldap":
+                if role_type == "ldap_group":
+                    logger.info(f"      LDAP Group with {len(policies)} policies")
+                elif role_type == "ldap_user":
+                    groups = role.get("groups", [])
+                    logger.info(f"      LDAP User in groups: {groups}")
+
+        if errors:
+            logger.warning("    Errors encountered:")
+            for error in errors:
+                logger.warning(f"      - {error}")
+
+
 def example_error_handling(debug: bool):
     """Demonstrates how errors are captured and reported during a review of a non-existent namespace.
 
@@ -187,8 +238,12 @@ def main(namespace: Optional[str], debug: Optional[bool]):
         console.rule("Example 4: Auth Method Analysis")
         example_auth_method_analysis(results)
 
-        # Example 5: Save results
-        console.rule("Example 5: Saving Results")
+        # Example 5: Role binding analysis
+        console.rule("Example 5: Role Binding Analysis")
+        example_role_binding_analysis(results)
+
+        # Example 6: Save results
+        console.rule("Example 6: Saving Results")
         output_dir = get_env_var("VAULT_OUTPUT_DIR", default="./tmp")
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -201,8 +256,8 @@ def main(namespace: Optional[str], debug: Optional[bool]):
         except IOError as e:
             logger.error(f"Failed to save results to '{output_file}': {e}")
 
-    # Example 6: Error handling
-    console.rule("Example 6: Error Handling")
+    # Example 7: Error handling
+    console.rule("Example 7: Error Handling")
     example_error_handling(debug)
 
     logger.info("Examples completed.")

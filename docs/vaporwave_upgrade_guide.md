@@ -67,23 +67,23 @@
 
 ## Technical Implementation Priority
 
-### Phase 1 (Critical)
+### Phase 1 (Critical - Core Geometry)
 
-1. Triangle rasterization functions
-2. Mesh generation between height points
-3. Grid-based coloring logic
+1. **Triangle rasterization functions** - Implement algorithms to fill triangle interiors with voxels
+2. **Mesh generation between height points** - Create triangular surfaces connecting grid corners (p0, p1, p2, p3)
+3. **Grid-based coloring logic** - Apply wireframe colors only to grid lines, set others to black
 
-### Phase 2 (Important)
+### Phase 2 (Important - Rendering & Integration)
 
-4. Enhanced 3D projection system
-5. Frame class improvements
-6. Audio synchronization verification
+1. **Enhanced 3D projection system** - Replace simple np.max() with proper perspective/isometric projection
+2. **Frame class improvements** - Better voxel overlap handling and memory-efficient storage
+3. **Audio synchronization verification** - Ensure timing alignment between audio weights and visual updates
 
-### Phase 3 (Polish)
+### Phase 3 (Polish - Optimization & Effects)
 
-7. Performance optimization
-8. Memory usage optimization
-9. Visual effect fine-tuning
+1. **Performance optimization** - Optimize triangle rasterization and voxel operations
+2. **Memory usage optimization** - Efficient storage for dense solid surfaces
+3. **Visual effect fine-tuning** - Depth-based intensity, camera positioning, and rendering quality
 
 ## Expected Outcome
 
@@ -117,4 +117,4 @@ If full 3D geometry implementation proves complex, consider integrating a lightw
 
 ---
 
-This guide provides a comprehensive roadmap for upgrading `vaporwave.py` to achieve visual parity with the original `spatialstudio`-based implementation. 
+This guide provides a comprehensive roadmap for upgrading `vaporwave.py` to achieve visual parity with the original `spatialstudio`-based implementation.

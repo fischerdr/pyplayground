@@ -1,7 +1,6 @@
-
 # Storage Solutions
 
-1. CNCF‑Native, Container‑First Solutions
+## CNCF‑Native, Container‑First Solutions
 
     OpenEBS (MayaData)
 
@@ -27,7 +26,7 @@
 
         Innovation Lens: Optimizes disaster‑recovery topologies across hybrid‑cloud zones, enabling geospatial resiliency.
 
-2. Vendor CSI Solutions for Enterprise Portfolios
+## Vendor CSI Solutions for Enterprise Portfolios
 
     NetApp Trident
 
@@ -53,7 +52,7 @@
 
         Innovation Lens: Channels high‑performance compute and storage synergy for HPC and data lake use cases.
 
-3. Cloud‑Provider CSI Drivers & Hybrid Edge
+## Cloud‑Provider CSI Drivers & Hybrid Edge
 
     AWS EBS & EFS CSI Drivers
 
@@ -73,7 +72,7 @@
 
         Innovation Lens: Integrates AI/ML‑accelerated pipelines with TPU‑optimized storage tiers.
 
-4. Emerging & Specialized Data Fabrics
+## Emerging & Specialized Data Fabrics
 
     Quobyte
 
@@ -93,7 +92,7 @@
 
         Innovation Lens: Shifts CapEx to OpEx, enabling headless provisioning and flexible scaling.
 
-# Strategic Considerations & Next‑Gen Roadmap
+## Strategic Considerations & Next‑Gen Roadmap
 
     Data Gravity & Placement: Leverage CSI topology awareness to co‑locate data with compute for ultra‑low latency.
 

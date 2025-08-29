@@ -8,7 +8,7 @@ This script generates a retro-futuristic vaporwave aesthetic video by combining 
 
 ### Audio Processing Pipeline
 
-```
+```text
 Audio File → STFT → Mel Filterbank → Normalization → Frequency Bands
 ```
 
@@ -25,25 +25,29 @@ The terrain uses multi-octave Perlin noise with audio modulation:
 
 1. **Grid Generation**: Creates a spatial grid with configurable spacing
 2. **Height Calculation**: For each grid point (x,z):
-   ```
+
+   ```text
    height = Σ(octave_noise × audio_weight × decay_factor)
    ```
+
 3. **Audio Reactivity**: Frequency bands directly modulate noise octave weights
 4. **Triangulation**: Connects adjacent height points into triangular surfaces
 5. **Voxelization**: Fills triangle interiors with 3D voxels using signed distance fields
 
 ### 3D Rendering Pipeline
 
-```
+```text
 Height Field → Triangulation → SDF Rasterization → Voxel Grid → Frame Projection
 ```
 
 **Triangle Rasterization Process**:
+
 - `sdf_triangle()`: Calculates signed distance from points to triangle surfaces
 - `rasterize_triangle()`: Fills triangle volumes with voxels
 - Creates solid surfaces instead of wireframe outlines
 
 **Voxel Coloring Logic**:
+
 ```python
 if int(z + z_base) % spacing == 0 or x % spacing == 0:
     col = gradient_color  # Neon wireframe lines
@@ -87,7 +91,7 @@ The output resembles:
 
 ### Frame Composition
 
-```
+```text
 ┌─────────────────────────┐
 │     🌅 (Striped Sun)    │ ← Upper third: animated sun
 │                         │
@@ -118,6 +122,7 @@ The `splv.Encoder` generates:
 ### Main Execution Loop
 
 1. **Initialization**
+
    ```python
    vis = Visualizer(octaves)
    audio = AudioProcessor(audio_path, octaves)
@@ -126,6 +131,7 @@ The `splv.Encoder` generates:
    ```
 
 2. **Frame Generation Loop**
+
    ```python
    for b0 in range(0, total_vf, batch):
        # Update visualizer state with audio data
@@ -140,6 +146,7 @@ The `splv.Encoder` generates:
    ```
 
 3. **Parallel Worker Function**
+
    ```python
    def _render_job(args):
        vis, n = args
@@ -149,6 +156,7 @@ The `splv.Encoder` generates:
 ### Key Algorithms
 
 #### Height Field Generation
+
 ```python
 def height(x, z):
     xn, zn = x / w, z / d
@@ -171,6 +179,7 @@ def height(x, z):
 ```
 
 #### Triangle Mesh Creation
+
 ```python
 for x in range(0, w, spacing):
     for z in range(min_z, max_z, spacing):
@@ -199,11 +208,13 @@ Unlike `vaporwave.py`, this creates:
 ## Audio-Visual Synchronization
 
 ### Frequency Band Mapping
+
 - **Low frequencies (bass)**: Control terrain amplitude and movement speed
 - **Mid frequencies**: Modulate noise octave weights
 - **High frequencies**: Influence fine detail and texture variation
 
 ### Temporal Dynamics
+
 - **Frame Rate**: 30 fps video output
 - **Audio Rate**: 44.1kHz sample rate with 512-sample hop length
 - **Sync Ratio**: `afps / fps` ensures frame-accurate audio alignment
@@ -212,15 +223,17 @@ Unlike `vaporwave.py`, this creates:
 ## Output Specifications
 
 ### Video Properties
+
 - **Resolution**: 128x128 pixels (optimized for retro aesthetic)
 - **Depth**: 256 voxel layers for true 3D rendering
 - **Duration**: Limited to 300 frames (~10 seconds at 30fps)
 - **Format**: `.splv` (Spatial Studio proprietary format)
 
 ### Color Palette
+
 - **Terrain Gradient**: `[(25, 214, 252), (255, 20, 147), (232, 103, 23), (232, 224, 16)]`
   - Cyan → Hot Pink → Orange → Yellow
 - **Sun Gradient**: `[(255, 94, 0), (255, 42, 100), (180, 0, 255)]`
   - Orange → Pink → Purple
 
-The result is a polished, professional-looking vaporwave aesthetic that captures the nostalgic 80s computer graphics style with modern rendering quality and sophisticated audio reactivity. 
+The result is a polished, professional-looking vaporwave aesthetic that captures the nostalgic 80s computer graphics style with modern rendering quality and sophisticated audio reactivity.

@@ -67,7 +67,7 @@ for model in "${models[@]}"; do
       \"keep_alive\": \"2h\"
     }" > /dev/null
   
-  if [ $? -eq 0 ]; then
+  if [ $? ]; then
     echo "✓ $model loaded and ready"
   else
     echo "✗ Failed to load $model"
@@ -93,7 +93,7 @@ for i in {1..3}; do
         \"keep_alive\": \"2h\"
       }")
     
-    if [ $? -eq 0 ]; then
+    if [ $? ]; then
       # Extract just the response text
       echo "    Response: $(echo "$response" | jq -r '.response' | tr -d '\n')"
     else

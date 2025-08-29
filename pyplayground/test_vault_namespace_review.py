@@ -37,18 +37,17 @@ def run_review(namespace: str, debug: bool) -> Dict[str, Any]:
         # Load environment variables from .env file
         load_env_file()
 
-        # Check environment variables using config utils
+        # Check only VAULT_ADDR since perform_namespace_review will handle token resolution
         vault_addr = get_env_var("VAULT_ADDR", required=True)
-        vault_token = get_env_var("VAULT_TOKEN", required=True)
 
-        if not vault_addr or not vault_token:
-            msg = "VAULT_ADDR and VAULT_TOKEN environment variables must be set."
+        if not vault_addr:
+            msg = "VAULT_ADDR environment variable must be set."
             logger.error(msg)
             return {"error": msg}
 
         logger.info(f"Using Vault at: {vault_addr}")
 
-        # Perform the review
+        # Perform the review - this will handle token resolution including ~/.vault-token
         results = perform_namespace_review(namespace, debug)
 
         # Log summary
@@ -88,7 +87,8 @@ def main(namespace: Optional[str], debug: Optional[bool], output: Optional[str])
     """A CLI tool to perform a comprehensive review of a HashiCorp Vault namespace.
 
     Prerequisites:
-    - The VAULT_ADDR and VAULT_TOKEN environment variables must be set.
+    - The VAULT_ADDR environment variable must be set.
+    - Authentication: Set VAULT_TOKEN env var, or use 'vault login' (creates ~/.vault-token).
     - Optional: VAULT_NAMESPACE, VAULT_DEBUG, VAULT_LOG_LEVEL, VAULT_OUTPUT_DIR environment variables.
     - The script requires read permissions on policies, groups, and auth methods
       within the target namespace.

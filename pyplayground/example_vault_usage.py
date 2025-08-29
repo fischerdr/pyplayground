@@ -35,12 +35,11 @@ def example_basic_usage(namespace: str, debug: bool) -> Optional[Dict[str, Any]]
     # Load environment variables from .env file
     load_env_file()
 
-    # Check environment using config utils
+    # Check only VAULT_ADDR since perform_namespace_review will handle token resolution
     vault_addr = get_env_var("VAULT_ADDR", required=True)
-    vault_token = get_env_var("VAULT_TOKEN", required=True)
 
-    if not vault_addr or not vault_token:
-        logger.error("Please set VAULT_ADDR and VAULT_TOKEN environment variables")
+    if not vault_addr:
+        logger.error("Please set VAULT_ADDR environment variable")
         return None
 
     # Perform review
@@ -145,7 +144,8 @@ def main(namespace: Optional[str], debug: Optional[bool]):
     """Runs a series of examples demonstrating how to use and interpret the results of the `perform_namespace_review` utility.
 
     Prerequisites:
-        - VAULT_ADDR and VAULT_TOKEN environment variables must be set.
+        - VAULT_ADDR environment variable must be set.
+        - Authentication: Set VAULT_TOKEN env var, or use 'vault login' (creates ~/.vault-token).
         - Optional: VAULT_NAMESPACE, VAULT_DEBUG, VAULT_LOG_LEVEL environment variables.
     """
     # Load environment variables from .env file

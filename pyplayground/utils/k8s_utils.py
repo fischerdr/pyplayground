@@ -5,11 +5,11 @@ import logging
 import os
 import re
 import time
-import urllib3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+import urllib3
 import yaml
 from hvac.exceptions import VaultError
 from kubernetes import client, config, stream

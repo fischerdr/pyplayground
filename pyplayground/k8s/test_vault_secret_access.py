@@ -18,11 +18,11 @@ import base64
 import logging
 import os
 import sys
-import urllib3
 from typing import Any, Dict, Optional
 
 import click
 import hvac
+import urllib3
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 from rich.console import Console

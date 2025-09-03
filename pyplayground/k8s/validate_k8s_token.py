@@ -37,6 +37,133 @@ from pyplayground.utils.vault_utils import log_jwt_payload
 logger = logging.getLogger(__name__)
 
 
+def _check_service_account_exists(core_v1_api, namespace, sa_name, console):
+    """Checks if the specified ServiceAccount exists."""
+    console.print(
+        f"  Verifying ServiceAccount '[cyan]{sa_name}[/cyan]' in namespace '[cyan]{namespace}[/cyan]'..."
+    )
+    try:
+        core_v1_api.read_namespaced_service_account(name=sa_name, namespace=namespace)
+        console.print("  [green]✔ OK:[/green] ServiceAccount exists.")
+        return True
+    except ApiException as e:
+        if e.status == 404:
+            console.print(
+                f"  [red]✖ FAIL:[/red] ServiceAccount '[bold]{sa_name}[/bold]' not found in namespace '[bold]{namespace}[/bold]'."
+            )
+        else:
+            console.print(f"  [red]✖ FAIL:[/red] API error checking ServiceAccount: {e.reason}")
+        return False
+
+
+def _check_auth_delegator_binding(rbac_v1_api, namespace, sa_name, console):
+    """Checks if the ServiceAccount is bound to the system:auth-delegator ClusterRole."""
+    console.print(f"  Checking ClusterRoleBindings for '[cyan]{sa_name}[/cyan]'...")
+    try:
+        bindings = rbac_v1_api.list_cluster_role_binding()
+        found_binding = False
+        is_delegator = False
+        for binding in bindings.items:
+            if binding.subjects:
+                for subject in binding.subjects:
+                    if (
+                        subject.kind == "ServiceAccount"
+                        and subject.name == sa_name
+                        and subject.namespace == namespace
+                    ):
+                        role_name = binding.role_ref.name
+                        console.print(
+                            f"    [green]Found binding:[/green] '{binding.metadata.name}' -> grants ClusterRole -> '[bold]{role_name}[/bold]'"
+                        )
+                        found_binding = True
+                        if role_name == "system:auth-delegator":
+                            is_delegator = True
+
+        if not found_binding:
+            console.print(
+                "  [red]✖ FAIL:[/red] No ClusterRoleBinding found for this ServiceAccount."
+            )
+            return False
+
+        if is_delegator:
+            console.print(
+                "  [green]✔ OK:[/green] ServiceAccount is correctly bound to 'system:auth-delegator'."
+            )
+        else:
+            console.print(
+                "  [red]✖ FAIL:[/red] ServiceAccount is NOT bound to 'system:auth-delegator'. This is required for TokenReview."
+            )
+        return is_delegator
+
+    except ApiException as e:
+        console.print(f"  [red]✖ FAIL:[/red] API error checking ClusterRoleBindings: {e.reason}")
+        return False
+
+
+def _run_pre_flight_checks(
+    console: Console,
+    core_v1_api,
+    rbac_v1_api,
+    namespace: str,
+    sa_name: str,
+    reviewer_namespace: str,
+    reviewer_sa_name: str,
+):
+    """Runs all pre-flight RBAC checks."""
+    console.print("\n[bold]--- Running Pre-flight RBAC Checks ---[/bold]")
+    sa_to_check_ns = reviewer_namespace or namespace
+    sa_to_check_name = reviewer_sa_name or sa_name
+
+    console.print(
+        f"Checking permissions for reviewer: [bold cyan]{sa_to_check_ns}/{sa_to_check_name}[/bold cyan]"
+    )
+
+    sa_exists = _check_service_account_exists(
+        core_v1_api, sa_to_check_ns, sa_to_check_name, console
+    )
+    if not sa_exists:
+        sys.exit(1)
+
+    binding_ok = _check_auth_delegator_binding(
+        rbac_v1_api, sa_to_check_ns, sa_to_check_name, console
+    )
+    if not binding_ok:
+        sys.exit(1)
+
+    console.print("[bold]--- Pre-flight Checks Complete ---[/bold]")
+
+
+def _setup_reviewer_client(
+    console: Console, core_v1_api, reviewer_namespace: str, reviewer_sa_name: str
+):
+    """Configures and returns a Kubernetes client authenticated as the reviewer."""
+    console.print(
+        f"\n[bold magenta]Reviewer Mode:[/bold magenta] Authenticating as reviewer "
+        f"[cyan]{reviewer_sa_name}[/cyan] in namespace [cyan]{reviewer_namespace}[/cyan]."
+    )
+    reviewer_jwt = get_service_account_jwt(
+        reviewer_namespace, reviewer_sa_name, v1_client=core_v1_api
+    )
+    if not reviewer_jwt:
+        console.print(
+            "[red]Error: Could not retrieve JWT for reviewer service account. "
+            "Cannot proceed.[/red]"
+        )
+        sys.exit(1)
+
+    logger.debug("Successfully retrieved JWT for reviewer.")
+
+    # Create a new client configuration authenticated with the reviewer's token
+    reviewer_config = client.Configuration.get_default_copy()
+    reviewer_config.api_key["authorization"] = reviewer_jwt
+    reviewer_config.api_key_prefix["authorization"] = "Bearer"
+
+    # This auth client will act AS the reviewer
+    auth_v1_client = client.AuthenticationV1Api(client.ApiClient(reviewer_config))
+    console.print("[green]Successfully configured client to act as the reviewer.[/green]")
+    return auth_v1_client
+
+
 def _handle_api_exception(e: ApiException, console: Console, debug: bool):
     """Handles Kubernetes API exceptions with detailed, user-friendly messages."""
     console.print("[red]Error: A Kubernetes API call failed.[/red]")
@@ -111,6 +238,12 @@ def _display_token_review_status(
     help="(Optional) The name of the service account that will perform the token review.",
 )
 @click.option(
+    "--pre-flight-checks",
+    is_flag=True,
+    default=False,
+    help="Perform RBAC pre-flight checks before attempting token review.",
+)
+@click.option(
     "--no-verify-ssl",
     is_flag=True,
     default=False,
@@ -129,6 +262,7 @@ def validate_k8s_token(
     debug: bool,
     reviewer_namespace: str,
     reviewer_service_account: str,
+    pre_flight_checks: bool,
 ):
     """Retrieves an existing service account token and validates it."""
     console = Console()
@@ -143,36 +277,30 @@ def validate_k8s_token(
             console.print("[red]Error: Failed to load Kubernetes configuration.[/red]")
             sys.exit(1)
 
-        # This client uses the ambient credentials (kubeconfig or pod's SA)
+        # Clients using ambient credentials (kubeconfig or pod's SA)
         initial_core_v1_client = client.CoreV1Api()
+        initial_rbac_v1_client = client.RbacAuthorizationV1Api()
         auth_v1_client = client.AuthenticationV1Api()  # Default client
+
+        if pre_flight_checks:
+            _run_pre_flight_checks(
+                console,
+                initial_core_v1_client,
+                initial_rbac_v1_client,
+                namespace,
+                service_account_name,
+                reviewer_namespace,
+                reviewer_service_account,
+            )
 
         # If a reviewer SA is specified, create a dedicated client for it
         if reviewer_namespace and reviewer_service_account:
-            console.print(
-                f"\n[bold magenta]Reviewer Mode:[/bold magenta] Authenticating as reviewer "
-                f"[cyan]{reviewer_service_account}[/cyan] in namespace [cyan]{reviewer_namespace}[/cyan]."
+            auth_v1_client = _setup_reviewer_client(
+                console,
+                initial_core_v1_client,
+                reviewer_namespace,
+                reviewer_service_account,
             )
-            reviewer_jwt = get_service_account_jwt(
-                reviewer_namespace, reviewer_service_account, v1_client=initial_core_v1_client
-            )
-            if not reviewer_jwt:
-                console.print(
-                    "[red]Error: Could not retrieve JWT for reviewer service account. "
-                    "Cannot proceed.[/red]"
-                )
-                sys.exit(1)
-
-            logger.debug("Successfully retrieved JWT for reviewer.")
-
-            # Create a new client configuration authenticated with the reviewer's token
-            reviewer_config = client.Configuration.get_default_copy()
-            reviewer_config.api_key["authorization"] = reviewer_jwt
-            reviewer_config.api_key_prefix["authorization"] = "Bearer"
-
-            # This auth client will act AS the reviewer
-            auth_v1_client = client.AuthenticationV1Api(client.ApiClient(reviewer_config))
-            console.print("[green]Successfully configured client to act as the reviewer.[/green]")
 
         # 1. Retrieve the JWT for the TARGET service account using the initial client
         console.print(

@@ -274,7 +274,11 @@ def update_portworx_labels(
         return True
 
     # Prepare update command
-    labels_to_update = [f"SECRET_NAME={secret_name}", f"px/secret-name={secret_name}", "px/vault-namespace"]
+    labels_to_update = [
+        f"SECRET_NAME={secret_name}",
+        f"px/secret-name={secret_name}",
+        "px/vault-namespace",
+    ]
     command = f"pxctl volume update --label {','.join(labels_to_update)} {pv_name}"
 
     if dry_run:
@@ -326,7 +330,9 @@ def remove_pvc_vault_annotation(
         annotations = pvc.metadata.annotations or {}
 
         if "px/vault-namespace" not in annotations:
-            logger.debug(f"Annotation 'px/vault-namespace' not found on PVC '{pvc_name}', skipping.")
+            logger.debug(
+                f"Annotation 'px/vault-namespace' not found on PVC '{pvc_name}', skipping."
+            )
             return True
 
         if dry_run:
@@ -345,7 +351,9 @@ def remove_pvc_vault_annotation(
             name=pvc_name, namespace=namespace, body=patch_body
         )
 
-        console.print(f"[green]✓[/green] Removed vault annotation from PVC '{namespace}/{pvc_name}'")
+        console.print(
+            f"[green]✓[/green] Removed vault annotation from PVC '{namespace}/{pvc_name}'"
+        )
         logger.info(
             f"Successfully removed 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}'"
         )
@@ -411,7 +419,9 @@ def update_pvc_annotations(
             name=pvc_name, namespace=namespace, body=patch_body
         )
 
-        console.print(f"[green]✓[/green] Updated secret annotations on PVC '{namespace}/{pvc_name}'")
+        console.print(
+            f"[green]✓[/green] Updated secret annotations on PVC '{namespace}/{pvc_name}'"
+        )
         logger.info(f"Successfully updated secret annotations on PVC '{namespace}/{pvc_name}'")
         return True
 

@@ -21,6 +21,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from pyplayground.utils.k8s_utils import (
+    get_cluster_name_from_config,
     get_k8s_client,
     load_kube_config_auto,
 )
@@ -199,14 +200,14 @@ def write_json_output(data: Dict, output_file: str):
 )
 @click.option(
     "--output-file",
-    default="px_pvc_export",
+    default=None,
     show_default=True,
     required=False,
     type=str,
-    help="Base name for the output JSON file (no path, .json will be added, file will be written to tmp/ with a timestamp).",
+    help="Base name for the output JSON file (no path, .json will be added, file will be written to tmp/ with a timestamp). If not provided, it's derived from the cluster name.",
 )
 @click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
-def main(kubeconfig: Optional[str], px_namespace: str, output_file: str, debug: bool):
+def main(kubeconfig: Optional[str], px_namespace: str, output_file: Optional[str], debug: bool):
     """Exports Portworx PVC data (PV, annotations, volume labels) to a JSON file in tmp/ with a timestamped filename."""
     import datetime
 
@@ -227,6 +228,12 @@ def main(kubeconfig: Optional[str], px_namespace: str, output_file: str, debug: 
         console.print(f"[bold red]Error initializing Kubernetes clients: {e}[/bold red]")
         sys.exit(1)
 
+    # Determine the output file base name
+    if output_file:
+        base_name_str = output_file
+    else:
+        base_name_str = get_cluster_name_from_config()
+
     exported_data = gather_pvc_data(core_v1, storage_v1, px_namespace)
 
     # Ensure tmp/ directory exists
@@ -237,7 +244,7 @@ def main(kubeconfig: Optional[str], px_namespace: str, output_file: str, debug: 
 
     # Create timestamped output filename
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_name = os.path.splitext(os.path.basename(output_file))[0]
+    base_name = os.path.splitext(os.path.basename(base_name_str))[0]
     final_output_file = os.path.join(tmp_dir, f"{base_name}_{timestamp}.json")
 
     if exported_data:

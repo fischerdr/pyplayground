@@ -1048,3 +1048,41 @@ def get_service_account_jwt(
 
     logger.error(f"Could not retrieve a token for ServiceAccount '{service_account_name}'.")
     return None
+
+
+def get_cluster_name_from_config() -> str:
+    """Derives a cluster name from the current kubeconfig context's server URL.
+
+    Returns:
+        A sanitized cluster name, or 'unknown_cluster' if it cannot be determined.
+    """
+    try:
+        # Load the configuration to get the host
+        config = client.Configuration.get_default_copy()
+        if not config or not config.host:
+            logger.warning("Could not determine Kubernetes API host from config.")
+            return "unknown_cluster"
+
+        # The host is a full URL, e.g., https://api.my-cluster.dev.example.com:6443
+        from urllib.parse import urlparse
+
+        hostname = urlparse(config.host).hostname
+        if not hostname:
+            return "unknown_cluster"
+
+        # Sanitize the hostname
+        # Remove common prefixes like 'api.'
+        if hostname.startswith("api."):
+            hostname = hostname[4:]
+
+        # Take the first part of the hostname as the cluster name
+        cluster_name = hostname.split(".")[0]
+
+        # Final sanitization for file names
+        sanitized_name = re.sub(r"[^a-zA-Z0-9_-]", "", cluster_name)
+        logger.debug(f"Derived cluster name '{sanitized_name}' from host '{config.host}'")
+        return sanitized_name
+
+    except Exception as e:
+        logger.error(f"Failed to get cluster name from kubeconfig: {e}", exc_info=True)
+        return "unknown_cluster"

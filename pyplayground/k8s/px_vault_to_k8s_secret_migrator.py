@@ -274,7 +274,7 @@ def update_portworx_labels(
         return True
 
     # Prepare update command
-    labels_to_update = [f"SECRET_NAME={secret_name}", f"px/secret-name={secret_name}"]
+    labels_to_update = [f"SECRET_NAME={secret_name}", f"px/secret-name={secret_name}", "px/vault-namespace"]
     command = f"pxctl volume update --label {','.join(labels_to_update)} {pv_name}"
 
     if dry_run:
@@ -309,6 +309,125 @@ def update_portworx_labels(
     except Exception as e:
         logger.error(f"Unexpected error running pxctl for volume '{pv_name}': {e}")
         console.print(f"[red]✗[/red] Unexpected error updating volume '{pv_name}': {e}")
+        return False
+
+
+def remove_pvc_vault_annotation(
+    core_v1: client.CoreV1Api,
+    pvc_name: str,
+    namespace: str,
+    dry_run: bool = False,
+) -> bool:
+    """Remove the 'px/vault-namespace' annotation from a PVC if it exists."""
+    logger.debug(f"Checking annotations for PVC '{pvc_name}' in namespace '{namespace}'")
+
+    try:
+        pvc = core_v1.read_namespaced_persistent_volume_claim(name=pvc_name, namespace=namespace)
+        annotations = pvc.metadata.annotations or {}
+
+        if "px/vault-namespace" not in annotations:
+            logger.debug(f"Annotation 'px/vault-namespace' not found on PVC '{pvc_name}', skipping.")
+            return True
+
+        if dry_run:
+            console.print(
+                f"[blue]DRY-RUN: Would remove 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}'[/blue]"
+            )
+            logger.info(
+                f"DRY-RUN: Would remove 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}'"
+            )
+            return True
+
+        # JSON Patch to remove the annotation. Note the escaping for the '/' in the key.
+        patch_body = [{"op": "remove", "path": "/metadata/annotations/px~1vault-namespace"}]
+
+        core_v1.patch_namespaced_persistent_volume_claim(
+            name=pvc_name, namespace=namespace, body=patch_body
+        )
+
+        console.print(f"[green]✓[/green] Removed vault annotation from PVC '{namespace}/{pvc_name}'")
+        logger.info(
+            f"Successfully removed 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}'"
+        )
+        return True
+
+    except ApiException as e:
+        if e.status == 404:
+            logger.error(f"PVC '{pvc_name}' not found in namespace '{namespace}'")
+            console.print(f"[red]✗[/red] PVC '{pvc_name}' not found in '{namespace}'")
+        else:
+            logger.error(f"Failed to patch PVC '{pvc_name}': {e}")
+            console.print(f"[red]✗[/red] Failed to patch PVC '{pvc_name}': {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error removing annotation from PVC '{pvc_name}': {e}")
+        console.print(f"[red]✗[/red] Unexpected error patching PVC '{pvc_name}': {e}")
+        return False
+
+
+def update_pvc_annotations(
+    core_v1: client.CoreV1Api,
+    pvc_name: str,
+    namespace: str,
+    secret_key: str,
+    secret_name: str,
+    secret_namespace: str,
+    dry_run: bool = False,
+) -> bool:
+    """Update the Kubernetes PVC with Portworx secret annotations."""
+    logger.debug(f"Updating secret annotations for PVC '{pvc_name}' in namespace '{namespace}'")
+
+    try:
+        pvc = core_v1.read_namespaced_persistent_volume_claim(name=pvc_name, namespace=namespace)
+        current_annotations = pvc.metadata.annotations or {}
+
+        annotations_to_set = {
+            "px/secret-key": secret_key,
+            "px/secret-name": secret_name,
+            "px/secret-namespace": secret_namespace,
+        }
+
+        # Check if an update is needed to avoid unnecessary API calls
+        if all(current_annotations.get(k) == v for k, v in annotations_to_set.items()):
+            logger.debug(f"PVC '{pvc_name}' annotations are already correct. Skipping.")
+            return True
+
+        if dry_run:
+            console.print(
+                f"[blue]DRY-RUN: Would update annotations on PVC '{namespace}/{pvc_name}' with: {annotations_to_set}[/blue]"
+            )
+            logger.info(
+                f"DRY-RUN: Would update annotations on PVC '{namespace}/{pvc_name}' with {annotations_to_set}"
+            )
+            return True
+
+        # Prepare the patch by updating the current annotations
+        updated_annotations = current_annotations.copy()
+        updated_annotations.update(annotations_to_set)
+
+        patch_body = {"metadata": {"annotations": updated_annotations}}
+
+        core_v1.patch_namespaced_persistent_volume_claim(
+            name=pvc_name, namespace=namespace, body=patch_body
+        )
+
+        console.print(f"[green]✓[/green] Updated secret annotations on PVC '{namespace}/{pvc_name}'")
+        logger.info(f"Successfully updated secret annotations on PVC '{namespace}/{pvc_name}'")
+        return True
+
+    except ApiException as e:
+        if e.status == 404:
+            logger.error(
+                f"PVC '{pvc_name}' not found in namespace '{namespace}' for annotation update"
+            )
+            console.print(f"[red]✗[/red] PVC '{pvc_name}' not found in '{namespace}'")
+        else:
+            logger.error(f"Failed to patch PVC '{pvc_name}' for annotation update: {e}")
+            console.print(f"[red]✗[/red] Failed to patch PVC '{pvc_name}': {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error updating annotations on PVC '{pvc_name}': {e}")
+        console.print(f"[red]✗[/red] Unexpected error patching PVC '{pvc_name}': {e}")
         return False
 
 
@@ -365,6 +484,14 @@ def process_pvc_entry(
     if not secret_success:
         return False
 
+    # Remove vault annotation from PVC
+    annotation_success = remove_pvc_vault_annotation(
+        core_v1=core_v1,
+        pvc_name=pvc_name,
+        namespace=namespace,
+        dry_run=dry_run,
+    )
+
     # Update Portworx labels if needed
     current_labels = pvc_entry.get("portworxvolumeinspect_labels", {})
     label_success = update_portworx_labels(
@@ -378,7 +505,18 @@ def process_pvc_entry(
         dry_run=dry_run,
     )
 
-    return secret_success and label_success
+    # Update PVC annotations
+    pvc_annotation_success = update_pvc_annotations(
+        core_v1=core_v1,
+        pvc_name=pvc_name,
+        namespace=namespace,
+        secret_key=secret_key,
+        secret_name=normalized_secret_name,
+        secret_namespace=secret_context,
+        dry_run=dry_run,
+    )
+
+    return secret_success and annotation_success and label_success and pvc_annotation_success
 
 
 def migrate_vault_to_k8s_secrets(

@@ -272,7 +272,7 @@ def list_secrets(
         ['config', 'credentials/', 'certificates/']
     """
     try:
-        result = client.kv.v2.list_secrets(path=path, mount_point=mount_point)
+        result = client.secrets.kv.v2.list_secrets(path=path, mount_point=mount_point)
         if not result or "data" not in result:
             return {"keys": []}
         return {"keys": result["data"]["keys"]}
@@ -310,7 +310,7 @@ def get_secret(
         'abc123'
     """
     try:
-        result = client.kv.v2.read_secret_version(
+        result = client.secrets.kv.v2.read_secret_version(
             path=path, mount_point=mount_point, version=version
         )
         if not result or "data" not in result or "data" not in result["data"]:

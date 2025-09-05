@@ -153,9 +153,13 @@ def gather_pvc_data(
                     logger.error(f"Error inspecting volume '{pv_name}': {err_msg}")
                     pvc_data_entry["portworxvolumeinspect_labels"] = {"error": err_msg}
                 elif pxctl_json and "spec" in pxctl_json:
-                    all_labels = pxctl_json.get("spec", {}).get("volume_labels") or {}
+                    all_labels = pxctl_json.get("locator", {}).get("volume_labels") or {}
+                    logger.debug(f"Unfiltered volume labels for {pv_name}: {all_labels}")
                     pvc_data_entry["portworxvolumeinspect_labels"] = filter_volume_labels(
                         all_labels
+                    )
+                    logger.debug(
+                        f"Filtered volume labels for {pv_name}: {pvc_data_entry['portworxvolumeinspect_labels']}"
                     )
             else:
                 logger.warning(f"PVC {namespace}/{pvc_name} has no PV name (unbound?).")

@@ -6,12 +6,18 @@ Usage:
     python pyplayground/k8s/validate_k8s_token.py \
         --namespace <namespace> \
         --service-account <service-account> \
+        --reviewer-namespace <reviewer-namespace> \
+        --reviewer-service-account <reviewer-service-account> \
+        --pre-flight-checks \
         --no-verify-ssl \
         --debug
 
 Arguments:
     namespace: The namespace of the service account.
     service-account: The name of the service account.
+    reviewer-namespace: The namespace of the reviewer service account.
+    reviewer-service-account: The name of the reviewer service account.
+    pre-flight-checks: Perform RBAC pre-flight checks before attempting token review.
     no-verify-ssl: Disable SSL verification for the Kubernetes API.
     debug: Enable debug logging.
 """

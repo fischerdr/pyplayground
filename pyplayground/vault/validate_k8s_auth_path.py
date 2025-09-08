@@ -17,6 +17,7 @@ from typing import Any, Dict
 
 import click
 import hvac
+import requests
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 from rich.console import Console
@@ -63,6 +64,35 @@ def create_custom_k8s_client(
     config.api_key["authorization"] = reviewer_jwt
     config.api_key_prefix["authorization"] = "Bearer"
     return client.AuthenticationV1Api(client.ApiClient(config))
+
+
+def _perform_ca_pre_check(k8s_host: str, ca_cert_path: str, console: Console):
+    """Performs a direct TLS check to validate the CA cert against the K8s host."""
+    console.print(
+        f"--> Performing pre-check: Validating CA certificate against [magenta]{k8s_host}[/magenta]..."
+    )
+    try:
+        # Make a simple GET request, telling `requests` to use our temp file as the only trusted CA
+        requests.get(k8s_host, verify=ca_cert_path, timeout=15)
+        console.print(
+            "[green]Success:[/green] Pre-check passed. The CA from Vault is trusted by the Kubernetes API server."
+        )
+    except requests.exceptions.SSLError:
+        console.print("[bold red]✖ Error: Pre-check FAILED.[/bold red]")
+        console.print(
+            "  The `kubernetes_ca_cert` stored in Vault does NOT trust the certificate presented by the Kubernetes API server."
+        )
+        console.print("  [bold]Common Causes:[/bold]")
+        console.print(
+            "    - The Kubernetes cluster's certificates have been rotated, but Vault was not updated."
+        )
+        console.print("    - The `kubernetes_host` URL points to the wrong cluster.")
+        console.print("    - The `kubernetes_ca_cert` in Vault is incorrect or malformed.")
+        sys.exit(1)  # Exit immediately, as further steps will fail
+    except requests.exceptions.RequestException as e:
+        console.print("[bold red]✖ Error: Pre-check FAILED.[/bold red]")
+        console.print(f"  An error occurred while trying to connect to {k8s_host}: {e}")
+        sys.exit(1)
 
 
 def _fetch_vault_config(vault_client, auth_path, console):
@@ -123,8 +153,8 @@ def _perform_token_review(custom_k8s_client, target_jwt, console) -> Dict[str, A
     token_review = client.V1TokenReview(spec=token_review_spec)
 
     try:
-        auth_v1 = client.AuthenticationV1Api(api_client=custom_k8s_client)
-        api_response = auth_v1.create_token_review(token_review)
+        # The custom_k8s_client is already the auth_v1 instance
+        api_response = custom_k8s_client.create_token_review(token_review)
 
         console.print("Success: TokenReview API call successful.")
         console.print(
@@ -221,11 +251,13 @@ def main(
         vault_client = create_vault_client(namespace=vault_namespace)
         k8s_host, ca_cert_pem = _fetch_vault_config(vault_client, auth_path, console)
 
-        # 2. Save CA cert to a temporary file
+        # 2. Save CA cert and perform pre-check
         with tempfile.NamedTemporaryFile(delete=False, mode="w", suffix=".pem") as f:
             f.write(ca_cert_pem)
             temp_ca_file = f.name
         logger.debug("Saved K8s CA cert from Vault to temporary file: %s", temp_ca_file)
+
+        _perform_ca_pre_check(k8s_host, temp_ca_file, console)
 
         # 3. Connect to K8s with ambient credentials to get service account tokens
         console.print("--> Connecting to Kubernetes with local kubeconfig to fetch SA tokens...")

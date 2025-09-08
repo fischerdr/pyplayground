@@ -54,6 +54,27 @@
             content: "{{ ca_cert_pem }}"
             dest: "{{ temp_ca_file.path }}"
 
+        - name: "2a. Pre-check: Validate CA cert against K8s API server"
+          ansible.builtin.uri:
+            url: "{{ k8s_host }}"
+            method: GET
+            validate_certs: true
+            ca_path: "{{ temp_ca_file.path }}"
+            timeout: 15
+          register: ca_check_result
+          ignore_errors: true
+
+        - name: Fail if CA pre-check failed
+          ansible.builtin.fail:
+            msg: |
+              Pre-check FAILED: The `kubernetes_ca_cert` from Vault does not trust the certificate from the Kubernetes API server ({{ k8s_host }}).
+              Common Causes:
+                - The Kubernetes cluster's certificates have been rotated, but Vault was not updated.
+                - The `kubernetes_host` URL points to the wrong cluster.
+                - The `kubernetes_ca_cert` in Vault is incorrect or malformed.
+              SSL Error: {{ ca_check_result.msg | default('N/A') }}
+          when: ca_check_result.failed
+
         - name: "SUB-BLOCK: Fetch Service Account JWTs"
           block:
             - name: 3a. Find token secret for Target SA

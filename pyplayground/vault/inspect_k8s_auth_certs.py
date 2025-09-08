@@ -119,9 +119,7 @@ def _process_auth_method(
         k8s_host = config.get("kubernetes_host", "N/A")
         ca_cert_pem_str = config.get("kubernetes_ca_cert")
 
-        all_cert_details = _get_certificate_info(
-            ca_cert_pem_str, namespace, path, output_dir
-        )
+        all_cert_details = _get_certificate_info(ca_cert_pem_str, namespace, path, output_dir)
 
         if not ca_cert_pem_str:
             cert_subject = "Not Found"
@@ -204,16 +202,12 @@ def inspect_single_auth_path(
 
         # Certificate Details
         ca_cert_pem_str = config.get("kubernetes_ca_cert")
-        all_cert_details = _get_certificate_info(
-            ca_cert_pem_str, namespace, path, output_dir
-        )
+        all_cert_details = _get_certificate_info(ca_cert_pem_str, namespace, path, output_dir)
         if all_cert_details:
             total_certs = len(all_cert_details)
             for i, cert_details in enumerate(all_cert_details, 1):
                 panel_title = f"[bold]Certificate {i} of {total_certs}[/bold]"
-                console.print(
-                    Panel(Pretty(cert_details), title=panel_title, expand=False)
-                )
+                console.print(Panel(Pretty(cert_details), title=panel_title, expand=False))
         else:
             console.print(
                 Panel(

@@ -17,7 +17,6 @@ from typing import Optional
 import click
 import hvac
 from cryptography import x509
-from cryptography.hazmat.backends import default_backend
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
@@ -31,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 def get_cert_details(pem_data: bytes) -> dict:
     """Parses a PEM certificate (or the first in a bundle) and returns its details."""
-    certs = x509.load_pem_x509_certificates(pem_data, default_backend())
+    certs = x509.load_pem_x509_certificates(pem_data)
     if not certs:
         raise ValueError("No certificates found in PEM data.")
 
@@ -57,6 +56,7 @@ def _get_certificate_info(
 ) -> dict:
     """Extracts, parses, and saves a CA certificate."""
     if not ca_cert_pem_str:
+        logger.debug("No certificate data found for auth path '%s'", path)
         return {}
     try:
         pem_data = ca_cert_pem_str.encode("utf-8")
@@ -107,10 +107,26 @@ def _process_auth_method(
             ]
 
         config = config_response["data"]
+
+        logger.debug("Keys in Vault config for path '%s': %s", path, list(config.keys()))
+
         k8s_host = config.get("kubernetes_host", "N/A")
         ca_cert_pem_str = config.get("kubernetes_ca_cert")
 
         cert_details = _get_certificate_info(ca_cert_pem_str, namespace, path, output_dir)
+
+        if not ca_cert_pem_str:
+            cert_subject = "Not Found"
+            cert_issuer, not_before, not_after, serial = "N/A", "N/A", "N/A", "N/A"
+        elif not cert_details:
+            cert_subject = "Parse Error"
+            cert_issuer, not_before, not_after, serial = "N/A", "N/A", "N/A", "N/A"
+        else:
+            cert_subject = cert_details.get("subject", "N/A")
+            cert_issuer = cert_details.get("issuer", "N/A")
+            not_before = cert_details.get("not_before", "N/A")
+            not_after = cert_details.get("not_after", "N/A")
+            serial = str(cert_details.get("serial_number", "N/A"))
 
         auth_type = "token_reviewer_jwt" if config.get("token_reviewer_jwt") else "use_env/other"
 
@@ -119,11 +135,11 @@ def _process_auth_method(
         return [
             path,
             k8s_host,
-            cert_details.get("subject", "N/A"),
-            cert_details.get("issuer", "N/A"),
-            cert_details.get("not_before", "N/A"),
-            cert_details.get("not_after", "N/A"),
-            str(cert_details.get("serial_number", "N/A")),
+            cert_subject,
+            cert_issuer,
+            not_before,
+            not_after,
+            serial,
             auth_type,
             role_count,
         ]
@@ -219,6 +235,7 @@ def main(vault_namespace: str, output_dir: Optional[str], debug: bool) -> None:
         project_root = get_project_root()
         output_dir = os.path.join(project_root, "tmp", "certificates")
 
+    logger.info("Certificate output directory is set to: %s", output_dir)
     console.print(f"Certificate output directory is set to: [bold green]{output_dir}[/bold green]")
 
     # Create output directory if it doesn't exist

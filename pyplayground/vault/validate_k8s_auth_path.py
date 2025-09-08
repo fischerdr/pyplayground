@@ -13,7 +13,7 @@ import logging
 import os
 import sys
 import tempfile
-from typing import Dict, Any
+from typing import Any, Dict
 
 import click
 import hvac
@@ -87,7 +87,12 @@ def _fetch_vault_config(vault_client, auth_path, console):
 
 
 def _fetch_service_account_jwts(
-    target_namespace, target_service_account, reviewer_namespace, reviewer_service_account, core_v1_api, console
+    target_namespace,
+    target_service_account,
+    reviewer_namespace,
+    reviewer_service_account,
+    core_v1_api,
+    console,
 ):
     """Fetches JWTs for the target and reviewer service accounts."""
     console.print(
@@ -138,15 +143,17 @@ def _perform_token_review(custom_k8s_client, target_jwt, console) -> Dict[str, A
             )
             return {"success": True, "status": "Authenticated", "details": status_dict}
         else:
-            console.print(
-                "[bold red]---> Validation Failed: Token is not authentic.[/bold red]"
-            )
+            console.print("[bold red]---> Validation Failed: Token is not authentic.[/bold red]")
             return {"success": False, "status": "Not Authenticated", "details": status_dict}
 
     except ApiException as e:
         console.print(f"[red]Error during TokenReview:[/red] {e.reason}")
         console.print(Panel(e.body, title="[bold red]API Error Details[/bold red]"))
-        return {"success": False, "status": "API Error", "details": {"reason": e.reason, "body": e.body}}
+        return {
+            "success": False,
+            "status": "API Error",
+            "details": {"reason": e.reason, "body": e.body},
+        }
 
 
 @click.command()

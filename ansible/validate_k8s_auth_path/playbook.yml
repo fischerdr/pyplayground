@@ -1,0 +1,159 @@
+---
+- name: Validate Vault Kubernetes Auth Path
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars:
+    reviewer_namespace_eff: "{{ reviewer_namespace | default(target_namespace) }}"
+    reviewer_service_account_eff: "{{ reviewer_service_account | default(target_service_account) }}"
+    no_verify_ssl: "{{ no_verify_ssl | default(false) }}"
+    debug_output: "{{ debug_output | default(false) }}"
+
+  tasks:
+    - name: Fail if required variables are not provided
+      ansible.builtin.fail:
+        msg: "Missing required variable(s). Please provide vault_namespace, auth_path, target_namespace, and target_service_account."
+      when: (vault_namespace is not defined) or (auth_path is not defined) or (target_namespace is not defined) or (target_service_account is not defined)
+
+    - name: "BLOCK: Main validation workflow"
+      block:
+        - name: 1. Read Vault K8s auth config
+          community.hashi_corp.vault_read:
+            path: "auth/{{ auth_path }}/config"
+            namespace: "{{ vault_namespace }}"
+            auth_method: token
+          register: vault_config_response
+
+        - name: Set K8s host and CA cert from Vault config
+          ansible.builtin.set_fact:
+            k8s_host: "{{ vault_config_response.data.data.kubernetes_host }}"
+            ca_cert_pem: "{{ vault_config_response.data.data.kubernetes_ca_cert }}"
+
+        - name: Fail if Vault config is incomplete
+          ansible.builtin.fail:
+            msg: "Vault config for auth path '{{ auth_path }}' is missing 'kubernetes_host' or 'kubernetes_ca_cert'."
+          when: (k8s_host is not defined) or (ca_cert_pem is not defined)
+
+        - name: Display Vault K8s Auth Config
+          ansible.builtin.debug:
+            msg:
+              - "Success: Successfully connected to Vault."
+              - "Vault K8s Auth Config for '{{ auth_path }}':"
+              - "{{ vault_config_response.data.data | to_nice_yaml }}"
+          when: debug_output
+
+        - name: 2. Create a temporary file for the CA certificate
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .pem
+          register: temp_ca_file
+
+        - name: Save CA cert to temporary file
+          ansible.builtin.copy:
+            content: "{{ ca_cert_pem }}"
+            dest: "{{ temp_ca_file.path }}"
+
+        - name: "SUB-BLOCK: Fetch Service Account JWTs"
+          block:
+            - name: 3a. Find token secret for Target SA
+              kubernetes.core.k8s_info:
+                kind: Secret
+                api_version: v1
+                namespace: "{{ target_namespace }}"
+              register: target_ns_secrets
+
+            - name: Filter for the correct token secret for Target SA
+              ansible.builtin.set_fact:
+                target_sa_secret_name: "{{ item.metadata.name }}"
+              loop: "{{ target_ns_secrets.resources }}"
+              when:
+                - item.type == "kubernetes.io/service-account-token"
+                - item.metadata.annotations is defined
+                - item.metadata.annotations['kubernetes.io/service-account.name'] == target_service_account
+
+            - name: Fail if target SA token secret not found
+              ansible.builtin.fail:
+                msg: "Could not find a token secret for SA '{{ target_service_account }}' in namespace '{{ target_namespace }}'."
+              when: target_sa_secret_name is not defined
+
+            - name: Get Target SA JWT from secret and decode it
+              kubernetes.core.k8s_info:
+                kind: Secret
+                api_version: v1
+                name: "{{ target_sa_secret_name }}"
+                namespace: "{{ target_namespace }}"
+              register: target_sa_secret_data
+
+            - name: Set Target JWT fact
+              ansible.builtin.set_fact:
+                target_jwt: "{{ target_sa_secret_data.resources[0].data.token | b64decode }}"
+
+            - name: 3b. Find token secret for Reviewer SA
+              kubernetes.core.k8s_info:
+                kind: Secret
+                api_version: v1
+                namespace: "{{ reviewer_namespace_eff }}"
+              register: reviewer_ns_secrets
+
+            - name: Filter for the correct token secret for Reviewer SA
+              ansible.builtin.set_fact:
+                reviewer_sa_secret_name: "{{ item.metadata.name }}"
+              loop: "{{ reviewer_ns_secrets.resources }}"
+              when:
+                - item.type == "kubernetes.io/service-account-token"
+                - item.metadata.annotations is defined
+                - item.metadata.annotations['kubernetes.io/service-account.name'] == reviewer_service_account_eff
+
+            - name: Fail if reviewer SA token secret not found
+              ansible.builtin.fail:
+                msg: "Could not find a token secret for SA '{{ reviewer_service_account_eff }}' in namespace '{{ reviewer_namespace_eff }}'."
+              when: reviewer_sa_secret_name is not defined
+
+            - name: Get Reviewer SA JWT from secret and decode it
+              kubernetes.core.k8s_info:
+                kind: Secret
+                api_version: v1
+                name: "{{ reviewer_sa_secret_name }}"
+                namespace: "{{ reviewer_namespace_eff }}"
+              register: reviewer_sa_secret_data
+
+            - name: Set Reviewer JWT fact
+              ansible.builtin.set_fact:
+                reviewer_jwt: "{{ reviewer_sa_secret_data.resources[0].data.token | b64decode }}"
+          rescue:
+            - name: JWT Fetch Failure Message
+              ansible.builtin.debug:
+                msg: "Error: Failed to retrieve one or both Service Account JWTs from the local Kubernetes cluster."
+              failed_when: true
+
+        - name: 4. Perform TokenReview against Vault-specified K8s API
+          kubernetes.core.k8s:
+            state: present
+            api_version: authentication.k8s.io/v1
+            kind: TokenReview
+            resource_definition:
+              spec:
+                token: "{{ target_jwt }}"
+            api_endpoint: "{{ k8s_host }}"
+            validate_certs: "{{ not no_verify_ssl }}"
+            ca_cert: "{{ temp_ca_file.path }}"
+            api_key: "{{ reviewer_jwt }}"
+          register: token_review_result
+
+        - name: 5. Display Validation Results
+          ansible.builtin.debug:
+            msg:
+              - "--- Validation Result ---"
+              - "Status: {% if token_review_result.result.status.authenticated %}SUCCESS - Token is authentic.{% else %}FAILURE - Token is NOT authentic.{% endif %}"
+              - "Username: {{ token_review_result.result.status.user.username | default('N/A') }}"
+              - "UID: {{ token_review_result.result.status.user.uid | default('N/A') }}"
+              - "Groups: {{ token_review_result.result.status.user.groups | default(['N/A']) | join(', ') }}"
+              - "Error: {{ token_review_result.result.status.error | default('None') }}"
+
+      always:
+        - name: 6. Clean up temporary CA file
+          ansible.builtin.file:
+            path: "{{ temp_ca_file.path }}"
+            state: absent
+          when: temp_ca_file.path is defined

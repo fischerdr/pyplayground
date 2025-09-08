@@ -29,6 +29,10 @@ ENV/
 env/
 .env
 
+# Ansible runner, navigator and artifacts
+.ansible/*
+artifacts/*
+
 # Testing and Coverage
 htmlcov/
 .tox/
@@ -122,7 +126,9 @@ tmp/build/*
 
 # Config files
 !config/**/*
-
+.ansible/.lock
+.DS_Store
+.vscode/settings.json
 # Misc
 *.retry
 pip-selfcheck.json

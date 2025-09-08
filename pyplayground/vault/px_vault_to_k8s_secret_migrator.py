@@ -207,7 +207,14 @@ def create_kubernetes_secret(
     Returns:
         True if successful (or would be successful in dry-run), False otherwise
     """
-    logger.debug(f"Creating secret '{secret_name}' in namespace '{namespace}' (dry-run: {dry_run})")
+    logger.debug(f"Handling secret '{secret_name}' in namespace '{namespace}' (dry-run: {dry_run})")
+
+    if dry_run:
+        console.print(
+            f"[blue]DRY-RUN: Would check for and create secret '{secret_name}' in namespace '{namespace}' with key '{secret_key}' if not present.[/blue]"
+        )
+        logger.info(f"DRY-RUN: Would create secret '{secret_name}' in namespace '{namespace}'")
+        return True
 
     # Check if secret already exists
     try:
@@ -232,13 +239,6 @@ def create_kubernetes_secret(
         type="Opaque",
         string_data=secret_data,
     )
-
-    if dry_run:
-        console.print(
-            f"[blue]DRY-RUN: Would create secret '{secret_name}' in namespace '{namespace}' with key '{secret_key}'[/blue]"
-        )
-        logger.info(f"DRY-RUN: Would create secret '{secret_name}' in namespace '{namespace}'")
-        return True
 
     try:
         core_v1.create_namespaced_secret(namespace=namespace, body=secret_manifest)
@@ -266,6 +266,19 @@ def update_portworx_labels(
     Returns:
         True if successful or no update needed, False otherwise
     """
+    # Prepare update command early to show in dry-run
+    labels_to_update = [
+        f"SECRET_NAME={secret_name}",
+        f"px/secret-name={secret_name}",
+        "px/vault-namespace",
+    ]
+    command = f"pxctl volume update --label {','.join(labels_to_update)} {pv_name}"
+
+    if dry_run:
+        console.print(f"[blue]DRY-RUN: Would check labels and potentially run command: {command}[/blue]")
+        logger.info(f"DRY-RUN: Would run pxctl command: {command}")
+        return True
+
     # Check if labels need updating
     current_secret_name = current_labels.get("SECRET_NAME") or current_labels.get("px/secret-name")
 
@@ -280,11 +293,6 @@ def update_portworx_labels(
         "px/vault-namespace",
     ]
     command = f"pxctl volume update --label {','.join(labels_to_update)} {pv_name}"
-
-    if dry_run:
-        console.print(f"[blue]DRY-RUN: Would run command: {command}[/blue]")
-        logger.info(f"DRY-RUN: Would run pxctl command: {command}")
-        return True
 
     try:
         logger.debug(f"Running pxctl command: {command}")
@@ -323,7 +331,18 @@ def remove_pvc_vault_annotation(
     dry_run: bool = False,
 ) -> bool:
     """Remove the 'px/vault-namespace' annotation from a PVC if it exists."""
-    logger.debug(f"Checking annotations for PVC '{pvc_name}' in namespace '{namespace}'")
+    logger.debug(
+        f"Handling 'px/vault-namespace' annotation for PVC '{pvc_name}' in namespace '{namespace}' (dry-run: {dry_run})"
+    )
+
+    if dry_run:
+        console.print(
+            f"[blue]DRY-RUN: Would check and remove 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}' if it exists.[/blue]"
+        )
+        logger.info(
+            f"DRY-RUN: Would remove 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}'"
+        )
+        return True
 
     try:
         pvc = core_v1.read_namespaced_persistent_volume_claim(name=pvc_name, namespace=namespace)
@@ -332,15 +351,6 @@ def remove_pvc_vault_annotation(
         if "px/vault-namespace" not in annotations:
             logger.debug(
                 f"Annotation 'px/vault-namespace' not found on PVC '{pvc_name}', skipping."
-            )
-            return True
-
-        if dry_run:
-            console.print(
-                f"[blue]DRY-RUN: Would remove 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}'[/blue]"
-            )
-            logger.info(
-                f"DRY-RUN: Would remove 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}'"
             )
             return True
 
@@ -383,30 +393,32 @@ def update_pvc_annotations(
     dry_run: bool = False,
 ) -> bool:
     """Update the Kubernetes PVC with Portworx secret annotations."""
-    logger.debug(f"Updating secret annotations for PVC '{pvc_name}' in namespace '{namespace}'")
+    logger.debug(
+        f"Handling secret annotations for PVC '{pvc_name}' in namespace '{namespace}' (dry-run: {dry_run})"
+    )
+
+    annotations_to_set = {
+        "px/secret-key": secret_key,
+        "px/secret-name": secret_name,
+        "px/secret-namespace": secret_namespace,
+    }
+
+    if dry_run:
+        console.print(
+            f"[blue]DRY-RUN: Would check and update annotations on PVC '{namespace}/{pvc_name}' with: {annotations_to_set}[/blue]"
+        )
+        logger.info(
+            f"DRY-RUN: Would update annotations on PVC '{namespace}/{pvc_name}' with {annotations_to_set}"
+        )
+        return True
 
     try:
         pvc = core_v1.read_namespaced_persistent_volume_claim(name=pvc_name, namespace=namespace)
         current_annotations = pvc.metadata.annotations or {}
 
-        annotations_to_set = {
-            "px/secret-key": secret_key,
-            "px/secret-name": secret_name,
-            "px/secret-namespace": secret_namespace,
-        }
-
         # Check if an update is needed to avoid unnecessary API calls
         if all(current_annotations.get(k) == v for k, v in annotations_to_set.items()):
             logger.debug(f"PVC '{pvc_name}' annotations are already correct. Skipping.")
-            return True
-
-        if dry_run:
-            console.print(
-                f"[blue]DRY-RUN: Would update annotations on PVC '{namespace}/{pvc_name}' with: {annotations_to_set}[/blue]"
-            )
-            logger.info(
-                f"DRY-RUN: Would update annotations on PVC '{namespace}/{pvc_name}' with {annotations_to_set}"
-            )
             return True
 
         # Prepare the patch by updating the current annotations

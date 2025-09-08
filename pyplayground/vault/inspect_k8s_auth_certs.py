@@ -48,6 +48,7 @@ def get_cert_details(pem_data: bytes) -> dict:
         "serial_number": cert.serial_number,
         "not_before": cert.not_valid_before.isoformat(),
         "not_after": cert.not_valid_after.isoformat(),
+        "cert_count": len(certs),
     }
 
 
@@ -120,16 +121,29 @@ def _process_auth_method(
 
         if not ca_cert_pem_str:
             cert_subject = "Not Found"
-            cert_issuer, not_before, not_after, serial = "N/A", "N/A", "N/A", "N/A"
+            cert_issuer, not_before, not_after, serial, cert_count = (
+                "N/A",
+                "N/A",
+                "N/A",
+                "N/A",
+                "0",
+            )
         elif not cert_details:
             cert_subject = "Parse Error"
-            cert_issuer, not_before, not_after, serial = "N/A", "N/A", "N/A", "N/A"
+            cert_issuer, not_before, not_after, serial, cert_count = (
+                "N/A",
+                "N/A",
+                "N/A",
+                "N/A",
+                "N/A",
+            )
         else:
             cert_subject = cert_details.get("subject", "N/A")
             cert_issuer = cert_details.get("issuer", "N/A")
             not_before = cert_details.get("not_before", "N/A")
             not_after = cert_details.get("not_after", "N/A")
             serial = str(cert_details.get("serial_number", "N/A"))
+            cert_count = str(cert_details.get("cert_count", "1"))
 
         auth_type = "token_reviewer_jwt" if config.get("token_reviewer_jwt") else "use_env/other"
 
@@ -143,6 +157,7 @@ def _process_auth_method(
             not_before,
             not_after,
             serial,
+            cert_count,
             auth_type,
             role_count,
         ]
@@ -196,6 +211,7 @@ def inspect_k8s_auth_methods(
     table.add_column("Not Before", style="blue")
     table.add_column("Not After", style="blue")
     table.add_column("Serial Number", style="yellow")
+    table.add_column("Cert Count", style="yellow")
     table.add_column("Auth Type", style="bold")
     table.add_column("Role Count", style="bold")
 

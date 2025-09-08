@@ -565,6 +565,8 @@ def migrate_vault_to_k8s_secrets(
 
     with console.status("[bold green]Migrating encryption keys...") as status:
         for namespace, pvc_list in export_data.items():
+            console.print(f"\n[bold cyan]==> Processing Namespace: {namespace} ({len(pvc_list)} PVCs)[/bold cyan]")
+            logger.info(f"--- Starting processing for namespace: {namespace} ---")
             for pvc_entry in pvc_list:
                 results["total"] += 1
                 pvc_name = pvc_entry.get("pvc", "unknown")

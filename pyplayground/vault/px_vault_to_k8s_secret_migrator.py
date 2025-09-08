@@ -211,7 +211,7 @@ def create_kubernetes_secret(
 
     if dry_run:
         console.print(
-            f"[blue]DRY-RUN: Would check for and create secret '{secret_name}' in namespace '{namespace}' with key '{secret_key}' if not present.[/blue]"
+            f"[bright_blue]DRY-RUN: Would check for and create secret '{secret_name}' in namespace '{namespace}' with key '{secret_key}' if not present.[/bright_blue]"
         )
         logger.info(f"DRY-RUN: Would create secret '{secret_name}' in namespace '{namespace}'")
         return True
@@ -275,7 +275,7 @@ def update_portworx_labels(
     command = f"pxctl volume update --label {','.join(labels_to_update)} {pv_name}"
 
     if dry_run:
-        console.print(f"[blue]DRY-RUN: Would check labels and potentially run command: {command}[/blue]")
+        console.print(f"[bright_blue]DRY-RUN: Would check labels and potentially run command: {command}[/bright_blue]")
         logger.info(f"DRY-RUN: Would run pxctl command: {command}")
         return True
 
@@ -337,7 +337,7 @@ def remove_pvc_vault_annotation(
 
     if dry_run:
         console.print(
-            f"[blue]DRY-RUN: Would check and remove 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}' if it exists.[/blue]"
+            f"[bright_blue]DRY-RUN: Would check and remove 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}' if it exists.[/bright_blue]"
         )
         logger.info(
             f"DRY-RUN: Would remove 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}'"
@@ -405,7 +405,7 @@ def update_pvc_annotations(
 
     if dry_run:
         console.print(
-            f"[blue]DRY-RUN: Would check and update annotations on PVC '{namespace}/{pvc_name}' with: {annotations_to_set}[/blue]"
+            f"[bright_blue]DRY-RUN: Would check and update annotations on PVC '{namespace}/{pvc_name}' with: {annotations_to_set}[/bright_blue]"
         )
         logger.info(
             f"DRY-RUN: Would update annotations on PVC '{namespace}/{pvc_name}' with {annotations_to_set}"
@@ -636,7 +636,7 @@ def main(input: str, dry_run: bool, px_namespace: str, debug: bool):
     logger.info("Migration script started")
 
     if dry_run:
-        console.print("[bold blue]DRY-RUN MODE: No changes will be made[/bold blue]")
+        console.print("[bold bright_blue]DRY-RUN MODE: No changes will be made[/bold bright_blue]")
         logger.info("Running in dry-run mode")
 
     # Parse input data

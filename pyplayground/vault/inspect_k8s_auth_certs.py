@@ -8,7 +8,6 @@ It extracts certificate details, saves the certificates to files, and
 provides additional troubleshooting information for each auth method.
 """
 
-import base64
 import logging
 import os
 import re
@@ -31,8 +30,17 @@ logger = logging.getLogger(__name__)
 
 
 def get_cert_details(pem_data: bytes) -> dict:
-    """Parses a PEM certificate and returns its details."""
-    cert = x509.load_pem_x509_certificate(pem_data, default_backend())
+    """Parses a PEM certificate (or the first in a bundle) and returns its details."""
+    certs = x509.load_pem_x509_certificates(pem_data, default_backend())
+    if not certs:
+        raise ValueError("No certificates found in PEM data.")
+
+    if len(certs) > 1:
+        logger.debug(
+            "Certificate bundle with %d certificates found. Using the first one.", len(certs)
+        )
+
+    cert = certs[0]  # Use the first certificate in the bundle
     subject = cert.subject.rfc4514_string()
     issuer = cert.issuer.rfc4514_string()
     return {
@@ -45,20 +53,20 @@ def get_cert_details(pem_data: bytes) -> dict:
 
 
 def _get_certificate_info(
-    ca_cert_b64: Optional[str], namespace: str, path: str, output_dir: str
+    ca_cert_pem_str: Optional[str], namespace: str, path: str, output_dir: str
 ) -> dict:
     """Extracts, parses, and saves a CA certificate."""
-    if not ca_cert_b64:
+    if not ca_cert_pem_str:
         return {}
     try:
-        pem_data = base64.b64decode(ca_cert_b64)
+        pem_data = ca_cert_pem_str.encode("utf-8")
         cert_details = get_cert_details(pem_data)
         cert_filename = f"{namespace}-{path.replace('/', '_')}.pem"
         cert_filepath = Path(output_dir) / cert_filename
         cert_filepath.write_bytes(pem_data)
         logger.info("Saved certificate for %s to %s", path, cert_filepath)
         return cert_details
-    except (base64.binascii.Error, ValueError) as e:
+    except Exception as e:
         logger.warning("Could not parse certificate for auth path '%s': %s", path, e)
         return {}
 
@@ -100,9 +108,9 @@ def _process_auth_method(
 
         config = config_response["data"]
         k8s_host = config.get("kubernetes_host", "N/A")
-        ca_cert_b64 = config.get("kubernetes_ca_cert")
+        ca_cert_pem_str = config.get("kubernetes_ca_cert")
 
-        cert_details = _get_certificate_info(ca_cert_b64, namespace, path, output_dir)
+        cert_details = _get_certificate_info(ca_cert_pem_str, namespace, path, output_dir)
 
         auth_type = "token_reviewer_jwt" if config.get("token_reviewer_jwt") else "use_env/other"
 

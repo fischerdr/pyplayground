@@ -303,6 +303,7 @@ def update_portworx_labels(
             command=command,
             env_vars=effective_env_vars,
             v1_client=core_v1,
+            expect_json=False,
         )
 
         if error_msg:

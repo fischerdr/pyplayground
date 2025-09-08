@@ -354,6 +354,7 @@ def execute_pxctl_command(
     command: str,
     env_vars: Optional[List[str]] = None,
     v1_client: Optional[client.CoreV1Api] = None,
+    expect_json: bool = True,
 ) -> tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
     """Executes a pxctl command in the Portworx pod and returns parsed JSON.
 
@@ -364,11 +365,12 @@ def execute_pxctl_command(
         command: The base pxctl command to run (e.g., "volume inspect my-volume -j").
         env_vars: A list of environment variables to set (e.g., ["VAR=VALUE"]).
         v1_client: Optional CoreV1Api client.
+        expect_json: If True, attempts to parse stdout as JSON.
 
     Returns:
         A tuple containing:
-        - Parsed JSON output from pxctl if successful.
-        - Raw stdout if parsing fails or output is not JSON.
+        - Parsed JSON output from pxctl if successful and expect_json is True.
+        - Raw stdout if parsing fails or is not expected.
         - Raw stderr if the command fails.
     """
     if not v1_client:
@@ -396,11 +398,21 @@ def execute_pxctl_command(
             v1_client=v1_client,
         )
 
+        # Always log the raw output at debug level for traceability
+        if stdout_data:
+            logger.debug(f"pxctl stdout for '{command}':\n{stdout_data}")
+        if stderr_data:
+            logger.debug(f"pxctl stderr for '{command}':\n{stderr_data}")
+
         volume_name_match = re.search(r"volume inspect (\S+)", command)
         volume_name = volume_name_match.group(1) if volume_name_match else "unknown_volume"
 
         if exit_code == 0:
-            return _parse_pxctl_output(stdout_data, stderr_data, volume_name)
+            if expect_json:
+                return _parse_pxctl_output(stdout_data, stderr_data, volume_name)
+            else:
+                # Command succeeded, but no JSON expected; return raw stdout
+                return None, stdout_data, stderr_data
         else:
             return None, stdout_data, stderr_data
     except Exception as e:

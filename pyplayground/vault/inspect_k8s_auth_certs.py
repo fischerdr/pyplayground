@@ -19,6 +19,8 @@ import hvac
 from cryptography import x509
 from dotenv import load_dotenv
 from rich.console import Console
+from rich.panel import Panel
+from rich.pretty import Pretty
 from rich.table import Table
 
 from pyplayground.utils.logging_utils import get_project_root, setup_logging
@@ -179,6 +181,81 @@ def _process_auth_method(
         return [path, "Error", str(e), "N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]
 
 
+def inspect_single_auth_path(
+    client: hvac.Client, namespace: str, auth_path: str, output_dir: str, console: Console
+) -> None:
+    """Inspects a single Kubernetes auth method in detail."""
+    console.print(f"Inspecting details for auth path: [bold cyan]{auth_path}[/bold cyan]")
+    path = auth_path.strip("/")
+    try:
+        config_path = f"auth/{path}/config"
+        config_response = client.read(config_path)
+        if not config_response or "data" not in config_response:
+            console.print(f"[bold red]No configuration found for auth path '{path}'[/bold red]")
+            return
+
+        config = config_response["data"]
+        console.print(
+            Panel(Pretty(config), title="[bold]General Configuration[/bold]", expand=False)
+        )
+
+        # Certificate Details
+        ca_cert_pem_str = config.get("kubernetes_ca_cert")
+        cert_details = _get_certificate_info(ca_cert_pem_str, namespace, path, output_dir)
+        if cert_details:
+            console.print(
+                Panel(Pretty(cert_details), title="[bold]Certificate Details[/bold]", expand=False)
+            )
+        else:
+            console.print(
+                Panel(
+                    "[yellow]No certificate found or failed to parse.[/yellow]",
+                    title="[bold]Certificate Details[/bold]",
+                )
+            )
+
+        # Associated Roles
+        try:
+            roles_response = client.list(f"auth/{path}/role")
+            roles = (
+                roles_response["data"]["keys"]
+                if roles_response and "keys" in roles_response.get("data", {})
+                else []
+            )
+            if roles:
+                console.print(
+                    Panel(
+                        Pretty(roles),
+                        title=f"[bold]Associated Roles ({len(roles)})[/bold]",
+                        expand=False,
+                    )
+                )
+            else:
+                console.print(
+                    Panel(
+                        "[yellow]No roles found for this auth path.[/yellow]",
+                        title="[bold]Associated Roles (0)[/bold]",
+                    )
+                )
+        except hvac.exceptions.Forbidden:
+            console.print(
+                Panel(
+                    "[red]Permission denied to list roles.[/red]",
+                    title="[bold]Associated Roles[/bold]",
+                )
+            )
+
+    except hvac.exceptions.Forbidden:
+        console.print(
+            f"[bold red]Permission denied when reading config for auth path '{path}'[/bold red]"
+        )
+    except Exception as e:
+        logger.error("Could not process auth path '%s': %s", path, e, exc_info=True)
+        console.print(
+            f"[bold red]An error occurred while processing auth path '{path}': {e}[/bold red]"
+        )
+
+
 def inspect_k8s_auth_methods(
     client: hvac.Client, namespace: str, output_dir: str, console: Console
 ) -> None:
@@ -236,7 +313,13 @@ def inspect_k8s_auth_methods(
     help="Directory to save certificate files. Defaults to '<project_root>/tmp/certificates'.",
 )
 @click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
-def main(vault_namespace: str, output_dir: Optional[str], debug: bool) -> None:
+@click.option("--auth-path", default=None, help="Inspect a single auth path in detail.")
+def main(
+    vault_namespace: str,
+    output_dir: Optional[str],
+    debug: bool,
+    auth_path: Optional[str],
+) -> None:
     """Inspects SSL certificates on Vault Kubernetes auth methods for a given namespace."""
     # Setup Logging
     script_base_name = os.path.basename(__file__).replace(".py", "")
@@ -271,7 +354,10 @@ def main(vault_namespace: str, output_dir: Optional[str], debug: bool) -> None:
             )
             return
 
-        inspect_k8s_auth_methods(client, vault_namespace, output_dir, console)
+        if auth_path:
+            inspect_single_auth_path(client, vault_namespace, auth_path, output_dir, console)
+        else:
+            inspect_k8s_auth_methods(client, vault_namespace, output_dir, console)
 
     except Exception as e:
         logger.error("An unexpected error occurred: %s", e, exc_info=True)

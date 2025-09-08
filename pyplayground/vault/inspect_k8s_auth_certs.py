@@ -30,51 +30,51 @@ from pyplayground.utils.vault_utils import create_vault_client, get_auth_methods
 logger = logging.getLogger(__name__)
 
 
-def get_cert_details(pem_data: bytes) -> dict:
-    """Parses a PEM certificate (or the first in a bundle) and returns its details."""
-    certs = x509.load_pem_x509_certificates(pem_data)
-    if not certs:
-        raise ValueError("No certificates found in PEM data.")
-
-    if len(certs) > 1:
-        logger.debug(
-            "Certificate bundle with %d certificates found. Using the first one.", len(certs)
-        )
-
-    cert = certs[0]  # Use the first certificate in the bundle
+def format_cert_details(cert: x509.Certificate) -> dict:
+    """Formats a certificate object into a dictionary of details."""
     subject = cert.subject.rfc4514_string()
     issuer = cert.issuer.rfc4514_string()
     return {
         "subject": subject,
         "issuer": issuer,
         "serial_number": cert.serial_number,
-        "not_before": cert.not_valid_before.isoformat(),
-        "not_after": cert.not_valid_after.isoformat(),
-        "cert_count": len(certs),
+        "not_before": cert.not_valid_before_utc.isoformat(),
+        "not_after": cert.not_valid_after_utc.isoformat(),
     }
+
+
+def parse_pem_bundle(pem_data: bytes) -> list[x509.Certificate]:
+    """Parses PEM data and returns a list of certificate objects."""
+    return x509.load_pem_x509_certificates(pem_data)
 
 
 def _get_certificate_info(
     ca_cert_pem_str: Optional[str], namespace: str, path: str, output_dir: str
-) -> dict:
-    """Extracts, parses, and saves a CA certificate."""
+) -> list[dict]:
+    """Extracts, parses, and saves a CA certificate bundle."""
     if not ca_cert_pem_str:
         logger.debug("No certificate data found for auth path '%s'", path)
-        return {}
+        return []
     try:
         pem_data = ca_cert_pem_str.encode("utf-8")
-        cert_details = get_cert_details(pem_data)
+        certs = parse_pem_bundle(pem_data)
+        if not certs:
+            return []
+
+        # Save the raw bundle to a file
         sanitized_namespace = namespace.strip("/").replace("/", "_")
         cert_filename = f"{sanitized_namespace}-{path.replace('/', '_')}.pem"
         cert_filepath = Path(output_dir) / cert_filename
         cert_filepath.write_bytes(pem_data)
-        logger.info("Saved certificate for %s to %s", path, cert_filepath)
-        return cert_details
+        logger.info("Saved certificate bundle for %s to %s", path, cert_filepath)
+
+        # Format details for each certificate
+        return [format_cert_details(cert) for cert in certs]
     except Exception as e:
         logger.warning(
             "Could not process certificate for auth path '%s'. Error: %s", path, e, exc_info=True
         )
-        return {}
+        return []
 
 
 def _get_role_count(client: hvac.Client, path: str) -> str:
@@ -119,7 +119,9 @@ def _process_auth_method(
         k8s_host = config.get("kubernetes_host", "N/A")
         ca_cert_pem_str = config.get("kubernetes_ca_cert")
 
-        cert_details = _get_certificate_info(ca_cert_pem_str, namespace, path, output_dir)
+        all_cert_details = _get_certificate_info(
+            ca_cert_pem_str, namespace, path, output_dir
+        )
 
         if not ca_cert_pem_str:
             cert_subject = "Not Found"
@@ -130,7 +132,7 @@ def _process_auth_method(
                 "N/A",
                 "0",
             )
-        elif not cert_details:
+        elif not all_cert_details:
             cert_subject = "Parse Error"
             cert_issuer, not_before, not_after, serial, cert_count = (
                 "N/A",
@@ -140,12 +142,13 @@ def _process_auth_method(
                 "N/A",
             )
         else:
-            cert_subject = cert_details.get("subject", "N/A")
-            cert_issuer = cert_details.get("issuer", "N/A")
-            not_before = cert_details.get("not_before", "N/A")
-            not_after = cert_details.get("not_after", "N/A")
-            serial = str(cert_details.get("serial_number", "N/A"))
-            cert_count = str(cert_details.get("cert_count", "1"))
+            first_cert = all_cert_details[0]
+            cert_subject = first_cert.get("subject", "N/A")
+            cert_issuer = first_cert.get("issuer", "N/A")
+            not_before = first_cert.get("not_before", "N/A")
+            not_after = first_cert.get("not_after", "N/A")
+            serial = str(first_cert.get("serial_number", "N/A"))
+            cert_count = str(len(all_cert_details))
 
         auth_type = "token_reviewer_jwt" if config.get("token_reviewer_jwt") else "use_env/other"
 
@@ -201,11 +204,16 @@ def inspect_single_auth_path(
 
         # Certificate Details
         ca_cert_pem_str = config.get("kubernetes_ca_cert")
-        cert_details = _get_certificate_info(ca_cert_pem_str, namespace, path, output_dir)
-        if cert_details:
-            console.print(
-                Panel(Pretty(cert_details), title="[bold]Certificate Details[/bold]", expand=False)
-            )
+        all_cert_details = _get_certificate_info(
+            ca_cert_pem_str, namespace, path, output_dir
+        )
+        if all_cert_details:
+            total_certs = len(all_cert_details)
+            for i, cert_details in enumerate(all_cert_details, 1):
+                panel_title = f"[bold]Certificate {i} of {total_certs}[/bold]"
+                console.print(
+                    Panel(Pretty(cert_details), title=panel_title, expand=False)
+                )
         else:
             console.print(
                 Panel(

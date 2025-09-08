@@ -61,13 +61,16 @@ def _get_certificate_info(
     try:
         pem_data = ca_cert_pem_str.encode("utf-8")
         cert_details = get_cert_details(pem_data)
-        cert_filename = f"{namespace}-{path.replace('/', '_')}.pem"
+        sanitized_namespace = namespace.strip("/").replace("/", "_")
+        cert_filename = f"{sanitized_namespace}-{path.replace('/', '_')}.pem"
         cert_filepath = Path(output_dir) / cert_filename
         cert_filepath.write_bytes(pem_data)
         logger.info("Saved certificate for %s to %s", path, cert_filepath)
         return cert_details
     except Exception as e:
-        logger.warning("Could not parse certificate for auth path '%s': %s", path, e)
+        logger.warning(
+            "Could not process certificate for auth path '%s'. Error: %s", path, e, exc_info=True
+        )
         return {}
 
 
@@ -232,6 +235,7 @@ def main(vault_namespace: str, output_dir: Optional[str], debug: bool) -> None:
 
     # Determine output directory
     if output_dir is None:
+        # Determine project root relative to this script's location
         project_root = get_project_root()
         output_dir = os.path.join(project_root, "tmp", "certificates")
 

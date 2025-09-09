@@ -2,12 +2,11 @@
 # -*- coding: utf-8 -*-
 """Script to migrate Portworx volume encryption keys from Vault to Kubernetes Secrets."""
 
-import json
 import logging
 import os
 import re
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 import click
 import urllib3
@@ -26,6 +25,11 @@ from pyplayground.utils.k8s_utils import (
     load_kube_config_auto,
 )
 from pyplayground.utils.logging_utils import get_logger, setup_logging
+from pyplayground.utils.migration_utils import (
+    normalize_secret_name,
+    parse_export_data,
+    validate_pvc_entry,
+)
 from pyplayground.utils.px_api import (
     DEFAULT_PX_NAMESPACE,
     execute_pxctl_command,
@@ -44,154 +48,6 @@ logger = get_logger(__name__)
 
 
 # --- Helper Functions ---
-
-
-def normalize_secret_name(secret_key: str, pvc_name: str) -> Tuple[str, bool]:
-    """Normalize SECRET_KEY to a valid Kubernetes secret name.
-
-    IMPORTANT: Preserves '-pvc' suffixes as Portworx requires this naming
-    pattern to locate encryption keys correctly.
-
-    Returns:
-        Tuple of (normalized_name, was_changed)
-    """
-    original_key = secret_key
-
-    # If secret_key is already valid, use it
-    if len(secret_key) <= MAX_SECRET_NAME_LENGTH and VALID_SECRET_NAME_PATTERN.match(secret_key):
-        return secret_key, False
-
-    # Convert to lowercase and replace invalid characters with hyphens
-    normalized = re.sub(r"[^a-z0-9-]", "-", secret_key.lower())
-
-    # Replace multiple consecutive hyphens with single hyphen
-    normalized = re.sub(r"-+", "-", normalized)
-
-    # Remove leading/trailing hyphens only (preserve alphanumeric + internal hyphens)
-    normalized = normalized.strip("-")
-
-    # Truncate if too long, but preserve the -pvc suffix if present
-    if len(normalized) > MAX_SECRET_NAME_LENGTH:
-        if normalized.endswith("-pvc") and len(normalized) > 4:
-            # Preserve -pvc suffix, truncate the beginning part
-            max_prefix_length = MAX_SECRET_NAME_LENGTH - 4  # Save space for "-pvc"
-            prefix = normalized[:-4][:max_prefix_length].rstrip("-")
-            old_normalized = normalized
-            normalized = f"{prefix}-pvc"
-            logger.debug(
-                f"Preserved -pvc suffix during truncation: '{old_normalized}' → '{normalized}'"
-            )
-        else:
-            normalized = normalized[:MAX_SECRET_NAME_LENGTH].rstrip("-")
-
-    # If result is empty or still invalid, use PVC name as fallback
-    if not normalized or not VALID_SECRET_NAME_PATTERN.match(normalized):
-        normalized = pvc_name.lower()
-        # For PVC names, preserve the structure but ensure K8s compliance
-        normalized = re.sub(r"[^a-z0-9-]", "-", normalized)
-        normalized = re.sub(r"-+", "-", normalized).strip("-")
-
-    # Final validation - if still invalid, use a generic name
-    if not VALID_SECRET_NAME_PATTERN.match(normalized):
-        normalized = f"px-secret-{hash(original_key) & 0x7fffffff}"
-
-    return normalized, True
-
-
-def parse_export_data(input_file: str) -> Dict[str, List[Dict[str, Any]]]:
-    """Parse and validate the JSON export file."""
-    logger.debug(f"Parsing export data from {input_file}")
-
-    try:
-        with open(input_file, "r") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        logger.error(f"Input file not found: {input_file}")
-        console.print(f"[bold red]Error: Input file '{input_file}' not found.[/bold red]")
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in input file: {e}")
-        console.print(f"[bold red]Error: Invalid JSON in input file: {e}[/bold red]")
-        sys.exit(1)
-
-    if not isinstance(data, dict):
-        logger.error("Input data must be a dictionary with namespaces as keys")
-        console.print(
-            "[bold red]Error: Input data must be a dictionary with namespaces as keys[/bold red]"
-        )
-        sys.exit(1)
-
-    # Validate structure
-    total_entries = 0
-    for namespace, pvc_list in data.items():
-        if not isinstance(pvc_list, list):
-            logger.warning(f"Namespace '{namespace}' does not contain a list of PVCs, skipping")
-            continue
-        total_entries += len(pvc_list)
-
-    console.print(f"[green]Loaded {total_entries} PVC entries from {len(data)} namespaces[/green]")
-    return data
-
-
-def validate_pvc_entry(pvc_entry: Dict[str, Any]) -> Optional[Dict[str, str]]:
-    """Validate a PVC entry and extract required fields.
-
-    Returns:
-        Dict with required fields or None if validation fails
-    """
-    required_fields = ["pvc", "pv", "portworxvolumeinspect_labels", "vault_data"]
-
-    for field in required_fields:
-        if field not in pvc_entry:
-            logger.warning(f"Missing required field '{field}' in PVC entry")
-            return None
-
-    # Check for vault_data errors
-    vault_data = pvc_entry["vault_data"]
-    if not isinstance(vault_data, dict) or "error" in vault_data:
-        error_msg = (
-            vault_data.get("error", "Unknown vault error")
-            if isinstance(vault_data, dict)
-            else "Invalid vault data"
-        )
-        logger.warning(f"Vault data error for PVC '{pvc_entry['pvc']}': {error_msg}")
-        return None
-
-    # Extract volume labels
-    volume_labels = pvc_entry["portworxvolumeinspect_labels"]
-    if not isinstance(volume_labels, dict):
-        logger.warning(f"Invalid volume labels for PVC '{pvc_entry['pvc']}'")
-        return None
-
-    secret_key = volume_labels.get(SECRET_KEY_LABEL)
-    secret_context = volume_labels.get(SECRET_CONTEXT_LABEL)
-
-    if not secret_key:
-        logger.warning(f"Missing SECRET_KEY label for PVC '{pvc_entry['pvc']}'")
-        return None
-
-    if not secret_context:
-        logger.warning(f"Missing SECRET_CONTEXT label for PVC '{pvc_entry['pvc']}'")
-        return None
-
-    # Extract the first key from vault_data as the encryption key
-    vault_data_content = vault_data.get("data", {})
-    if not vault_data_content:
-        logger.warning(f"No data found in vault for PVC '{pvc_entry['pvc']}'")
-        return None
-
-    encryption_key = next(iter(vault_data_content.values()), None)
-    if not encryption_key:
-        logger.warning(f"No encryption key found in vault data for PVC '{pvc_entry['pvc']}'")
-        return None
-
-    return {
-        "pvc_name": pvc_entry["pvc"],
-        "pv_name": pvc_entry["pv"],
-        "secret_key": secret_key,
-        "secret_context": secret_context,
-        "encryption_key": encryption_key,
-    }
 
 
 def create_kubernetes_secret(
@@ -275,7 +131,9 @@ def update_portworx_labels(
     command = f"pxctl volume update --label {','.join(labels_to_update)} {pv_name}"
 
     if dry_run:
-        console.print(f"[bright_blue]DRY-RUN: Would check labels and potentially run command: {command}[/bright_blue]")
+        console.print(
+            f"[bright_blue]DRY-RUN: Would check labels and potentially run command: {command}[/bright_blue]"
+        )
         logger.info(f"DRY-RUN: Would run pxctl command: {command}")
         return True
 
@@ -566,7 +424,9 @@ def migrate_vault_to_k8s_secrets(
 
     with console.status("[bold green]Migrating encryption keys...") as status:
         for namespace, pvc_list in export_data.items():
-            console.print(f"\n[bold cyan]==> Processing Namespace: {namespace} ({len(pvc_list)} PVCs)[/bold cyan]")
+            console.print(
+                f"\n[bold cyan]==> Processing Namespace: {namespace} ({len(pvc_list)} PVCs)[/bold cyan]"
+            )
             logger.info(f"--- Starting processing for namespace: {namespace} ---")
             for pvc_entry in pvc_list:
                 results["total"] += 1
@@ -641,7 +501,11 @@ def main(input: str, dry_run: bool, px_namespace: str, debug: bool):
         logger.info("Running in dry-run mode")
 
     # Parse input data
-    export_data = parse_export_data(input)
+    try:
+        export_data = parse_export_data(input)
+    except (ValueError, FileNotFoundError) as e:
+        console.print(f"[bold red]Error: {e}[/bold red]")
+        sys.exit(1)
 
     # Load Kubernetes configuration
     if not load_kube_config_auto():

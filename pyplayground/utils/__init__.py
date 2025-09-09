@@ -16,6 +16,13 @@ from .k8s_utils import (
 # Logging utilities
 from .logging_utils import get_logger, setup_logging
 
+# Migration utilities
+from .migration_utils import (
+    normalize_secret_name,
+    parse_export_data,
+    validate_pvc_entry,
+)
+
 # Vault utilities
 from .vault_utils import (
     collect_secrets,
@@ -41,6 +48,10 @@ __all__ = [
     # Logging utils
     "get_logger",
     "setup_logging",
+    # Migration utils
+    "normalize_secret_name",
+    "parse_export_data",
+    "validate_pvc_entry",
     # Vault utils
     "collect_secrets",
     "create_vault_client",

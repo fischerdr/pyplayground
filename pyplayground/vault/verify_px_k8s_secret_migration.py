@@ -156,13 +156,22 @@ def verify_pvc_annotations(
             return False, "'px/vault-namespace' annotation was not removed."
 
         if annotations.get("px/secret-name") != expected_secret_name:
-            return False, f"'px/secret-name' annotation has incorrect value: {annotations.get('px/secret-name')}"
+            return (
+                False,
+                f"'px/secret-name' annotation has incorrect value: {annotations.get('px/secret-name')}",
+            )
 
         if annotations.get("px/secret-key") != expected_secret_key:
-            return False, f"'px/secret-key' annotation has incorrect value: {annotations.get('px/secret-key')}"
+            return (
+                False,
+                f"'px/secret-key' annotation has incorrect value: {annotations.get('px/secret-key')}",
+            )
 
         if annotations.get("px/secret-namespace") != expected_secret_namespace:
-            return False, f"'px/secret-namespace' annotation has incorrect value: {annotations.get('px/secret-namespace')}"
+            return (
+                False,
+                f"'px/secret-namespace' annotation has incorrect value: {annotations.get('px/secret-namespace')}",
+            )
 
         return True, "PVC annotations are correct."
     except ApiException as e:
@@ -194,7 +203,9 @@ def run_verification(
                 validated_entry = validate_pvc_entry(pvc_entry)
 
                 if not validated_entry:
-                    result.add_check("Initial Validation", False, "Skipped due to invalid data in export file.")
+                    result.add_check(
+                        "Initial Validation", False, "Skipped due to invalid data in export file."
+                    )
                     all_results.append(result)
                     continue
 

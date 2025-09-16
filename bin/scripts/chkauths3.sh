@@ -77,11 +77,21 @@ process_pod() {
         echo "pod ${pod} verified" >>"${tmp_dir}/success"
     else
         log_debug "S3 credential validation for ${pod} failed. Exit code: ${s3val_exit_code}"
+        local s3_failure_reason
         if [[ ${s3val_exit_code} -ne 0 ]]; then
-            echo "node: ${stc_node} pod ${pod} s3 validate command failed with exit code ${s3val_exit_code}. Output: ${s3val}" >>"${tmp_dir}/failure"
+            s3_failure_reason="command failed with exit code ${s3val_exit_code}"
         else
-            echo "node: ${stc_node} pod ${pod} s3 validate command succeeded but success string was not in output. Output: ${s3val}" >>"${tmp_dir}/failure"
+            s3_failure_reason="command succeeded but success string was not in output"
         fi
+
+        # Use printf to format the entire multi-line output into a single, atomic write.
+        # This is more robust against parallel write race conditions than multiple echo commands.
+        printf "node: %s pod %s s3 validate %s. Output:\n%s\n" \
+            "${stc_node}" \
+            "${pod}" \
+            "${s3_failure_reason}" \
+            "$(echo "${s3val}" | sed 's/^/    /')" \
+            >>"${tmp_dir}/failure"
     fi
 
     # Run vault login and check command exit status
@@ -105,21 +115,20 @@ process_pod() {
         # Failure: Log details for this pod.
         log_debug "Vault login for ${pod} failed. Exit code: ${vault_exit_code}"
         
-        {
-            echo -e "\n--- Vault login for ${pod} ---"
-            # shellcheck disable=SC2001
-            echo "${vault_output_filtered}" | sed 's/^/    /'
-        } >>"${tmp_dir}/vault_logs"
-
+        local vault_failure_reason
         if [[ ${vault_exit_code} -ne 0 ]]; then
-            # Command failed with a non-zero exit code
-            echo "    [FAILURE] Vault login command failed for ${pod} with exit code ${vault_exit_code}" >>"${tmp_dir}/vault_logs"
-            echo "node: ${stc_node} pod ${pod} vault login failed with exit code ${vault_exit_code}. Output: ${vault_output_filtered}" >>"${tmp_dir}/failure"
+            vault_failure_reason="command failed with exit code ${vault_exit_code}"
         else
-            # Command succeeded (exit code 0), but the success string was not found in the output
-            echo "    [FAILURE] Vault login for ${pod} had exit code 0 but success message was not found." >>"${tmp_dir}/vault_logs"
-            echo "node: ${stc_node} pod ${pod} vault login check failed. Exit code was 0 but success string was not in output. Output: ${vault_output_filtered}" >>"${tmp_dir}/failure"
+            vault_failure_reason="command succeeded but success string was not in output"
         fi
+
+        # Use printf for a single, atomic write to prevent interleaved output.
+        printf "node: %s pod %s vault login %s. Output:\n%s\n" \
+            "${stc_node}" \
+            "${pod}" \
+            "${vault_failure_reason}" \
+            "$(echo "${vault_output_filtered}" | sed 's/^/    /')" \
+            >>"${tmp_dir}/failure"
     fi
 }
 
@@ -203,7 +212,6 @@ main() {
     # Initialize results files
     : >"${tmp_dir}/success"
     : >"${tmp_dir}/failure"
-    : >"${tmp_dir}/vault_logs"
 
     # Process pods in parallel with controlled concurrency
     for pod in "${pods[@]}"; do
@@ -221,15 +229,9 @@ main() {
         log_warn "\n\n${#pods[@]} pods processed with ${failed_count} failure(s):"
         cat "${tmp_dir}/failure" >&2
         
-        # If there are vault-related failures, print the logs for them.
-        if [[ -s "${tmp_dir}/vault_logs" ]]; then
-            echo -e "\nFailed Vault login details:" >&2
-            cat "${tmp_dir}/vault_logs" >&2
-        fi
         exit 1
     else
-        log_info "\nAll ${#pods[@]} pods successfully validated!"
-        # Do not print vault logs on a fully successful run
+        # Successful run: no output
         exit 0
     fi
 }

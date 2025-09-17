@@ -86,7 +86,8 @@ process_pod() {
 
         # Use printf to format the entire multi-line output into a single, atomic write.
         # This is more robust against parallel write race conditions than multiple echo commands.
-        printf "node: %s pod %s s3 validate %s. Output:\n%s\n" \
+        # The extra \n at the end adds a blank line between failure entries for readability.
+        printf "node: %s pod %s s3 validate %s. Output:\n%s\n\n" \
             "${stc_node}" \
             "${pod}" \
             "${s3_failure_reason}" \
@@ -123,7 +124,8 @@ process_pod() {
         fi
 
         # Use printf for a single, atomic write to prevent interleaved output.
-        printf "node: %s pod %s vault login %s. Output:\n%s\n" \
+        # The extra \n at the end adds a blank line between failure entries for readability.
+        printf "node: %s pod %s vault login %s. Output:\n%s\n\n" \
             "${stc_node}" \
             "${pod}" \
             "${vault_failure_reason}" \
@@ -225,8 +227,11 @@ main() {
     # Display final results
     if [[ -s "${tmp_dir}/failure" ]]; then
         local failed_count
-        failed_count=$(wc -l <"${tmp_dir}/failure" | tr -d ' ')
-        log_warn "\n\n${#pods[@]} pods processed with ${failed_count} failure(s):"
+        # Count the number of failure entries by counting lines that start with "node:",
+        # which is more accurate than counting all lines in the file (wc -l).
+        failed_count=$(grep -c '^node:' "${tmp_dir}/failure")
+        echo >&2 "" # Add a blank line for spacing before the summary
+        log_warn "${#pods[@]} pods processed with ${failed_count} failure(s):"
         cat "${tmp_dir}/failure" >&2
         
         exit 1

@@ -1,28 +1,25 @@
-# Different docker runs
+# Different podman runs
 
 ```bash
-docker run -ti --name local-ai \
+podman run -ti --name local-ai \
  -p 8080:8080 \
  --group-add video \
  --security-opt seccomp=unconfined \
  --security-opt apparmor=unconfined \
  --device /dev/kfd \
  --device /dev/dri \
- --ipc=host \
- --shm-size 16G \
- --net host \
- -v ${PWD}/models:/models \
+ -v localai:/models \
  -v /opt/rocm/:/opt/rocm/ \
  -e HSA_OVERRIDE_GFX_VERSION=11.0.0 \
  -e DEBUG=true \
  -e REBUILD=true \
  -e BUILD_TYPE=hipblas \
- -e GPU_TARGETS=gfx1151 \
+ -e GPU_TARGETS=gfx1100 \
  quay.io/go-skynet/local-ai:master-aio-gpu-hipblas
 ```
 
 ```bash
-docker run -ti --name local-ai \
+podman run -ti --name local-ai \
   -p 8080:8080 \
   --group-add video \
   --security-opt seccomp=unconfined \
@@ -41,7 +38,7 @@ docker run -ti --name local-ai \
 ```
 
 ```bash
-docker run -d -p 3000:8080 \
+podman run -d -p 3000:8080 \
  --group-add video \
  --security-opt seccomp=unconfined \
  --security-opt apparmor=unconfined \
@@ -59,7 +56,7 @@ docker run -d -p 3000:8080 \
 ```
 
 ```bash
-docker run -d -p 3000:8080 \
+podman run -d -p 3000:8080 \
  --group-add video \
  --security-opt seccomp=unconfined \
  --security-opt apparmor=unconfined \
@@ -69,7 +66,7 @@ docker run -d -p 3000:8080 \
     --restart always \
     ghcr.io/open-webui/open-webui:main
 
-docker run -d -p 3000:8080 \
+podman run -d -p 3000:8080 \
     -v open-webui:/app/backend/data \
     -e OLLAMA_BASE_URL=http://flyyn.modmtrx.net:11434 \
     --name open-webui \
@@ -78,7 +75,7 @@ docker run -d -p 3000:8080 \
 ```
 
 ```bash
-docker run -d \
+podman run -d \
   --name ollama-rocm \
   --device=/dev/kfd \
   --device=/dev/dri \
@@ -88,10 +85,14 @@ docker run -d \
   -e OLLAMA_FLASH_ATTENTION=true \
   -v ollama:/root/.ollama \
   -p 11434:11434 \
-  ollama/ollama:0.11.4-rocm
+  ollama/ollama:rocm
  ```
+```bash
+podman run -d --replace  --name ollama-rocm   --device=/dev/kfd   --device=/dev/dri   --group-add video -e OLLAMA_GPU_LAYERS=49 -e OLLAMA_KEEP_ALIVE=2m  -e HSA_OVERRIDE_GFX_VERSION=11.0.0 --ipc=host -v ollama:/root/.ollama   -p 11434:11434 ollama/ollama:0.12.0-rc0-rocm
 
- ```yaml
+```
+
+```yaml
 version: '3.8'
 
 services:
@@ -175,20 +176,20 @@ volumes:
 
 ```
 
-## docker command line
+## podman command line
 
 ```bash
-alias drun='sudo docker run -it --network=host --device=/dev/kfd --device=/dev/dri --group-add=video --ipc=host --cap-add=SYS_PTRACE --security-opt seccomp=unconfined --shm-size 8G -v $HOME/dockerx:/dockerx -w /dockerx'
+alias drun='sudo podman run -it --network=host --device=/dev/kfd --device=/dev/dri --group-add=video --ipc=host --cap-add=SYS_PTRACE --security-opt seccomp=unconfined --shm-size 8G -v $HOME/podmanx:/podmanx -w /podmanx'
 ```
 
 ```bash
 # Start without shm-size
-docker-compose up -d
+podman-compose up -d
 
 # Monitor memory usage
-docker stats ollama
+podman stats ollama
 
 # Check if there are any shared memory errors in logs
-docker-compose logs ollama | grep -i "shm\|memory"
+podman-compose logs ollama | grep -i "shm\|memory"
 
 ```

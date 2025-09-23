@@ -29,7 +29,6 @@ dependencies = [
     "boto3>=1.37.0",
     "click>=8.1.0",
     "cryptography>=44.0.0",
-    "dumb-init>=1.2.5",
     "filelock>=3.18.0",
     "hvac>=1.2.1",
     "kubernetes>=25.3.0",

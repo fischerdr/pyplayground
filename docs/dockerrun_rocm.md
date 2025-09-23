@@ -67,6 +67,14 @@ podman run -d -p 3000:8080 \
     ghcr.io/open-webui/open-webui:main
 
 podman run -d -p 3000:8080 \
+    -e OLLAMA_BASE_URL=http://flyyn.modmtrx.net:11434 \
+    -v open-webui:/app/backend/data \
+    --name open-webui \
+    --restart always \
+    --net host \
+    ghcr.io/open-webui/open-webui:main
+    
+podman run -d -p 3000:8080 \
     -v open-webui:/app/backend/data \
     -e OLLAMA_BASE_URL=http://flyyn.modmtrx.net:11434 \
     --name open-webui \
@@ -191,5 +199,78 @@ podman stats ollama
 
 # Check if there are any shared memory errors in logs
 podman-compose logs ollama | grep -i "shm\|memory"
+
+```
+
+## VLLM runs
+
+```bash
+codellama/CodeLlama-13b-Instruct-hf
+
+--enforce-eager --gpu-memory-utilization 0.95  --cpu-offload-gb 8
+
+vllm serve TheBloke/Phind-CodeLlama-34B-v2-GPTQ \
+     --host 0.0.0.0 \
+     --port 8000 \
+     --download-dir /home/dfischer/vllm-models \
+     --dtype float16 \
+     --max-model-len 16384 \
+     --max-num-batched-tokens 4096 \
+     --quantization gptq \
+     --enforce-eager
+
+vllm serve Qwen/Qwen2.5-Coder-14B-Instruct-GPTQ-Int4 \
+     --host 0.0.0.0 \
+     --port 8000 \
+     --download-dir /home/dfischer/vllm-models \
+     --quantization gptq \
+     --dtype float16 \
+     --max-model-len 32768 \
+     --max-num-batched-tokens 4096
+vllm serve Qwen/Qwen2.5-Coder-7B-Instruct-GPTQ-Int8 \
+     --host 0.0.0.0 \
+     --port 8000 \
+     --download-dir /home/dfischer/vllm-models \
+     --quantization gptq \
+     --dtype float16 \
+     --max-model-len 32768 \
+     --max-num-batched-tokens 8192
+
+vllm serve TheBloke/CodeLlama-13B-Instruct-GPTQ \
+     --host 0.0.0.0 \
+     --port 8000 \
+     --download-dir /home/dfischer/vllm-models \
+     --dtype float16 \
+     --max-model-len 16384 \
+     --max-num-batched-tokens 4096 \
+     --quantization gptq
+
+export VLLM_USE_TRITON_FLASH_ATTN=0 ;vllm serve Qwen/Qwen2.5-Coder-7B-Instruct-GPTQ-Int8 \
+--host 0.0.0.0 \
+--port 8000 \
+--download-dir /home/dfischer/vllm-models \
+--quantization gptq \
+--dtype float16 \
+--max-model-len 32768 \
+--max-num-batched-tokens 8192
+
+vllm serve Qwen/Qwen2.5-Coder-14B-Instruct-GPTQ-Int4 \
+--host 0.0.0.0 \
+--port 8000 \
+--download-dir /home/dfischer/vllm-models \
+--quantization gptq \
+--dtype float16 \
+--max-model-len 32768 \
+--max-num-batched-tokens 4096
+
+export VLLM_USE_TRITON_FLASH_ATTN=0; vllm serve Qwen/Qwen3-30B-A3B-GPTQ-Int4 \
+--host 0.0.0.0 \
+--port 8000 \
+--download-dir /home/dfischer/vllm-models \
+--quantization gptq \
+--dtype float16 \
+--max-model-len 32768 \
+--max-num-batched-tokens 4096
+
 
 ```

@@ -32,6 +32,13 @@ from .vault_utils import (
     validate_path_access,
 )
 
+# Ansible Tower utilities
+from .ansible_tower_utils import (
+    get_awx_or_tower_client,
+    get_resource,
+    update_resource,
+)
+
 __all__ = [
     # Config utils
     "get_env_var",
@@ -58,4 +65,8 @@ __all__ = [
     "get_secret",
     "get_token_info",
     "validate_path_access",
+    # Ansible Tower utils
+    "get_awx_or_tower_client",
+    "get_resource",
+    "update_resource",
 ]

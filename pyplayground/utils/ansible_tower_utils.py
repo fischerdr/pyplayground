@@ -706,6 +706,76 @@ def create_resource(
         return None
 
 
+def update_resource(
+    tower_url: str,
+    headers: Dict[str, str],
+    endpoint: str,
+    resource_id: int,
+    payload: Dict[str, Any],
+    verify: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Update an existing resource via AWX/Tower API.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'credentials', 'inventories', 'projects')
+        resource_id: ID of the resource to update
+        payload: Resource data to update
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        Updated resource dictionary if successful, None otherwise
+    """
+    url = f"{tower_url}/api/v2/{endpoint}/{resource_id}/"
+    try:
+        response = requests.patch(url, headers=headers, json=payload, verify=verify, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to update {endpoint} {resource_id}: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            logger.error(f"Response: {e.response.text}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when updating {endpoint}: {e}")
+        return None
+
+
+def get_resource(
+    tower_url: str,
+    headers: Dict[str, str],
+    endpoint: str,
+    resource_id: int,
+    verify: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Get a specific resource by ID via AWX/Tower API.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'credentials', 'inventories', 'projects')
+        resource_id: ID of the resource to get
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        Resource dictionary if successful, None otherwise
+    """
+    url = f"{tower_url}/api/v2/{endpoint}/{resource_id}/"
+    try:
+        response = requests.get(url, headers=headers, verify=verify, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to get {endpoint} {resource_id}: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            logger.error(f"Response: {e.response.text}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when getting {endpoint}: {e}")
+        return None
+
+
 def get_inventory_hosts(
     tower_url: str, headers: Dict[str, str], inventory_id: int, verify: bool = True
 ) -> Optional[List[Dict[str, Any]]]:

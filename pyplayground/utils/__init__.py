@@ -1,6 +1,12 @@
 """Utility functions for the pyplayground project."""
 
 # Config utilities
+# Ansible Tower utilities
+from .ansible_tower_utils import (
+    get_awx_or_tower_client,
+    get_resource,
+    update_resource,
+)
 from .config_utils import get_env_var, load_env_file, load_json_config, save_json_config
 
 # Kubernetes utilities
@@ -30,13 +36,6 @@ from .vault_utils import (
     get_secret,
     get_token_info,
     validate_path_access,
-)
-
-# Ansible Tower utilities
-from .ansible_tower_utils import (
-    get_awx_or_tower_client,
-    get_resource,
-    update_resource,
 )
 
 __all__ = [

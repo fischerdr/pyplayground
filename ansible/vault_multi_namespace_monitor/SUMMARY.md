@@ -7,6 +7,7 @@ This Ansible playbook implementation provides the same functionality as the Pyth
 ## Files Created
 
 ### Core Playbook Files
+
 - **`playbook.yml`** - Main playbook that orchestrates the Vault testing
 - **`vault_test_tasks.yml`** - Individual test tasks for each namespace/secret combination
 - **`requirements.yml`** - Ansible collection dependencies
@@ -14,23 +15,27 @@ This Ansible playbook implementation provides the same functionality as the Pyth
 - **`ansible.cfg`** - Ansible configuration file
 
 ### Documentation Files
+
 - **`README.md`** - Comprehensive usage documentation
 - **`COMPARISON.md`** - Detailed comparison between Python script and Ansible playbook
 - **`SUMMARY.md`** - This summary document
 
 ### Utility Files
+
 - **`run_tests.sh`** - Shell script wrapper for easy execution
 - **`test_playbook.yml`** - Test playbook for validation
 
 ## Key Features
 
 ### ✅ Complete Feature Parity
+
 - Vault authentication using Kubernetes service account JWT tokens
 - Multi-namespace testing across different Vault namespaces
 - Secret access testing with detailed error reporting
 - Comprehensive result reporting and summary
 
 ### ✅ Additional Benefits
+
 - **Infrastructure as Code**: Version controlled and repeatable
 - **Configuration Management**: Variables, inventory, and templating
 - **No Python Dependencies**: Uses Ansible's built-in modules
@@ -41,11 +46,13 @@ This Ansible playbook implementation provides the same functionality as the Pyth
 ## Quick Start
 
 ### 1. Install Dependencies
+
 ```bash
 ansible-galaxy collection install -r requirements.yml
 ```
 
 ### 2. Basic Usage
+
 ```bash
 ansible-playbook playbook.yml \
   -e target_namespace="production" \
@@ -54,11 +61,13 @@ ansible-playbook playbook.yml \
 ```
 
 ### 3. Using the Shell Script Wrapper
+
 ```bash
 ./run_tests.sh -n production -s "app/config,db/credentials" -v "prod-ns1,prod-ns2"
 ```
 
 ### 4. Using Inventory File
+
 ```bash
 # Edit inventory.yml with your values
 ansible-playbook -i inventory.yml playbook.yml
@@ -67,11 +76,13 @@ ansible-playbook -i inventory.yml playbook.yml
 ## Configuration
 
 ### Required Variables
+
 - `target_namespace`: Kubernetes namespace to test
 - `secret_paths`: Comma-separated list of secret paths
 - `vault_namespaces`: Comma-separated list of Vault namespaces
 
 ### Optional Variables
+
 - `px_namespace`: Portworx namespace (default: "portworx")
 - `kubeconfig`: Path to kubeconfig file
 - `debug`: Enable debug output (default: false)
@@ -82,18 +93,20 @@ ansible-playbook -i inventory.yml playbook.yml
 ## Prerequisites
 
 ### Required Tools
+
 - `ansible-playbook` (Ansible 2.9+)
 - `kubectl` (Kubernetes CLI)
 - Access to Kubernetes cluster with Vault secrets
 
 ### Required Kubernetes Resources
+
 - Secret `px-vault` in Portworx namespace with Vault connection info
 - Service account `portworx` with valid JWT token
 - Network access to Vault server
 
 ## Output Example
 
-```
+```text
 === VAULT MULTI-NAMESPACE TEST RESULTS ===
 Total tests: 3
 Successful tests: 2
@@ -113,16 +126,19 @@ Success Rate: 2/3 tests passed
 ## Testing
 
 ### Validate Playbook
+
 ```bash
 ansible-playbook test_playbook.yml
 ```
 
 ### Syntax Check
+
 ```bash
 ansible-playbook --syntax-check playbook.yml
 ```
 
 ### Dry Run
+
 ```bash
 ansible-playbook playbook.yml --check
 ```
@@ -130,12 +146,14 @@ ansible-playbook playbook.yml --check
 ## Troubleshooting
 
 ### Common Issues
+
 1. **Kubernetes Connection**: Verify `kubectl` access
 2. **Vault Authentication**: Check `px-vault` secret and service account
 3. **Secret Access**: Verify secret paths and permissions
 4. **Network Connectivity**: Ensure Vault server is accessible
 
 ### Debug Mode
+
 ```bash
 ansible-playbook playbook.yml -e debug=true -v
 ```
@@ -143,6 +161,7 @@ ansible-playbook playbook.yml -e debug=true -v
 ## Integration
 
 ### CI/CD Pipeline
+
 ```yaml
 # Example GitHub Actions workflow
 - name: Run Vault Tests
@@ -151,6 +170,7 @@ ansible-playbook playbook.yml -e debug=true -v
 ```
 
 ### Ansible Tower/AWX
+
 - Import playbook into Ansible Tower
 - Configure inventory and variables
 - Schedule regular execution
@@ -159,16 +179,19 @@ ansible-playbook playbook.yml -e debug=true -v
 ## Maintenance
 
 ### Updating Collections
+
 ```bash
 ansible-galaxy collection install -r requirements.yml --force
 ```
 
 ### Adding New Tests
+
 1. Modify `vault_test_tasks.yml` for new test logic
 2. Update `playbook.yml` for new test orchestration
 3. Update documentation
 
 ### Monitoring
+
 - Use Ansible Tower for centralized management
 - Set up monitoring and alerting
 - Regular testing and validation

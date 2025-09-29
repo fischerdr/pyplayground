@@ -1,0 +1,53 @@
+---
+# Example inventory file for Vault multi-namespace monitoring
+# Copy and modify this file for your environment
+
+all:
+  hosts:
+    localhost:
+      vars:
+        # Required variables
+        target_namespace: "production"
+        secret_paths: "app/config,db/credentials,monitoring/alerts"
+        vault_namespaces: "prod-ns1,prod-ns2,monitoring-ns"
+        # Optional variables with defaults
+        px_namespace: "portworx"
+        debug: false
+        mask_values: true
+        k8s_verify_ssl: true
+
+        # Uncomment and set if using custom kubeconfig
+        # kubeconfig: "/path/to/your/kubeconfig"
+
+        # Uncomment and set if using custom CA certificate
+        # k8s_ssl_ca_cert: "/path/to/ca.crt"
+
+  # Example of multiple environments
+  children:
+    production:
+      hosts:
+        localhost:
+          vars:
+            target_namespace: "production"
+            secret_paths: "app/config,db/credentials,monitoring/alerts"
+            vault_namespaces: "prod-ns1,prod-ns2,monitoring-ns"
+            debug: false
+
+    staging:
+      hosts:
+        localhost:
+          vars:
+            target_namespace: "staging"
+            secret_paths: "app/config,db/credentials"
+            vault_namespaces: "staging-ns1,staging-ns2"
+            debug: true
+
+    development:
+      hosts:
+        localhost:
+          vars:
+            target_namespace: "development"
+            secret_paths: "app/config"
+            vault_namespaces: "dev-ns"
+            debug: true
+            mask_values: false

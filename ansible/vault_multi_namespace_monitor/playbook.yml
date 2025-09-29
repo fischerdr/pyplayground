@@ -1,0 +1,207 @@
+---
+# Ansible playbook for Vault multi-namespace monitoring
+# Based on multi_namespace_vault_monitor.py Python script
+# Tests Kubernetes authentication across multiple Vault namespaces
+
+- name: Vault Multi-Namespace Monitoring
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Default values - can be overridden via command line or inventory
+    target_namespace: "{{ target_namespace | default('default') }}"
+    secret_paths: "{{ secret_paths | default('') }}"
+    vault_namespaces: "{{ vault_namespaces | default('') }}"
+    px_namespace: "{{ px_namespace | default('portworx') }}"
+    kubeconfig: "{{ kubeconfig | default('') }}"
+    debug: "{{ debug | default(false) }}"
+    mask_values: "{{ mask_values | default(true) }}"
+    k8s_verify_ssl: "{{ k8s_verify_ssl | default(true) }}"
+    k8s_ssl_ca_cert: "{{ k8s_ssl_ca_cert | default('') }}"
+    
+    # Constants from the Python script
+    vault_addr_secret_name: "px-vault"
+    vault_addr_secret_key: "VAULT_ADDR"
+    vault_backend_path_key: "VAULT_BACKEND_PATH"
+    vault_auth_role_key: "VAULT_AUTH_KUBERNETES_ROLE"
+    vault_auth_mount_path_key: "VAULT_AUTH_MOUNT_PATH"
+    vault_auth_namespace_key: "VAULT_NAMESPACE"
+    vault_sa_name: "portworx"
+
+  tasks:
+    - name: Validate required variables
+      fail:
+        msg: "{{ item }} is required"
+      when: item is not defined or item == ""
+      loop:
+        - "{{ target_namespace }}"
+        - "{{ secret_paths }}"
+        - "{{ vault_namespaces }}"
+
+    - name: Parse secret paths and vault namespaces
+      set_fact:
+        secret_path_list: "{{ secret_paths.split(',') | map('trim') | list }}"
+        vault_namespace_list: "{{ vault_namespaces.split(',') | map('trim') | list }}"
+
+    - name: Validate that secret paths and vault namespaces have same length
+      fail:
+        msg: "Secret paths and Vault namespaces must have the same number of elements. Got {{ secret_path_list | length }} secret paths and {{ vault_namespace_list | length }} vault namespaces"
+      when: secret_path_list | length != vault_namespace_list | length
+
+    - name: Display test configuration
+      debug:
+        msg:
+          - "Testing Kubernetes namespace: {{ target_namespace }}"
+          - "Secret paths: {{ secret_path_list }}"
+          - "Vault namespaces: {{ vault_namespace_list }}"
+          - "Portworx namespace: {{ px_namespace }}"
+          - "Debug mode: {{ debug }}"
+          - "Mask values: {{ mask_values }}"
+
+    - name: Check if kubectl is available
+      command: which kubectl
+      register: kubectl_check
+      failed_when: kubectl_check.rc != 0
+      changed_when: false
+
+    - name: Set kubeconfig environment variable if provided
+      set_fact:
+        kubeconfig_env: "KUBECONFIG={{ kubeconfig }}"
+      when: kubeconfig != ""
+
+    - name: Get Vault connection information from Kubernetes secret
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: "{{ vault_addr_secret_name }}"
+        namespace: "{{ px_namespace }}"
+        kubeconfig: "{{ kubeconfig if kubeconfig else omit }}"
+        verify_ssl: "{{ k8s_verify_ssl }}"
+        ca_cert: "{{ k8s_ssl_ca_cert if k8s_ssl_ca_cert else omit }}"
+      register: vault_secret
+      failed_when: false
+
+    - name: Fail if Vault secret not found
+      fail:
+        msg: "Secret '{{ vault_addr_secret_name }}' not found in namespace '{{ px_namespace }}'"
+      when: vault_secret.resources | length == 0
+
+    - name: Extract Vault connection information
+      set_fact:
+        vault_conn_info:
+          addr: "{{ (vault_secret.resources[0].data[vault_addr_secret_key] | b64decode) | trim }}"
+          backend_path: "{{ (vault_secret.resources[0].data[vault_backend_path_key] | b64decode) | trim }}"
+          auth_role: "{{ (vault_secret.resources[0].data[vault_auth_role_key] | b64decode) | trim }}"
+          auth_mount_path: "{{ (vault_secret.resources[0].data[vault_auth_mount_path_key] | b64decode) | trim }}"
+      when: vault_secret.resources | length > 0
+
+    - name: Display Vault connection info (masked)
+      debug:
+        msg:
+          - "Vault Address: {{ vault_conn_info.addr }}"
+          - "Backend Path: {{ vault_conn_info.backend_path }}"
+          - "Auth Role: {{ vault_conn_info.auth_role }}"
+          - "Auth Mount Path: {{ vault_conn_info.auth_mount_path }}"
+      when: debug | bool
+
+    - name: Get service account JWT token
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: ServiceAccount
+        name: "{{ vault_sa_name }}"
+        namespace: "{{ px_namespace }}"
+        kubeconfig: "{{ kubeconfig if kubeconfig else omit }}"
+        verify_ssl: "{{ k8s_verify_ssl }}"
+        ca_cert: "{{ k8s_ssl_ca_cert if k8s_ssl_ca_cert else omit }}"
+      register: sa_info
+      failed_when: false
+
+    - name: Fail if service account not found
+      fail:
+        msg: "Service account '{{ vault_sa_name }}' not found in namespace '{{ px_namespace }}'"
+      when: sa_info.resources | length == 0
+
+    - name: Get service account token secret
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        namespace: "{{ px_namespace }}"
+        label_selectors:
+          - "kubernetes.io/service-account.name={{ vault_sa_name }}"
+        kubeconfig: "{{ kubeconfig if kubeconfig else omit }}"
+        verify_ssl: "{{ k8s_verify_ssl }}"
+        ca_cert: "{{ k8s_ssl_ca_cert if k8s_ssl_ca_cert else omit }}"
+      register: sa_token_secret
+      failed_when: false
+
+    - name: Fail if service account token not found
+      fail:
+        msg: "Service account token for '{{ vault_sa_name }}' not found in namespace '{{ px_namespace }}'"
+      when: sa_token_secret.resources | length == 0
+
+    - name: Extract service account JWT
+      set_fact:
+        sa_jwt: "{{ (sa_token_secret.resources[0].data.token | b64decode) | trim }}"
+      when: sa_token_secret.resources | length > 0
+
+    - name: Initialize test results list
+      set_fact:
+        test_results: []
+
+    - name: Run Vault tests for each namespace/secret combination
+      include_tasks: vault_test_tasks.yml
+      loop: "{{ secret_path_list | zip(vault_namespace_list) | list }}"
+      vars:
+        current_secret_path: "{{ item[0] }}"
+        current_vault_namespace: "{{ item[1] }}"
+        test_index: "{{ loop.index }}"
+
+    - name: Display test results summary
+      debug:
+        msg:
+          - "=== VAULT MULTI-NAMESPACE TEST RESULTS ==="
+          - "Total tests: {{ test_results | length }}"
+          - "Successful tests: {{ test_results | selectattr('success', 'equalto', true) | list | length }}"
+          - "Failed tests: {{ test_results | selectattr('success', 'equalto', false) | list | length }}"
+
+    - name: Display detailed results for each test
+      debug:
+        msg:
+          - "Test {{ loop.index }}: {{ item.namespace }} - {{ item.secret_path }}"
+          - "  Vault Namespace: {{ item.vault_namespace }}"
+          - "  Authentication: {{ 'SUCCESS' if item.auth_success else 'FAILED' }}"
+          - "  Secret Access: {{ 'SUCCESS' if item.secret_access_success else 'FAILED' }}"
+          - "  Overall Status: {{ item.status }}"
+          - "  Error: {{ item.error_message if item.error_message else 'None' }}"
+          - "  Secret Data Keys: {{ item.data.keys() | list if item.data else 'None' }}"
+      loop: "{{ test_results }}"
+      when: debug | bool
+
+    - name: Create results summary table
+      set_fact:
+        results_summary: |
+          | Namespace | Secret Path | Vault Namespace | Auth | Secret Access | Status |
+          |-----------|-------------|-----------------|------|----------------|--------|
+          {% for result in test_results %}
+          | {{ result.namespace }} | {{ result.secret_path }} | {{ result.vault_namespace }} | {{ '✓' if result.auth_success else '✗' }} | {{ '✓' if result.secret_access_success else '✗' }} | {{ result.status }} |
+          {% endfor %}
+
+    - name: Display results table
+      debug:
+        msg: "{{ results_summary }}"
+
+    - name: Calculate success rate
+      set_fact:
+        successful_tests: "{{ test_results | selectattr('success', 'equalto', true) | list | length }}"
+        total_tests: "{{ test_results | length }}"
+
+    - name: Display final summary
+      debug:
+        msg:
+          - "=== FINAL SUMMARY ==="
+          - "Success Rate: {{ successful_tests }}/{{ total_tests }} tests passed"
+          - "{{ 'All tests passed!' if successful_tests == total_tests else (total_tests - successful_tests) | string + ' test(s) failed.' }}"
+
+    - name: Fail if any tests failed
+      fail:
+        msg: "{{ total_tests - successful_tests }} test(s) failed. Check the detailed results above."
+      when: successful_tests != total_tests

@@ -1,0 +1,26 @@
+---
+# Example playbook using the vault_multi_namespace_monitor role
+# This demonstrates how to use the role in a playbook
+
+- name: Vault Multi-Namespace Monitoring
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - vault_multi_namespace_monitor
+  vars:
+    # Required variables
+    vault_monitor_target_namespace: "{{ target_namespace | default('production') }}"
+    vault_monitor_secret_paths: "{{ secret_paths | default('app/config,db/credentials') }}"
+    vault_monitor_vault_namespaces: "{{ vault_namespaces | default('prod-ns1,prod-ns2') }}"
+
+    # Optional variables
+    vault_monitor_px_namespace: "{{ px_namespace | default('portworx') }}"
+    vault_monitor_debug: "{{ debug | default(false) }}"
+    vault_monitor_mask_values: "{{ mask_values | default(true) }}"
+    vault_monitor_k8s_verify_ssl: "{{ k8s_verify_ssl | default(true) }}"
+
+    # Uncomment and set if using custom kubeconfig
+    # vault_monitor_kubeconfig: "{{ kubeconfig | default('') }}"
+
+    # Uncomment and set if using custom CA certificate
+    # vault_monitor_k8s_ssl_ca_cert: "{{ k8s_ssl_ca_cert | default('') }}"

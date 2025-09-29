@@ -1,0 +1,7 @@
+---
+# Handlers for vault_multi_namespace_monitor role
+
+- name: Restart vault monitoring
+  ansible.builtin.debug:
+    msg: "Vault monitoring restart requested"
+  # Add any restart logic here if needed

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 import click
+import yaml
 
 from pyplayground.utils.config_utils import get_env_var, load_env_file
 from pyplayground.utils.logging_utils import get_logger, setup_logging
@@ -120,6 +121,35 @@ def clean_filename(name: str) -> str:
     return cleaned
 
 
+def _parse_string_variables(variables_str: str, host_name: str) -> Dict[str, Any]:
+    """Parse variables from a string (JSON or YAML).
+
+    Args:
+        variables_str: Variables as string
+        host_name: Name of the host for logging
+
+    Returns:
+        Parsed variables dictionary
+    """
+    # Try JSON first
+    try:
+        result = json.loads(variables_str)
+        logger.debug(f"Successfully parsed JSON variables for {host_name}")
+        return result
+    except json.JSONDecodeError:
+        # If JSON fails, try YAML
+        try:
+            result = yaml.safe_load(variables_str)
+            logger.debug(f"Successfully parsed YAML variables for {host_name}")
+            return result
+        except yaml.YAMLError as yaml_e:
+            logger.warning(
+                f"YAML parse error for host {host_name}: {yaml_e}. "
+                f"Variables content: {repr(variables_str)}"
+            )
+            return {}
+
+
 def _parse_host_variables(host: Dict[str, Any]) -> Dict[str, Any]:
     """Parse existing variables from a host.
 
@@ -136,14 +166,10 @@ def _parse_host_variables(host: Dict[str, Any]) -> Dict[str, Any]:
         logger.debug(f"Original variables for {host_name}: {repr(host['variables'])}")
         try:
             if isinstance(host["variables"], str):
-                existing_vars = json.loads(host["variables"])
+                existing_vars = _parse_string_variables(host["variables"], host_name)
             elif isinstance(host["variables"], dict):
                 existing_vars = host["variables"]
-        except json.JSONDecodeError as e:
-            logger.warning(
-                f"JSON decode error for host {host_name}: {e}. "
-                f"Variables content: {repr(host['variables'])}"
-            )
+                logger.debug(f"Variables already in dict format for {host_name}")
         except TypeError as e:
             logger.warning(
                 f"Type error for host {host_name}: {e}. "

@@ -55,38 +55,52 @@ def validate_inventory_names(inventory_entries: List[Dict[str, Any]]) -> tuple[L
     return inventory_names, duplicate_names
 
 
-def _update_inventory_organization(item: Dict[str, Any], target_org: str) -> None:
-    """Update organization in inventory entry."""
-    if "organization" in item:
-        if item["organization"].get("name") == "Default":
-            item["organization"]["name"] = target_org
-            logger.debug(f"Updated inventory organization to {target_org}")
+def _update_organization_recursive(data: Any, target_org: str, path: str = "") -> int:
+    """Recursively update all organization names from "Default" to target organization.
 
+    Args:
+        data: The data structure to process (dict, list, or other)
+        target_org: Target organization name
+        path: Current path in the data structure for logging
 
-def _update_related_organizations(item: Dict[str, Any], target_org: str) -> None:
-    """Update organizations in related items."""
-    if "related" not in item:
-        return
+    Returns:
+        Number of organizations updated
+    """
+    updates_count = 0
 
-    for key, value in item["related"].items():
-        if not isinstance(value, list):
-            continue
-        for related_item in value:
-            if isinstance(related_item, dict) and "organization" in related_item:
-                if related_item["organization"].get("name") == "Default":
-                    related_item["organization"]["name"] = target_org
-                    logger.debug(f"Updated related item {key} organization to {target_org}")
+    if isinstance(data, dict):
+        # Check if this is an organization object
+        if "name" in data and data.get("name") == "Default":
+            data["name"] = target_org
+            updates_count += 1
+            logger.debug(f"Updated organization at path '{path}' to {target_org}")
+
+        # Recursively process all values in the dictionary
+        for key, value in data.items():
+            new_path = f"{path}.{key}" if path else key
+            updates_count += _update_organization_recursive(value, target_org, new_path)
+
+    elif isinstance(data, list):
+        # Recursively process all items in the list
+        for i, item in enumerate(data):
+            new_path = f"{path}[{i}]" if path else f"[{i}]"
+            updates_count += _update_organization_recursive(item, target_org, new_path)
+
+    return updates_count
 
 
 def update_organization_names(item: Dict[str, Any], target_org: str = "HYDRA-ENG") -> None:
-    """Update organization names from "Default" to target organization.
+    """Update organization names from "Default" to target organization throughout the entire structure.
 
     Args:
         item: Inventory entry to update
         target_org: Target organization name (default: "HYDRA-ENG")
     """
-    _update_inventory_organization(item, target_org)
-    _update_related_organizations(item, target_org)
+    updates_count = _update_organization_recursive(item, target_org)
+    if updates_count > 0:
+        logger.info(f"Updated {updates_count} organization references to {target_org}")
+    else:
+        logger.debug("No organization references found to update")
 
 
 def remove_variables_field(item: Dict[str, Any]) -> None:

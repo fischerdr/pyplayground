@@ -24,6 +24,9 @@ from pyplayground.utils.logging_utils import get_logger, setup_logging
 # Setup logging
 logger = get_logger(__name__)
 
+# Add project root to path for utils
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+
 
 def validate_inventory_names(inventory_entries: List[Dict[str, Any]]) -> tuple[List[str], Set[str]]:
     """Validate uniqueness of inventory names.
@@ -117,6 +120,68 @@ def clean_filename(name: str) -> str:
     return cleaned
 
 
+def _parse_host_variables(host: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse existing variables from a host.
+
+    Args:
+        host: Host dictionary
+
+    Returns:
+        Parsed variables dictionary
+    """
+    host_name = host.get("name", "unknown")
+    existing_vars = {}
+
+    if "variables" in host and host["variables"]:
+        logger.debug(f"Original variables for {host_name}: {repr(host['variables'])}")
+        try:
+            if isinstance(host["variables"], str):
+                existing_vars = json.loads(host["variables"])
+            elif isinstance(host["variables"], dict):
+                existing_vars = host["variables"]
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"JSON decode error for host {host_name}: {e}. "
+                f"Variables content: {repr(host['variables'])}"
+            )
+        except TypeError as e:
+            logger.warning(
+                f"Type error for host {host_name}: {e}. "
+                f"Variables type: {type(host['variables'])}, content: {repr(host['variables'])}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Unexpected error parsing variables for host {host_name}: {e}. "
+                f"Variables type: {type(host['variables'])}, content: {repr(host['variables'])}"
+            )
+
+    return existing_vars
+
+
+def _clean_ssh_variables(variables: Dict[str, Any], host_name: str) -> None:
+    """Remove SSH-related variables from the variables dictionary.
+
+    Args:
+        variables: Variables dictionary to clean
+        host_name: Name of the host for logging
+    """
+    ssh_vars_to_remove = [
+        "ansible_ssh_host",
+        "ansible_ssh_port",
+        "ansible_ssh_user",
+        "ansible_ssh_private_key_file",
+        "ansible_ssh_common_args",
+        "ansible_ssh_extra_args",
+        "ansible_ssh_pipelining",
+        "ansible_ssh_executable",
+    ]
+
+    for var in ssh_vars_to_remove:
+        if var in variables:
+            del variables[var]
+            logger.debug(f"Removed {var} from host {host_name}")
+
+
 def add_host_variables(hosts: List[Dict[str, Any]]) -> None:
     """Add and clean variables for hosts in the inventory.
 
@@ -125,43 +190,21 @@ def add_host_variables(hosts: List[Dict[str, Any]]) -> None:
     """
     for host in hosts:
         if isinstance(host, dict):
-            # Parse existing variables if they exist
-            existing_vars = {}
-            if "variables" in host and host["variables"]:
-                try:
-                    if isinstance(host["variables"], str):
-                        existing_vars = json.loads(host["variables"])
-                    elif isinstance(host["variables"], dict):
-                        existing_vars = host["variables"]
-                except (json.JSONDecodeError, TypeError):
-                    logger.warning(
-                        f"Could not parse variables for host {host.get('name', 'unknown')}"
-                    )
-                    existing_vars = {}
+            host_name = host.get("name", "unknown")
+            logger.debug(f"Processing host: {host_name}")
+
+            # Parse existing variables
+            existing_vars = _parse_host_variables(host)
 
             # Remove SSH-related variables
-            ssh_vars_to_remove = [
-                "ansible_ssh_host",
-                "ansible_ssh_port",
-                "ansible_ssh_user",
-                "ansible_ssh_private_key_file",
-                "ansible_ssh_common_args",
-                "ansible_ssh_extra_args",
-                "ansible_ssh_pipelining",
-                "ansible_ssh_executable",
-            ]
-
-            for var in ssh_vars_to_remove:
-                if var in existing_vars:
-                    del existing_vars[var]
-                    logger.debug(f"Removed {var} from host {host.get('name', 'unknown')}")
+            _clean_ssh_variables(existing_vars, host_name)
 
             # Add ansible_connection: local
             existing_vars["ansible_connection"] = "local"
 
             # Update host variables
             host["variables"] = json.dumps(existing_vars)
-            logger.debug(f"Updated variables for host: {host.get('name', 'unknown')}")
+            logger.debug(f"Updated variables for host {host_name}: {existing_vars}")
 
 
 def process_inventory_entry(

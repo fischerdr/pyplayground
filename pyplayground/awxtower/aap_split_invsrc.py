@@ -23,6 +23,9 @@ from pyplayground.utils.logging_utils import get_logger, setup_logging
 # Setup logging
 logger = get_logger(__name__)
 
+# Add project root to path for utils
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+
 
 def validate_inventory_names(inventory_sources: List[Dict[str, Any]]) -> tuple[List[str], Set[str]]:
     """Validate uniqueness of inventory names.

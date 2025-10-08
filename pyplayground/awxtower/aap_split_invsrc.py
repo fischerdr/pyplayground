@@ -84,6 +84,15 @@ def _update_related_organizations(item: Dict[str, Any], target_org: str) -> None
                     logger.debug(f"Updated related item {key} organization to {target_org}")
 
 
+def _update_natural_key_organization(item: Dict[str, Any], target_org: str) -> None:
+    """Update organization in natural_key section."""
+    if "natural_key" in item and "inventory" in item["natural_key"]:
+        if "organization" in item["natural_key"]["inventory"]:
+            if item["natural_key"]["inventory"]["organization"].get("name") == "Default":
+                item["natural_key"]["inventory"]["organization"]["name"] = target_org
+                logger.debug(f"Updated natural_key inventory organization to {target_org}")
+
+
 def update_organization_names(item: Dict[str, Any], target_org: str = "HYDRA-ENG") -> None:
     """Update organization names from "Default" to target organization.
 
@@ -94,10 +103,14 @@ def update_organization_names(item: Dict[str, Any], target_org: str = "HYDRA-ENG
     _update_inventory_organization(item, target_org)
     _update_source_project_organization(item, target_org)
     _update_related_organizations(item, target_org)
+    _update_natural_key_organization(item, target_org)
 
 
 def process_inventory_source(
-    item: Dict[str, Any], output_dir: Path, target_org: str = "HYDRA-ENG"
+    item: Dict[str, Any],
+    output_dir: Path,
+    target_org: str = "HYDRA-ENG",
+    template: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     """Process a single inventory source item.
 
@@ -105,6 +118,7 @@ def process_inventory_source(
         item: Inventory source item to process
         output_dir: Directory to save the output file
         target_org: Target organization name
+        template: Template to merge with item (optional)
 
     Returns:
         Path to the saved file if successful, None otherwise
@@ -114,8 +128,13 @@ def process_inventory_source(
         logger.warning("Skipping item with missing inventory.name")
         return None
 
-    # Create a copy of the item to modify
-    modified_item = item.copy()
+    # Merge with template if provided
+    if template:
+        modified_item = _merge_with_template(item, template)
+        logger.debug(f"Merged item with template for {inventory_name}")
+    else:
+        # Create a copy of the item to modify
+        modified_item = item.copy()
 
     # Update organization names
     update_organization_names(modified_item, target_org)
@@ -160,6 +179,84 @@ def _load_json_file(input_file: str) -> Optional[Dict[str, Any]]:
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in input file: {e}")
         return None
+
+
+def _load_template_file(template_file: str) -> Optional[Dict[str, Any]]:
+    """Load and parse template JSON file.
+
+    Args:
+        template_file: Path to template JSON file
+
+    Returns:
+        Parsed template data or None if failed
+    """
+    try:
+        with open(template_file, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.error(f"Template file not found: {template_file}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in template file: {e}")
+        return None
+
+
+def _merge_with_template(item: Dict[str, Any], template: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge inventory source item with template to add missing keys.
+
+    Args:
+        item: Inventory source item to merge
+        template: Template with default values
+
+    Returns:
+        Merged inventory source item
+    """
+    # Create a deep copy of the template
+    merged_item = json.loads(json.dumps(template))
+
+    # Update with values from the input item, preserving template defaults for missing keys
+    for key, value in item.items():
+        if key in merged_item:
+            if isinstance(value, dict) and isinstance(merged_item[key], dict):
+                # Recursively merge nested dictionaries
+                merged_item[key] = _merge_nested_dicts(merged_item[key], value)
+            else:
+                # Override template value with input value
+                merged_item[key] = value
+        else:
+            # Add new keys from input that aren't in template
+            merged_item[key] = value
+
+    # Add missing keys from template that aren't in input
+    for key, value in template.items():
+        if key not in item:
+            merged_item[key] = json.loads(json.dumps(value))  # Deep copy template value
+
+    logger.debug("Merged item with template, added missing keys")
+    return merged_item
+
+
+def _merge_nested_dicts(
+    template_dict: Dict[str, Any], input_dict: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Recursively merge nested dictionaries.
+
+    Args:
+        template_dict: Template dictionary with default values
+        input_dict: Input dictionary with actual values
+
+    Returns:
+        Merged dictionary
+    """
+    result = template_dict.copy()
+
+    for key, value in input_dict.items():
+        if key in result and isinstance(value, dict) and isinstance(result[key], dict):
+            result[key] = _merge_nested_dicts(result[key], value)
+        else:
+            result[key] = value
+
+    return result
 
 
 def _validate_and_prepare_data(data: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
@@ -216,7 +313,10 @@ def _create_output_directory(output_dir: str) -> Optional[Path]:
 
 
 def split_json_file(
-    input_file: str, output_dir: str = "output", target_org: str = "HYDRA-ENG"
+    input_file: str,
+    output_dir: str = "output",
+    target_org: str = "HYDRA-ENG",
+    template_file: Optional[str] = None,
 ) -> bool:
     """Split JSON file containing inventory sources into individual files.
 
@@ -224,6 +324,7 @@ def split_json_file(
         input_file: Path to input JSON file
         output_dir: Directory to save output files
         target_org: Target organization name for updates
+        template_file: Path to template JSON file (optional)
 
     Returns:
         True if successful, False otherwise
@@ -234,6 +335,16 @@ def split_json_file(
     data = _load_json_file(input_file)
     if not data:
         return False
+
+    # Load template file if provided
+    template = None
+    if template_file:
+        logger.info(f"Loading template file: {template_file}")
+        template = _load_template_file(template_file)
+        if not template:
+            logger.warning("Failed to load template file, proceeding without template")
+        else:
+            logger.info("Template loaded successfully")
 
     # Validate and prepare inventory sources
     inventory_sources = _validate_and_prepare_data(data)
@@ -248,7 +359,7 @@ def split_json_file(
     # Process each inventory source
     successful_files = 0
     for item in inventory_sources:
-        filepath = process_inventory_source(item, output_path, target_org)
+        filepath = process_inventory_source(item, output_path, target_org, template)
         if filepath:
             successful_files += 1
 
@@ -274,16 +385,26 @@ def split_json_file(
     help="Target organization name for updates (default: HYDRA-ENG)",
 )
 @click.option(
+    "--template",
+    "-T",
+    help="Template JSON file to merge with input data",
+    type=click.Path(exists=True, readable=True),
+)
+@click.option(
     "--debug",
     is_flag=True,
     help="Enable debug logging",
 )
-def main(input_file: str, output_dir: str, target_org: str, debug: bool) -> None:
+def main(
+    input_file: str, output_dir: str, target_org: str, template: Optional[str], debug: bool
+) -> None:
     """Split AAP inventory sources JSON file into individual files.
 
     This script processes a JSON file containing multiple inventory sources and splits
     them into individual JSON files, one per inventory source. It also updates
     organization names from "Default" to the specified target organization.
+    When a template file is provided, missing keys from the input will be filled
+    with default values from the template.
 
     Examples:
         # Basic usage
@@ -291,6 +412,9 @@ def main(input_file: str, output_dir: str, target_org: str, debug: bool) -> None
 
         # Custom output directory and target organization
         python aap_split_invsrc.py inventory_sources.json --output-dir /tmp/split --target-org MY-ORG
+
+        # With template file to add missing keys
+        python aap_split_invsrc.py inventory_sources.json --template template.json
 
         # With debug logging
         python aap_split_invsrc.py inventory_sources.json --debug
@@ -317,9 +441,11 @@ def main(input_file: str, output_dir: str, target_org: str, debug: bool) -> None
     logger.info(f"Input file: {input_file}")
     logger.info(f"Output directory: {output_dir}")
     logger.info(f"Target organization: {target_org}")
+    if template:
+        logger.info(f"Template file: {template}")
 
     # Process the file
-    success = split_json_file(input_file, output_dir, target_org)
+    success = split_json_file(input_file, output_dir, target_org, template)
 
     if success:
         click.echo("Successfully processed inventory sources!")

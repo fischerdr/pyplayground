@@ -1,0 +1,29 @@
+---
+# Default variables for vault_multi_namespace_monitor role
+
+# Required variables (should be overridden)
+vault_monitor_target_namespace: ""
+vault_monitor_secret_paths: ""
+vault_monitor_vault_namespaces: ""
+
+# Optional variables with defaults
+vault_monitor_px_namespace: "portworx"
+vault_monitor_kubeconfig: ""
+vault_monitor_debug: false
+vault_monitor_mask_values: true
+vault_monitor_k8s_verify_ssl: true
+vault_monitor_k8s_ssl_ca_cert: ""
+
+# Constants from the original Python script
+vault_monitor_vault_addr_secret_name: "px-vault"
+vault_monitor_vault_addr_secret_key: "VAULT_ADDR"
+vault_monitor_vault_backend_path_key: "VAULT_BACKEND_PATH"
+vault_monitor_vault_auth_role_key: "VAULT_AUTH_KUBERNETES_ROLE"
+vault_monitor_vault_auth_mount_path_key: "VAULT_AUTH_MOUNT_PATH"
+vault_monitor_vault_auth_namespace_key: "VAULT_NAMESPACE"
+vault_monitor_vault_sa_name: "portworx"
+
+# Internal variables
+vault_monitor_test_results: []
+vault_monitor_vault_conn_info: {}
+vault_monitor_sa_jwt: ""

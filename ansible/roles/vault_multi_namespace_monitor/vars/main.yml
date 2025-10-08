@@ -1,0 +1,12 @@
+---
+# Variables for vault_multi_namespace_monitor role
+
+# These variables are set during role execution
+vault_monitor_secret_path_list: []
+vault_monitor_vault_namespace_list: []
+vault_monitor_auth_success: false
+vault_monitor_vault_token: ""
+vault_monitor_auth_error: ""
+vault_monitor_secret_success: false
+vault_monitor_secret_data: null
+vault_monitor_secret_error: ""

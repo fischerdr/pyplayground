@@ -1,0 +1,7 @@
+---
+# Ansible collection requirements for Vault multi-namespace monitoring
+collections:
+  - name: kubernetes.core
+    version: ">=2.4.0"
+  - name: community.general
+    version: ">=5.0.0"

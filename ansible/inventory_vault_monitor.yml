@@ -1,0 +1,52 @@
+---
+# Example inventory for vault multi-namespace monitoring
+# This inventory demonstrates different environments and configurations
+
+all:
+  hosts:
+    localhost:
+      vars:
+        # Default variables
+        vault_monitor_px_namespace: "portworx"
+        vault_monitor_debug: false
+        vault_monitor_mask_values: true
+        vault_monitor_k8s_verify_ssl: true
+
+  children:
+    production:
+      hosts:
+        localhost:
+          vars:
+            vault_monitor_target_namespace: "production"
+            vault_monitor_secret_paths: "app/config,db/credentials,monitoring/alerts"
+            vault_monitor_vault_namespaces: "prod-ns1,prod-ns2,monitoring-ns"
+            vault_monitor_debug: false
+
+    staging:
+      hosts:
+        localhost:
+          vars:
+            vault_monitor_target_namespace: "staging"
+            vault_monitor_secret_paths: "app/config,db/credentials"
+            vault_monitor_vault_namespaces: "staging-ns1,staging-ns2"
+            vault_monitor_debug: true
+
+    development:
+      hosts:
+        localhost:
+          vars:
+            vault_monitor_target_namespace: "development"
+            vault_monitor_secret_paths: "app/config"
+            vault_monitor_vault_namespaces: "dev-ns"
+            vault_monitor_debug: true
+            vault_monitor_mask_values: false
+
+    testing:
+      hosts:
+        localhost:
+          vars:
+            vault_monitor_target_namespace: "testing"
+            vault_monitor_secret_paths: "test/config,test/credentials"
+            vault_monitor_vault_namespaces: "test-ns1,test-ns2"
+            vault_monitor_debug: true
+            vault_monitor_mask_values: false

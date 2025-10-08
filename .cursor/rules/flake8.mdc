@@ -16,7 +16,7 @@ This document provides a detailed guide on effectively using Flake8 in Python pr
 
 Example:
 
-
+```text
 my_project/
 ├── src/
 │   ├── my_package/
@@ -35,7 +35,7 @@ my_project/
 ├── .flake8
 ├── pyproject.toml
 └── README.md
-
+```
 
 ### File Naming Conventions
 
@@ -47,9 +47,9 @@ my_project/
 
 - **Single responsibility principle:** Each module should have a clear, single purpose.
 - **Import order:** Follow a consistent import order:
-    1.  Standard library imports
-    2.  Third-party imports
-    3.  Local application/package imports
+    1. Standard library imports
+    2. Third-party imports
+    3. Local application/package imports
 
     Separate each group with a blank line.
 - **Avoid circular dependencies:** Design your modules to minimize or eliminate circular dependencies.

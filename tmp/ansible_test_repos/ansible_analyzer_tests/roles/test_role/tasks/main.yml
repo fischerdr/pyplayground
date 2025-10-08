@@ -1,0 +1,6 @@
+---
+- name: Role task with shell command
+  shell: grep -r "{{ log_level }}" /var/log/
+
+- name: Role task with command
+  command: systemctl restart {{ app_name }}-service 

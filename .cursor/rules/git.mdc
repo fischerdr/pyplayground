@@ -2,6 +2,12 @@
 description: This rule outlines best practices for effective use of Git, including code organization, commit strategies, branching models, and collaborative workflows.
 globs: **/.git/*
 ---
+# Git Best Practices
+
+This document outlines best practices for effective use of Git, including code organization, commit strategies, branching models, and collaborative workflows.
+
+## 1. Commit Strategies
+
 - **Commit Strategies:**
   - **Atomic Commits:** Keep commits small and focused. Each commit should address a single, logical change. This makes it easier to understand the history and revert changes if needed.
   - **Descriptive Commit Messages:** Write clear, concise, and informative commit messages. Explain the *why* behind the change, not just *what* was changed. Use a consistent format (e.g., imperative mood: "Fix bug", "Add feature").

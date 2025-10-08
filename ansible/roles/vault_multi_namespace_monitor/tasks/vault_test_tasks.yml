@@ -1,0 +1,120 @@
+---
+# Individual Vault test tasks
+# This file contains the tasks for testing a single Vault namespace/secret combination
+
+- name: Initialize test result for {{ current_vault_namespace }}
+  ansible.builtin.set_fact:
+    current_test_result:
+      namespace: "{{ vault_monitor_target_namespace }}"
+      secret_path: "{{ current_secret_path }}"
+      vault_namespace: "{{ current_vault_namespace }}"
+      success: false
+      status: "Unknown"
+      auth_success: false
+      secret_access_success: false
+      data: null
+      error_message: null
+
+- name: Test Vault authentication for {{ current_vault_namespace }}
+  block:
+    - name: Authenticate with Vault using Kubernetes auth
+      ansible.builtin.uri:
+        url: "{{ vault_monitor_vault_conn_info.addr }}/v1/auth/{{ vault_monitor_vault_conn_info.auth_mount_path }}/login"
+        method: POST
+        body_format: json
+        body:
+          role: "{{ vault_monitor_vault_conn_info.auth_role }}"
+          jwt: "{{ vault_monitor_sa_jwt }}"
+        headers: >-
+          {%- set headers = {"Content-Type": "application/json"} -%}
+          {%- if current_vault_namespace != '' -%}
+          {%- set _ = headers.update({"X-Vault-Namespace": current_vault_namespace}) -%}
+          {%- endif -%}
+          {{ headers }}
+        status_code: 200
+        validate_certs: false
+      register: vault_auth_response
+      failed_when: false
+
+    - name: Check authentication response
+      ansible.builtin.set_fact:
+        vault_monitor_auth_success: "{{ vault_auth_response.status == 200 and vault_auth_response.json.auth is defined }}"
+        vault_monitor_vault_token: "{{ vault_auth_response.json.auth.client_token if vault_auth_response.status == 200 and vault_auth_response.json.auth is defined else '' }}"
+        vault_monitor_auth_error: "{{ 'Authentication successful but no token received' if vault_auth_response.status == 200 and vault_auth_response.json.auth is not defined else ('Authentication failed: ' + (vault_auth_response.json.errors[0] | default('Unknown error'))) }}"
+
+    - name: Update test result with auth status
+      ansible.builtin.set_fact:
+        current_test_result:
+          auth_success: "{{ vault_monitor_auth_success }}"
+          error_message: "{{ vault_monitor_auth_error if not vault_monitor_auth_success else null }}"
+          status: "{{ 'Authentication Failed' if not vault_monitor_auth_success else 'Authentication Success' }}"
+
+  rescue:
+    - name: Handle authentication failure
+      ansible.builtin.set_fact:
+        current_test_result:
+          auth_success: false
+          error_message: "Authentication failed: {{ ansible_failed_result.msg | default('Unknown error') }}"
+          status: "Authentication Failed"
+
+- name: Skip secret access test if authentication failed
+  ansible.builtin.debug:
+    msg: "Skipping secret access test due to authentication failure"
+  when: not vault_monitor_auth_success | default(false)
+
+- name: Test Vault secret access for {{ current_secret_path }}
+  when: vault_monitor_auth_success | default(false)
+  block:
+    - name: Read secret from Vault
+      ansible.builtin.uri:
+        url: "{{ vault_monitor_vault_conn_info.addr }}/v1/{{ vault_monitor_vault_conn_info.backend_path }}/data/{{ current_secret_path }}"
+        method: GET
+        headers: >-
+          {%- set headers = {"X-Vault-Token": vault_monitor_vault_token} -%}
+          {%- if current_vault_namespace != '' -%}
+          {%- set _ = headers.update({"X-Vault-Namespace": current_vault_namespace}) -%}
+          {%- endif -%}
+          {{ headers }}
+        status_code: 200
+        validate_certs: false
+      register: vault_secret_response
+      failed_when: false
+
+    - name: Check secret access response
+      ansible.builtin.set_fact:
+        vault_monitor_secret_success: "{{ vault_secret_response.status == 200 and vault_secret_response.json.data is defined }}"
+        vault_monitor_secret_data: "{{ vault_secret_response.json.data.data if vault_secret_response.status == 200 and vault_secret_response.json.data is defined else null }}"
+        vault_monitor_secret_error: "{{ 'Secret found but contains no data' if vault_secret_response.status == 200 and vault_secret_response.json.data is not defined else ('Secret access failed: ' + (vault_secret_response.json.errors[0] | default('Unknown error'))) }}"
+
+    - name: Update test result with secret access status
+      ansible.builtin.set_fact:
+        current_test_result:
+          secret_access_success: "{{ vault_monitor_secret_success }}"
+          data: "{{ vault_monitor_secret_data }}"
+          error_message: "{{ vault_monitor_secret_error if not vault_monitor_secret_success else (current_test_result.error_message if current_test_result.error_message else null) }}"
+          status: "{{ 'Success' if vault_monitor_secret_success else 'Secret Access Failed' }}"
+          success: "{{ vault_monitor_secret_success }}"
+
+  rescue:
+    - name: Handle secret access failure
+      ansible.builtin.set_fact:
+        current_test_result:
+          secret_access_success: false
+          error_message: "{{ current_test_result.error_message if current_test_result.error_message else 'Secret access failed: ' + (ansible_failed_result.msg | default('Unknown error')) }}"
+          status: "Secret Access Failed"
+          success: false
+
+- name: Add current test result to results list
+  ansible.builtin.set_fact:
+    vault_monitor_test_results: "{{ vault_monitor_test_results + [current_test_result] }}"
+
+- name: Display current test result
+  ansible.builtin.debug:
+    msg:
+      - "Test {{ test_index }}: {{ current_test_result.namespace }} - {{ current_test_result.secret_path }}"
+      - "  Vault Namespace: {{ current_test_result.vault_namespace }}"
+      - "  Authentication: {{ 'SUCCESS' if current_test_result.auth_success else 'FAILED' }}"
+      - "  Secret Access: {{ 'SUCCESS' if current_test_result.secret_access_success else 'FAILED' }}"
+      - "  Overall Status: {{ current_test_result.status }}"
+      - "  Error: {{ current_test_result.error_message if current_test_result.error_message else 'None' }}"
+  when: vault_monitor_debug | bool

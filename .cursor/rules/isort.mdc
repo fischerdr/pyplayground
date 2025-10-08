@@ -6,7 +6,8 @@ globs: **/*.py
 
 This document provides a comprehensive guide to using isort effectively in Python projects. It covers various aspects, including code organization, common patterns, performance considerations, security, testing, tooling, and common pitfalls.
 
-## Library Information:
+## Library Information
+
 - Name: isort
 - Tags: development, python, formatter, imports
 
@@ -19,18 +20,18 @@ While isort primarily focuses on import sorting within files, the overall direct
 - **Flat Structure (Small Projects):** For smaller projects, a flat structure might suffice, with all modules in a single directory.
 - **Modular Structure (Larger Projects):** For larger projects, adopt a modular structure using packages and subpackages. This enhances maintainability and reusability.
 
-  
+```text
   project_name/
   ├── package1/
-  │   ├── __init__.py
+  │   ├── **init**.py
   │   ├── module1.py
   │   └── module2.py
   ├── package2/
-  │   ├── __init__.py
+  │   ├── **init**.py
   │   └── module3.py
   ├── main.py
   └── pyproject.toml (isort configuration)
-  
+```
 
 ### 1.2 File Naming Conventions Specific to isort
 
@@ -43,14 +44,18 @@ While isort primarily focuses on import sorting within files, the overall direct
 - **Grouping Related Functionality:** Organize modules based on related functionality.  For example, place database-related functions in a `db` module.
 - **Avoiding Circular Imports:** Be cautious of circular import dependencies, where two or more modules import each other, leading to potential runtime errors.  isort can help detect these through proper import ordering.
 - **Using Relative Imports:** Utilize relative imports within packages for internal references.
-  python
-  # Within package1/module1.py
-  from .module2 import some_function  # Relative import
+  - Within package1/module1.py
 
-  # From outside the package
-  from package1.module1 import some_function
+    ```python
+    from .module2 import some_function  # Relative import
+    ```
+
+  - From outside the package
   
-
+    ```python
+    from package1.module1 import some_function
+    ```
+  
 ### 1.4 Component Architecture Recommendations
 
 - **Layered Architecture:** Consider a layered architecture (e.g., presentation, business logic, data access) to separate concerns and facilitate modularity.
@@ -69,14 +74,14 @@ isort itself doesn't directly relate to traditional design patterns like Singlet
 
 - **Import Facade:**  Use a module to consolidate and re-export imports from other modules to simplify external dependencies.
 
-  python
+  ```python
   # my_package/imports.py
   from .module1 import ClassA
   from .module2 import function_b
 
-  __all__ = ['ClassA', 'function_b']
+  **all** = ['ClassA', 'function_b']
+  ```
   
-
 ### 2.2 Recommended Approaches for Common Tasks
 
 - **Sorting Imports:** Use isort to automatically sort imports alphabetically and group them by type (standard library, third-party, local).

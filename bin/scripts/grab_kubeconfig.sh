@@ -1,14 +1,15 @@
 #!/bin/bash
 #
 # Script: grab_kubeconfig.sh
-# Description: Functions to retrieve and store the kubeconfig for a given cluster name. Needs to be included in a main script.
+# Description: Functions to retrieve and store the kubeconfig and SSH private key for a given cluster name. Needs to be included in a main script.
 # Usage: source ./grab_kubeconfig.sh
 #
 # Examples:
 #   source ./grab_kubeconfig.sh
 #   get_inventory_data "my-cluster"
 #   get_vault_kubeconfig "my-cluster"
-#   # This will create kube_configs/my-cluster.kubeconfig and export KUBECONFIG
+#   # This will create kube_configs/my-cluster.kubeconfig and kube_configs/my-cluster.sshpriv
+#   # and export KUBECONFIG
 #
 # Dependencies:
 #   - curl: for API requests
@@ -19,8 +20,9 @@
 #   - DEBUG: Optional, set to "true" for debug output
 #
 # Directory Structure:
-#   - kube_configs/: Directory where kubeconfig files are stored
+#   - kube_configs/: Directory where kubeconfig and SSH key files are stored
 #     - <cluster_name>.kubeconfig: Kubeconfig file for each cluster
+#     - <cluster_name>.sshpriv: SSH private key file for each cluster
 
 # Enable strict mode
 set -euo pipefail
@@ -47,25 +49,41 @@ log() {
 
 # Function to cleanup kubeconfig
 # Usage: cleanup
-# Description: Removes the created kubeconfig file and unsets KUBECONFIG environment variable
+# Description: Removes the created kubeconfig and SSH private key files and unsets KUBECONFIG environment variable
 # Returns: 0 on success, 1 on failure
 cleanup() {
     local kubeconfig_file="${KUBECONFIG:-}"
+    local ssh_key_file=""
+    local cleanup_failed=0
     
     if [[ -n "${kubeconfig_file}" ]]; then
+        # Derive SSH key file path from kubeconfig path
+        ssh_key_file="${kubeconfig_file%.kubeconfig}.sshpriv"
+        
+        # Remove kubeconfig file
         if [[ -f "${kubeconfig_file}" ]]; then
             log "INFO" "Removing kubeconfig file: ${kubeconfig_file}"
             rm -f "${kubeconfig_file}" || {
                 log "ERROR" "Failed to remove kubeconfig file: ${kubeconfig_file}"
-                return 1
+                cleanup_failed=1
             }
         fi
+        
+        # Remove SSH private key file
+        if [[ -f "${ssh_key_file}" ]]; then
+            log "INFO" "Removing SSH private key file: ${ssh_key_file}"
+            rm -f "${ssh_key_file}" || {
+                log "ERROR" "Failed to remove SSH private key file: ${ssh_key_file}"
+                cleanup_failed=1
+            }
+        fi
+        
         log "INFO" "Unsetting KUBECONFIG environment variable"
         unset KUBECONFIG
     else
         log "INFO" "No KUBECONFIG environment variable set, nothing to clean"
     fi
-    return 0
+    return ${cleanup_failed}
 }
 
 # Common error handler
@@ -223,14 +241,14 @@ validate_dir_permissions() {
 # Arguments:
 #   cluster_name - Name of the cluster to get kubeconfig for
 # Returns: 
-#   - 0 if kubeconfig successfully retrieved and saved
+#   - 0 if kubeconfig and SSH private key successfully retrieved and saved
 #   - 1 if any step fails
-# Description: Uses vault configuration to retrieve kubeconfig from vault's KV2 store
+# Description: Uses vault configuration to retrieve kubeconfig and SSH private key from vault's KV2 store
 #             at static_secrets mount point. Saves kubeconfig to file in kube_configs directory
-#             and exports KUBECONFIG environment variable
+#             and exports KUBECONFIG environment variable. Also saves SSH private key with secure permissions.
 get_vault_kubeconfig() {
     local cluster_name="$1"
-    local vault_token response kubeconfig
+    local vault_token response kubeconfig ssh_private_key
     
     # Validate cluster name
     validate_cluster_name "${cluster_name}" || return 1
@@ -239,19 +257,27 @@ get_vault_kubeconfig() {
     [[ -z "${VAULT_ADDR}" || -z "${VAULT_NAMESPACE}" || -z "${VAULT_PATH}" ]] && \
         error "Vault configuration not set. Run get_inventory_data first." && return 1
 
-    log "INFO" "Retrieving kubeconfig from vault"
-    # Construct KV2 path and get kubeconfig
+    log "INFO" "Retrieving kubeconfig and SSH private key from vault"
+    # Construct KV2 path and get secrets
     local kv2_path="static_secrets/data/${VAULT_PATH}"
     response=$(curl_cmd -s \
         -H "X-Vault-Token: ${vault_token}" \
         -H "X-Vault-Namespace: ${VAULT_NAMESPACE}" \
-        "${VAULT_ADDR}/v1/${kv2_path}") || error "Failed to retrieve kubeconfig from Vault"
+        "${VAULT_ADDR}/v1/${kv2_path}") || error "Failed to retrieve secrets from Vault"
 
+    # Extract kubeconfig
     kubeconfig=$("${JQ_CMD}" -r '.data.data.kubeconfig' <<< "${response}") || \
         error "Failed to parse kubeconfig from vault response"
 
     [[ -z "${kubeconfig}" || "${kubeconfig}" == "null" ]] && \
         error "No kubeconfig found in vault response" && return 1
+
+    # Extract SSH private key
+    ssh_private_key=$("${JQ_CMD}" -r '.data.data.ssh_private.key' <<< "${response}") || \
+        error "Failed to parse SSH private key from vault response"
+
+    [[ -z "${ssh_private_key}" || "${ssh_private_key}" == "null" ]] && \
+        error "No SSH private key found in vault response" && return 1
 
     # Validate directory permissions before saving
     validate_dir_permissions "${KUBECONFIG_DIR}" || return 1
@@ -261,5 +287,15 @@ get_vault_kubeconfig() {
     echo "${kubeconfig}" > "${kubeconfig_file}"
     export KUBECONFIG="${kubeconfig_file}"
     log "INFO" "Successfully saved kubeconfig to ${kubeconfig_file} and exported KUBECONFIG"
+    
+    # Save SSH private key to file with secure permissions
+    local ssh_key_file="${KUBECONFIG_DIR}/${cluster_name}.sshpriv"
+    echo "${ssh_private_key}" > "${ssh_key_file}"
+    chmod 600 "${ssh_key_file}" || {
+        error "Failed to set secure permissions on SSH private key file"
+        return 1
+    }
+    log "INFO" "Successfully saved SSH private key to ${ssh_key_file} with secure permissions"
+    
     return 0
 }

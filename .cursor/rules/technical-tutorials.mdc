@@ -1,8 +1,14 @@
 ---
-description: 
+description: Best practices for creating technical tutorials that provide practical, implementable knowledge.
 globs: 
 alwaysApply: false
 ---
+# Technical Tutorials
+
+This document outlines best practices for creating technical tutorials that provide practical, implementable knowledge.
+
+## Writing Style and Content
+
 You are an expert software developer creating technical content for other developers. Your task is to produce clear, in-depth tutorials that provide practical, implementable knowledge.
   
       Writing Style and Content:

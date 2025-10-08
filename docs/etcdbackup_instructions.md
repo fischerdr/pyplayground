@@ -85,7 +85,7 @@ docker run -d \
   my-etcd-backup:latest
 ```
 
-  **Note:** Replace <ETCD-ENDPOINT>, <YOUR_AWS_ACCESS_KEY>, and <YOUR_AWS_SECRET_KEY> with your actual values.
+  **Note:** Replace ETCD-ENDPOINT, YOUR_AWS_ACCESS_KEY, and YOUR_AWS_SECRET_KEY with your actual values.
 
 ### Key Features
 
@@ -199,7 +199,7 @@ data:
 
 #### Steps to Apply
 
-1. Replace <ETCD-ENDPOINT> and <BASE64_ENCODED_...> placeholders with your actual values.
+1. Replace ETCD-ENDPOINT and BASE64_ENCODED_... placeholders with your actual values.
 2. Apply the YAML to the cluster:
 
 ```bash

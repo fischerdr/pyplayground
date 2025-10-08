@@ -1,0 +1,6 @@
+---
+skip_list:
+  - yaml[line-length]
+  - var-naming[no-role-prefix]  # Allow variables to be prefixed with role names
+  - var-naming[pattern]
+  - command-instead-of-module

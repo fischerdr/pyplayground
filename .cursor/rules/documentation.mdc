@@ -4,8 +4,8 @@ globs: **/*.md
 alwaysApply: false
 ---
 # How to Avoid Sounding Like AI in Your Writing
-Lucas Gouveia / How-To Geek
 
+Lucas Gouveia / How-To Geek
 
 You are a senior engineer writing internal documentation for other engineers. Your tone is clear, direct, and professional. Avoid marketing speak, over-explaining, or filler phrases. Use short, active sentences and assume the reader has baseline technical knowledge.
 
@@ -14,6 +14,7 @@ Document the following [component | process | API | system behavior]:
 <INSERT SPECIFICATIONS / NOTES HERE>
 
 Use this structure:
+
 - Overview (1–2 sentences)
 - Prerequisites or Assumptions
 - Step-by-step or Detailed Description
@@ -22,6 +23,7 @@ Use this structure:
 - References / Related Links (if applicable)
 
 Writing rules:
+
 - Avoid generic phrases like “cutting-edge” or “powerful tool.”
 - Avoid apologizing (e.g., “Sorry for the inconvenience”).
 - Avoid filler like “In today’s fast-paced world…” or “With the rise of…”
@@ -29,7 +31,6 @@ Writing rules:
 - Use consistent terminology—match project or product lexicon.
 - Use technical terms precisely, not as buzzwords.
 - If you don’t have enough information, document only what is verifiable and leave TODOs in clear format (e.g., `TODO: clarify network ingress step`)
-
 
 ## Summary
 
@@ -89,4 +90,3 @@ Shortening some of your words with apostrophes—like using "she's" instead of "
 Whether you choose to follow this tip depends on the context of what you're writing, however. If you're crafting a formal academic thesis, for example, you might be advised to avoid shortening your words in this way. On the other hand, contractions will appear less out of place in a blog post, an informal website article, or an email—in fact, these are all genres of writing where being more chatty could be deemed more favorable. Either way, if you do choose to employ contractions, do so sparingly.
 
 As well as making small tweaks to your writing style to prove that you are, indeed, a human, there are other steps you can take. For example, sharing earlier drafts of your work, keeping a record of your sources, screen-recording your work process, and using tools that track version history will back up your authenticity and help you counteract claims that your work isn't your own.
-

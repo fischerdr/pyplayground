@@ -23,11 +23,15 @@ share/python-wheels/
 MANIFEST
 
 # Virtual Environment
-.venv/
+.venv*/
 venv/
 ENV/
 env/
 .env
+
+# Ansible runner, navigator and artifacts
+.ansible/*
+artifacts/*
 
 # Testing and Coverage
 htmlcov/
@@ -72,8 +76,6 @@ bin/tools/**
 !bin/tools/bin/
 !bin/tools/bin/.gitkeep
 !bin/tools/**/.gitkeep
-
-
 # Keep script directories but ignore binaries
 !bin/scripts/
 bin/scripts/**/*.exe
@@ -120,8 +122,13 @@ tmp/build/*
 !tmp/build/.gitkeep
 *.tmp
 *.temp
-*~
+models/**/*
 
+# Config files
+!config/**/*
+.ansible/.lock
+.DS_Store
+.vscode/settings.json
 # Misc
 *.retry
 pip-selfcheck.json
@@ -150,3 +157,14 @@ Temporary Items
 .vault_pass
 vault.key
 vault.txt
+
+# sound files
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.m4a
+*.aac
+*.wma
+*.aiff
+*.au

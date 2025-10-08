@@ -2,11 +2,16 @@
 description: Comprehensive best practices and coding standards for the Rich library, focusing on code quality, performance, and maintainability within Python terminal applications.
 globs: **/*.py
 ---
-- **General Guidelines**
-  - Adhere to PEP 8 coding style guidelines for Python code, emphasizing readability and consistency.
-  - Limit lines to a maximum of 79 characters to enhance readability across different environments.
-  - Prioritize code clarity and simplicity, making it easy to understand and maintain.
-  - Use UTF-8 encoding for source files to ensure compatibility with a wide range of characters.
+# Rich Best Practices and Coding Standards
+
+This document outlines comprehensive best practices and coding standards for the Rich library, focusing on code quality, performance, and maintainability within Python terminal applications.
+
+## 1. General Guidelines
+
+- Adhere to PEP 8 coding style guidelines for Python code, emphasizing readability and consistency.
+- Limit lines to a maximum of 79 characters to enhance readability across different environments.
+- Prioritize code clarity and simplicity, making it easy to understand and maintain.
+- Use UTF-8 encoding for source files to ensure compatibility with a wide range of characters.
 
 - **Installation and Environment**
   - Use `uv` for installing dependencies to improve speed and reliability, if appropriate.
@@ -15,24 +20,26 @@ globs: **/*.py
 - **Code Organization and Structure**
 
   - **Directory Structure:** Follow a logical directory structure.
-    
-    project_root/
-    ├── src/
-    │   ├── main.py        # Entry point of the application
-    │   ├── utils/
-    │   │   ├── __init__.py
-    │   │   ├── helper_functions.py
-    │   ├── modules/
-    │   │   ├── __init__.py
-    │   │   ├── module_a.py  # Rich-related components
-    │   │   ├── module_b.py
-    ├── tests/
-    │   ├── __init__.py
-    │   ├── test_main.py
-    │   ├── test_module_a.py
-    ├── README.md
-    ├── pyproject.toml  # Or requirements.txt
-    
+
+  ```text
+      project_root/
+      ├── src/
+      │   ├── main.py        # Entry point of the application
+      │   ├── utils/
+      │   │   ├── **init**.py
+      │   │   ├── helper_functions.py
+      │   ├── modules/
+      │   │   ├── **init**.py
+      │   │   ├── module_a.py  # Rich-related components
+      │   │   ├── module_b.py
+      ├── tests/
+      │   ├── **init**.py
+      │   ├── test_main.py
+      │   ├── test_module_a.py
+      ├── README.md
+      ├── pyproject.toml  # Or requirements.txt
+  ```
+
   - **File Naming:** Use descriptive lowercase names with underscores (e.g., `console_output.py`).
   - **Module Organization:** Group related functionalities into separate modules (e.g., `rich_display.py`, `data_formatting.py`).
   - **Component Architecture:** Design modular components with clear interfaces for reusability and maintainability.
@@ -65,11 +72,11 @@ globs: **/*.py
 
     def my_function():
         console.print("Hello, [bold red]World![/bold red]")
-    
+
   - **Styling:** Use Rich's markup system for styling text.  Refer to the Rich documentation for available styles and their usage.
     python
     console.print("[link=https://example.com]Click here[/link] to visit example.com")
-    
+
   - **Tables:** Utilize the `Table` class for structured data display.  Configure columns and rows appropriately.
     python
     from rich.table import Table
@@ -80,7 +87,7 @@ globs: **/*.py
     table.add_row("Alice", "30")
     table.add_row("Bob", "25")
     console.print(table)
-    
+
   - **Progress Bars:** Employ the `Progress` class for tracking long-running tasks.  Configure the progress bar to accurately reflect the task's progress.
     python
     from rich.progress import Progress
@@ -94,14 +101,13 @@ globs: **/*.py
             progress.update(task1, advance=0.5)
             progress.update(task2, advance=0.1)
             time.sleep(0.01) #Simulate some work
-    
+
   - **Inspect:** Use `console.inspect()` for debugging and understanding objects.  This is invaluable for exploring Rich's own classes and objects, or any object in your application.
     python
     from rich.panel import Panel
 
     panel = Panel("Hello, World!")
     console.inspect(panel, methods=True)
-    
 
 - **Common Patterns and Anti-patterns**
   - **Design Patterns:**  Employ appropriate design patterns such as Factory Pattern for creating Rich objects or Strategy Pattern for different output styles.
@@ -114,7 +120,6 @@ globs: **/*.py
         result = 1 / 0
     except Exception as e:
         console.print_exception(show_locals=True)
-    
 
 - **Performance Considerations**
   - **Optimization Techniques:** Use Rich's built-in caching mechanisms to avoid re-rendering the same content repeatedly.  Minimize the use of computationally expensive Rich features when performance is critical.
@@ -151,10 +156,10 @@ globs: **/*.py
   - **CI/CD Integration:** Integrate Rich-based applications into your CI/CD pipeline to automate testing and deployment.  Use tools like Jenkins, GitLab CI, or GitHub Actions.
 
 - **Additional Notes**
-  - Consult the official Rich documentation (https://rich.readthedocs.io) for the most up-to-date information and examples.
+  - Consult the official Rich documentation (<https://rich.readthedocs.io>) for the most up-to-date information and examples.
   - Explore Rich's examples and demonstrations to learn more about its capabilities.
   - Contribute to the Rich community by reporting bugs, suggesting features, or submitting pull requests.
 
 - **References**
-  - PEP 8: Style Guide for Python Code (https://peps.python.org/pep-0008/)
-  - Rich Documentation: (https://rich.readthedocs.io)
+  - PEP 8: Style Guide for Python Code (<https://peps.python.org/pep-0008/>)
+  - Rich Documentation: (<https://rich.readthedocs.io>)

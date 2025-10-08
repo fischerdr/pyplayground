@@ -62,15 +62,15 @@ The Secret Scanner Tool is a Python-based utility designed to detect potential s
 1. Clone the repository
 2. Install dependencies:
 
-```bash
-pip install -r requirements.txt
-```
+    ```bash
+    pip install -r requirements.txt
+    ```
 
 3. Make the script executable:
 
-```bash
-chmod +x find_passwords.py
-```
+    ```bash
+    chmod +x find_passwords.py
+    ```
 
 ## Usage
 

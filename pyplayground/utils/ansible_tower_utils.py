@@ -1,0 +1,865 @@
+"""Utility functions for interacting with Ansible Tower/Controller API."""
+
+import json
+import logging
+import os
+import sys
+from time import sleep, time
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urljoin
+
+import requests
+import urllib3
+from dotenv import load_dotenv
+from requests.auth import HTTPBasicAuth
+
+# Disable SSL warnings - due to self-signed certs
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# It's better to get a logger instance per module
+logger = logging.getLogger(__name__)
+
+# Cache configuration
+_CACHE_TTL = 300  # 5 minutes in seconds
+_CACHE_MAX_SIZE = 1000  # Maximum number of cached entries
+
+# Global cache for resource lookups
+_resource_cache: Dict[Tuple[str, str, str, str, str], Tuple[Dict[str, Any], float]] = {}
+
+
+def _get_cache_key(
+    tower_url: str, endpoint: str, attribute_name: str, value: str, verify: bool
+) -> Tuple[str, str, str, str, str]:
+    """Generate a cache key for resource lookups.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        endpoint: API endpoint
+        attribute_name: Name of the attribute to search by
+        value: Value of the attribute to search for
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        Tuple representing the cache key
+    """
+    return (tower_url, endpoint, attribute_name, value, str(verify))
+
+
+def _is_cache_valid(cache_entry: Tuple[Dict[str, Any], float]) -> bool:
+    """Check if a cache entry is still valid based on TTL.
+
+    Args:
+        cache_entry: Tuple of (data, timestamp)
+
+    Returns:
+        True if cache entry is still valid, False otherwise
+    """
+    data, timestamp = cache_entry
+    return (time() - timestamp) < _CACHE_TTL
+
+
+def _cleanup_expired_cache() -> None:
+    """Remove expired cache entries to prevent memory bloat."""
+    current_time = time()
+    expired_keys = [
+        key
+        for key, (_, timestamp) in _resource_cache.items()
+        if (current_time - timestamp) >= _CACHE_TTL
+    ]
+    for key in expired_keys:
+        del _resource_cache[key]
+
+    if expired_keys:
+        logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
+
+
+def _manage_cache_size() -> None:
+    """Manage cache size by removing oldest entries if cache exceeds maximum size."""
+    if len(_resource_cache) > _CACHE_MAX_SIZE:
+        # Sort by timestamp and remove oldest entries
+        sorted_entries = sorted(_resource_cache.items(), key=lambda x: x[1][1])
+        entries_to_remove = len(_resource_cache) - _CACHE_MAX_SIZE
+        for key, _ in sorted_entries[:entries_to_remove]:
+            del _resource_cache[key]
+        logger.debug(f"Removed {entries_to_remove} oldest cache entries to maintain size limit")
+
+
+def clear_resource_cache() -> None:
+    """Clear the entire resource cache.
+
+    This function can be called to manually clear the cache if needed,
+    for example when you know the data has changed on the server.
+    """
+    _resource_cache.clear()
+    logger.info("Resource cache cleared")
+
+
+def get_cache_stats() -> Dict[str, Any]:
+    """Get statistics about the current cache state.
+
+    Returns:
+        Dictionary containing cache statistics
+    """
+    current_time = time()
+    valid_entries = sum(
+        1 for _, timestamp in _resource_cache.values() if (current_time - timestamp) < _CACHE_TTL
+    )
+    expired_entries = len(_resource_cache) - valid_entries
+
+    return {
+        "total_entries": len(_resource_cache),
+        "valid_entries": valid_entries,
+        "expired_entries": expired_entries,
+        "cache_size_limit": _CACHE_MAX_SIZE,
+        "ttl_seconds": _CACHE_TTL,
+    }
+
+
+def invalidate_cache_entry(
+    tower_url: str, endpoint: str, attribute_name: str, value: str, verify: bool = True
+) -> bool:
+    """Invalidate a specific cache entry.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        endpoint: API endpoint
+        attribute_name: Name of the attribute
+        value: Value of the attribute
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        True if entry was found and removed, False otherwise
+    """
+    cache_key = _get_cache_key(tower_url, endpoint, attribute_name, value, verify)
+    if cache_key in _resource_cache:
+        del _resource_cache[cache_key]
+        logger.debug(
+            f"Invalidated cache entry for {endpoint} with attribute '{attribute_name}' and value '{value}'"
+        )
+        return True
+    return False
+
+
+def invalidate_cache_by_endpoint(tower_url: str, endpoint: str, verify: bool = True) -> int:
+    """Invalidate all cache entries for a specific endpoint.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        endpoint: API endpoint to invalidate
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        Number of cache entries removed
+    """
+    removed_count = 0
+    keys_to_remove = []
+
+    for key in _resource_cache.keys():
+        if key[0] == tower_url and key[1] == endpoint and key[4] == str(verify):
+            keys_to_remove.append(key)
+
+    for key in keys_to_remove:
+        del _resource_cache[key]
+        removed_count += 1
+
+    if removed_count > 0:
+        logger.debug(f"Invalidated {removed_count} cache entries for endpoint '{endpoint}'")
+
+    return removed_count
+
+
+def cleanup_cache() -> Dict[str, int]:
+    """Clean up expired cache entries and return statistics.
+
+    Returns:
+        Dictionary with cleanup statistics
+    """
+    initial_count = len(_resource_cache)
+
+    _cleanup_expired_cache()
+    _manage_cache_size()
+
+    final_count = len(_resource_cache)
+    removed_count = initial_count - final_count
+
+    return {
+        "initial_entries": initial_count,
+        "final_entries": final_count,
+        "removed_entries": removed_count,
+    }
+
+
+def get_awx_or_tower_client(prefix: str, verify: bool = False) -> Dict[str, Any]:
+    """Get an authenticated AWX or Tower API client configuration for REST API.
+
+    Args:
+        prefix (str): The prefix for environment variables, e.g., 'AWX' or 'TOWER'.
+
+    Returns:
+        Dict containing connection details: {'url': str, 'headers': Dict[str, str], 'verify': bool}
+    """
+    load_dotenv()
+    host = os.getenv(f"{prefix}_HOST")
+    username = os.getenv(f"{prefix}_USERNAME")
+    password = os.getenv(f"{prefix}_PASSWORD")
+    token = os.getenv(f"{prefix}_TOKEN")
+
+    if not host:
+        logger.error(f"Missing required environment variable: {prefix}_HOST")
+        sys.exit(1)
+
+    # Ensure host has proper scheme
+    if not host.startswith(("http://", "https://")):
+        host = f"https://{host}"
+
+    headers = {"Content-Type": "application/json"}
+
+    try:
+        if token:
+            logger.info(f"Connecting to {host} using token.")
+            headers["Authorization"] = f"Bearer {token}"
+            return {"url": host, "headers": headers, "verify": verify, "auth_type": "token"}
+        elif username and password:
+            logger.info(f"Connecting to {host} using user/pass for {username}.")
+            # Get token using credentials
+            token = get_tower_token_from_credentials(host, username, password, verify=verify)
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+                return {"url": host, "headers": headers, "verify": verify, "auth_type": "token"}
+            else:
+                logger.error(f"Failed to obtain token for user {username}")
+                sys.exit(1)
+        else:
+            logger.error(
+                f"Missing credentials for {prefix}. "
+                f"Set ({prefix}_USERNAME and {prefix}_PASSWORD), or {prefix}_TOKEN."
+            )
+            sys.exit(1)
+    except Exception as e:
+        logger.error(f"Failed to connect to {prefix} instance at {host}: {e}", exc_info=True)
+        sys.exit(1)
+
+
+def get_tower_token_from_credentials(
+    tower_url: str, username: str, password: str, verify: bool = True
+) -> Optional[str]:
+    """Obtain an API token from Tower using username and password."""
+    token_url = f"{tower_url.rstrip('/')}/api/v2/tokens/"
+    payload = {
+        "description": "Token for run_template_restapi.py script",
+        "scope": "write",
+        # Not including "application" to request a personal access token (PAT)
+        # If this fails, an Application with "password" grant_type might need to be created in Tower
+        # and its ID passed here, or the user must generate a PAT manually.
+    }
+    try:
+        logger.info(f"Attempting to obtain token for user '{username}' from {token_url}")
+        response = requests.post(
+            token_url,
+            auth=HTTPBasicAuth(username, password),
+            json=payload,
+            verify=verify,
+            timeout=30,
+        )
+        response.raise_for_status()
+        token_data = response.json()
+        access_token = token_data.get("token")
+        if access_token:
+            logger.info(f"Successfully obtained token for user '{username}'.")
+            return access_token
+        else:
+            logger.error("Token request successful, but no token found in response.")
+            return None
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"HTTP error obtaining token: {e.response.status_code} - {e.response.text}")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error obtaining token: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when obtaining token: {e}")
+        return None
+
+
+def search_resource_by_name(
+    tower_url: str, headers: Dict[str, str], endpoint: str, partial_name: str, verify: bool = True
+) -> Optional[List[Dict[str, Any]]]:
+    """Search for a resource by partial name (e.g., job_templates, inventories)."""
+    url = f"{tower_url}/api/v2/{endpoint}/?name__icontains={partial_name}"
+    try:
+        response = requests.get(url, headers=headers, verify=verify, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        if data.get("count", 0) > 0:
+            results = data.get("results", [])
+            logger.info(f"Found {len(results)} {endpoint}(s) matching '{partial_name}':")
+            for idx, resource in enumerate(results):
+                logger.info(f"  [{idx + 1}] {resource.get('name')} (ID: {resource.get('id')})")
+            return results
+        else:
+            logger.info(f"No {endpoint} found with partial name '{partial_name}'.")
+            return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to search {endpoint}: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when searching {endpoint}: {e}")
+        return None
+
+
+def select_resource(resources: Optional[List[Dict[str, Any]]], resource_type: str) -> Optional[int]:
+    """Allow the user to select a resource from the list interactively."""
+    if not resources:
+        logger.warning(f"No {resource_type}s provided to select from.")
+        return None
+
+    if len(resources) == 1:
+        selected_resource = resources[0]
+        logger.info(
+            f"Automatically selecting {resource_type}: "
+            f"{selected_resource.get('name')} (ID: {selected_resource.get('id')})"
+        )
+        return selected_resource.get("id")
+
+    logger.info(f"Please select a {resource_type} from the following list:")
+    for idx, resource in enumerate(resources):
+        logger.info(f"  [{idx + 1}] {resource.get('name')} (ID: {resource.get('id')})")
+
+    while True:
+        try:
+            selection = input(
+                f"Enter the number for the desired {resource_type} (1-{len(resources)}): "
+            )
+            selection_int = int(selection)
+            if 1 <= selection_int <= len(resources):
+                selected = resources[selection_int - 1]
+                logger.info(
+                    f"Selected {resource_type}: {selected.get('name')} (ID: {selected.get('id')})"
+                )
+                return selected.get("id")
+            else:
+                logger.warning(
+                    f"Invalid selection. Please choose a number between 1 and {len(resources)}."
+                )
+        except ValueError:
+            logger.warning("Invalid input. Please enter a number.")
+        except KeyboardInterrupt:
+            logger.info("\nSelection cancelled by user.")
+            return None
+
+
+def launch_job_template(
+    tower_url: str,
+    headers: Dict[str, str],
+    job_template_id: int,
+    inventory_id: Optional[int] = None,
+    extra_vars: Optional[str] = None,
+    verify: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Launch an Ansible Tower job template."""
+    url = f"{tower_url}/api/v2/job_templates/{job_template_id}/launch/"
+    payload: Dict[str, Any] = {}
+
+    if inventory_id is not None:
+        payload["inventory"] = inventory_id
+    if extra_vars:
+        try:
+            payload["extra_vars"] = json.loads(extra_vars)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in extra_vars: '{extra_vars}'. Error: {e}")
+            return None
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, verify=verify, timeout=30)
+        response.raise_for_status()
+        job_data = response.json()
+        logger.info(f"Job launched successfully. Job ID: {job_data.get('id')}")
+        return job_data
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to launch job: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when launching job: {e}")
+        return None
+
+
+def monitor_job_status(
+    tower_url: str, headers: Dict[str, str], job_id: int, verify: bool = True
+) -> Optional[Dict[str, Any]]:
+    """Monitor the status of a running job and return its details upon completion."""
+    url = f"{tower_url}/api/v2/jobs/{job_id}/"
+    logger.info(f"Monitoring job ID: {job_id} at {url}")
+
+    while True:
+        try:
+            response = requests.get(url, headers=headers, verify=verify, timeout=30)
+            response.raise_for_status()
+            job_details = response.json()
+            status = job_details.get("status")
+            logger.info(f"Job ID {job_id} status: {status}")
+
+            if status in ["successful", "failed", "error", "canceled"]:
+                logger.info(f"Job ID {job_id} finished with status: {status}")
+                return job_details
+
+            sleep(5)  # Poll every 5 seconds
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to fetch job status for job ID {job_id}: {e}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to decode JSON for job status (ID {job_id}): {e}")
+            return None
+        except KeyboardInterrupt:
+            logger.info(f"\nMonitoring of job ID {job_id} cancelled by user.")
+            return None
+
+
+def fetch_job_events(
+    tower_url: str, headers: Dict[str, str], job_id: int, verify: bool = True
+) -> None:
+    """Fetch and log notable job events for a completed job."""
+    url = f"{tower_url}/api/v2/jobs/{job_id}/job_events/"
+    logger.info(f"Fetching events for job ID: {job_id}")
+    try:
+        response = requests.get(url, headers=headers, verify=verify, timeout=30)
+        response.raise_for_status()
+        events_data = response.json()
+        events = events_data.get("results", [])
+
+        if not events:
+            logger.info(f"No events found for job ID {job_id}.")
+            return
+
+        for event in events:
+            event_type = event.get("event")
+            if event_type == "playbook_on_task_start":
+                logger.info(f"  Task Started: {event.get('task')}")
+            elif event_type == "runner_on_failed":
+                failed_details = (
+                    f"  Task Failed: {event.get('task')}\n"
+                    f"    Host: {event.get('host')}\n"
+                    f"    Message: {event.get('stdout', 'No stdout message').strip()}"
+                )
+                logger.error(failed_details)
+            elif event_type == "runner_on_ok":
+                # Reduce verbosity for runner_on_ok, could be many.
+                # Consider logging only if a specific verbosity flag is set.
+                pass  # logger.debug(f"  Task OK: {event.get('task')} on Host: {event.get('host')}")
+            # Add more event types to log if needed
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to fetch job events for job ID {job_id}: {e}")
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON for job events (ID {job_id}): {e}")
+
+
+def fetch_job_output(
+    tower_url: str, headers: Dict[str, str], job_id: int, verify: bool = True
+) -> Optional[str]:
+    """Fetch the full stdout output of a completed job."""
+    url = f"{tower_url}/api/v2/jobs/{job_id}/stdout/"
+    logger.info(f"Fetching stdout for job ID: {job_id}")
+    try:
+        response = requests.get(
+            url, headers=headers, params={"format": "txt"}, verify=verify, timeout=30
+        )
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to fetch job stdout for job ID {job_id}: {e}")
+        return None
+
+
+def list_resources_with_params(
+    tower_url: str,
+    headers: Dict[str, str],
+    endpoint: str,
+    verify: bool = True,
+    params: Optional[Dict[str, Any]] = None,
+    paginated: Optional[bool] = True,
+) -> Optional[List[Dict[str, Any]]]:
+    """List all resources of a specific type from AWX/Tower API with query parameters.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'credentials', 'inventories', 'projects')
+        verify: Whether to verify SSL certificates
+        params: Optional query parameters for filtering, searching, sorting, etc.
+        paginated: If True, fetch all pages of results. If False, return only first page.
+
+    Returns:
+        List of resource dictionaries or None if failed
+    """
+    if not paginated:
+        # Original behavior - return only first page
+        url = f"{tower_url}/api/v2/{endpoint}/"
+        try:
+            response = requests.get(url, headers=headers, params=params, verify=verify, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            return data.get("results", [])
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to list {endpoint}: {e}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to decode JSON response when listing {endpoint}: {e}")
+            return None
+    else:
+        # New behavior - fetch all pages
+        return _fetch_all_paginated_resources(tower_url, headers, endpoint, verify, params)
+
+
+def _fetch_all_paginated_resources(
+    tower_url: str,
+    headers: Dict[str, str],
+    endpoint: str,
+    verify: bool = True,
+    params: Optional[Dict[str, Any]] = None,
+) -> Optional[List[Dict[str, Any]]]:
+    """Internal function to fetch all pages of resources from a paginated Tower API endpoint.
+
+    Args:
+        tower_url: The base URL of the Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'job_templates', 'workflow_job_templates')
+        verify: Whether to verify SSL certificates
+        params: Optional query parameters for filtering, searching, sorting, etc.
+
+    Returns:
+        Complete list of all resources from all pages, or None if failed
+    """
+    all_results = []
+    url = f"{tower_url.rstrip('/')}/api/v2/{endpoint}/"
+    page_count = 0
+
+    # Use a copy to avoid modifying the original dict in case it's reused
+    current_params = params.copy() if params else {}
+
+    try:
+        while url:
+            page_count += 1
+            logger.debug(f"Fetching page {page_count} for {endpoint}")
+
+            response = requests.get(
+                url, headers=headers, params=current_params, verify=verify, timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            page_results = data.get("results", [])
+            all_results.extend(page_results)
+
+            # Get next page URL
+            next_page_path = data.get("next")
+
+            if next_page_path:
+                # AWX/Tower API can return a relative path for the next page
+                url = urljoin(tower_url, next_page_path)
+                logger.debug(f"Fetching next page: {url}")
+                # Parameters are included in the 'next' URL, so clear them for the next loop
+                current_params = {}
+            else:
+                # No more pages, exit the loop
+                url = None
+
+        logger.info(f"Fetched {len(all_results)} total {endpoint} across {page_count} pages")
+        return all_results
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to fetch paginated {endpoint}: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when fetching paginated {endpoint}: {e}")
+        return None
+
+
+def list_resources(
+    tower_url: str, headers: Dict[str, str], endpoint: str, verify: bool = True
+) -> Optional[List[Dict[str, Any]]]:
+    """List all resources of a specific type from AWX/Tower API.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'credentials', 'inventories', 'projects')
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        List of resource dictionaries or None if failed
+    """
+    return list_resources_with_params(tower_url, headers, endpoint, verify)
+
+
+def find_resource_by_attribute_name(
+    tower_url: str,
+    headers: Dict[str, str],
+    endpoint: str,
+    attribute_name: str,
+    value: str,
+    verify: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Find a specific resource by exact name.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'credentials', 'inventories', 'projects')
+        attribute_name: Name of the attribute to search by
+        value: Value of the attribute to search for
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        Resource dictionary of results and count of results
+    """
+    cache_key = _get_cache_key(tower_url, endpoint, attribute_name, value, verify)
+
+    # Check cache first
+    if cache_key in _resource_cache:
+        cached_data, timestamp = _resource_cache[cache_key]
+        if _is_cache_valid((cached_data, timestamp)):
+            logger.debug(
+                f"Returning cached data for {endpoint} with attribute '{attribute_name}' and value '{value}'"
+            )
+            return cached_data
+        else:
+            logger.debug(
+                f"Cache expired for {endpoint} with attribute '{attribute_name}' and value '{value}'. Refreshing."
+            )
+            del _resource_cache[cache_key]  # Remove expired entry
+
+    # Log cache stats on cache miss
+    cache_stats = get_cache_stats()
+    logger.info(
+        f"[CACHE MISS] Cache stats: total_entries={cache_stats['total_entries']}, "
+        f"valid_entries={cache_stats['valid_entries']}, expired_entries={cache_stats['expired_entries']}, "
+        f"cache_size_limit={cache_stats['cache_size_limit']}, ttl_seconds={cache_stats['ttl_seconds']}"
+    )
+
+    url = f"{tower_url}/api/v2/{endpoint}/?{attribute_name}={value}"
+    try:
+        response = requests.get(url, headers=headers, verify=verify, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        results = {"results": data.get("results", []), "count": data.get("count", 0)}
+
+        # Add to cache
+        _manage_cache_size()
+        _resource_cache[cache_key] = (results, time())
+
+        return results
+    except requests.exceptions.RequestException as e:
+        logger.error(
+            f"Failed to find {endpoint} with attribute '{attribute_name}' and value '{value}': {e}"
+        )
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when finding {endpoint}: {e}")
+        return None
+
+
+def find_resource_by_name(
+    tower_url: str, headers: Dict[str, str], endpoint: str, name: str, verify: bool = True
+) -> Optional[Dict[str, Any]]:
+    """Find a specific resource by exact name."""
+    return find_resource_by_attribute_name(tower_url, headers, endpoint, "name", name, verify)
+
+
+def find_resource_by_id(
+    tower_url: str, headers: Dict[str, str], endpoint: str, id: int, verify: bool = True
+) -> Optional[Dict[str, Any]]:
+    """Find a specific resource by exact ID."""
+    return find_resource_by_attribute_name(tower_url, headers, endpoint, "id", str(id), verify)
+
+
+def create_resource(
+    tower_url: str,
+    headers: Dict[str, str],
+    endpoint: str,
+    payload: Dict[str, Any],
+    verify: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Create a new resource via AWX/Tower API.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'credentials', 'inventories', 'projects')
+        payload: Resource data to create
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        Created resource dictionary if successful, None otherwise
+    """
+    url = f"{tower_url}/api/v2/{endpoint}/"
+    try:
+        response = requests.post(url, headers=headers, json=payload, verify=verify, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to create {endpoint}: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            logger.error(f"Response: {e.response.text}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when creating {endpoint}: {e}")
+        return None
+
+
+def update_resource(
+    tower_url: str,
+    headers: Dict[str, str],
+    endpoint: str,
+    resource_id: int,
+    payload: Dict[str, Any],
+    verify: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Update an existing resource via AWX/Tower API.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'credentials', 'inventories', 'projects')
+        resource_id: ID of the resource to update
+        payload: Resource data to update
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        Updated resource dictionary if successful, None otherwise
+    """
+    url = f"{tower_url}/api/v2/{endpoint}/{resource_id}/"
+    try:
+        response = requests.patch(url, headers=headers, json=payload, verify=verify, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to update {endpoint} {resource_id}: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            logger.error(f"Response: {e.response.text}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when updating {endpoint}: {e}")
+        return None
+
+
+def get_resource(
+    tower_url: str,
+    headers: Dict[str, str],
+    endpoint: str,
+    resource_id: int,
+    verify: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Get a specific resource by ID via AWX/Tower API.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'credentials', 'inventories', 'projects')
+        resource_id: ID of the resource to get
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        Resource dictionary if successful, None otherwise
+    """
+    url = f"{tower_url}/api/v2/{endpoint}/{resource_id}/"
+    try:
+        response = requests.get(url, headers=headers, verify=verify, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to get {endpoint} {resource_id}: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            logger.error(f"Response: {e.response.text}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when getting {endpoint}: {e}")
+        return None
+
+
+def get_inventory_hosts(
+    tower_url: str, headers: Dict[str, str], inventory_id: int, verify: bool = True
+) -> Optional[List[Dict[str, Any]]]:
+    """Get all hosts for a specific inventory.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        inventory_id: ID of the inventory
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        List of host dictionaries or None if failed
+    """
+    url = f"{tower_url}/api/v2/inventories/{inventory_id}/hosts/"
+    try:
+        response = requests.get(url, headers=headers, verify=verify, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("results", [])
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to get hosts for inventory {inventory_id}: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when getting hosts: {e}")
+        return None
+
+
+def add_host_to_inventory(
+    tower_url: str,
+    headers: Dict[str, str],
+    inventory_id: int,
+    host_data: Dict[str, Any],
+    verify: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Add a host to a specific inventory.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        inventory_id: ID of the inventory
+        host_data: Host data to create
+        verify: Whether to verify SSL certificates
+
+    Returns:
+        Created host dictionary if successful, None otherwise
+    """
+    url = f"{tower_url}/api/v2/inventories/{inventory_id}/hosts/"
+    try:
+        response = requests.post(url, headers=headers, json=host_data, verify=verify, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to add host to inventory {inventory_id}: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            logger.error(f"Response: {e.response.text}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode JSON response when adding host: {e}")
+        return None
+
+
+def export_all_resources(
+    tower_url: str,
+    headers: Dict[str, str],
+    endpoint: str,
+    verify: bool = True,
+    params: Optional[Dict[str, Any]] = None,
+    paginated: Optional[bool] = True,
+) -> Optional[List[Dict[str, Any]]]:
+    """Export all resources from a Tower API endpoint with pagination enabled.
+
+    This function is specifically designed for export scripts and always fetches
+    all pages to ensure complete data export.
+
+    Args:
+        tower_url: The base URL of the AWX/Tower instance
+        headers: HTTP headers for authentication
+        endpoint: API endpoint (e.g., 'job_templates', 'workflow_job_templates')
+        verify: Whether to verify SSL certificates
+        params: Optional query parameters for filtering, searching, sorting, etc.
+        paginated: If True, fetch all pages of results. If False, return only first page.
+
+    Returns:
+        Complete list of all resources from all pages, or None if failed
+    """
+    return list_resources_with_params(tower_url, headers, endpoint, verify, params, paginated)

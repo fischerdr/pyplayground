@@ -1,0 +1,74 @@
+{
+    "name": "",
+    "description": "",
+    "job_type": "run",
+    "inventory": null,
+    "playbook": "",
+    "scm_branch": "",
+    "forks": 0,
+    "limit": "",
+    "verbosity": 0,
+    "extra_vars": "",
+    "job_tags": "",
+    "force_handlers": false,
+    "skip_tags": "",
+    "start_at_task": "",
+    "timeout": 0,
+    "use_fact_cache": false,
+    "host_config_key": "",
+    "ask_scm_branch_on_launch": true,
+    "ask_diff_mode_on_launch": false,
+    "ask_variables_on_launch": true,
+    "ask_limit_on_launch": false,
+    "ask_tags_on_launch": false,
+    "ask_skip_tags_on_launch": false,
+    "ask_job_type_on_launch": false,
+    "ask_verbosity_on_launch": true,
+    "ask_inventory_on_launch": true,
+    "ask_credential_on_launch": true,
+    "ask_execution_environment_on_launch": false,
+    "ask_labels_on_launch": false,
+    "ask_forks_on_launch": false,
+    "ask_job_slice_count_on_launch": false,
+    "ask_timeout_on_launch": false,
+    "ask_instance_groups_on_launch": false,
+    "survey_enabled": false,
+    "become_enabled": false,
+    "diff_mode": false,
+    "allow_simultaneous": true,
+    "job_slice_count": 1,
+    "webhook_service": "",
+    "webhook_credential": null,
+    "prevent_instance_group_fallback": true,
+    "opa_query_path": "",
+    "project": {
+        "organization": {
+            "name": "HYDRA-ENG",
+            "type": "organization"
+        },
+        "name": "",
+        "type": "project"
+    },
+    "execution_environment": {
+        "name": "",
+        "type": "execution_environment"
+    },
+    "related": {
+        "labels": [],
+        "credentials": [],
+        "schedules": [],
+        "notification_templates_started": [],
+        "notification_templates_success": [],
+        "notification_templates_error": [],
+        "survey_spec": {}
+    },
+    "natural_key": {
+        "organization": {
+            "name": "HYDRA-ENG",
+            "type": "organization"
+        },
+        "name": "",
+        "type": "job_template"
+    }
+}
+

@@ -114,7 +114,6 @@ def connect(args) -> Optional[vim.ServiceInstance]:
     """
     service_instance = None
     try:
-        # ssl_context = None # Removed as context is used directly
         if args.disable_ssl_verification:
             # Attempt to import ssl module for context creation
             context = None  # Initialize context

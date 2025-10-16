@@ -265,9 +265,14 @@ def process_job_template(
         # Create a copy of the item to modify
         modified_item = json.loads(json.dumps(item))  # Deep copy
 
-    # Always set inventory to null
-    modified_item["inventory"] = None
-    logger.debug("Set inventory to null")
+    # Check if inventory is not null and set ask_inventory_on_launch accordingly
+    if modified_item.get("inventory") is not None:
+        modified_item["inventory"] = None
+        modified_item["ask_inventory_on_launch"] = True
+        logger.debug("Set inventory to null and ask_inventory_on_launch to true")
+    else:
+        modified_item["inventory"] = None
+        logger.debug("Inventory already null, keeping ask_inventory_on_launch as-is")
 
     # Ensure related section exists and initialize credentials/schedules
     if "related" not in modified_item:

@@ -265,11 +265,30 @@ def process_job_template(
         # Create a copy of the item to modify
         modified_item = json.loads(json.dumps(item))  # Deep copy
 
+    # Always set inventory to null
+    modified_item["inventory"] = None
+    logger.debug("Set inventory to null")
+
+    # Ensure related section exists and initialize credentials/schedules
+    if "related" not in modified_item:
+        modified_item["related"] = {}
+    if "schedules" not in modified_item["related"]:
+        modified_item["related"]["schedules"] = []
+    else:
+        # Always reset schedules to empty array
+        modified_item["related"]["schedules"] = []
+    logger.debug("Initialized related.schedules to []")
+
     # Update credentials first
     update_credentials(modified_item, credential_mapping, target_org)
 
     # Update organization names throughout the structure
     update_organization_names(modified_item, target_org)
+
+    # Remove custom_virtualenv key if it exists
+    if "custom_virtualenv" in modified_item:
+        del modified_item["custom_virtualenv"]
+        logger.debug("Removed custom_virtualenv key")
 
     # Create new structure with only this object in the array
     output_data = {"job_templates": [modified_item]}

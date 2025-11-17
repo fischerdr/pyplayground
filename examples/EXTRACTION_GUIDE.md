@@ -35,21 +35,21 @@ You should see:
 ├── requirements.txt           # Python dependencies
 ├── logs/                      # Logs directory (with .gitkeep)
 ├── tmp/                       # Temp files directory (with .gitkeep)
-├── pxsecretmigrate/          # Main scripts package
-│   ├── __init__.py
-│   ├── k8s_px_pvc_data_exporter.py
-│   ├── k8s_px_pvc_vault_secret_checker.py
-│   ├── k8s_px_volume_details.py
-│   ├── px_vault_to_k8s_secret_migrator.py
-│   ├── verify_px_k8s_secret_migration.py
-│   └── README.md              # Detailed script docs
-└── utils/                     # Utility modules
+└── pxsecretmigrate/          # Main package
     ├── __init__.py
-    ├── k8s_utils.py
-    ├── vault_utils.py
-    ├── px_api.py
-    ├── migration_utils.py
-    └── logging_utils.py
+    ├── k8s_px_pvc_data_exporter.py
+    ├── k8s_px_pvc_vault_secret_checker.py
+    ├── k8s_px_volume_details.py
+    ├── px_vault_to_k8s_secret_migrator.py
+    ├── verify_px_k8s_secret_migration.py
+    ├── README.md              # Detailed script docs
+    └── utils/                 # Utility modules (nested)
+        ├── __init__.py
+        ├── k8s_utils.py
+        ├── vault_utils.py
+        ├── px_api.py
+        ├── migration_utils.py
+        └── logging_utils.py
 ```
 
 ---
@@ -107,10 +107,10 @@ pip install -r requirements.txt
 
 ```bash
 # Check Python syntax
-python3 -m py_compile pxsecretmigrate/*.py utils/*.py
+python3 -m py_compile pxsecretmigrate/*.py pxsecretmigrate/utils/*.py
 
-# Test script help
-python pxsecretmigrate/k8s_px_pvc_data_exporter.py --help
+# Test script help (run as module)
+python -m pxsecretmigrate.k8s_px_pvc_data_exporter --help
 
 # Should display usage information
 ```
@@ -147,16 +147,16 @@ git push -u origin main
 
 ### Export PVC Data (requires cluster access):
 ```bash
-python pxsecretmigrate/k8s_px_pvc_data_exporter.py \
+python -m pxsecretmigrate.k8s_px_pvc_data_exporter \
   --kubeconfig ~/.kube/config \
   --output-file test-export
 ```
 
 ### Check Help for All Scripts:
 ```bash
-for script in pxsecretmigrate/*.py; do
+for script in k8s_px_pvc_data_exporter k8s_px_pvc_vault_secret_checker k8s_px_volume_details px_vault_to_k8s_secret_migrator verify_px_k8s_secret_migration; do
   echo "=== $script ==="
-  python "$script" --help
+  python -m pxsecretmigrate.$script --help
   echo
 done
 ```
@@ -167,7 +167,7 @@ done
 
 ### Configuration Files
 - **pyproject.toml**: Python project configuration (build system, dependencies, tools)
-- **requirements.txt**: Pinned production dependencies
+- **requirements.txt**: Pinned production dependencies (7 packages)
 - **.flake8**: Linting rules and code style configuration
 - **.gitignore**: Git ignore patterns for Python projects
 
@@ -178,14 +178,15 @@ done
 
 ### Source Code
 - **pxsecretmigrate/**: Main package with 5 migration scripts
-- **utils/**: Shared utility modules (k8s, vault, px_api, migration, logging)
+- **pxsecretmigrate/utils/**: Shared utility modules (k8s, vault, px_api, migration, logging)
 
 ### Key Features
-1. All import paths updated from `pyplayground.utils.*` to `utils.*`
-2. Minimal dependency set (only 6 core packages)
-3. Standalone documentation
-4. Proper Python package structure
-5. Ready for pip installation with `pip install -e .`
+1. Utils nested under pxsecretmigrate/ (matches your structure)
+2. All imports use: `from pxsecretmigrate.utils.*`
+3. Minimal dependency set (7 core packages including python-dotenv)
+4. Standalone documentation
+5. Proper Python package structure
+6. Ready for pip installation with `pip install -e .`
 
 ---
 
@@ -195,6 +196,7 @@ done
 - `click` - CLI framework
 - `hvac` - HashiCorp Vault client
 - `kubernetes` - Kubernetes Python client
+- `python-dotenv` - Environment variable management
 - `pyyaml` - YAML parsing
 - `requests` - HTTP library
 - `rich` - Terminal formatting
@@ -206,6 +208,20 @@ Install with: `pip install -e ".[dev]"`
 - `flake8` - Linting
 - `mypy` - Type checking
 - `isort` - Import sorting
+
+---
+
+## Running Scripts
+
+Scripts MUST be run as Python modules due to the nested utils structure:
+
+```bash
+# Correct way
+python -m pxsecretmigrate.k8s_px_pvc_data_exporter --help
+
+# This works after installing with pip install -e .
+python pxsecretmigrate/k8s_px_pvc_data_exporter.py --help
+```
 
 ---
 
@@ -225,13 +241,13 @@ pxsecretmigrate/
 │   └── .gitkeep
 ├── tmp/                       # Temp files (created at runtime)
 │   └── .gitkeep
-├── pxsecretmigrate/          # Main package
-│   ├── __init__.py
-│   ├── README.md
-│   └── *.py (5 scripts)
-└── utils/                     # Utilities
+└── pxsecretmigrate/          # Main package
     ├── __init__.py
-    └── *.py (5 modules)
+    ├── README.md
+    ├── *.py (5 scripts)
+    └── utils/                 # Nested utilities
+        ├── __init__.py
+        └── *.py (5 modules)
 ```
 
 ---
@@ -242,24 +258,63 @@ pxsecretmigrate/
 
 ```bash
 # 1. Export current state
-python pxsecretmigrate/k8s_px_pvc_data_exporter.py \
+python -m pxsecretmigrate.k8s_px_pvc_data_exporter \
   --output-file production-cluster
 
 # 2. Check Vault secrets
-python pxsecretmigrate/k8s_px_pvc_vault_secret_checker.py
+python -m pxsecretmigrate.k8s_px_pvc_vault_secret_checker
 
 # 3. Test migration (dry-run)
-python pxsecretmigrate/px_vault_to_k8s_secret_migrator.py \
+python -m pxsecretmigrate.px_vault_to_k8s_secret_migrator \
   --input tmp/production-cluster_*.json \
   --dry-run
 
 # 4. Perform migration
-python pxsecretmigrate/px_vault_to_k8s_secret_migrator.py \
+python -m pxsecretmigrate.px_vault_to_k8s_secret_migrator \
   --input tmp/production-cluster_*.json
 
 # 5. Verify migration
-python pxsecretmigrate/verify_px_k8s_secret_migration.py \
+python -m pxsecretmigrate.verify_px_k8s_secret_migration \
   --input tmp/production-cluster_*.json
+```
+
+---
+
+## Troubleshooting
+
+### Import Errors
+If you see `ModuleNotFoundError: No module named 'pxsecretmigrate'`:
+```bash
+# Make sure you're running as a module
+python -m pxsecretmigrate.k8s_px_pvc_data_exporter --help
+
+# OR install in editable mode
+pip install -e .
+```
+
+### Virtual Environment
+```bash
+# Make sure virtual environment is activated
+source .venv/bin/activate
+
+# Reinstall dependencies
+pip install -r requirements.txt
+```
+
+### Script Execution Errors
+```bash
+# Verify Python version (3.9+)
+python --version
+
+# Check syntax
+python -m py_compile pxsecretmigrate/*.py pxsecretmigrate/utils/*.py
+```
+
+### Git Issues
+```bash
+# If remote already exists
+git remote remove origin
+git remote add origin <new-url>
 ```
 
 ---
@@ -278,36 +333,6 @@ python pxsecretmigrate/verify_px_k8s_secret_migration.py \
 
 ---
 
-## Troubleshooting
-
-### Import Errors
-If you see `ModuleNotFoundError`:
-```bash
-# Make sure virtual environment is activated
-source .venv/bin/activate
-
-# Reinstall dependencies
-pip install -r requirements.txt
-```
-
-### Script Execution Errors
-```bash
-# Verify Python version (3.9+)
-python --version
-
-# Check syntax
-python -m py_compile pxsecretmigrate/*.py
-```
-
-### Git Issues
-```bash
-# If remote already exists
-git remote remove origin
-git remote add origin <new-url>
-```
-
----
-
 ## Support
 
 - Check [README.md](README.md) for usage documentation
@@ -316,9 +341,11 @@ git remote add origin <new-url>
 
 ---
 
-## License
+## Important Notes
 
-[Add your license information]
+- **Utils are nested**: `pxsecretmigrate/utils/` (not at root level)
+- **Run as modules**: Use `python -m pxsecretmigrate.script_name`
+- **Includes dotenv**: python-dotenv dependency added for environment variable management
 
 ---
 

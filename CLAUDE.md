@@ -277,12 +277,24 @@ logger.info("Operation started", extra={"operation": "example", "count": 5})
 
 Configuration files live in `config/`, logs in `logs/`, and temporary files in `tmp/`. The `tmp/` directory contents should always be safe to delete.
 
-## Documentation
+### Documentation Standards
 
+**IMPORTANT:** Follow these rules when working with documentation:
+
+- **No emojis or icons** - Documentation must be professional and text-only
+- **Ask before creating** - Always ask the user for approval before generating or modifying documentation files
+- **No unsolicited documentation** - Never proactively create README files, markdown documentation, or similar without explicit user request
 - Main docs in `docs/` directory covering setup, configuration, usage guides
 - Keep README.md synchronized with project changes
 - Update documentation when making code changes
 - Document thought process and architecture decisions in `docs/`
+
+This applies to all documentation including:
+
+- README files
+- Markdown documentation (*.md)
+- Code comments and docstrings (emojis prohibited)
+- Commit messages (emojis prohibited)
 
 ## Important Notes
 
@@ -301,3 +313,34 @@ Configuration files live in `config/`, logs in `logs/`, and temporary files in `
 - **awxtower/**: AWX/Ansible Tower API integration, resource management
 - **dndfightsim/**: D&D character simulation and combat mechanics
 - **pxsecretmigrate/**: Standalone secret migration tool for Portworx environments
+
+## Git Commit Messages
+
+**IMPORTANT:** Do NOT add Claude Code attribution or co-authorship to commit messages.
+
+Commit messages should:
+
+- Follow conventional commit format when appropriate
+- Be concise and descriptive
+- Focus on the "why" rather than the "what"
+- Match the repository's existing commit style
+- **NOT include** any Claude Code branding, attribution, or co-authorship footers
+
+Bad example (DO NOT USE):
+
+```text
+Add new feature
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+```
+
+Good example:
+
+```text
+Add etcd defragmentation monitoring
+
+Implements health check validation before and after defrag operations
+to ensure cluster stability.
+```

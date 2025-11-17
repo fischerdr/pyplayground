@@ -1,5 +1,5 @@
 ================================================================================
-PXSECRETMIGRATE STANDALONE BUNDLE - VERIFICATION REPORT
+PXSECRETMIGRATE STANDALONE BUNDLE - VERIFICATION REPORT (v2)
 ================================================================================
 
 Generated: $(date)
@@ -10,23 +10,23 @@ DELIVERABLES
 ================================================================================
 
 1. pxsecretmigrate-standalone.tar.gz (62KB)
-   └─ Ready-to-extract bundle for creating new git repository
+   └─ Ready-to-extract bundle with NESTED utils structure
 
-2. EXTRACTION_GUIDE.md (7.9KB)
-   └─ Step-by-step setup instructions
+2. EXTRACTION_GUIDE.md (Updated)
+   └─ Step-by-step setup instructions for nested structure
 
-3. BUNDLE_INFO.md (4.8KB)
+3. BUNDLE_INFO.md
    └─ Technical details and bundle contents
 
 ================================================================================
-BUNDLE CONTENTS (26 items)
+BUNDLE CONTENTS (21 items)
 ================================================================================
 
 Configuration Files:
   ✓ .flake8                  - Linting configuration
   ✓ .gitignore               - Git ignore patterns  
   ✓ pyproject.toml           - Python project config
-  ✓ requirements.txt         - Production dependencies
+  ✓ requirements.txt         - Production dependencies (7 packages)
 
 Documentation:
   ✓ README.md                - User documentation
@@ -41,7 +41,7 @@ Main Package (pxsecretmigrate/):
   ✓ px_vault_to_k8s_secret_migrator.py
   ✓ verify_px_k8s_secret_migration.py
 
-Utilities (utils/):
+Utilities (pxsecretmigrate/utils/) - NESTED:
   ✓ __init__.py
   ✓ k8s_utils.py
   ✓ vault_utils.py
@@ -58,32 +58,58 @@ VERIFICATION CHECKS
 ================================================================================
 
 ✓ Python Syntax Check:      PASSED (all files compile)
-✓ Import Path Updates:       PASSED (no pyplayground imports)
-✓ Package Structure:         PASSED (__init__.py files present)
+✓ Import Path Updates:       PASSED (uses pxsecretmigrate.utils.*)
+✓ Package Structure:         NESTED (utils under pxsecretmigrate/)
 ✓ Documentation:             COMPLETE (README, CLAUDE.md, guides)
 ✓ Configuration Files:       PRESENT (.flake8, pyproject.toml)
-✓ Dependencies:              MINIMAL (6 core packages)
+✓ Dependencies:              MINIMAL (7 packages including dotenv)
 ✓ Git Readiness:             READY (.gitignore included)
 
 ================================================================================
-KEY CHANGES FROM ORIGINAL
+KEY STRUCTURE DETAILS
+================================================================================
+
+Directory Layout:
+pxsecretmigrate/
+├── pxsecretmigrate/          # Main package
+│   ├── *.py                  # Migration scripts
+│   └── utils/                # Utilities NESTED here
+│       └── *.py
+├── logs/
+└── tmp/
+
+Import Pattern (ALL scripts use):
+from pxsecretmigrate.utils.k8s_utils import ...
+from pxsecretmigrate.utils.vault_utils import ...
+from pxsecretmigrate.utils.px_api import ...
+from pxsecretmigrate.utils.migration_utils import ...
+from pxsecretmigrate.utils.logging_utils import ...
+
+Running Scripts:
+python -m pxsecretmigrate.k8s_px_pvc_data_exporter --help
+
+================================================================================
+CHANGES FROM ORIGINAL BUNDLE
 ================================================================================
 
 1. Import Paths
-   FROM: from pyplayground.utils.*
-   TO:   from utils.*
+   FROM: from utils.*
+   TO:   from pxsecretmigrate.utils.*
    
-2. Dependencies
-   FROM: 47+ packages (full pyplayground)
-   TO:   6 core packages (click, hvac, kubernetes, pyyaml, requests, rich)
+2. Directory Structure
+   FROM: utils/ at root level
+   TO:   pxsecretmigrate/utils/ (nested)
    
-3. Structure
-   FROM: Part of monorepo
-   TO:   Standalone Python package
+3. Dependencies
+   FROM: 6 packages
+   TO:   7 packages (added python-dotenv)
+   
+4. Package Config
+   pyproject.toml packages = ["pxsecretmigrate"]
+   (utils included automatically as subpackage)
 
-4. Documentation  
-   FROM: Shared docs in monorepo
-   TO:   Complete standalone documentation
+5. Documentation
+   Updated to reflect nested structure and module execution
 
 ================================================================================
 NEXT STEPS
@@ -103,18 +129,19 @@ NEXT STEPS
    Create repo on GitHub/GitLab and push
 
 5. Test:
-   python pxsecretmigrate/k8s_px_pvc_data_exporter.py --help
+   python -m pxsecretmigrate.k8s_px_pvc_data_exporter --help
 
 ================================================================================
 DEPENDENCIES (Production)
 ================================================================================
 
-click       >= 8.1.0    - CLI framework
-hvac        >= 1.2.1    - Vault client  
-kubernetes  >= 25.3.0   - K8s Python client
-pyyaml      >= 6.0.1    - YAML parsing
-requests    >= 2.31.0   - HTTP library
-rich        >= 14.0.0   - Terminal formatting
+click           >= 8.1.0    - CLI framework
+hvac            >= 1.2.1    - Vault client  
+kubernetes      >= 25.3.0   - K8s Python client
+python-dotenv   >= 1.0.0    - Environment variables
+pyyaml          >= 6.0.1    - YAML parsing
+requests        >= 2.31.0   - HTTP library
+rich            >= 14.0.0   - Terminal formatting
 
 Python: 3.9 - 3.13
 
@@ -131,6 +158,8 @@ This Report:     BUNDLE_VERIFICATION.txt
 STATUS: READY FOR DEPLOYMENT
 ================================================================================
 
-The bundle is complete and verified. Follow EXTRACTION_GUIDE.md to create
-your new standalone repository.
+The bundle matches your environment structure with utils nested under
+pxsecretmigrate/. Follow EXTRACTION_GUIDE.md to create your standalone repo.
+
+IMPORTANT: Run scripts as modules: python -m pxsecretmigrate.script_name
 

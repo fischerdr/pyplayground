@@ -274,3 +274,38 @@ export VLLM_USE_TRITON_FLASH_ATTN=0; vllm serve Qwen/Qwen3-30B-A3B-GPTQ-Int4 \
 
 
 ```
+# llama.cpp command lines
+```bash
+
+
+llama-server --host 192.168.100.10 --port 10000 \
+    -hf unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M \
+    -ngl 999 -c 64738 -b 1024 --parallel 2 --mlock -fa on \
+    --seed 42 --alias "local-model" \
+    --temp 0.7 --top-p 0.9 --top-k 20 --min-p 0.0 \
+    --repeat-penalty 1.05 \
+    --jinja --no-mmap --no-webui --threads 12 --threads-batch 24
+
+llama-server --host 192.168.100.10 --port 10000 \
+    -hf unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q5_K_M \
+    -ngl 999 -c 32768 -b 512 --parallel 2 --mlock -fa on \
+    --seed 42 --alias "local-model" \
+    --temp 0.7 --top-p 0.9 --top-k 20 --min-p 0.05 \
+    --repeat-penalty 1.1 --n-cpu-moe 16 \
+    --jinja --no-mmap --no-webui --threads 8 --threads-batch 16
+
+llama-server --host 192.168.100.10 --port 10000  \
+    -hf unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M \
+    -ngl 999 -c 64738 -b 1024 --threads 12 --threads-batch 24 --parallel 2 --mlock -fa on \
+    --seed 42 --alias "local-model" \
+    --temp 0.7 --top-p 0.9 --top-k 20 --min-p 0.0  --repeat-penalty 1.05 \
+    --jinja --no-mmap --no-webui
+
+llama-server --host 192.168.100.10 --port 10000 \
+    -hf unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q5_K_M \
+    -ngl 999 -c 32768 -b 1024 --threads 12 --threads-batch 24 --parallel 2 --mlock -fa on \
+    --seed 42 --alias "local-model" \
+    --temp 0.7 --top-p 0.9 --top-k 20 --min-p 0.05 --repeat-penalty 1.1  \
+    --jinja --no-mmap --no-webui 
+
+```

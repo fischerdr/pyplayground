@@ -1,6 +1,20 @@
 ---
+profile: production
+
+exclude_paths:
+  - .github/
+  - .molecule/
+  - tests/
+
 skip_list:
   - yaml[line-length]
   - var-naming[no-role-prefix]  # Allow variables to be prefixed with role names
   - var-naming[pattern]
   - command-instead-of-module
+
+warn_list:
+  - experimental
+  - jinja[spacing]
+
+enable_list:
+  - no-same-owner

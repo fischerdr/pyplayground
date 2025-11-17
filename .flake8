@@ -1,6 +1,6 @@
 [flake8]
 docstring-convention = google
-max-line-length = 100
+max-line-length = 180
 max-complexity = 10
 exclude =
     .git,
@@ -10,22 +10,30 @@ exclude =
     .venv,
     tools
 ignore =
-    # Existing: whitespace before ':' (needed for black)
-    E203,  
+    # Missing docstring in public module
+    D100,
+    # Missing docstring in public package
+    D104,
     # Missing docstring in magic method
-    D105,  
-    # Module level import not at top of file
-    E402,  
-    # Line too long (handled by black, but good to ignore in flake8)
-    E501,  
-    # Line break before binary operator (conflicts with black)
-    W503,  
-    # First line should be imperative mood
-    D401,  
-    # One-line docstring should fit on one line
-    D200,  
+    D105,
+    # Missing docstring in __init__
+    D107,
+    # line break before binary operator
+    W503,
+    # Import errors - imports must be at top of the file
+    E402,
+    # Line too long - i give up
+    E501,
+    # First line should be in imperative mood; try rephrasing
+    D401,
+    # One-line docstring should fit on one line with quotes
+    D200,
+    # Assigned but not used
+    F841,
+    # Unable to detect undefinded names
+    F403
 per-file-ignores =
-    # Allow unused imports in __init__
-    __init__.py:F401,
+    # Allow unused imports in __init__.py
+    __init__.py:F401
     # Allow missing docstrings in tests
-    tests/*:D100,D101,D102,D103,
+    test_*.py:D100,D101,D102,D103

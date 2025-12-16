@@ -22,23 +22,40 @@ def get_project_root() -> str:
     This works correctly when scripts are executed as modules using
     python -m pyplayground.awxtower.<script> syntax.
 
+    The function prioritizes .git directory as the most definitive marker,
+    then looks for directories with multiple project markers to avoid
+    stopping at package subdirectories.
+
     Returns:
         str: Path to the project root directory
     """
     # Start from the current file's directory
     current_path = Path(__file__).resolve().parent
 
-    # Project markers that indicate we've found the root
-    project_markers = {"pyproject.toml", "README.md", ".git", "requirements.txt"}
+    # Primary markers - .git is the most definitive
+    primary_markers = {".git"}
+
+    # Secondary markers - used in combination
+    secondary_markers = {"pyproject.toml", "README.md", "requirements.txt", "setup.py"}
 
     # Walk up the directory tree looking for project markers
     for parent in [current_path] + list(current_path.parents):
-        if any((parent / marker).exists() for marker in project_markers):
+        # First check for .git directory (most definitive)
+        if (parent / ".git").exists():
             return str(parent)
 
-    # Fallback 1: If we can't find markers, try the current working directory
+        # Check for multiple secondary markers (at least 2)
+        found_markers = sum(1 for marker in secondary_markers if (parent / marker).exists())
+        if found_markers >= 2:
+            return str(parent)
+
+    # Fallback 1: If we can't find definitive markers, try the current working directory
     cwd = Path.cwd()
-    if any((cwd / marker).exists() for marker in project_markers):
+    if (cwd / ".git").exists():
+        return str(cwd)
+
+    found_markers_cwd = sum(1 for marker in secondary_markers if (cwd / marker).exists())
+    if found_markers_cwd >= 2:
         return str(cwd)
 
     # Fallback 2: Use the original method as last resort

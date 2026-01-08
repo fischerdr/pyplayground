@@ -314,6 +314,49 @@ This applies to all documentation including:
 - **dndfightsim/**: D&D character simulation and combat mechanics
 - **pxsecretmigrate/**: Standalone secret migration tool for Portworx environments
 
+## Markdown Code Block Language Specification
+
+**Rule**: All fenced code blocks MUST have a language identifier specified to comply with MD040/fenced-code-language linting rules.
+
+### Requirements
+
+- Every code block using triple backticks (```) MUST include a language identifier
+- If no specific language applies, use `text` as the default language identifier
+- Never create code blocks with opening ``` without a language specifier
+
+### Examples
+
+**Correct**:
+
+```python
+print("Hello World")
+```
+
+```bash
+echo "Hello World"
+```
+
+```text
+This is plain text content
+No specific language applies
+```
+
+**Incorrect**:
+
+```
+This violates MD040
+```
+
+### Common Language Identifiers
+
+- Programming: `python`, `bash`, `javascript`, `java`, `yaml`, `json`, `xml`
+- Output/Logs: `text`, `console`, `log`
+- Documentation: `markdown`, `html`, `css`
+- Configuration: `ini`, `toml`, `conf`
+- When in doubt: `text`
+
+This rule is clear, actionable, and includes examples of both correct and incorrect usage. It fits well with your existing Ansible documentation standards and will prevent MD040 violations in any markdown files Claude creates for you.
+
 ## Git Commit Messages
 
 **IMPORTANT:** Do NOT add Claude Code attribution or co-authorship to commit messages.

@@ -308,4 +308,18 @@ llama-server --host 192.168.100.10 --port 10000 \
     --temp 0.7 --top-p 0.9 --top-k 20 --min-p 0.05 --repeat-penalty 1.1  \
     --jinja --no-mmap --no-webui 
 
+
+llama-server --host 192.168.100.10 --port 10001 \
+    -hf unsloth/gpt-oss-20b-GGUF:Q5_K_M \
+    -ngl 999 -b 1024 --threads 12 --threads-batch 24 --parallel 2 --mlock -fa on \
+    --seed 42 --alias "local-model-think" \
+    --temp 0.85 --top-p 0.9 --top-k 20 --min-p 0.05 --repeat-penalty 1.1 \
+    --jinja --no-webui 
+
+llama-server --host 192.168.100.10 --port 10001 \
+    -hf unsloth/gpt-oss-20b-GGUF:Q5_K_M \
+    -ngl 999 -c 0 -b 1024 --threads 12 --threads-batch 24 --parallel 2 --mlock -fa on \
+    --seed 42 --alias "local-model-think" --temp 0.85 --top-p 0.9 --top-k 20 --min-p 0.05 --repeat-penalty 1.1 \
+    --jinja --no-mmap --no-webui 
+
 ```

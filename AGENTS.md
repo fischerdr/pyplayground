@@ -152,6 +152,23 @@ This violates MD040
 
 This rule is clear, actionable, and includes examples of both correct and incorrect usage. It fits well with your existing Ansible documentation standards and will prevent MD040 violations in any markdown files Claude creates for you.
 
+## Documentation Standards
+
+**CRITICAL**: Follow these rules when working with documentation:
+
+- **No emojis or icons** - Documentation must be professional and text-only
+- **Ask before creating** - Always ask the user for approval before generating or modifying documentation files
+- **No unsolicited documentation** - Never proactively create README files, markdown documentation, or similar without explicit user request
+- Main documentation in `docs/` directory
+- Update documentation when making code changes
+
+**This applies to all documentation including:**
+
+- README files
+- Markdown documentation (*.md)
+- Code comments and docstrings (emojis prohibited)
+- Commit messages (emojis prohibited)
+
 ## Testing Guidelines
 
 The test suite is located under `tests/` and runs with **pytest**. Test files
@@ -173,7 +190,28 @@ and review `coverage report`.
 - Attach screenshots for UI/CLI output when relevant.
 - Request review from at least one core maintainer.
 
-## Security & Configuration Tips (Optional)
+## Git Commit Messages
+
+**IMPORTANT**: Do NOT add attribution or co-authorship to commit messages.
+
+Commit messages should:
+
+- Follow conventional commit format when appropriate
+- Be concise and descriptive
+- Focus on the "why" rather than the "what"
+- Match the repository's existing commit style
+- **NOT include** any branding, attribution, or co-authorship footers
+
+## System Commands Policy
+
+**CRITICAL**: The `rm` command is strictly prohibited without explicit user permission.
+
+- Never execute `rm` commands without prior approval from the user
+- All file deletion operations must be reviewed and authorized by the user first
+- When working with temporary files or directories, always ask for confirmation before removal
+- If a script needs to delete files, implement an interactive prompt that requires explicit user consent
+
+This policy protects against accidental data loss during development and testing activities.
 
 - Avoid hard‑coding Vault tokens; use environment variables such as
   `VAULT_TOKEN` or files in `~/.vault-token`.

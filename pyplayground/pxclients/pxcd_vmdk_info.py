@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Get VM Drive Details Script.
+# -*- coding: utf-8 -*-
+"""VM Drive Details Script.
 
-Retrieves vSphere config from K8s (like parse_clouddrive_map.py)
-and then lists the actual virtual disks attached to each VM found in the
-specified cloud drive configmap, showing their provisioned size.
+Retrieves vSphere configuration from Kubernetes (similar to parse_clouddrive_map.py)
+and lists the actual virtual disks attached to each VM found in the specified
+cloud drive ConfigMap, showing their provisioned size.
 """
 
 import base64
@@ -11,10 +12,10 @@ import logging
 import os
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, cast
 
 import click
-from kubernetes import client
+from kubernetes import client  # type: ignore
 from pyVmomi import vim
 from rich.console import Console
 from rich.table import Table
@@ -40,7 +41,16 @@ console = Console()
 
 @dataclass
 class VSphereConfig:
-    """vSphere connection configuration."""
+    """vSphere connection configuration.
+
+    Attributes:
+        host: vSphere/vCenter hostname or IP address.
+        username: Username for vSphere authentication.
+        password: Password for vSphere authentication.
+        port: Port number for vSphere connection. Defaults to 443.
+        disable_ssl_verification: If True, disable SSL certificate verification.
+            Defaults to True.
+    """
 
     host: str
     username: str
@@ -48,8 +58,13 @@ class VSphereConfig:
     port: int = 443
     disable_ssl_verification: bool = True
 
-    def to_args(self) -> object:
-        """Convert config to args for vmware_utils.connect()."""
+    def to_args(self) -> SimpleNamespace:
+        """Convert config to SimpleNamespace args for vmware_utils.connect().
+
+        Returns:
+            SimpleNamespace: Object with attributes (host, user, password, port,
+                disable_ssl_verification) suitable for passing to vmware_utils.connect().
+        """
         args = SimpleNamespace()
         args.host = self.host
         args.user = self.username
@@ -61,7 +76,25 @@ class VSphereConfig:
 
 # TODO: Reduce complexity (currently McCabe complexity 15) - Consider refactoring K8s calls
 def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConfig]:  # noqa: C901
-    """Get vSphere configuration from Kubernetes secrets."""
+    """Get vSphere configuration from Kubernetes secrets and StorageCluster CRD.
+
+    Retrieves vSphere credentials from the 'px-vsphere-secret' Secret and
+    vCenter URL from the StorageCluster CRD in the specified namespace.
+
+    Args:
+        namespace: Kubernetes namespace containing the StorageCluster CRD and
+            px-vsphere-secret Secret.
+        verify_ssl: If True, enable SSL verification for vSphere connections.
+            If False, disable SSL verification.
+
+    Returns:
+        Optional[VSphereConfig]: VSphereConfig object if successful, None if
+            any required configuration cannot be retrieved.
+
+    Raises:
+        client.ApiException: If Kubernetes API calls fail.
+        KeyError: If required keys are missing from secrets or CRDs.
+    """
     logger.debug("Attempting to get vSphere config from namespace: %s", namespace)
     vcenter = None
     username = None
@@ -170,7 +203,25 @@ def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConf
 def _initialize_resources(
     portworx_namespace: str, verify_vsphere_ssl: bool
 ) -> Optional[VSphereConfig]:
-    """Load kubeconfig and get vSphere configuration."""
+    """Load kubeconfig and get vSphere configuration.
+
+    Performs initialization tasks including loading Kubernetes configuration
+    and retrieving vSphere connection details from Kubernetes resources.
+
+    Args:
+        portworx_namespace: Kubernetes namespace containing the vSphere secret
+            and StorageCluster CRD.
+        verify_vsphere_ssl: If True, enable SSL verification for vSphere connections.
+            If False, disable SSL verification.
+
+    Returns:
+        Optional[VSphereConfig]: VSphereConfig object if successful, None if
+            initialization fails at any step.
+
+    Raises:
+        Exception: If Kubernetes configuration loading fails or vSphere config
+            retrieval encounters unexpected errors.
+    """
     logger.debug("Initializing Kubernetes and vSphere resources...")
 
     # Step 1: Load Kubeconfig
@@ -209,7 +260,23 @@ def _initialize_resources(
 
 
 def _find_cloud_drive_configmap(namespace: str, v1_client: client.CoreV1Api) -> Optional[str]:
-    """Find a unique configmap starting with 'px-cloud-drive-' in the namespace."""
+    """Find a unique ConfigMap starting with 'px-cloud-drive-' in the namespace.
+
+    Searches for ConfigMaps with the prefix 'px-cloud-drive-' in the specified
+    namespace. Returns the name if exactly one is found, otherwise returns None.
+
+    Args:
+        namespace: Kubernetes namespace to search for ConfigMaps.
+        v1_client: Initialized CoreV1Api client for Kubernetes API calls.
+
+    Returns:
+        Optional[str]: Name of the ConfigMap if exactly one matching ConfigMap
+            is found, None if zero or multiple matching ConfigMaps are found.
+
+    Raises:
+        client.ApiException: If the Kubernetes API call fails.
+        Exception: For other unexpected errors during the search.
+    """
     prefix = "px-cloud-drive-"
     try:
         logger.debug(
@@ -221,7 +288,8 @@ def _find_cloud_drive_configmap(namespace: str, v1_client: client.CoreV1Api) -> 
         ]
 
         if len(matching_cms) == 1:
-            found_name = matching_cms[0]
+            # Type cast: cm.metadata.name is Any due to incomplete kubernetes type stubs
+            found_name = cast(str, matching_cms[0])
             logger.info("Found unique ConfigMap: '%s'", found_name)
             return found_name
         elif len(matching_cms) == 0:
@@ -249,8 +317,23 @@ def _find_cloud_drive_configmap(namespace: str, v1_client: client.CoreV1Api) -> 
         return None
 
 
-def _fetch_cluster_drive_data(namespace: str, configmap_name: str) -> Optional[Dict]:
-    """Fetch cloud drive configuration data from Kubernetes configmap."""
+def _fetch_cluster_drive_data(namespace: str, configmap_name: str) -> Optional[Dict[str, Any]]:
+    """Fetch cloud drive configuration data from Kubernetes ConfigMap.
+
+    Retrieves and parses cloud drive configuration data from the specified
+    ConfigMap using the px_api utility function.
+
+    Args:
+        namespace: Kubernetes namespace containing the ConfigMap.
+        configmap_name: Name of the ConfigMap containing cloud drive data.
+
+    Returns:
+        Optional[Dict[str, Any]]: Dictionary containing cloud drive configuration
+            data if successful, None if the ConfigMap cannot be read or parsed.
+
+    Raises:
+        Exception: If an error occurs while fetching or parsing the ConfigMap data.
+    """
     try:
         cloud_drive_data = get_cloud_drive_config(namespace, configmap_name)
         if not cloud_drive_data:
@@ -270,10 +353,30 @@ def _fetch_cluster_drive_data(namespace: str, configmap_name: str) -> Optional[D
 def get_vm_info(  # noqa: C901
     vsphere_config: VSphereConfig, vm_uuid: str
 ) -> Optional[Tuple[Dict[str, float], float]]:
-    """Get VM disk information and total committed storage using pyVmomi."""
+    """Get VM disk information and total committed storage using pyVmomi.
+
+    Connects to vSphere, finds a VM by UUID, and retrieves information about
+    virtual disks attached to the VM (excluding Disk 0) along with total
+    committed storage.
+
+    Args:
+        vsphere_config: VSphereConfig object containing connection details.
+        vm_uuid: UUID of the VM to query (BIOS UUID format).
+
+    Returns:
+        Optional[Tuple[Dict[str, float], float]]: Tuple containing:
+            - Dictionary mapping disk paths (datastore path) to provisioned
+              size in GB (excluding Disk 0).
+            - Total committed storage in GB.
+            Returns None if connection fails, VM is not found, or an error occurs.
+
+    Raises:
+        Exception: If vSphere connection fails, VM lookup fails, or device
+            enumeration encounters errors.
+    """
     logger.debug("Fetching VM info for UUID: %s", vm_uuid)
     vmdk_info: Dict[str, float] = {}
-    si = None
+    si: Optional[vim.ServiceInstance] = None
 
     try:
         # Convert config to args and log (excluding password)
@@ -311,7 +414,8 @@ def get_vm_info(  # noqa: C901
 
         # Search for VM by UUID
         logger.debug("Searching for VM by UUID: %s", vm_uuid)
-        vm = si.content.searchIndex.FindByUuid(None, vm_uuid, True)
+        # Type ignore: pyVmomi type stubs don't fully define ServiceInstance.content.searchIndex
+        vm = si.content.searchIndex.FindByUuid(None, vm_uuid, True)  # type: ignore[attr-defined]
         if not vm:
             logger.error("FindByUuid search failed: VM with UUID %s not found", vm_uuid)
             return None
@@ -419,8 +523,31 @@ def show_vm_drives(  # noqa: C901
     vsphere_ssl_verify: bool,
     configmap_name: Optional[str],
     debug: bool,
-):
-    """Gets drive details for VMs specified in a cloud drive configmap."""
+) -> None:
+    """Get drive details for VMs specified in a cloud drive ConfigMap.
+
+    Main entry point that orchestrates the retrieval of VM drive information.
+    Loads Kubernetes configuration, retrieves vSphere connection details,
+    fetches cloud drive data from a ConfigMap, and displays virtual disk
+    information for each VM in a formatted table.
+
+    Args:
+        namespace: Kubernetes namespace containing the cloud drive ConfigMap.
+        portworx_namespace: Kubernetes namespace containing the vSphere secret
+            and StorageCluster CRD.
+        kubeconfig: Optional path to kubeconfig file. If None, uses default
+            kubeconfig loading behavior.
+        vsphere_ssl_verify: If True, enable SSL verification for vSphere connections.
+            If False, disable SSL verification.
+        configmap_name: Optional name of the cloud drive ConfigMap. If None,
+            searches for ConfigMaps with prefix 'px-cloud-drive-'.
+        debug: If True, enable debug-level logging; otherwise use INFO level.
+
+    Raises:
+        click.Abort: If Kubernetes configuration loading fails, vSphere config
+            cannot be retrieved, or ConfigMap data cannot be fetched.
+        Exception: For other unexpected errors during execution.
+    """
     # Setup Logging
     script_base_name = os.path.basename(__file__).replace(".py", "")
     log_level = logging.DEBUG if debug else logging.INFO

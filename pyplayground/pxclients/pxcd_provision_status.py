@@ -1,15 +1,21 @@
 #! /usr/bin/env python3
-"""Script to get Portworx provision status from a running pod."""
+# -*- coding: utf-8 -*-
+"""Portworx cluster provision status checker.
+
+This script retrieves and displays Portworx cluster provision status information
+by executing commands in a running Portworx pod. It can display the information
+as a formatted table or save it as JSON output.
+"""
 
 import json
 import logging
 import os
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import click
-from kubernetes import client, stream
-from kubernetes.client.rest import ApiException
+from kubernetes import client, stream  # type: ignore
+from kubernetes.client.rest import ApiException  # type: ignore
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
@@ -58,10 +64,10 @@ def _find_running_portworx_pod(v1_client: client.CoreV1Api, namespace: str) -> s
         )
         raise  # Re-raise the ApiException
 
-    running_pod_name = None
+    running_pod_name: Optional[str] = None
     for pod in pod_list.items:
         if pod.status.phase == "Running":
-            running_pod_name = pod.metadata.name
+            running_pod_name = cast(str, pod.metadata.name)
             logger.debug(f"Found running pod matching labels: '{running_pod_name}'")
             break  # Found the first one, stop searching
 
@@ -113,17 +119,29 @@ def _prepare_execution_command(
 
 
 def _format_bytes(size_bytes: int) -> str:
-    """Converts bytes into a human-readable string (TiB, GiB, MiB)."""
+    """Convert bytes into a human-readable string.
+
+    Converts a byte value into a human-readable format using binary prefixes
+    (KiB, MiB, GiB, TiB).
+
+    Args:
+        size_bytes: The size in bytes to convert.
+
+    Returns:
+        str: Human-readable string representation (e.g., "1.5 GiB", "512 MiB").
+            Returns "0 B" if size_bytes is 0.
+    """
     if size_bytes == 0:
         return "0 B"
     power = 1024
     n = 0
     power_labels = {0: "", 1: "Ki", 2: "Mi", 3: "Gi", 4: "Ti"}
-    while size_bytes >= power and n < 4:
-        size_bytes /= power
+    size_float = float(size_bytes)
+    while size_float >= power and n < 4:
+        size_float /= power
         n += 1
     # Format to one decimal place, adjust precision as needed
-    return f"{size_bytes:.1f} {power_labels[n]}B"
+    return f"{size_float:.1f} {power_labels[n]}B"
 
 
 def _execute_and_stream_output(
@@ -257,7 +275,24 @@ def _parse_provision_info(
 
 
 def _save_json_output(summary_data: Dict[str, int], node_details: List[Dict[str, Any]]) -> bool:
-    """Saves the processed data to a JSON file in tmp/."""
+    """Save the processed data to a JSON file in tmp/.
+
+    Writes the summary data and node details to a JSON file in the tmp/
+    directory. The summary includes total pool used bytes calculated from
+    node details.
+
+    Args:
+        summary_data: Dictionary containing summary statistics (total_nodes,
+            up_nodes, storage_nodes_reporting_pools).
+        node_details: List of dictionaries containing details for each storage node.
+
+    Returns:
+        bool: True if the file was saved successfully, False otherwise.
+
+    Raises:
+        TypeError: If the data cannot be serialized to JSON.
+        OSError: If the directory cannot be created or the file cannot be written.
+    """
     output_dir = os.path.join(os.getcwd(), "tmp")
     output_filename = os.path.join(output_dir, "pxcd_provision_status.json")
 
@@ -292,7 +327,20 @@ def _save_json_output(summary_data: Dict[str, int], node_details: List[Dict[str,
 
 
 def _print_rich_table(summary_data: Dict[str, int], node_details: List[Dict[str, Any]]) -> None:
-    """Prints the processed data as a Rich table with a totals row."""
+    """Print the processed data as a Rich table with a totals row.
+
+    Displays the storage node details in a formatted Rich table with columns
+    for PX Node ID, K8s Hostname, Node Status, Pool Status, Pool Size,
+    Pool Used, and Drive Count. Includes a totals row at the bottom showing
+    the total used bytes across all storage nodes.
+
+    Args:
+        summary_data: Dictionary containing summary statistics (total_nodes,
+            up_nodes, storage_nodes_reporting_pools).
+        node_details: List of dictionaries containing details for each storage node.
+            Each dictionary should contain keys: px_node_id, k8s_hostname,
+            node_status, pool_status, pool_size_bytes, pool_used_bytes, drive_count.
+    """
     if node_details:
         # Calculate total used bytes
         total_used_bytes = sum(node.get("pool_used_bytes", 0) for node in node_details)
@@ -359,7 +407,23 @@ def _print_rich_table(summary_data: Dict[str, int], node_details: List[Dict[str,
 
 
 def _display_provision_status(json_output: str, as_json: bool) -> bool:
-    """Parses the JSON output and displays/saves provisioned nodes info."""
+    """Parse the JSON output and display/save provisioned nodes info.
+
+    Parses the JSON output from the pxctl command, extracts provision info,
+    and either displays it as a Rich table or saves it to a JSON file based
+    on the as_json flag.
+
+    Args:
+        json_output: JSON string output from the pxctl provision-status command.
+        as_json: If True, save output to JSON file; if False, display as table.
+
+    Returns:
+        bool: True if the operation succeeded, False otherwise.
+
+    Raises:
+        json.JSONDecodeError: If the JSON output cannot be parsed.
+        KeyError: If required keys are missing from the JSON data.
+    """
     try:
         data = json.loads(json_output)
         provision_info = data.get("provisionInfo")
@@ -389,7 +453,22 @@ def _display_provision_status(json_output: str, as_json: bool) -> bool:
 
 
 def _initialize_script(debug: bool, kubeconfig: Optional[str]) -> client.CoreV1Api:
-    """Sets up logging, loads kubeconfig, and initializes the K8s client."""
+    """Set up logging, load kubeconfig, and initialize the K8s client.
+
+    Performs initial setup tasks including configuring logging level,
+    loading Kubernetes configuration, and creating a CoreV1Api client.
+
+    Args:
+        debug: If True, enable debug-level logging; otherwise use INFO level.
+        kubeconfig: Optional path to kubeconfig file. If None, uses default
+            kubeconfig loading behavior.
+
+    Returns:
+        client.CoreV1Api: Initialized Kubernetes CoreV1Api client.
+
+    Raises:
+        SystemExit: If kubeconfig loading fails or client initialization fails.
+    """
     # Setup Logging
     log_level = logging.DEBUG if debug else logging.INFO
     setup_logging(level=log_level, script_name=script_base_name)
@@ -440,15 +519,41 @@ def _initialize_script(debug: bool, kubeconfig: Optional[str]) -> client.CoreV1A
     help="Output the processed data as JSON instead of a table.",
 )
 @click.option("--debug", "-d", is_flag=True, default=False, help="Enable debug logging.")
-def get_px_status(namespace, kubeconfig, env_var, output_json, debug):
-    """Gets the Portworx cluster provision status from a running pod."""
+def get_px_status(
+    namespace: str,
+    kubeconfig: Optional[str],
+    env_var: Tuple[str, ...],
+    output_json: bool,
+    debug: bool,
+) -> None:
+    """Get the Portworx cluster provision status from a running pod.
+
+    Executes the 'pxctl cluster provision-status' command in a running
+    Portworx pod and displays or saves the provision status information.
+    The command can be configured with environment variables and output
+    can be displayed as a formatted table or saved as JSON.
+
+    Args:
+        namespace: Kubernetes namespace where Portworx pods are running.
+        kubeconfig: Optional path to kubeconfig file for Kubernetes client.
+        env_var: Tuple of environment variables in VAR=VALUE format to set
+            in the pod before executing the command.
+        output_json: If True, save output to JSON file; if False, display as table.
+        debug: If True, enable debug-level logging.
+
+    Raises:
+        SystemExit: If any error occurs during execution (pod not found,
+            command execution failure, API errors, etc.).
+        ValueError: If configuration or input validation fails.
+        ApiException: If Kubernetes API calls fail.
+    """
     # Initialize script (logging, config, client)
     v1 = _initialize_script(debug, kubeconfig)
 
     try:
         # Prepare command string using the helper
         base_command = "/opt/pwx/bin/pxctl cluster provision-status -j"
-        full_command_str, _ = _prepare_execution_command(env_var, base_command)
+        full_command_str, _ = _prepare_execution_command(list(env_var), base_command)
 
         # Find a running Portworx pod
         pod_name = _find_running_portworx_pod(v1, namespace)

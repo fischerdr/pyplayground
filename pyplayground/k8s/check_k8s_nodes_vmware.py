@@ -1,17 +1,18 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """Check Kubernetes nodes on VMware vSphere.
 
 This script checks the status of Kubernetes nodes on a VMware vSphere environment.
 It connects to the vCenter server, retrieves the list of VMs, and checks their power state.
-
-
 """
 
 import logging
 import ssl
+from typing import Any, Dict, Optional, cast
 
 import click
-from kubernetes import client, config
-from pyVim.connect import Disconnect, SmartConnect, SmartConnectNoSSL
+from kubernetes import client, config  # type: ignore
+from pyVim.connect import Disconnect, SmartConnect, SmartConnectNoSSL  # type: ignore
 from pyVmomi import vim
 
 # Set up logging
@@ -31,22 +32,26 @@ file_handler.setFormatter(file_format)
 logger.addHandler(file_handler)
 
 
-# Helper function to establish connection to VMware vCenter
-def connect_to_vcenter(vcenter_host, username, password, disable_ssl):
+def connect_to_vcenter(
+    vcenter_host: str, username: str, password: str, disable_ssl: bool
+) -> Optional[vim.ServiceInstance]:
     """Connect to VMware vCenter.
 
-    This function establishes a connection to a VMware vCenter server using the pyVim library.
-    It supports both SSL and non-SSL connections.
+    Establishes a connection to a VMware vCenter server using the pyVim library.
+    Supports both SSL and non-SSL connections.
 
     Args:
-        vcenter_host (str): The hostname or IP address of the vCenter server.
-        username (str): The username for the vCenter server.
-        password (str): The password for the vCenter server.
-        disable_ssl (bool): Whether to disable SSL verification.
+        vcenter_host: The hostname or IP address of the vCenter server.
+        username: The username for the vCenter server.
+        password: The password for the vCenter server.
+        disable_ssl: Whether to disable SSL verification.
 
     Returns:
-        pyVmomi.VmomiSupport.SmartConnect or pyVmomi.VmomiSupport.SmartConnectNoSSL: A connection object.
-        None: If the connection fails.
+        Optional[vim.ServiceInstance]: ServiceInstance object if connection succeeds,
+            None if the connection fails.
+
+    Raises:
+        Exception: If connection fails for any reason (logged but not re-raised).
     """
     try:
         if disable_ssl:
@@ -54,34 +59,42 @@ def connect_to_vcenter(vcenter_host, username, password, disable_ssl):
         else:
             context = ssl.create_default_context()
             si = SmartConnect(host=vcenter_host, user=username, pwd=password, sslContext=context)
-        return si
+        return cast(vim.ServiceInstance, si)
     except Exception as e:
         logger.error(f"Failed to connect to vCenter: {e}")
         return None
 
 
-# Helper function to get VM details
-def get_vm_details(vm, info_type="all"):
+def get_vm_details(vm: vim.VirtualMachine, info_type: str = "all") -> Dict[str, Any]:
     """Get details about a VM.
 
-    This function retrieves details about a virtual machine from a VMware vSphere environment.
-    It can return all details or specific types of information.
+    Retrieves details about a virtual machine from a VMware vSphere environment.
+    Can return all details or specific types of information based on info_type.
 
     Args:
-        vm (pyVmomi.VmomiSupport.VirtualMachine): The virtual machine object.
-        info_type (str): The type of information to retrieve.
+        vm: The virtual machine object from pyVmomi.
+        info_type: The type of information to retrieve. Options: "all" or "disk".
+            Defaults to "all".
 
     Returns:
-        dict: A dictionary containing the VM details.
+        Dict[str, Any]: Dictionary containing VM details with keys:
+            - name: VM name
+            - power_state: Current power state
+            - ip_address: Guest IP address (may be None)
+            - disk_status: List of disk information dictionaries (if info_type
+              includes "disk"), each containing disk_label and disk_capacity_gb.
     """
     details = {
         "name": vm.name,
-        "power_state": vm.runtime.powerState,
-        "ip_address": vm.guest.ipAddress,
+        # Type ignore: pyVmomi type stubs don't fully define RuntimeInfo.powerState
+        "power_state": vm.runtime.powerState,  # type: ignore[attr-defined]
+        # Type ignore: pyVmomi type stubs don't fully define GuestInfo.ipAddress
+        "ip_address": vm.guest.ipAddress,  # type: ignore[attr-defined]
         "disk_status": [],
     }
     if info_type in ["all", "disk"]:
-        for device in vm.config.hardware.device:
+        # Type ignore: pyVmomi type stubs don't fully define VirtualMachineConfigInfo.hardware.device
+        for device in vm.config.hardware.device:  # type: ignore[attr-defined]
             if isinstance(device, vim.vm.device.VirtualDisk):
                 details["disk_status"].append(
                     {
@@ -92,26 +105,28 @@ def get_vm_details(vm, info_type="all"):
     return details
 
 
-# Helper function to find a VM by name
-def find_vm_by_name(content, vm_name):
+def find_vm_by_name(
+    content: vim.ServiceInstanceContent, vm_name: str
+) -> Optional[vim.VirtualMachine]:
     """Find a VM by name.
 
-    This function searches for a virtual machine in a VMware vSphere environment by its name.
-    It creates a container view of all VMs and checks if any of them match the provided name.
+    Searches for a virtual machine in a VMware vSphere environment by its name.
+    Creates a container view of all VMs and checks if any of them match the provided name.
 
     Args:
-        content (pyVmomi.VmomiSupport.Content): The content object for the vSphere environment.
-        vm_name (str): The name of the VM to search for.
+        content: The ServiceInstanceContent object for the vSphere environment.
+        vm_name: The name of the VM to search for.
 
     Returns:
-        pyVmomi.VmomiSupport.VirtualMachine: The VM object if found, otherwise None.
+        Optional[vim.VirtualMachine]: The VM object if found, None if not found.
     """
-    container = content.viewManager.CreateContainerView(
+    # Type ignore: pyVmomi type stubs don't fully define ViewManager.CreateContainerView
+    container = content.viewManager.CreateContainerView(  # type: ignore[attr-defined]
         content.rootFolder, [vim.VirtualMachine], True
     )
     for vm in container.view:
         if vm.name == vm_name:
-            return vm
+            return cast(vim.VirtualMachine, vm)
     return None
 
 
@@ -139,29 +154,35 @@ def find_vm_by_name(content, vm_name):
     "--disable_vcenter_ssl", is_flag=True, help="Disable SSL verification for vCenter connection."
 )
 def check_k8s_nodes(  # noqa: C901
-    vcenter_host,
-    username,
-    password,
-    kubeconfig,
-    node_search,
-    label_selector,
-    disable_k8s_ssl,
-    disable_vcenter_ssl,
-):
+    vcenter_host: str,
+    username: str,
+    password: Optional[str],
+    kubeconfig: Optional[str],
+    node_search: str,
+    label_selector: str,
+    disable_k8s_ssl: bool,
+    disable_vcenter_ssl: bool,
+) -> None:
     """Check Kubernetes nodes on VMware vSphere.
 
-    This function checks the status of Kubernetes nodes on a VMware vSphere environment.
-    It connects to the vCenter server, retrieves the list of VMs, and checks their power state.
+    Checks the status of Kubernetes nodes on a VMware vSphere environment.
+    Connects to the vCenter server, retrieves the list of VMs, and checks their power state.
+    Displays VM details including power state, IP address, and disk information for each
+    matching Kubernetes node.
 
     Args:
-        vcenter_host (str): The hostname or IP address of the vCenter server.
-        username (str): The username for the vCenter server.
-        password (str): The password for the vCenter server.
-        kubeconfig (str): The path to the kubeconfig file.
-        node_search (str): Optional substring to filter Kubernetes nodes by name.
-        label_selector (str): Optional label selector to filter Kubernetes nodes.
-        disable_k8s_ssl (bool): Disable SSL verification for Kubernetes API.
-        disable_vcenter_ssl (bool): Disable SSL verification for vCenter connection.
+        vcenter_host: The hostname or IP address of the vCenter server.
+        username: The username for the vCenter server.
+        password: The password for the vCenter server. If None, will prompt for it.
+        kubeconfig: Optional path to the kubeconfig file. If None, uses default kubeconfig.
+        node_search: Optional substring to filter Kubernetes nodes by name.
+        label_selector: Optional label selector to filter Kubernetes nodes.
+        disable_k8s_ssl: If True, disable SSL verification for Kubernetes API.
+        disable_vcenter_ssl: If True, disable SSL verification for vCenter connection.
+
+    Raises:
+        Exception: If Kubernetes config loading fails or vCenter connection fails
+            (errors are logged and function returns early).
     """
     # If password is not provided, prompt for it securely
     if password is None:

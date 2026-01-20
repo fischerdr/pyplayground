@@ -1,16 +1,29 @@
 #! /usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Shows the version of PX-backup."""
+"""PX-Backup version checker.
+
+This module provides functionality to authenticate with PX-Backup instances
+and retrieve version information from the API. It supports both username/password
+authentication and OAuth2 client credentials flow.
+"""
 import argparse
 import getpass
 import json
 import logging
+from typing import Any, Dict, Optional
 
-import requests
+import requests  # type: ignore
 
 
-def _prompt_for_password(args):
-    """If no password is specified on the command line, prompt for it."""
+def _prompt_for_password(args: argparse.Namespace) -> argparse.Namespace:
+    """Prompt for password if not specified on the command line.
+
+    Args:
+        args: Parsed command-line arguments namespace.
+
+    Returns:
+        argparse.Namespace: Updated arguments namespace with password set.
+    """
     if not args.password:
         args.password = getpass.getpass(
             prompt='"Please enter password for host %s and user %s: ' % (args.host, args.user)
@@ -18,19 +31,52 @@ def _prompt_for_password(args):
     return args
 
 
-def grab_token(user, passwd, url):
-    """Grab a token for PX-backup."""
+def grab_token(user: str, passwd: str, url: str) -> str:
+    """Grab an authentication token for PX-backup.
+
+    Authenticates with PX-backup using username/password and retrieves
+    an access token from the Keycloak authentication endpoint.
+
+    Args:
+        user: Username for PX-backup authentication.
+        passwd: Password for PX-backup authentication.
+        url: Base URL of the PX-backup instance.
+
+    Returns:
+        str: Access token string for authenticated requests.
+
+    Raises:
+        KeyError: If the response does not contain an access_token.
+        requests.exceptions.RequestException: If the authentication request fails.
+    """
     pxbk_authep = "/auth/realms/master/protocol/openid-connect/token"
     pxbk_authrequest = f"grant_type=password&client_id=pxcentral&username={user}&password={passwd}&token-duration=365d"
     pxbk_url = url + pxbk_authep
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     response = requests.post(pxbk_url, verify=False, data=pxbk_authrequest, headers=headers)
     resp = response.json()
-    return resp["access_token"]
+    return resp["access_token"]  # type: ignore[no-any-return]
 
 
-def get_jwt_token(consumer_key, consumer_secret, url):
-    """Get a JWT token for PX-backup."""
+def get_jwt_token(consumer_key: str, consumer_secret: str, url: str) -> str:
+    """Get a JWT token for PX-backup using client credentials.
+
+    Authenticates with PX-backup using OAuth2 client credentials flow
+    and retrieves a JWT access token.
+
+    Args:
+        consumer_key: OAuth2 client ID.
+        consumer_secret: OAuth2 client secret.
+        url: Token endpoint URL.
+
+    Returns:
+        str: Access token string, or "error" if authentication fails.
+
+    Raises:
+        requests.exceptions.RequestException: If the token request fails.
+        json.JSONDecodeError: If the response is not valid JSON.
+        KeyError: If the response does not contain an access_token.
+    """
     data = (
         "grant_type=client_credentials&client_id="
         + consumer_key
@@ -42,14 +88,29 @@ def get_jwt_token(consumer_key, consumer_secret, url):
         response = requests.post(url, data=data, headers=header)
         access_token = json.loads(response.text)
         final_response = access_token["access_token"]
-    except requests.exceptions as err:
+    except (requests.exceptions.RequestException, json.JSONDecodeError, KeyError) as err:
         print(err)
         final_response = "error"
-    return final_response
+    return final_response  # type: ignore[no-any-return]
 
 
-def checkpxbkstatus(token, url):
-    """Check the status of PX-backup."""
+def checkpxbkstatus(token: str, url: str) -> Optional[Dict[str, Any]]:
+    """Check the status and version of PX-backup.
+
+    Retrieves version information from the PX-backup API using
+    an authenticated bearer token.
+
+    Args:
+        token: Bearer token for authentication.
+        url: Base URL of the PX-backup instance.
+
+    Returns:
+        Optional[Dict[str, Any]]: Version information as a dictionary if successful,
+            None if the request fails or returns a non-200 status code.
+
+    Raises:
+        requests.exceptions.RequestException: If the HTTP request fails.
+    """
     pxbk_version = "/v1/version"
     ckurl = url + pxbk_version
     pxbkheaders = {"accept": "application/json", "Authorization": f"bearer {token}"}
@@ -59,7 +120,7 @@ def checkpxbkstatus(token, url):
         if response.status_code == 200:
             print("200 returned")
             print(response.text)
-            return response.json()
+            return response.json()  # type: ignore[no-any-return]
         else:
             return None
     except Exception as e:
@@ -68,7 +129,7 @@ def checkpxbkstatus(token, url):
 
 
 if __name__ == "__main__":
-    """Main function."""
+    """Main entry point for the script."""
     parser = argparse.ArgumentParser(description="Check PX - Backup status")
     parser.add_argument(
         "-u",

@@ -1,20 +1,26 @@
-"""Kubernetes utility functions."""
+"""Kubernetes utility functions.
+
+This module provides utility functions for interacting with Kubernetes clusters,
+including configuration loading, client creation, pod operations, node management,
+and integration with HashiCorp Vault for kubeconfig retrieval.
+"""
 
 import base64
+import binascii
 import logging
 import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
-import requests
+import requests  # type: ignore
 import urllib3
-import yaml
-from hvac.exceptions import VaultError
-from kubernetes import client, config, stream
-from kubernetes.client import ApiClient, V1Pod
-from kubernetes.client.rest import ApiException
+import yaml  # type: ignore
+from hvac.exceptions import VaultError  # type: ignore
+from kubernetes import client, config, stream  # type: ignore
+from kubernetes.client import ApiClient, V1Pod  # type: ignore
+from kubernetes.client.rest import ApiException  # type: ignore
 
 from pyplayground.utils.vault_utils import create_vault_client, get_secret, normalize_vault_path
 
@@ -184,9 +190,11 @@ def get_machine_for_node(
         )
 
         for machine in machines["items"]:
-            if machine["status"]["nodeRef"]["name"] == node_name:
-                logger.info(f"Found Machine {machine['metadata']['name']} for Node {node_name}")
-                return machine
+            # Type cast: machines["items"] is Any due to incomplete kubernetes type stubs
+            machine_dict = cast(Dict[str, Any], machine)
+            if machine_dict["status"]["nodeRef"]["name"] == node_name:
+                logger.info(f"Found Machine {machine_dict['metadata']['name']} for Node {node_name}")
+                return machine_dict
         logger.warning(f"No Machine found for Node {node_name}. This might be UPI.")
         return None
     except Exception as e:
@@ -216,9 +224,11 @@ def get_machineset_for_machine(
 
         machine_name = machine["metadata"]["name"]
         for ms in machinesets["items"]:
-            if ms["metadata"]["name"] in machine_name:
-                logger.info(f"Found MachineSet {ms['metadata']['name']} for Machine {machine_name}")
-                return ms
+            # Type cast: machinesets["items"] is Any due to incomplete kubernetes type stubs
+            ms_dict = cast(Dict[str, Any], ms)
+            if ms_dict["metadata"]["name"] in machine_name:
+                logger.info(f"Found MachineSet {ms_dict['metadata']['name']} for Machine {machine_name}")
+                return ms_dict
         logger.warning(f"No MachineSet found for Machine {machine_name}.")
         return None
     except Exception as e:
@@ -384,11 +394,25 @@ def extract_cluster_name_from_api_url(api_url: str) -> str:
         return "unknown-cluster"
 
 
-# Helper function for get_nodes_from_machineset_specific
 def _extract_node_info_from_machine(
     machine: Dict[str, Any], machineset_name: str, machineset_labels: Dict[str, str]
 ) -> Optional[Tuple[str, Dict[str, str]]]:
-    """Processes a single machine object to extract node info if it matches the machineset."""
+    """Process a single machine object to extract node info if it matches the machineset.
+
+    Helper function for get_nodes_from_machineset_specific that processes a Machine
+    object to determine if it belongs to the specified MachineSet and extracts
+    associated node information.
+
+    Args:
+        machine: Dictionary representing a Machine object from Kubernetes API.
+        machineset_name: Name of the MachineSet to match against.
+        machineset_labels: Dictionary of labels from the MachineSet.
+
+    Returns:
+        Optional[Tuple[str, Dict[str, str]]]: Tuple containing node name and
+            machineset labels if the machine matches and has an associated node,
+            None otherwise.
+    """
     machine_metadata = machine.get("metadata", {})
     machine_name = machine_metadata.get("name", "")
     machine_status = machine.get("status")
@@ -512,6 +536,10 @@ def get_kubeconfig_from_vault(  # noqa: C901
     )
     try:
         secret = get_secret(vault_client, vault_path, mount_point=vault_mount)
+        if not secret:
+            msg = f"No secret found in Vault at path: {vault_path}"
+            logger.error(msg)
+            raise ValueError(msg)
         kubeconfig_data = secret.get("kubeconfig")
         if not kubeconfig_data:
             msg = f"No kubeconfig found in Vault at path: {vault_path}"
@@ -716,11 +744,14 @@ def get_configmap_data(
         configmap = v1_client.read_namespaced_config_map(configmap_name, namespace)
 
         if key:
-            if key not in configmap.data:
+            # Type cast: configmap.data is Any due to incomplete kubernetes type stubs
+            configmap_data = cast(Dict[str, Any], configmap.data)
+            if key not in configmap_data:
                 raise KeyError(f"Key '{key}' not found in ConfigMap")
-            return configmap.data[key]
+            return {key: configmap_data[key]}
 
-        return configmap.data
+        # Type cast: configmap.data is Any due to incomplete kubernetes type stubs
+        return cast(Dict[str, Any], configmap.data)
     except ApiException as e:
         logger.error(f"Kubernetes API error: {str(e)}")
         raise
@@ -729,17 +760,28 @@ def get_configmap_data(
         raise
 
 
-# Helper function to parse Kubernetes storage strings (e.g., "10Gi", "500Mi")
 def parse_storage_string(storage_str: str) -> Optional[int]:
-    """Parses Kubernetes storage strings into bytes."""
+    """Parse Kubernetes storage strings into bytes.
+
+    Converts Kubernetes storage quantity strings (e.g., "10Gi", "500Mi", "1T")
+    into their byte equivalents. Supports both decimal (K, M, G, T, P, E) and
+    binary (Ki, Mi, Gi, Ti, Pi, Ei) units.
+
+    Args:
+        storage_str: Storage string in Kubernetes format (e.g., "10Gi", "500Mi").
+
+    Returns:
+        Optional[int]: Number of bytes if parsing succeeds, None if parsing fails.
+            Returns 0 for empty or invalid input types.
+
+    Examples:
+        >>> parse_storage_string("10Gi")
+        10737418240
+        >>> parse_storage_string("500Mi")
+        524288000
+    """
     if not storage_str:
         return 0
-
-    # Handle potential None or empty strings
-    if not isinstance(storage_str, str):
-        logger.warning(f"Invalid storage string type: {type(storage_str)}, value: {storage_str}")
-        return 0  # Or raise an error? Returning 0 for now.
-
     multipliers = {
         "K": 1000,
         "M": 1000**2,
@@ -771,13 +813,20 @@ def parse_storage_string(storage_str: str) -> Optional[int]:
         return None  # Indicate parsing failure
 
 
-# Add list_all_namespaces and namespace_exists near other generic k8s functions
 def list_all_namespaces(api_client: Optional[ApiClient] = None) -> Optional[List[str]]:
-    """Retrieves a list of all namespace names in the cluster.
+    """Retrieve a list of all namespace names in the cluster.
 
     Args:
-        api_client: Optional initialized Kubernetes ApiClient.
-        A list of namespace names, or None if an error occurs.
+        api_client: Optional initialized Kubernetes ApiClient. If not provided,
+            creates a new CoreV1Api client.
+
+    Returns:
+        Optional[List[str]]: List of namespace names if successful, None if an
+            error occurs.
+
+    Raises:
+        ApiException: If the Kubernetes API call fails.
+        Exception: For other unexpected errors during namespace listing.
     """
     try:
         v1 = client.CoreV1Api(api_client)
@@ -819,7 +868,24 @@ def namespace_exists(namespace_name: str, api_client: Optional[ApiClient] = None
 
 
 def format_duration(seconds: float) -> str:
-    """Formats a duration in seconds into a human-readable string (D H M S)."""
+    """Format a duration in seconds into a human-readable string.
+
+    Converts a duration in seconds into a human-readable format showing days,
+    hours, minutes, and seconds as appropriate.
+
+    Args:
+        seconds: Duration in seconds (can be a float for sub-second precision).
+
+    Returns:
+        str: Human-readable duration string (e.g., "2 days, 3 hours, 15 minutes, 30 seconds").
+            Returns "Invalid duration" if seconds is negative, "0 seconds" if zero.
+
+    Examples:
+        >>> format_duration(90061)
+        "1 day, 1 hour, 1 minute, 1 second"
+        >>> format_duration(45.5)
+        "45.50 seconds"
+    """
     if seconds < 0:
         return "Invalid duration"
     if seconds == 0:
@@ -853,19 +919,25 @@ def format_duration(seconds: float) -> str:
     return ", ".join(parts)
 
 
-# Add the determine_target_container function here
 def determine_target_container(pod: V1Pod, specified_container_name: Optional[str]) -> str:
-    """Determines the container to execute the command in, handling errors.
+    """Determine the container to execute the command in, handling errors.
+
+    Determines which container in a pod should be used for command execution.
+    If the pod has only one container, that container is used (and any specified
+    name is validated). If multiple containers exist, a container name must be
+    specified.
 
     Args:
-        pod: The V1Pod object.
-        specified_container_name: The container name provided by the user, if any.
+        pod: The V1Pod object containing container specifications.
+        specified_container_name: Optional container name provided by the user.
+            If None and pod has multiple containers, raises ValueError.
 
     Returns:
-        The validated name of the target container.
+        str: The validated name of the target container.
 
     Raises:
-        ValueError: If container logic fails (e.g., not found, ambiguous).
+        ValueError: If container resolution fails (e.g., container not found,
+            multiple containers but none specified, or specified container doesn't exist).
     """
     containers = pod.spec.containers
     container_names = [c.name for c in containers]
@@ -873,7 +945,8 @@ def determine_target_container(pod: V1Pod, specified_container_name: Optional[st
     logger_local = logging.getLogger(__name__)  # Use local logger
 
     if len(containers) == 1:
-        actual_container_name = containers[0].name
+        # Type cast: containers[0].name is Any due to incomplete kubernetes type stubs
+        actual_container_name = cast(str, containers[0].name)
         if specified_container_name and specified_container_name != actual_container_name:
             logger_local.warning(
                 f"Specified container '{specified_container_name}' ignored; pod '{pod_name}' has only one container: '{actual_container_name}'."
@@ -910,15 +983,22 @@ def find_running_pod_by_label(
     label_selector: str,
     v1_client: Optional[client.CoreV1Api] = None,
 ) -> Optional[V1Pod]:
-    """Finds the first running pod based on a label selector.
+    """Find the first running pod based on a label selector.
+
+    Searches for pods in the specified namespace matching the label selector
+    and returns the first pod that is in the "Running" phase.
 
     Args:
         namespace: The namespace to search in.
-        label_selector: The label selector string to filter pods.
+        label_selector: The label selector string to filter pods (e.g., "app=myapp").
         v1_client: Optional CoreV1Api client. If not provided, creates a new one.
 
     Returns:
-        The V1Pod object if a running pod is found, otherwise None.
+        Optional[V1Pod]: The V1Pod object if a running pod is found, None if
+            no pods match the selector or no running pods are found.
+
+    Raises:
+        ApiException: If the Kubernetes API call fails.
     """
     if not v1_client:
         v1_client = client.CoreV1Api()
@@ -957,15 +1037,24 @@ def get_secret_data(
     secret_name: str,
     v1_client: Optional[client.CoreV1Api] = None,
 ) -> Optional[Dict[str, str]]:
-    """Retrieves and decodes all data from a Kubernetes secret.
+    """Retrieve and decode all data from a Kubernetes secret.
+
+    Reads a Kubernetes secret and decodes all base64-encoded values into UTF-8 strings.
 
     Args:
-        namespace: The namespace of the secret.
-        secret_name: The name of the secret.
+        namespace: The namespace containing the secret.
+        secret_name: The name of the secret to retrieve.
         v1_client: Optional CoreV1Api client. If not provided, creates a new one.
 
     Returns:
-        A dictionary with the decoded secret data, or None if the secret is not found or an error occurs.
+        Optional[Dict[str, str]]: Dictionary with decoded secret data (key-value pairs),
+            empty dictionary if secret exists but has no data, None if secret is not
+            found or an error occurs during decoding.
+
+    Raises:
+        ApiException: If the Kubernetes API call fails (e.g., secret not found).
+        base64.binascii.Error: If base64 decoding fails.
+        UnicodeDecodeError: If UTF-8 decoding fails.
     """
     if not v1_client:
         v1_client = client.CoreV1Api()
@@ -990,7 +1079,7 @@ def get_secret_data(
         else:
             logger.error(f"API error reading secret '{secret_name}': {e.reason}", exc_info=True)
         return None
-    except (base64.binascii.Error, UnicodeDecodeError) as e:
+    except (binascii.Error, UnicodeDecodeError) as e:
         logger.error(f"Failed to decode secret data from '{secret_name}': {e}", exc_info=True)
         return None
 
@@ -1000,17 +1089,23 @@ def get_service_account_jwt(
     service_account_name: str,
     v1_client: Optional[client.CoreV1Api] = None,
 ) -> Optional[str]:
-    """Retrieves an existing K8s service account token (JWT) from a secret.
+    """Retrieve an existing Kubernetes service account token (JWT) from a secret.
 
-    It searches for a secret associated with the service account that contains '-token' in its name.
+    Searches for a secret associated with the service account that contains
+    '-token' in its name and extracts the JWT token from the 'token' key.
 
     Args:
-        namespace: The namespace of the service account.
+        namespace: The namespace containing the service account.
         service_account_name: The name of the service account.
-        v1_client: Optional CoreV1Api client.
+        v1_client: Optional CoreV1Api client. If not provided, creates a new one.
 
     Returns:
-        The JWT string if found, otherwise None.
+        Optional[str]: The JWT token string if found, None if no token secret is
+            found or an error occurs.
+
+    Raises:
+        ApiException: If the Kubernetes API call fails.
+        Exception: For other unexpected errors during token retrieval.
     """
     if not v1_client:
         v1_client = client.CoreV1Api()
@@ -1051,10 +1146,19 @@ def get_service_account_jwt(
 
 
 def get_cluster_name_from_config() -> str:
-    """Derives a cluster name from the current kubeconfig context's server URL.
+    """Derive a cluster name from the current kubeconfig context's server URL.
+
+    Extracts and sanitizes a cluster name from the Kubernetes API server URL
+    in the current kubeconfig. Removes common prefixes like 'api.' and sanitizes
+    the hostname to create a valid cluster identifier.
 
     Returns:
-        A sanitized cluster name, or 'unknown_cluster' if it cannot be determined.
+        str: A sanitized cluster name derived from the API server hostname,
+            or 'unknown_cluster' if the hostname cannot be determined or parsed.
+
+    Examples:
+        >>> # For API URL: https://api.my-cluster.dev.example.com:6443
+        >>> # Returns: "my-cluster"
     """
     try:
         # Load the configuration to get the host

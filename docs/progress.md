@@ -142,7 +142,7 @@
 **Status**: Complete  
 **Date**: 2026-02-05  
 **Branch**: main  
-**Commit**: 7a60af7
+**Commit**: 7cfe6a6
 
 **Changes Made**:
 - Added module-level `_path_to_role_name(repo_root, file_path)` helper: returns role name when path is under `repo_root/roles/<name>/`, otherwise None

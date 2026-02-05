@@ -51,6 +51,39 @@
 
 ---
 
+### Investigation: Circular Dependency Detection and Missing Role Clarification
+
+**Status**: ✅ Complete  
+**Date**: 2026-02-05  
+**Branch**: main  
+**Commit**: 74523ae
+
+**Changes Made**:
+- Updated debugging.md: Marked `setup_env` missing role as expected behavior (external dependency from `roles/requirements.yml`)
+- Updated debugging.md: Changed circular dependency status to INVESTIGATING with detailed analysis
+- Enhanced circular dependency logging: Added debug output showing where file was first visited and what it includes
+- Added debug logging to show what files are included when circular dependency detected
+
+**Tests**:
+- Manual: Documentation updated based on user feedback
+- Validation: Enhanced logging will help identify if circular dependency is false positive
+
+**Logging Added/Verified**:
+- New logger.debug(): Shows first visit index and circular loop path when circular dependency detected
+- New logger.debug(): Shows what files are included when circular dependency detected (for debugging)
+
+**Issues Found**:
+- setup_env role: Confirmed as expected behavior - external dependency from requirements.yml
+- Circular dependency: User reports `scale_nodes.yml` only includes `post_provision.yml`, but circular dependency detected - needs investigation with enhanced logging
+
+**Files Modified**:
+- docs/debugging.md (+50, -30 lines): Updated status and added investigation details
+- pyplayground/ansible_structure_analyzer.py (+25, -5 lines): Enhanced circular dependency logging
+
+**Next Steps**: User will test with enhanced logging to verify if circular dependency is false positive
+
+---
+
 ### Bug Fix: FQCN Include Parsing and Output File Naming
 
 **Status**: ✅ Complete  

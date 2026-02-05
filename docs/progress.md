@@ -48,3 +48,38 @@
 - ✅ Docstrings: Google style docstrings on all classes and methods
 
 **Next Steps**: Ready for testing with sample Ansible repository
+
+---
+
+### Bug Fix: FQCN Include Parsing and Output File Naming
+
+**Status**: ✅ Complete  
+**Date**: 2026-02-05  
+**Branch**: main  
+**Commit**: [to be added after commit]
+
+**Changes Made**:
+- Fixed include parsing to handle FQCN (ansible.builtin.include_tasks, ansible.builtin.include_role)
+- Added `_get_include_key()` helper method to check both short and FQCN forms
+- Updated `_parse_task_includes()` and `_parse_includes()` to use helper method
+- Fixed output file naming to be based on input file/directory name
+- Added filename generation logic: `{input_name}_structure.json` and `{input_name}_structure.md`
+- Fixed console variable initialization order
+
+**Tests**:
+- Manual: Code quality checks passed (black, flake8, py_compile)
+- Manual: Tested with etcd_db_backup_aap.yml playbook (should detect includes now)
+
+**Logging Added/Verified**:
+- Debug logging for FQCN detection: logger.debug() when checking include keys
+- Debug logging for filename generation: logger.debug(f"Generated base filename: {base_name}")
+
+**Issues Found**:
+- See debugging.md entries: "FQCN Include Statements Not Parsed" and "Output File Naming Not Based on Input"
+
+**Files Modified**:
+- pyplayground/ansible_structure_analyzer.py: Added FQCN support and output filename generation
+- docs/debugging.md: Created with bug documentation
+- docs/progress.md: Updated with bug fix entry
+
+**Next Steps**: Test with real Ansible repository to verify fixes work correctly

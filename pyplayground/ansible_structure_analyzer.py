@@ -199,6 +199,33 @@ class IncludeResolver:
             f"IncludeResolver initialized with repo_root: {repo_root}, max_depth: {max_depth}"
         )
 
+    def _get_include_key(self, task: Dict[str, Any], short_name: str) -> Optional[str]:
+        """Get include key from task, checking both short and FQCN forms.
+
+        Args:
+            task: Task dictionary
+            short_name: Short module name (e.g., 'include_tasks')
+
+        Returns:
+            Key name if found (short or FQCN), None otherwise
+        """
+        # Check short form first
+        if short_name in task:
+            return short_name
+
+        # Check FQCN form
+        fqcn_name = f"ansible.builtin.{short_name}"
+        if fqcn_name in task:
+            return fqcn_name
+
+        # Check other common FQCN forms
+        for collection in ["ansible.legacy", "ansible.posix"]:
+            fqcn_alt = f"{collection}.{short_name}"
+            if fqcn_alt in task:
+                return fqcn_alt
+
+        return None
+
     def resolve_includes(
         self,
         file_path: Path,
@@ -351,28 +378,40 @@ class IncludeResolver:
                         content["roles"], current_file, visited, depth, include_chain
                     )
                 )
-            if "include_tasks" in content:
+
+            # Check for include_tasks at play level (short or FQCN)
+            include_tasks_key = self._get_include_key(content, "include_tasks")
+            if include_tasks_key:
                 includes.append(
                     self._resolve_include_task(
-                        content["include_tasks"], current_file, visited, depth, include_chain
+                        content[include_tasks_key], current_file, visited, depth, include_chain
                     )
                 )
-            if "import_tasks" in content:
+
+            # Check for import_tasks at play level (short or FQCN)
+            import_tasks_key = self._get_include_key(content, "import_tasks")
+            if import_tasks_key:
                 includes.append(
                     self._resolve_import_task(
-                        content["import_tasks"], current_file, visited, depth, include_chain
+                        content[import_tasks_key], current_file, visited, depth, include_chain
                     )
                 )
-            if "include_role" in content:
+
+            # Check for include_role at play level (short or FQCN)
+            include_role_key = self._get_include_key(content, "include_role")
+            if include_role_key:
                 includes.append(
                     self._resolve_include_role(
-                        content["include_role"], current_file, visited, depth, include_chain
+                        content[include_role_key], current_file, visited, depth, include_chain
                     )
                 )
-            if "import_role" in content:
+
+            # Check for import_role at play level (short or FQCN)
+            import_role_key = self._get_include_key(content, "import_role")
+            if import_role_key:
                 includes.append(
                     self._resolve_import_role(
-                        content["import_role"], current_file, visited, depth, include_chain
+                        content[import_role_key], current_file, visited, depth, include_chain
                     )
                 )
 
@@ -410,30 +449,43 @@ class IncludeResolver:
             if not isinstance(task, dict):
                 continue
 
-            if "include_tasks" in task:
+            # Check for include_tasks (short or FQCN)
+            include_tasks_key = self._get_include_key(task, "include_tasks")
+            if include_tasks_key:
                 includes.append(
                     self._resolve_include_task(
-                        task["include_tasks"], current_file, visited, depth, include_chain
+                        task[include_tasks_key], current_file, visited, depth, include_chain
                     )
                 )
-            if "import_tasks" in task:
+
+            # Check for import_tasks (short or FQCN)
+            import_tasks_key = self._get_include_key(task, "import_tasks")
+            if import_tasks_key:
                 includes.append(
                     self._resolve_import_task(
-                        task["import_tasks"], current_file, visited, depth, include_chain
+                        task[import_tasks_key], current_file, visited, depth, include_chain
                     )
                 )
-            if "include_role" in task:
+
+            # Check for include_role (short or FQCN)
+            include_role_key = self._get_include_key(task, "include_role")
+            if include_role_key:
                 includes.append(
                     self._resolve_include_role(
-                        task["include_role"], current_file, visited, depth, include_chain
+                        task[include_role_key], current_file, visited, depth, include_chain
                     )
                 )
-            if "import_role" in task:
+
+            # Check for import_role (short or FQCN)
+            import_role_key = self._get_include_key(task, "import_role")
+            if import_role_key:
                 includes.append(
                     self._resolve_import_role(
-                        task["import_role"], current_file, visited, depth, include_chain
+                        task[import_role_key], current_file, visited, depth, include_chain
                     )
                 )
+
+            # Check blocks
             if "block" in task:
                 includes.extend(
                     self._parse_task_includes(
@@ -1320,13 +1372,14 @@ def main(
     # Log file location info
     from pyplayground.utils.logging_utils import DEFAULT_LOG_DIR
 
+    console = Console()
+
     log_dir = Path(DEFAULT_LOG_DIR)
     if log_dir.exists():
         log_files = sorted(
             log_dir.glob(f"{script_name}_*.log"), key=lambda p: p.stat().st_mtime, reverse=True
         )
         if log_files:
-            console = Console()
             console.print(f"[dim]Log file: {log_files[0]}[/dim]")
 
     # Resolve input path - try relative to current directory first, then relative to repo-root
@@ -1356,20 +1409,30 @@ def main(
     logger.info(f"Resolved input path: {resolved_input_path}")
     input_path = resolved_input_path
 
+    # Generate base filename from input path
+    if input_path.is_file():
+        base_name = input_path.stem
+    else:
+        # For directories, use directory name
+        base_name = input_path.name if input_path.name else "ansible_structure"
+    logger.debug(f"Generated base filename: {base_name}")
+
     try:
         with console.status("[bold green]Analyzing Ansible structure..."):
             analyzer = AnsibleStructureAnalyzer(repo_root, max_depth)
             structure = analyzer.analyze(input_path)
 
-            # Generate output
+            # Generate output with base filename
             output_gen = OutputGenerator(output_dir)
 
             if output_format in ["json", "both"]:
-                json_path = output_gen.generate_json(structure)
+                json_filename = f"{base_name}_structure.json"
+                json_path = output_gen.generate_json(structure, filename=json_filename)
                 console.print(f"[bold green]JSON output saved to: {json_path}[/bold green]")
 
             if output_format in ["markdown", "both"]:
-                md_path = output_gen.generate_markdown(structure)
+                md_filename = f"{base_name}_structure.md"
+                md_path = output_gen.generate_markdown(structure, filename=md_filename)
                 console.print(f"[bold green]Markdown output saved to: {md_path}[/bold green]")
 
             # Generate summary report

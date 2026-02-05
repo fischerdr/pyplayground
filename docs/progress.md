@@ -221,3 +221,49 @@
 - ✅ Syntax validation: Passed
 
 **Next Steps**: User will test manually with --debug flag to verify fixes work correctly
+
+---
+
+### Bug Fix: Task List vs Playbook Detection Logic
+
+**Status**: ✅ Complete  
+**Date**: 2026-02-05  
+**Branch**: main  
+**Commit**: d44827a
+
+**Changes Made**:
+- Fixed play detection logic that incorrectly treated task lists as playbooks
+- Previous logic checked for 'name' key, but tasks can have names too (causing false positives)
+- New logic: Files in tasks/ directory are treated as task lists (unless they have hosts)
+- Plays MUST have 'hosts' OR 'tasks'/'pre_tasks' keys to be identified as plays
+- Added comprehensive debug logging for play detection decision process
+- This fixes issue where create_cluster.yml (task file) was treated as playbook, missing nested includes like validate_dns_record.yml
+
+**Tests**:
+- Manual: Code quality checks passed (black, isort, flake8)
+- Validation: Logic verified against Ansible structure patterns
+- Manual: User will test to verify validate_dns_record.yml is now found
+
+**Logging Added/Verified**:
+- Added debug logging for tasks directory detection (is_in_tasks_dir)
+- Added debug logging for play detection criteria (has_hosts, has_tasks_key, is_in_tasks_dir)
+- Added debug logging for final decision (play vs task list) with reasoning
+- All logging follows project standards with appropriate levels
+
+**Issues Found**:
+- Task files in roles/*/tasks/ were being incorrectly identified as playbooks
+- Root cause: Play detection checked for 'name' key, but tasks can have names too
+- Result: Task lists were processed as playbooks, causing includes within tasks to be missed
+- Example: create_cluster.yml (task file) was treated as playbook with 19 "plays" (actually tasks), so include_tasks: validate_dns_record.yml was never found
+- Solution: Use file location (tasks/ directory) as primary indicator, with hosts/tasks keys as secondary
+
+**Files Modified**:
+- pyplayground/ansible_structure_analyzer.py (+32, -5 lines): Fixed play detection logic
+
+**Code Quality**:
+- ✅ Black formatting: Passed
+- ✅ isort import sorting: Passed
+- ✅ flake8 linting: Passed
+- ✅ Syntax validation: Passed
+
+**Next Steps**: User will test to verify validate_dns_record.yml and other nested includes are now found correctly

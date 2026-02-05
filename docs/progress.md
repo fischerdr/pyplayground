@@ -137,6 +137,44 @@
 
 ---
 
+### Feature: Cross-role detection and reporting
+
+**Status**: Complete  
+**Date**: 2026-02-05  
+**Branch**: main  
+**Commit**: [to be added after commit]
+
+**Changes Made**:
+- Added module-level `_path_to_role_name(repo_root, file_path)` helper: returns role name when path is under `repo_root/roles/<name>/`, otherwise None
+- IncludeResolver: set `cross_role`, `caller_role`, `target_role` in `_resolve_include_task`, `_resolve_import_task` when caller and target are different roles; set same in `_resolve_role` when a role includes another role
+- TemplateFinder: in `_extract_template_usage`, set `cross_role`, `caller_role`, `template_role` when task file role and template path role differ
+- OutputGenerator: include lines in Markdown show `(cross-role: <target_role>)` when applicable; Templates table has Cross-role column; new "Cross-role summary" section after Errors with task includes, role includes, and template usage
+- Added `_collect_cross_role_summary()` to walk playbooks/roles include trees and templates list for the summary
+- JSON output: include and template dicts carry optional `cross_role`, `caller_role`, `target_role` / `template_role` (no structural change)
+
+**Tests**:
+- Automated: Added `TestCrossRole` with 8 tests:
+  - Unit: `_path_to_role_name` for paths under roles/foo/tasks, roles/foo/templates, playbooks/, root tasks/, and outside roles/
+  - Integration: role A includes role B task file (cross_role True, caller/target set)
+  - Integration: role A uses template from role B (cross_role True, caller/template_role set)
+  - Output: JSON contains cross_role in include tree; Markdown contains Cross-role summary section
+- Manual: black, isort applied; linter clean
+
+**Logging Added/Verified**:
+- No new logging; cross-role is derived from existing resolution and path metadata
+
+**Issues Found**:
+- None
+
+**Files Modified**:
+- pyplayground/ansible_structure_analyzer.py: _path_to_role_name, cross-role in IncludeResolver and TemplateFinder, Markdown/JSON output and _collect_cross_role_summary
+- tests/test_ansible_structure_analyzer.py: import _path_to_role_name, TestCrossRole class with 8 tests
+- docs/progress.md: this entry
+
+**Next Steps**: Cross-role detection complete per plan; optional follow-ups: whole-repo mode, recursive playbook discovery, CSV/DOT export
+
+---
+
 ### Bug Fix: FQCN Include Parsing and Output File Naming
 
 **Status**: ✅ Complete  

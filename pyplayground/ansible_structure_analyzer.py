@@ -35,6 +35,34 @@ INCLUDE_TYPES = ["include_tasks", "import_tasks", "include_role", "import_role",
 logger = get_logger(__name__)
 
 
+def _path_to_role_name(repo_root: Path, file_path: Path) -> Optional[str]:
+    """Return the role name if file_path is under repo_root/roles/<name>/.
+
+    Args:
+        repo_root: Repository root directory
+        file_path: Path to a file (task, template, etc.)
+
+    Returns:
+        Role name if path is under roles/<name>/, None otherwise
+    """
+    if not file_path:
+        return None
+    try:
+        resolved_path = Path(file_path).resolve()
+        resolved_repo = Path(repo_root).resolve()
+        roles_dir = resolved_repo / "roles"
+        try:
+            resolved_path.relative_to(roles_dir)
+        except ValueError:
+            return None
+        parts = resolved_path.relative_to(roles_dir).parts
+        if parts:
+            return parts[0]
+    except (ValueError, OSError):
+        pass
+    return None
+
+
 class FileDiscovery:
     """Handles discovery of Ansible playbook files from input."""
 
@@ -920,6 +948,16 @@ class IncludeResolver:
                 f"_resolve_include_task: could not resolve path for include_ref={include_ref} from {current_file}"
             )
 
+        # Cross-role detection: task in role A including task file from role B
+        caller_role = _path_to_role_name(self.repo_root, current_file)
+        target_role = _path_to_role_name(self.repo_root, resolved_path) if resolved_path else None
+        if caller_role and target_role and caller_role != target_role:
+            result["cross_role"] = True
+            result["caller_role"] = caller_role
+            result["target_role"] = target_role
+        else:
+            result["cross_role"] = False
+
         return result
 
     def _resolve_import_task(
@@ -967,6 +1005,16 @@ class IncludeResolver:
                 resolved_path, visited, depth + 1, include_chain, loop_context
             )
             result["includes"] = nested.get("includes", [])
+
+        # Cross-role detection for import_tasks
+        caller_role = _path_to_role_name(self.repo_root, current_file)
+        target_role = _path_to_role_name(self.repo_root, resolved_path) if resolved_path else None
+        if caller_role and target_role and caller_role != target_role:
+            result["cross_role"] = True
+            result["caller_role"] = caller_role
+            result["target_role"] = target_role
+        else:
+            result["cross_role"] = False
 
         return result
 
@@ -1077,6 +1125,14 @@ class IncludeResolver:
         result = {"type": "role", "name": role_name, "resolved": role_path is not None}
         if loop_context:
             result["loop_context"] = loop_context
+
+        caller_role = _path_to_role_name(self.repo_root, current_file)
+        if caller_role is not None and caller_role != role_name:
+            result["cross_role"] = True
+            result["caller_role"] = caller_role
+            result["target_role"] = role_name
+        else:
+            result["cross_role"] = False
 
         if role_path:
             result["path"] = str(role_path)
@@ -1310,12 +1366,28 @@ class TemplateFinder:
         # Resolve template path
         resolved_path = self._find_template_path(template_path, file_path)
 
-        return {
+        result = {
             "template": template_path,
             "resolved_path": str(resolved_path) if resolved_path else None,
             "used_in": str(file_path),
             "found": resolved_path is not None,
         }
+        caller_role = _path_to_role_name(self.repo_root, file_path)
+        if resolved_path is not None:
+            template_role = _path_to_role_name(self.repo_root, resolved_path)
+            if (
+                caller_role is not None
+                and template_role is not None
+                and caller_role != template_role
+            ):
+                result["cross_role"] = True
+                result["caller_role"] = caller_role
+                result["template_role"] = template_role
+            else:
+                result["cross_role"] = False
+        else:
+            result["cross_role"] = False
+        return result
 
     def _find_template_path(  # noqa: C901
         self, template_ref: str, current_file: Path
@@ -1627,12 +1699,21 @@ class OutputGenerator:
 
                 # Templates
                 f.write("## Templates\n\n")
-                f.write("| Template File | Used In |\n")
-                f.write("|--------------|----------|\n")
+                f.write("| Template File | Used In | Cross-role |\n")
+                f.write("|--------------|----------|------------|\n")
                 for template in structure.get("templates", []):
                     template_file = template.get("template", "N/A")
                     used_in = template.get("used_in", "N/A")
-                    f.write(f"| {template_file} | {used_in} |\n")
+                    cross_role = ""
+                    if (
+                        template.get("cross_role")
+                        and template.get("caller_role")
+                        and template.get("template_role")
+                    ):
+                        cross_role = f"{template['caller_role']} -> {template['template_role']}"
+                    else:
+                        cross_role = "-"
+                    f.write(f"| {template_file} | {used_in} | {cross_role} |\n")
                 f.write("\n")
 
                 # Errors
@@ -1646,12 +1727,81 @@ class OutputGenerator:
                             f.write(f"- **File**: {error.get('file')}\n")
                         f.write("\n")
 
+                # Cross-role summary
+                task_includes, role_includes, template_usage = self._collect_cross_role_summary(
+                    structure
+                )
+                if task_includes or role_includes or template_usage:
+                    f.write("## Cross-role summary\n\n")
+                    if task_includes:
+                        f.write("### Cross-role task includes\n\n")
+                        for caller, target, ref in task_includes:
+                            f.write(f"- {caller} -> {target}: `{ref}`\n")
+                        f.write("\n")
+                    if role_includes:
+                        f.write("### Cross-role role includes\n\n")
+                        for caller, target in role_includes:
+                            f.write(f"- {caller} -> {target}\n")
+                        f.write("\n")
+                    if template_usage:
+                        f.write("### Cross-role template usage\n\n")
+                        for caller, t_role, t_path, used_in in template_usage:
+                            f.write(
+                                f"- {caller} -> {t_role}: template `{t_path}` (used in {used_in})\n"
+                            )
+                        f.write("\n")
+
             logger.info(f"Markdown output saved to: {output_path}")
             return output_path
 
         except Exception as e:
             logger.error(f"Error generating Markdown output: {e}", exc_info=True)
             raise
+
+    def _collect_cross_role_summary(self, structure: Dict[str, Any]) -> tuple:  # noqa: C901
+        """Collect cross-role task includes, role includes, and template usage from structure.
+
+        Args:
+            structure: Full structure dict from analyzer.
+
+        Returns:
+            Tuple of (task_includes, role_includes, template_usage).
+            task_includes: List of (caller_role, target_role, ref).
+            role_includes: List of (caller_role, target_role).
+            template_usage: List of (caller_role, template_role, template_path, used_in).
+        """
+        task_includes: List[tuple] = []
+        role_includes: List[tuple] = []
+
+        def walk(includes: List[Dict[str, Any]]) -> None:
+            for inc in includes:
+                if inc.get("cross_role") and inc.get("caller_role") and inc.get("target_role"):
+                    if inc.get("type") in ("include_tasks", "import_tasks"):
+                        ref = inc.get("ref") or inc.get("path") or "?"
+                        task_includes.append((inc["caller_role"], inc["target_role"], ref))
+                    elif inc.get("type") in ("include_role", "import_role", "role"):
+                        role_includes.append((inc["caller_role"], inc["target_role"]))
+                for nested in inc.get("includes") or []:
+                    walk([nested])
+
+        for pb in structure.get("playbooks", []):
+            walk(pb.get("includes") or [])
+        for role in structure.get("roles", []):
+            walk(role.get("includes") or [])
+
+        template_usage: List[tuple] = []
+        for t in structure.get("templates", []):
+            if t.get("cross_role") and t.get("caller_role") and t.get("template_role"):
+                template_usage.append(
+                    (
+                        t["caller_role"],
+                        t["template_role"],
+                        t.get("template", "N/A"),
+                        t.get("used_in", "N/A"),
+                    )
+                )
+
+        return task_includes, role_includes, template_usage
 
     def _write_includes_markdown(self, f, includes: List[Dict[str, Any]], indent: int = 0) -> None:
         """Write includes to markdown file recursively.
@@ -1666,33 +1816,44 @@ class OutputGenerator:
             include_type = include.get("type", "unknown")
             loop_context = include.get("loop_context")
             loop_suffix = f" [{loop_context}]" if loop_context else ""
+            cross_note = ""
+            if include.get("cross_role") and include.get("target_role"):
+                cross_note = f" (cross-role: {include['target_role']})"
 
             if include_type == "role":
                 role_name = include.get("name", "N/A")
                 resolved = include.get("resolved", False)
                 status = "✓" if resolved else "✗"
-                f.write(f"{indent_prefix}- {status} **Role**: `{role_name}`{loop_suffix}\n")
+                f.write(
+                    f"{indent_prefix}- {status} **Role**: `{role_name}`{loop_suffix}{cross_note}\n"
+                )
                 if include.get("path"):
                     f.write(f"{indent_prefix}  - Path: `{include.get('path')}`\n")
             elif include_type in ["include_tasks", "import_tasks"]:
                 ref = include.get("ref", "N/A")
                 resolved = include.get("resolved", False)
                 status = "✓" if resolved else "✗"
-                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}\n")
+                f.write(
+                    f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}{cross_note}\n"
+                )
                 if include.get("path"):
                     f.write(f"{indent_prefix}  - Path: `{include.get('path')}`\n")
             elif include_type in ["include_role", "import_role"]:
                 ref = include.get("ref", include.get("name", "N/A"))
                 resolved = include.get("resolved", False)
                 status = "✓" if resolved else "✗"
-                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}\n")
+                f.write(
+                    f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}{cross_note}\n"
+                )
                 if include.get("path"):
                     f.write(f"{indent_prefix}  - Path: `{include.get('path')}`\n")
             else:
                 ref = include.get("ref", str(include))
                 resolved = include.get("resolved", False)
                 status = "✓" if resolved else "✗"
-                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}\n")
+                f.write(
+                    f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}{cross_note}\n"
+                )
 
             # Write nested includes
             nested_includes = include.get("includes", [])

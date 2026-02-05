@@ -14,6 +14,7 @@ from pyplayground.ansible_structure_analyzer import (
     OutputGenerator,
     StructureBuilder,
     TemplateFinder,
+    _path_to_role_name,
 )
 
 
@@ -611,3 +612,151 @@ class TestLoopHandling:
         assert "includes" in result
         includes = result.get("includes", [])
         assert len(includes) > 0, "Should find includes in role_with_loops"
+
+
+class TestCrossRole:
+    """Tests for cross-role detection and reporting."""
+
+    def test_path_to_role_name_under_role_tasks(self, tmp_path):
+        """_path_to_role_name returns role name for path under roles/foo/tasks/."""
+        repo = tmp_path
+        (repo / "roles" / "configure_cluster" / "tasks").mkdir(parents=True)
+        path = repo / "roles" / "configure_cluster" / "tasks" / "setup_machinesets.yml"
+        path.touch()
+        assert _path_to_role_name(repo, path) == "configure_cluster"
+
+    def test_path_to_role_name_under_role_templates(self, tmp_path):
+        """_path_to_role_name returns role name for path under roles/foo/templates/."""
+        repo = tmp_path
+        (repo / "roles" / "create_machineset" / "templates").mkdir(parents=True)
+        path = repo / "roles" / "create_machineset" / "templates" / "machineset.yaml.j2"
+        path.touch()
+        assert _path_to_role_name(repo, path) == "create_machineset"
+
+    def test_path_to_role_name_playbook_returns_none(self, tmp_path):
+        """_path_to_role_name returns None for playbooks/ path."""
+        repo = tmp_path
+        (repo / "playbooks").mkdir(parents=True)
+        path = repo / "playbooks" / "configure_cluster.yml"
+        path.touch()
+        assert _path_to_role_name(repo, path) is None
+
+    def test_path_to_role_name_root_tasks_returns_none(self, tmp_path):
+        """_path_to_role_name returns None for repo root tasks/."""
+        repo = tmp_path
+        (repo / "tasks").mkdir(parents=True)
+        path = repo / "tasks" / "setup.yml"
+        path.touch()
+        assert _path_to_role_name(repo, path) is None
+
+    def test_path_to_role_name_outside_roles_returns_none(self, tmp_path):
+        """_path_to_role_name returns None for path outside repo roles/."""
+        repo = tmp_path
+        (repo / "roles" / "foo").mkdir(parents=True)
+        path = Path("/other/repo/roles/bar/tasks/main.yml")
+        assert _path_to_role_name(repo, path) is None
+
+    def test_cross_role_task_include_detected(self, tmp_path):
+        """Role A including role B task file is reported as cross-role."""
+        repo = tmp_path
+        # role_a/tasks/main.yml includes ../../role_b/tasks/extra.yml
+        (repo / "roles" / "role_a" / "tasks").mkdir(parents=True)
+        (repo / "roles" / "role_b" / "tasks").mkdir(parents=True)
+        (repo / "playbooks").mkdir(parents=True)
+
+        main_a = repo / "roles" / "role_a" / "tasks" / "main.yml"
+        main_a.write_text("- include_tasks: ../../role_b/tasks/extra.yml\n")
+        (repo / "roles" / "role_b" / "tasks" / "extra.yml").write_text("- debug: msg=ok\n")
+
+        playbook = repo / "playbooks" / "pb.yml"
+        playbook.write_text("---\n- hosts: all\n  roles:\n    - role_a\n")
+
+        analyzer = AnsibleStructureAnalyzer(repo)
+        result = analyzer.analyze(playbook)
+
+        def find_cross_role_includes(includes):
+            for inc in includes:
+                if inc.get("cross_role") and inc.get("type") in ("include_tasks", "import_tasks"):
+                    return inc
+                found = find_cross_role_includes(inc.get("includes") or [])
+                if found:
+                    return found
+            return None
+
+        role_a = next((r for r in result.get("roles", []) if r.get("name") == "role_a"), None)
+        assert role_a is not None, "role_a should be in result"
+        cross = find_cross_role_includes(role_a.get("includes") or [])
+        assert cross is not None, "Should find cross-role task include"
+        assert cross.get("caller_role") == "role_a"
+        assert cross.get("target_role") == "role_b"
+
+    def test_cross_role_template_detected(self, tmp_path):
+        """Role A using a template from role B is reported as cross-role."""
+        repo = tmp_path
+        (repo / "roles" / "role_a" / "tasks").mkdir(parents=True)
+        (repo / "roles" / "role_b" / "templates").mkdir(parents=True)
+        (repo / "playbooks").mkdir(parents=True)
+
+        main_a = repo / "roles" / "role_a" / "tasks" / "main.yml"
+        main_a.write_text("- template:\n    src: other_config.j2\n    dest: /tmp/other.conf\n")
+        (repo / "roles" / "role_b" / "templates" / "other_config.j2").write_text("config\n")
+
+        playbook = repo / "playbooks" / "pb.yml"
+        playbook.write_text("---\n- hosts: all\n  roles:\n    - role_a\n")
+
+        analyzer = AnsibleStructureAnalyzer(repo)
+        result = analyzer.analyze(playbook)
+
+        templates = result.get("templates", [])
+        cross_templates = [
+            t for t in templates if t.get("cross_role") and t.get("template_role") == "role_b"
+        ]
+        assert len(cross_templates) >= 1, "Should find cross-role template usage"
+        assert cross_templates[0].get("caller_role") == "role_a"
+        assert cross_templates[0].get("template_role") == "role_b"
+
+    def test_cross_role_in_json_and_markdown(self, tmp_path):
+        """Cross-role flags appear in JSON and Cross-role summary in Markdown."""
+        repo = tmp_path
+        (repo / "roles" / "role_a" / "tasks").mkdir(parents=True)
+        (repo / "roles" / "role_b" / "tasks").mkdir(parents=True)
+        (repo / "playbooks").mkdir(parents=True)
+
+        (repo / "roles" / "role_a" / "tasks" / "main.yml").write_text(
+            "- include_tasks: ../../role_b/tasks/extra.yml\n"
+        )
+        (repo / "roles" / "role_b" / "tasks" / "extra.yml").write_text("- debug: msg=ok\n")
+
+        playbook = repo / "playbooks" / "pb.yml"
+        playbook.write_text("---\n- hosts: all\n  roles:\n    - role_a\n")
+
+        analyzer = AnsibleStructureAnalyzer(repo)
+        result = analyzer.analyze(playbook)
+
+        # JSON: at least one include has cross_role true
+        def has_cross_role_in_includes(includes):
+            for inc in includes:
+                if inc.get("cross_role") is True:
+                    return True
+                if has_cross_role_in_includes(inc.get("includes") or []):
+                    return True
+            return False
+
+        assert has_cross_role_in_includes(
+            result.get("playbooks", [{}])[0].get("includes") or []
+        ), "Playbook includes tree should contain cross_role include"
+        roles_includes = []
+        for r in result.get("roles", []):
+            roles_includes.extend(r.get("includes") or [])
+        assert has_cross_role_in_includes(
+            roles_includes
+        ), "Roles includes should contain cross_role"
+
+        # Markdown: Cross-role summary section present
+        output_gen = OutputGenerator(tmp_path)
+        md_path = output_gen.generate_markdown(result)
+        content = md_path.read_text()
+        assert "## Cross-role summary" in content, "Markdown should have Cross-role summary section"
+        assert (
+            "Cross-role task includes" in content or "role_a" in content
+        ), "Markdown should list cross-role task includes"

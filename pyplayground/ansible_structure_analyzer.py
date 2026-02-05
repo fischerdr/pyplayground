@@ -287,12 +287,16 @@ class IncludeResolver:
             # Mark as visited
             visited.add(file_path)
             current_chain = include_chain + [file_path]
-            logger.debug(f"resolve_includes: marked {file_path} as visited (total visited: {len(visited)})")
+            logger.debug(
+                f"resolve_includes: marked {file_path} as visited (total visited: {len(visited)})"
+            )
 
             # Parse file
             content = self._parse_yaml_file(file_path)
             if content is None:
-                logger.debug(f"resolve_includes: content is None for {file_path}, returning empty includes")
+                logger.debug(
+                    f"resolve_includes: content is None for {file_path}, returning empty includes"
+                )
                 return {"file": str(file_path), "includes": []}
 
             # Find includes
@@ -445,34 +449,95 @@ class IncludeResolver:
                 first_item = content[0]
                 first_item_keys = list(first_item.keys())[:10]  # First 10 keys
                 logger.debug(f"_parse_includes: first list item keys (first 10): {first_item_keys}")
-                
+
                 # Check if we're in a tasks directory - if so, almost certainly a task list
                 is_in_tasks_dir = current_file.parent.name == "tasks"
                 logger.debug(f"_parse_includes: file is in tasks directory: {is_in_tasks_dir}")
-                
+
                 # Plays MUST have "hosts" OR have "tasks"/"pre_tasks" keys
                 # Tasks NEVER have "hosts" - that's a play-level key
-                # Just having "name" is not enough - tasks can have names too
+                # Tasks can be unnamed, but they have module keys (ansible.builtin.*) or include keys
                 has_hosts = "hosts" in first_item
                 has_tasks_key = "tasks" in first_item or "pre_tasks" in first_item
-                
+
+                # Check for task indicators: module keys or include keys
+                # Tasks have module keys like ansible.builtin.shell, template, copy, etc.
+                # Or include keys like include_tasks, include_role, import_tasks, import_role
+                has_module_key = any(
+                    key.startswith("ansible.builtin.")
+                    or key.startswith("ansible.")
+                    or key.startswith("kubernetes.")
+                    or key
+                    in [
+                        "shell",
+                        "command",
+                        "template",
+                        "copy",
+                        "file",
+                        "debug",
+                        "set_fact",
+                        "pause",
+                        "fail",
+                        "uri",
+                        "get_url",
+                        "tempfile",
+                        "meta",
+                    ]
+                    for key in first_item.keys()
+                )
+                has_include_key = any(
+                    key in ["include_tasks", "import_tasks", "include_role", "import_role"]
+                    or key.startswith("ansible.builtin.include_")
+                    or key.startswith("ansible.builtin.import_")
+                    for key in first_item.keys()
+                )
+                # Task-specific keys that plays don't typically have
+                has_task_indicators = any(
+                    key
+                    in [
+                        "block",
+                        "when",
+                        "register",
+                        "loop",
+                        "with_items",
+                        "until",
+                        "retries",
+                        "changed_when",
+                        "failed_when",
+                    ]
+                    for key in first_item.keys()
+                )
+
                 # If file is in tasks/ directory, treat as task list (very reliable indicator)
                 # Exception: if it has "hosts", it might be a play (unusual but possible)
                 # Otherwise, if it has "hosts" or "tasks"/"pre_tasks", it's a play
+                # If it has module/include keys or task indicators, it's a task
                 if is_in_tasks_dir and not has_hosts:
                     is_play = False
-                    logger.debug("_parse_includes: file in tasks/ directory without hosts → treating as task list")
+                    logger.debug(
+                        "_parse_includes: file in tasks/ directory without hosts → treating as task list"
+                    )
                 elif has_hosts or has_tasks_key:
                     is_play = True
-                    logger.debug(f"_parse_includes: item has hosts={has_hosts} or tasks_key={has_tasks_key} → treating as play")
+                    logger.debug(
+                        f"_parse_includes: item has hosts={has_hosts} or tasks_key={has_tasks_key} → treating as play"
+                    )
+                elif has_module_key or has_include_key or has_task_indicators:
+                    is_play = False
+                    logger.debug(
+                        f"_parse_includes: item has module_key={has_module_key}, include_key={has_include_key}, task_indicators={has_task_indicators} → treating as task"
+                    )
                 else:
                     # Default to task list if uncertain (safer for includes)
                     is_play = False
-                    logger.debug("_parse_includes: no clear play indicators → treating as task list")
-                
+                    logger.debug(
+                        "_parse_includes: no clear play indicators → treating as task list"
+                    )
+
                 logger.debug(
                     f"_parse_includes: play detection - has_hosts={has_hosts}, has_tasks_key={has_tasks_key}, "
-                    f"has_module_key={has_module_key}, is_in_tasks_dir={is_in_tasks_dir}, is_play={is_play}"
+                    f"has_module_key={has_module_key}, has_include_key={has_include_key}, "
+                    f"has_task_indicators={has_task_indicators}, is_in_tasks_dir={is_in_tasks_dir}, is_play={is_play}"
                 )
 
                 if is_play:
@@ -828,7 +893,9 @@ class IncludeResolver:
         Returns:
             Dictionary with resolved role information
         """
-        logger.debug(f"_resolve_role: resolving role={role_name}, from={current_file}, depth={depth}")
+        logger.debug(
+            f"_resolve_role: resolving role={role_name}, from={current_file}, depth={depth}"
+        )
 
         # Find role directory
         role_path = self._find_role_path(role_name)
@@ -1157,12 +1224,12 @@ class TemplateFinder:
                     # Find templates in tasks
                     file_templates = self.find_templates(tasks, task_file)
                     templates.extend(file_templates)
-                    logger.debug(
-                        f"Found {len(file_templates)} templates in task file: {task_file}"
-                    )
+                    logger.debug(f"Found {len(file_templates)} templates in task file: {task_file}")
 
                 except Exception as e:
-                    logger.warning(f"Error scanning task file {task_file} for templates: {e}", exc_info=True)
+                    logger.warning(
+                        f"Error scanning task file {task_file} for templates: {e}", exc_info=True
+                    )
 
         logger.debug(f"Found {len(templates)} total templates in role tasks: {role_path}")
         return templates
@@ -1550,7 +1617,9 @@ class AnsibleStructureAnalyzer:
                         role_path = self.include_resolver._find_role_path(role_name)
                         if role_path:
                             # Scan role templates directory for .j2 files
-                            role_template_files = self.template_finder.scan_role_templates(role_path)
+                            role_template_files = self.template_finder.scan_role_templates(
+                                role_path
+                            )
                             # Find templates used in role task files
                             role_task_templates = self.template_finder.find_templates_in_role_tasks(
                                 role_path, self.include_resolver

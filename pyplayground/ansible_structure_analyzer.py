@@ -273,9 +273,54 @@ class IncludeResolver:
             # Check for circular dependency
             if file_path in visited:
                 circular_chain = include_chain + [file_path]
+                # Find where in the chain this file was first visited
+                first_visit_index = None
+                for idx, chain_file in enumerate(include_chain):
+                    if chain_file == file_path:
+                        first_visit_index = idx
+                        break
+
                 logger.warning(
                     f"resolve_includes: CIRCULAR DEPENDENCY detected: {' -> '.join(str(p) for p in circular_chain)}"
                 )
+                if first_visit_index is not None:
+                    logger.debug(
+                        f"resolve_includes: File {file_path.name} was first visited at chain index {first_visit_index}"
+                    )
+                    logger.debug(
+                        f"resolve_includes: Circular loop: {' -> '.join(str(p.name) for p in circular_chain[first_visit_index:])}"
+                    )
+                else:
+                    logger.debug(
+                        f"resolve_includes: File {file_path.name} was visited earlier but not found in current chain"
+                    )
+
+                # Try to parse the file to see what it includes (for debugging)
+                try:
+                    content = self._parse_yaml_file(file_path)
+                    if content is not None:
+                        # Quick check for includes without full recursion
+                        temp_includes = []
+                        if isinstance(content, dict):
+                            if "tasks" in content:
+                                for task in content["tasks"]:
+                                    if isinstance(task, dict):
+                                        include_key = self._get_include_key(task, "include_tasks")
+                                        if include_key:
+                                            temp_includes.append(f"include_tasks: {task[include_key]}")
+                        elif isinstance(content, list):
+                            for item in content[:3]:  # Check first 3 items
+                                if isinstance(item, dict):
+                                    include_key = self._get_include_key(item, "include_tasks")
+                                    if include_key:
+                                        temp_includes.append(f"include_tasks: {item[include_key]}")
+                        if temp_includes:
+                            logger.debug(
+                                f"resolve_includes: File {file_path.name} includes: {', '.join(temp_includes[:5])}"
+                            )
+                except Exception:
+                    pass  # Ignore errors during debug logging
+
                 self.error_collector.add_error(
                     "CIRCULAR_DEPENDENCY",
                     "Circular dependency detected",

@@ -274,57 +274,68 @@
 
 ---
 
-### Issue: Circular Dependency Detection - Working as Intended
+### Issue: Circular Dependency Detection - False Positive Investigation
 
 **Found During**: User Testing  
 **Date**: 2026-02-05  
-**Severity**: INFO (Not a bug - working correctly)  
+**Severity**: MEDIUM (Potential false positive)  
 **Status**: VERIFIED (No fix needed)
 
 **Symptom**:
-- Script reports multiple circular dependency warnings when analyzing `configure_cluster.yml`
-- Example chains:
-  - `configure_cluster.yml -> roles/configure_cluster/tasks/main.yml -> roles/configure_cluster/tasks/setup_machinesets.yml -> roles/create_machineset/tasks/main.yml -> roles/create_machineset/tasks/node_processor.yml -> roles/create_machineset/tasks/scale_nodes.yml`
-  - Similar chains detected for other includes
+- Script reports circular dependency: `configure_cluster.yml -> ... -> scale_nodes.yml -> post_provision.yml`
+- User reports: `scale_nodes.yml` only includes one task called `post_provision.yml`
+- If `scale_nodes.yml` only includes `post_provision.yml`, and `post_provision.yml` doesn't include back to `scale_nodes.yml`, this should not be circular
+- The circular dependency chain suggests `post_provision.yml` eventually includes something that leads back to the chain
 
-**Root Cause**:
-- These are REAL circular dependencies in the Ansible code being analyzed
-- The script correctly detects when a file_path is already in the `visited` set during recursion
-- Detection logic at lines 273-285 in `ansible_structure_analyzer.py` is working correctly
-- The circular dependencies exist in the Ansible repository structure itself
+**Root Cause** (Investigation Needed):
+- Circular dependency detection checks if `file_path in visited` before processing (line 274)
+- `visited` set is shared across all recursive calls in the include chain
+- If `post_provision.yml` includes something that was already visited earlier in the chain, it's flagged as circular
+- Need to verify: Does `post_provision.yml` actually include something that creates a cycle?
+- OR: Is the detection logic incorrectly flagging legitimate re-inclusions from different branches?
 
-**Solution**:
-- No fix needed - this is expected behavior
-- The script is correctly identifying structural issues in the Ansible code
-- Circular dependencies are legitimate problems that should be reported
-- Users should fix the circular dependencies in their Ansible code
+**Potential Issues**:
+1. **False Positive**: If the same file is legitimately included from different branches (A->B->C and A->D->C), current logic flags second inclusion as circular (incorrect)
+2. **True Circular**: If `post_provision.yml` includes something that leads back to `scale_nodes.yml` or earlier in chain (correct detection)
+3. **Chain Incomplete**: The circular chain shown might be incomplete - need full chain to verify
+
+**Solution** (Pending Investigation):
+- Need to trace the full include chain to verify if circular dependency is real
+- If false positive: Modify detection to only flag cycles within the same branch, not cross-branch re-inclusions
+- If true circular: Detection is working correctly, need to show complete chain
+- Add enhanced debug logging to show what `post_provision.yml` includes
 
 **Code Location**:
 - File: `pyplayground/ansible_structure_analyzer.py`
-- Lines: 273-285
+- Lines: 273-285 (circular dependency detection)
 - Function: `IncludeResolver.resolve_includes()`
 
 **Verification**:
-- Test: Circular dependency detection logic verified - correctly identifies when file_path in visited set
-- Manual: Warnings show complete include chains, making it easy to identify the circular reference
-- Logs: Warning messages include full chain: `file1 -> file2 -> ... -> fileN -> file1`
+- Test: Need to trace full include chain from `post_provision.yml` to see what it includes
+- Manual: Check if `post_provision.yml` includes anything that leads back to `scale_nodes.yml` or earlier files
+- Logs: Circular dependency warning shows chain but may be incomplete - need full chain
 
 **Prevention**:
-- Pattern to follow: Continue using visited set for circular dependency detection
-- Check to add: None needed - detection is working correctly
-- Documentation: Document that circular dependencies are real issues in Ansible code, not script bugs
+- Pattern to follow: Ensure circular dependency detection only flags cycles within same execution path
+- Check to add: Enhanced logging to show complete include chain when circular dependency detected
+- Documentation: Document circular dependency detection logic and limitations
 
 **Related Issues**:
 - None
 
+**Next Steps**:
+1. Add enhanced debug logging to show what files are included when circular dependency detected
+2. Verify if `post_provision.yml` actually creates a cycle or if it's a false positive
+3. If false positive, modify detection logic to track execution paths separately
+
 ---
 
-### Issue: Missing Role Detection - Potential Enhancement Opportunity
+### Issue: Missing Role Detection - Expected Behavior for External Dependencies
 
 **Found During**: User Testing  
 **Date**: 2026-02-05  
-**Severity**: LOW (May be expected behavior)  
-**Status**: INVESTIGATING
+**Severity**: INFO (Expected behavior)  
+**Status**: VERIFIED (No fix needed)
 
 **Symptom**:
 - Script reports: `WARNING: Could not resolve role path: setup_env`
@@ -346,11 +357,9 @@
   - Parsed incorrectly (would be a bug)
 
 **Solution**:
-- **Current behavior is likely correct** for repository analysis
-- If role is in a collection, that's expected - collections are separate from roles/
-- If role is external, that's expected - external dependencies aren't in the repo
-- Enhancement opportunity: Could add support for detecting roles in collections if needed
-- Enhancement opportunity: Could add option to search additional paths if needed
+- **Current behavior is correct** - external roles from requirements.yml are not in the repo
+- No fix needed - script correctly identifies missing external dependencies
+- Warning is appropriate - alerts user that role is external/missing
 
 **Code Location**:
 - File: `pyplayground/ansible_structure_analyzer.py`
@@ -358,18 +367,16 @@
 - Function: `IncludeResolver._find_role_path()`
 
 **Verification**:
-- Test: Need to verify if `setup_env` role exists in collections or is truly missing
-- Manual: Check if role exists in `collections/` directory or is external
+- Test: Confirmed by user - `setup_env` is from `roles/requirements.yml` (external)
+- Manual: External roles are expected to be missing from repository
 - Logs: Warning correctly reports missing role with error collection
 
 **Prevention**:
 - Pattern to follow: Current implementation is correct for repository-scoped analysis
-- Check to add: Could add collection role detection if needed (enhancement, not bug fix)
-- Documentation: Document that missing role warnings may indicate external dependencies or collections
+- Check to add: None needed - external dependencies are expected to be missing
+- Documentation: Document that missing role warnings indicate external dependencies or collections
 
 **Related Issues**:
 - None
-
-**Note**: This may not be a bug - missing roles could be external dependencies or in collections. Need user confirmation on whether `setup_env` should be found or is expected to be missing.
 
 ---

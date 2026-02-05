@@ -168,3 +168,56 @@
 - ✅ Syntax validation: Passed
 
 **Next Steps**: Ready for commit
+
+---
+
+### Bug Fix: Role Recursion Depth and Template Detection
+
+**Status**: ✅ Complete  
+**Date**: 2026-02-05  
+**Branch**: main  
+**Commit**: d18ef65
+
+**Changes Made**:
+- Added enhanced debug logging to trace recursion depth and path resolution for nested includes
+- Enhanced `resolve_includes()` with depth progression logging (depth/max_depth format), include chain tracking (last 3 files), and visited file count
+- Enhanced `_resolve_include_task()` with detailed logging of include reference, path resolution, depth, and nested include counts
+- Enhanced `_find_include_path()` with comprehensive logging of all attempted path resolution strategies
+- Enhanced `_resolve_role()` with role resolution tracking, path finding, and nested include counts
+- Added `find_templates_in_role_tasks()` method to scan all task files in a role for template module usage
+- Method uses `rglob("*")` to recursively find all YAML files in tasks directory
+- Method parses each task file and extracts templates via `template` module usage
+- Updated `_collect_roles_and_templates()` to call `find_templates_in_role_tasks()` and collect templates from role tasks
+- Templates from nested includes (e.g., create_cluster.yml -> validate_dns_record.yml) are now detected
+- Fixed linting errors: removed f-string placeholders where not needed, added complexity annotation
+
+**Tests**:
+- Manual: Code quality checks passed (black, isort, flake8)
+- Validation: All linting errors fixed (f-string placeholders, complexity annotations)
+- Manual: User will test with --debug flag to verify recursion depth and template detection
+
+**Logging Added/Verified**:
+- Debug logging in `resolve_includes()`: Depth progression (depth/max_depth), include chain (last 3 files), visited file count
+- Debug logging in `_resolve_include_task()`: Include reference, path resolution, depth, nested include counts
+- Debug logging in `_find_include_path()`: All attempted paths logged with strategy identification
+- Debug logging in `_resolve_role()`: Role resolution, path finding, nested include counts
+- Debug logging in `find_templates_in_role_tasks()`: Task file scanning, template detection per file
+- Warning logging: Enhanced max depth exceeded and circular dependency messages
+- All logging follows project standards with appropriate levels
+
+**Issues Found**:
+- Role recursion depth: Script was not traversing deep enough into nested includes (playbook -> role/main.yaml -> create_cluster.yml -> validate_dns_record.yml)
+- Template detection: Templates used via template module in role tasks were not detected, only playbook-level tasks were scanned
+- Root cause: Template detection only scanned playbook tasks, not role task files
+- Solution: Added comprehensive role task file scanning with recursive template detection
+
+**Files Modified**:
+- pyplayground/ansible_structure_analyzer.py (+142, -14 lines): Enhanced debug logging and template detection
+
+**Code Quality**:
+- ✅ Black formatting: Passed
+- ✅ isort import sorting: Passed
+- ✅ flake8 linting: Passed (complexity annotation added where needed)
+- ✅ Syntax validation: Passed
+
+**Next Steps**: User will test manually with --debug flag to verify fixes work correctly

@@ -110,6 +110,56 @@ source .venv/bin/activate
 .venv/bin/pytest --cov=pyplayground --cov-report=html
 ```
 
+### Testing Methodology
+
+**Three-Tier Testing Strategy**:
+
+**Tier 1: Automated Tests** (pytest or equivalent)
+- **When**: After EVERY code change
+- **Requirement**: Must remain passing (no tolerance for breaking tests)
+- **Frequency**: Continuous
+- **Command**: `pytest tests/` or equivalent
+
+**Tier 2: Programmatic Validation**
+- **When**: GUI/integration testing not available
+- **Methods**:
+  - Syntax validation (`python -m py_compile`)
+  - Pattern verification (grep, static analysis)
+  - Round-trip testing (load → process → save → compare)
+  - API compliance checking
+  - Comparison with reference implementations
+- **Purpose**: Test what CAN be tested without full environment
+
+**Tier 3: Manual Testing**
+- **When**: Full environment available
+- **Requirements**:
+  - Structured checklist (not ad-hoc)
+  - Document each step result
+  - Capture logs for review
+  - Verify with automated tools after
+- **Purpose**: User experience validation, visual verification
+
+**Testing Principles**:
+1. **Test at highest available tier** - Don't skip testing because ideal environment unavailable
+2. **Never skip Tier 1** - Automated tests always run
+3. **Document test strategy** - Explain which tier used and why
+4. **Validate with lower tiers** - Manual testing should still run automated tests
+
+**Test Coverage Requirements**:
+- Critical paths: 100% (must have tests)
+- User-facing features: 90%+ (should have tests)
+- Utility functions: 70%+ (nice to have tests)
+- Legacy code: Test during modification (add as you touch)
+
+**Test-Driven Bug Fixing**:
+1. Write test that reproduces bug (if possible)
+2. Verify test fails
+3. Fix bug
+4. Verify test passes
+5. Keep test in suite (prevent regression)
+
+For comprehensive testing methodology, see `docs/DEVELOPMENT_STANDARDS.md` Section 2.
+
 ### Code Quality
 
 **NOTE**: All tool configurations (black, isort, pytest, mypy) are defined in `pyproject.toml`. Check there for settings like line length, target Python version, etc.
@@ -177,6 +227,92 @@ source .venv/bin/activate
 - **mypy**: Type checking (strict mode enabled)
 
 All Python code MUST pass black, isort, and flake8 checks before committing.
+
+### Core Coding Principles
+
+**NO EXCEPTIONS to these rules**:
+
+1. **Fix Bugs Immediately** - No "low priority" deferrals, regardless of fix time
+2. **No Deprecated API** - Update immediately when found
+3. **Consistent Patterns** - Copy proven code, don't reinvent
+4. **Complete Error Handling** - All user-facing code must have try/except/finally
+5. **Resource Cleanup** - Always use finally blocks for cleanup
+
+### Code Pattern Template
+
+Every user-facing function MUST follow this pattern:
+
+```python
+import logging
+logger = logging.getLogger(__name__)
+
+def userAction(self, event):
+    """Clear docstring explaining purpose and behavior.
+    
+    Args:
+        event: Description of parameter
+        
+    Returns:
+        Description of return value (if any)
+    """
+    logger.info("User action started - describe what user did")
+    
+    try:
+        # Setup phase
+        logger.debug(f"Setup details: {variable}")
+        
+        # Main logic
+        result = performOperation()
+        
+        # Handle result
+        if result:
+            logger.info(f"Operation succeeded: {result}")
+            # Success path
+        else:
+            logger.debug("User cancelled operation")
+            # Cancellation path
+            
+    except SpecificException as e:
+        # Handle specific exceptions if possible
+        logger.error(f"Specific error in operation: {e}", exc_info=True)
+        showUserError(f"Specific error message: {e}")
+    except Exception as e:
+        # Catch-all for unexpected errors
+        logger.error(f"Unexpected error in operation: {e}", exc_info=True)
+        showUserError(f"An error occurred: {e}")
+    finally:
+        # Cleanup ALWAYS runs
+        cleanup_resources()
+        logger.debug("Cleanup completed")
+```
+
+**Mandatory Code Elements**:
+
+Every function with user interaction MUST have:
+- ✅ Logger initialization at module level
+- ✅ Entry logging (info level) when user triggers action
+- ✅ try/except/finally structure
+- ✅ Error logging with `exc_info=True` for stack traces
+- ✅ User feedback on errors
+- ✅ Resource cleanup in finally block
+
+Every module MUST have:
+- ✅ `import logging` at top
+- ✅ `logger = logging.getLogger(__name__)` after imports
+- ✅ Docstrings on all functions/classes
+- ✅ Type hints on new code (existing code optional)
+
+### Forbidden Patterns
+
+**Never use these in production/runtime code**:
+- ❌ `print()` statements (except CLI tools and startup checks)
+- ❌ Bare `except:` clauses without logging
+- ❌ Resource allocation without cleanup
+- ❌ Deprecated API calls
+- ❌ Magic numbers without constants/comments
+- ❌ Copy-paste code (extract to function)
+
+For comprehensive coding standards, see `docs/DEVELOPMENT_STANDARDS.md` Section 1.
 
 ### Ansible Standards
 
@@ -273,6 +409,91 @@ logger = get_logger(__name__)
 logger.info("Operation started", extra={"operation": "example", "count": 5})
 ```
 
+### Logging Standards (MANDATORY)
+
+**Three-Level Hierarchy**:
+
+**DEBUG Level** - Technical details for developers:
+```python
+logger.debug(f"Function called with args: {args}")
+logger.debug(f"Current state: {state}")
+logger.debug(f"Processing item {i} of {total}")
+logger.debug("Internal operation completed")
+```
+
+**INFO Level** - User actions and major events:
+```python
+logger.info("Application started")
+logger.info("User opened file dialog")
+logger.info(f"User selected file: {path}")
+logger.info(f"File saved successfully: {path}")
+logger.info("Operation completed")
+```
+
+**WARNING Level** - Potential issues, recoverable problems:
+```python
+logger.warning("Deprecated API used, consider updating")
+logger.warning(f"Retrying operation after failure: {retry_count}")
+logger.warning("Configuration missing, using defaults")
+```
+
+**ERROR Level** - Exceptions and failures:
+```python
+logger.error(f"Failed to open file: {e}", exc_info=True)
+logger.error(f"Operation failed: {e}", exc_info=True)
+logger.error(f"Unexpected error: {e}", exc_info=True)
+```
+
+**Mandatory Logging Patterns**:
+
+Every module:
+```python
+import logging
+logger = logging.getLogger(__name__)  # REQUIRED at module level
+```
+
+Every user action:
+```python
+logger.info("User triggered [action name]")  # REQUIRED when action starts
+```
+
+Every exception:
+```python
+logger.error(f"Error in [operation]: {e}", exc_info=True)  # REQUIRED - note exc_info
+```
+
+Every resource operation:
+```python
+logger.debug("Opening resource: {resource}")
+# ... operation ...
+logger.debug("Closing resource: {resource}")
+```
+
+**Forbidden Logging Patterns**:
+
+```python
+# ❌ Using print() in runtime code
+print("Debug info")  # Only acceptable in CLI tools and startup
+
+# ❌ Logging without context
+logger.info("Success")  # What succeeded?
+
+# ❌ Exception without stack trace
+logger.error(f"Error: {e}")  # Missing exc_info=True
+
+# ❌ Using logging module directly
+logging.info("Message")  # Use logger instance
+
+# ❌ Excessive logging in loops
+for item in huge_list:
+    logger.debug(f"Processing {item}")  # Will flood logs
+
+# ❌ Logging sensitive data
+logger.info(f"Password: {password}")  # Security issue
+```
+
+For detailed logging standards and audit process, see `docs/DEVELOPMENT_STANDARDS.md` Section 5.
+
 ### Configuration Management
 
 Configuration files live in `config/`, logs in `logs/`, and temporary files in `tmp/`. The `tmp/` directory contents should always be safe to delete.
@@ -296,6 +517,33 @@ This applies to all documentation including:
 - Code comments and docstrings (emojis prohibited)
 - Commit messages (emojis prohibited)
 
+### Documentation Structure (When Authorized)
+
+**Two Core Documents** (if maintained):
+
+1. **`docs/progress.md`** - Timeline of what's been done
+2. **`docs/debugging.md`** - Issues found and solutions
+
+**progress.md Structure**:
+- Track chronological progress through tasks
+- Document changes made, tests run, logging added
+- Update after EVERY task completion
+- Include: Status, Date, Branch, Commit, Changes Made, Tests, Logging Added, Issues Found, Files Modified, Next Steps
+
+**debugging.md Structure**:
+- Document issues, root causes, and solutions
+- Include: Symptom, Root Cause, Solution, Code Location, Verification, Logs, Prevention, Related Issues
+- Cross-reference from progress.md
+
+**Documentation Principles**:
+1. **Update immediately** - Don't defer documentation
+2. **Be specific** - "Fixed bug" is not sufficient
+3. **Include code** - Show before/after when relevant
+4. **Link between docs** - Cross-reference progress.md ↔ debugging.md
+5. **No emojis in professional docs** - Text only (except status indicators)
+
+For detailed documentation templates and examples, see `docs/DEVELOPMENT_STANDARDS.md` Section 6.
+
 ## Important Notes
 
 - **MANDATORY: No code duplication**: ALL reusable code MUST be placed in `pyplayground/utils/`. If you find yourself writing the same function twice, STOP and refactor it into a utility module first.
@@ -304,6 +552,69 @@ This applies to all documentation including:
 - **External tools**: Place in `bin/tools/` organized by vendor (k8s/, hashicorp/, vmware/, openshift/)
 - **No src/**: Code lives directly in `pyplayground/`, not in a `src/` directory
 - **Focus on specific issues**: Make targeted changes rather than broad refactoring
+
+## STOP Point Enforcement
+
+**CRITICAL**: After completing each task, STOP and await approval before proceeding.
+
+**Purpose**:
+- Prevents rushing ahead without review
+- Ensures quality of each task
+- Catches issues early
+- Maintains discipline
+- Allows course correction
+
+**STOP Point Template**:
+
+```bash
+echo "================================================"
+echo "TASK X.Y COMPLETE"
+echo "================================================"
+echo ""
+
+echo "Git Commit:"
+git log -1 --oneline
+echo ""
+
+echo "Files Changed:"
+git diff --stat HEAD~1 HEAD
+echo ""
+
+echo "Test Results:"
+pytest --co -q | tail -1
+# OR
+echo "Manual tests: [results]"
+echo ""
+
+echo "Task-Specific Evidence:"
+[Show relevant evidence for this specific task]
+echo ""
+
+echo "Documentation Updated:"
+echo "- progress.md: [what was added]"
+[ -f docs/debugging.md ] && echo "- debugging.md: [what was added]"
+echo ""
+
+echo "================================================"
+echo "STOP HERE - Awaiting Approval"
+echo "================================================"
+```
+
+**Never acceptable**:
+- "Task looks good, proceeding to next" (without approval)
+- "Skipping STOP since it's simple" (no exceptions)
+- "Combining tasks to save time" (breaks discipline)
+- "Will STOP at next task" (defeats purpose)
+
+For detailed STOP point workflow and enforcement, see `docs/DEVELOPMENT_STANDARDS.md` Section 8.
+
+## Reference Documentation
+
+For comprehensive development standards, testing methodology, debugging practices, and detailed templates, see:
+
+- **`docs/DEVELOPMENT_STANDARDS.md`** - Complete development standards and methodology (1147 lines)
+- **`AGENT_RULES.md`** - Minimum required rules for all agents (highest precedence)
+- **`AGENTS.md`** - Repository guidelines for contributors
 
 ## Module Purposes
 
@@ -357,17 +668,81 @@ This violates MD040
 
 This rule is clear, actionable, and includes examples of both correct and incorrect usage. It fits well with your existing Ansible documentation standards and will prevent MD040 violations in any markdown files Claude creates for you.
 
-## Git Commit Messages
+## Git Workflow
+
+### Commit Message Format
 
 **IMPORTANT:** Do NOT add Claude Code attribution or co-authorship to commit messages.
 
-Commit messages should:
+**Standard Format** (all sections required):
 
-- Follow conventional commit format when appropriate
-- Be concise and descriptive
-- Focus on the "why" rather than the "what"
-- Match the repository's existing commit style
-- **NOT include** any Claude Code branding, attribution, or co-authorship footers
+```text
+Phase X Task Y: [Short description - 50 chars max]
+
+Changes:
+- [What changed and WHY - be specific]
+- [Added logging: levels used]
+- [Added error handling: pattern used]
+- [Refactored: what and why]
+
+Testing:
+- Manual: [Specific test performed and result]
+- Automated: [pytest status - X/Y passing]
+- Validation: [comparison tool / other checks]
+
+Logging:
+- [What's now logged - be specific about levels]
+- [New logger.info(): user actions]
+- [New logger.debug(): technical details]
+- [New logger.error(): exception handling]
+
+Documentation:
+- progress.md updated [what was added]
+- debugging.md updated [if applicable]
+- Code comments added [where and why]
+
+Files Modified:
+- path/to/file1.py (+X, -Y lines): [what changed]
+- path/to/file2.py (+A, -B lines): [what changed]
+
+Next: Task Y+1 ([brief description of next task])
+```
+
+**Commit Message Rules**:
+1. First line: 50 characters max, imperative mood
+2. All sections required (even if empty, say "None")
+3. Be specific: "Fixed bug" → "Fixed memory leak in dialog cleanup"
+4. Reference issues: "Closes #123" if applicable
+5. No AI attribution (keep professional)
+
+**Commit Frequency**:
+- **One commit per task** - no more, no less
+- After task completion
+- After all tests passing
+- After documentation updated
+- After STOP point approval received
+
+**Pre-Commit Checklist**:
+```bash
+# 1. All tests passing
+pytest tests/
+
+# 2. Code quality checks
+black pyplayground/
+isort pyplayground/
+flake8 pyplayground/
+mypy pyplayground/
+
+# 3. Documentation updated
+git diff docs/progress.md  # Verify entry added
+[ -f docs/debugging.md ] && git diff docs/debugging.md  # If issues found
+
+# 4. Review changes
+git diff --staged
+
+# 5. Commit with complete message
+git commit -m "[message]"
+```
 
 Bad example (DO NOT USE):
 
@@ -387,3 +762,5 @@ Add etcd defragmentation monitoring
 Implements health check validation before and after defrag operations
 to ensure cluster stability.
 ```
+
+For detailed git workflow and branch strategy, see `docs/DEVELOPMENT_STANDARDS.md` Section 7.

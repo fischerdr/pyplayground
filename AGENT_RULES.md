@@ -139,6 +139,63 @@ Unless explicitly authorized, agents must not:
 
 Broad cleanup is not an acceptable substitute for targeted correctness.
 
+## Bug Fixing Policy
+
+**CRITICAL**: Fix bugs immediately upon discovery. No exceptions.
+
+* No "low priority" deferrals, regardless of fix time
+* No "fix later" - creates technical debt
+* Fix bugs in current phase/task, not deferred to future work
+* Document all bugs and fixes (see Documentation Requirements)
+
+**Investigation Before Implementation**:
+* Do not jump straight to fixing
+* Thorough investigation task first
+* Document root cause
+* Plan fix approach
+* Then implement
+
+For detailed debugging methodology, see `docs/DEVELOPMENT_STANDARDS.md` Section 4.
+
+## Error Handling Requirements
+
+All user-facing code must have complete error handling:
+
+* **try/except/finally structure** - Required for all user-facing functions
+* **Error logging** - All exceptions must be logged with `exc_info=True` for stack traces
+* **User feedback** - All errors must provide user-visible feedback
+* **Resource cleanup** - Always use finally blocks for cleanup operations
+
+**Forbidden Patterns**:
+* Bare `except:` clauses without logging
+* Resource allocation without cleanup
+* Silent exception swallowing
+
+For code pattern template and examples, see `docs/DEVELOPMENT_STANDARDS.md` Section 1.2.
+
+## Logging Requirements
+
+**Mandatory logging patterns** for all code:
+
+* **Module-level logger**: `logger = logging.getLogger(__name__)` required in every module
+* **Entry logging**: `logger.info()` when user triggers action
+* **Exception logging**: `logger.error(f"Error: {e}", exc_info=True)` for all exceptions
+* **Resource logging**: `logger.debug()` for resource open/close operations
+
+**Forbidden logging patterns**:
+* `print()` statements in runtime code (except CLI tools and startup checks)
+* Logging without context
+* Exception logging without `exc_info=True`
+* Logging sensitive data (passwords, tokens, etc.)
+
+**Three-level hierarchy**:
+* **DEBUG**: Technical details for developers
+* **INFO**: User actions and major events
+* **WARNING**: Potential issues, recoverable problems
+* **ERROR**: Exceptions and failures
+
+For detailed logging standards and examples, see `docs/DEVELOPMENT_STANDARDS.md` Section 5.
+
 ---
 
 ## Testing Expectations
@@ -158,6 +215,32 @@ When tests do not exist:
 
 Testing rigor increases, not decreases, when working with legacy or binary-sensitive code.
 
+### Three-Tier Testing Strategy
+
+Agents must use the highest available testing tier:
+
+**Tier 1: Automated Tests** (pytest or equivalent)
+* Run after EVERY code change
+* Must remain passing (no tolerance for breaking tests)
+* Continuous validation required
+
+**Tier 2: Programmatic Validation**
+* Use when GUI/integration testing not available
+* Methods: syntax validation, pattern verification, round-trip testing, API compliance checking
+* Test what CAN be tested without full environment
+
+**Tier 3: Manual Testing**
+* Use when full environment available
+* Must be structured (not ad-hoc)
+* Document each step result and capture logs
+
+**Key Rules**:
+* Test at highest available tier - Don't skip testing because ideal environment unavailable
+* Never skip Tier 1 - Automated tests always run
+* Document test strategy - Explain which tier used and why
+
+For detailed testing methodology, see `docs/DEVELOPMENT_STANDARDS.md` Section 2.
+
 ---
 
 ## Documentation Creation and Modification Policy
@@ -173,6 +256,28 @@ When documentation work is authorized:
 * Content must reflect actual behavior and decisions, not speculation
 
 Unsolicited documentation is considered an error.
+
+### Required Documentation Structure
+
+When documentation is authorized, follow these standards:
+
+**progress.md** (if maintained):
+* Track chronological progress through tasks
+* Document changes made, tests run, logging added
+* Update after EVERY task completion
+
+**debugging.md** (if maintained):
+* Document issues, root causes, and solutions
+* Include symptom, root cause, solution, verification
+* Cross-reference from progress.md
+
+**Documentation Principles**:
+* Update immediately - Don't defer documentation
+* Be specific - "Fixed bug" is not sufficient
+* Include code - Show before/after when relevant
+* Link between docs - Cross-reference progress.md ↔ debugging.md
+
+For detailed documentation templates and examples, see `docs/DEVELOPMENT_STANDARDS.md` Section 6.
 
 ---
 
@@ -201,6 +306,37 @@ When faced with ambiguity, incomplete information, or conflicting signals:
 Correctness, safety, and reversibility take precedence over speed or completeness.
 
 ---
+
+## STOP Point Enforcement
+
+**CRITICAL**: After completing each task, agents must STOP and await approval before proceeding.
+
+**Purpose**:
+* Prevents rushing ahead without review
+* Ensures quality of each task
+* Catches issues early
+* Maintains discipline
+* Allows course correction
+
+**STOP Point Requirements**:
+* Show evidence of completion (git commit, test results, documentation updates)
+* Present task-specific evidence (logs, comparison results, file changes)
+* Await explicit approval before proceeding to next task
+
+**Never acceptable**:
+* "Task looks good, proceeding to next" (without approval)
+* "Skipping STOP since it's simple" (no exceptions)
+* "Combining tasks to save time" (breaks discipline)
+
+For detailed STOP point template and workflow, see `docs/DEVELOPMENT_STANDARDS.md` Section 8.
+
+## Reference Documentation
+
+For comprehensive development standards, testing methodology, debugging practices, and detailed templates, see:
+
+* **`docs/DEVELOPMENT_STANDARDS.md`** - Complete development standards and methodology
+* **`CLAUDE.md`** - Tool-specific guidance for Claude Code
+* **`AGENTS.md`** - Repository guidelines for contributors
 
 ## Final Principle
 

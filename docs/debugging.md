@@ -380,3 +380,46 @@
 - None
 
 ---
+
+### Issue: Circular Dependency Detection - False Positive Investigation
+
+**Found During**: Phase 1 Investigation  
+**Date**: 2026-02-05  
+**Severity**: MEDIUM  
+**Status**: FIXED
+
+**Symptom**:
+- Script flagged `scale_nodes.yml` including `post_provision.yml` as circular dependency
+- User reported that `scale_nodes.yml` only includes `post_provision.yml` (not a true cycle)
+- `scale_nodes.yml` could be called with `with_sequence`, causing same file to be included multiple times from different loop iterations
+
+**Root Cause**:
+- Original circular dependency detection used `file_path in visited` which flagged any file that was visited before, even if from different branches
+- When `scale_nodes.yml` includes `post_provision.yml` with `with_sequence`, the same file could be included multiple times from different loop iterations
+- This created false positives because the same file was visited from different execution paths (different loop iterations)
+
+**Solution**:
+- Changed circular dependency detection to only flag true cycles: `file_path in include_chain` (file appears twice in same execution path)
+- Files visited from different branches now skip processing but don't flag as circular: `elif file_path in visited: return {"skipped": True, "reason": "already_visited"}`
+- Added loop context detection and propagation to preserve breadcrumbs with loop information
+- Enhanced logging to show loop context in include chains
+
+**Code Location**:
+- File: `pyplayground/ansible_structure_analyzer.py`
+- Lines: 293-354 (circular dependency detection logic)
+- Function: `IncludeResolver.resolve_includes()`
+
+**Verification**:
+- Test: `test_circular_dependency_with_loops_no_false_positive` verifies false positives are eliminated
+- Test: `test_true_circular_dependency_still_detected` verifies true cycles are still detected
+- Manual: Run script on playbooks with loops and verify no false positive circular dependencies
+
+**Prevention**:
+- Pattern to follow: Check `file_path in include_chain` for true cycles, not just `file_path in visited`
+- Check to add: Test cases for loop-based includes to prevent false positives
+- Documentation: Document lenient circular dependency detection approach
+
+**Related Issues**:
+- Resolves false positive circular dependency warnings when files are included from loops
+
+---

@@ -330,7 +330,7 @@ class IncludeResolver:
             self.error_collector.add_error("PARSE_ERROR", f"File read error: {e}", file_path)
             return None
 
-    def _parse_includes(
+    def _parse_includes(  # noqa: C901
         self,
         content: Any,
         current_file: Path,
@@ -352,7 +352,15 @@ class IncludeResolver:
         """
         includes = []
 
+        # Debug: Log content type and structure
+        content_type = type(content).__name__
+        logger.debug(
+            f"_parse_includes: content type={content_type}, file={current_file}, depth={depth}"
+        )
+
         if isinstance(content, dict):
+            content_keys = list(content.keys())[:10]  # First 10 keys for debugging
+            logger.debug(f"_parse_includes: dict content keys (first 10): {content_keys}")
             # Check for include statements in tasks
             if "tasks" in content:
                 includes.extend(
@@ -416,11 +424,51 @@ class IncludeResolver:
                 )
 
         elif isinstance(content, list):
-            # Process list of tasks
-            includes.extend(
-                self._parse_task_includes(content, current_file, visited, depth, include_chain)
-            )
+            logger.debug(f"_parse_includes: list content length={len(content)}")
+            # Check if list contains plays vs tasks
+            # Plays have keys like "hosts", "name", "tasks", "pre_tasks"
+            # Tasks are just task dictionaries with module keys
+            if content and isinstance(content[0], dict):
+                first_item = content[0]
+                first_item_keys = list(first_item.keys())[:10]  # First 10 keys
+                logger.debug(f"_parse_includes: first list item keys (first 10): {first_item_keys}")
+                # Check if first item looks like a play
+                is_play = any(key in first_item for key in ["hosts", "name", "tasks", "pre_tasks"])
+                logger.debug(f"_parse_includes: first list item looks like play={is_play}")
 
+                if is_play:
+                    # Process as list of plays
+                    logger.debug(
+                        f"_parse_includes: treating list as playbook with {len(content)} plays"
+                    )
+                    for play_index, play in enumerate(content):
+                        if isinstance(play, dict):
+                            logger.debug(f"_parse_includes: processing play {play_index + 1}")
+                            # Recursively process each play dict
+                            play_includes = self._parse_includes(
+                                play, current_file, visited, depth, include_chain
+                            )
+                            includes.extend(play_includes)
+                else:
+                    # Process as list of tasks
+                    logger.debug(
+                        f"_parse_includes: treating list as task list, length={len(content)}"
+                    )
+                    includes.extend(
+                        self._parse_task_includes(
+                            content, current_file, visited, depth, include_chain
+                        )
+                    )
+            else:
+                # Empty list or non-dict items - treat as task list
+                logger.debug(
+                    f"_parse_includes: treating list as task list (empty or non-dict items={len(content)})"
+                )
+                includes.extend(
+                    self._parse_task_includes(content, current_file, visited, depth, include_chain)
+                )
+
+        logger.debug(f"_parse_includes: returning {len(includes)} total includes")
         return includes
 
     def _parse_task_includes(
@@ -444,14 +492,24 @@ class IncludeResolver:
             List of resolved includes
         """
         includes = []
+        logger.debug(f"_parse_task_includes: processing {len(tasks)} tasks from {current_file}")
 
-        for task in tasks:
+        for task_index, task in enumerate(tasks):
             if not isinstance(task, dict):
+                logger.debug(f"_parse_task_includes: task {task_index} is not a dict, skipping")
                 continue
+
+            task_keys = list(task.keys())[:10]  # First 10 keys for debugging
+            logger.debug(
+                f"_parse_task_includes: task {task_index} keys (first 10): {task_keys}, name={task.get('name', 'N/A')}"
+            )
 
             # Check for include_tasks (short or FQCN)
             include_tasks_key = self._get_include_key(task, "include_tasks")
             if include_tasks_key:
+                logger.debug(
+                    f"_parse_task_includes: found include_tasks key={include_tasks_key} in task {task_index}"
+                )
                 includes.append(
                     self._resolve_include_task(
                         task[include_tasks_key], current_file, visited, depth, include_chain
@@ -470,6 +528,9 @@ class IncludeResolver:
             # Check for include_role (short or FQCN)
             include_role_key = self._get_include_key(task, "include_role")
             if include_role_key:
+                logger.debug(
+                    f"_parse_task_includes: found include_role key={include_role_key} in task {task_index}"
+                )
                 includes.append(
                     self._resolve_include_role(
                         task[include_role_key], current_file, visited, depth, include_chain
@@ -493,6 +554,9 @@ class IncludeResolver:
                     )
                 )
 
+        logger.debug(
+            f"_parse_task_includes: found {len(includes)} total includes from {len(tasks)} tasks"
+        )
         return includes
 
     def _parse_role_includes(
@@ -888,7 +952,9 @@ class TemplateFinder:
             "found": resolved_path is not None,
         }
 
-    def _find_template_path(self, template_ref: str, current_file: Path) -> Optional[Path]:
+    def _find_template_path(  # noqa: C901
+        self, template_ref: str, current_file: Path
+    ) -> Optional[Path]:
         """Find the path for a template reference.
 
         Args:
@@ -1078,7 +1144,7 @@ class OutputGenerator:
             logger.error(f"Error generating JSON output: {e}", exc_info=True)
             raise
 
-    def generate_markdown(
+    def generate_markdown(  # noqa: C901
         self, structure: Dict[str, Any], filename: str = "ansible_structure.md"
     ) -> Path:
         """Generate Markdown output file.
@@ -1118,7 +1184,8 @@ class OutputGenerator:
                     f.write(f"### {pb.get('file', 'Unknown')}\n\n")
                     includes = pb.get("includes", [])
                     if includes:
-                        f.write(f"- Includes: {len(includes)} items\n")
+                        f.write(f"#### Includes ({len(includes)} items)\n\n")
+                        self._write_includes_markdown(f, includes, indent=0)
                     f.write("\n")
 
                 # Roles
@@ -1126,6 +1193,10 @@ class OutputGenerator:
                 for role in structure.get("roles", []):
                     f.write(f"### {role.get('name', 'Unknown')}\n\n")
                     f.write(f"- Path: {role.get('path', 'N/A')}\n")
+                    role_includes = role.get("includes", [])
+                    if role_includes:
+                        f.write(f"#### Includes ({len(role_includes)} items)\n\n")
+                        self._write_includes_markdown(f, role_includes, indent=0)
                     f.write("\n")
 
                 # Templates
@@ -1155,6 +1226,49 @@ class OutputGenerator:
         except Exception as e:
             logger.error(f"Error generating Markdown output: {e}", exc_info=True)
             raise
+
+    def _write_includes_markdown(self, f, includes: List[Dict[str, Any]], indent: int = 0) -> None:
+        """Write includes to markdown file recursively.
+
+        Args:
+            f: File handle to write to
+            includes: List of include dictionaries
+            indent: Indentation level for nested includes
+        """
+        indent_prefix = "  " * indent
+        for include in includes:
+            include_type = include.get("type", "unknown")
+            if include_type == "role":
+                role_name = include.get("name", "N/A")
+                resolved = include.get("resolved", False)
+                status = "✓" if resolved else "✗"
+                f.write(f"{indent_prefix}- {status} **Role**: `{role_name}`\n")
+                if include.get("path"):
+                    f.write(f"{indent_prefix}  - Path: `{include.get('path')}`\n")
+            elif include_type in ["include_tasks", "import_tasks"]:
+                ref = include.get("ref", "N/A")
+                resolved = include.get("resolved", False)
+                status = "✓" if resolved else "✗"
+                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`\n")
+                if include.get("path"):
+                    f.write(f"{indent_prefix}  - Path: `{include.get('path')}`\n")
+            elif include_type in ["include_role", "import_role"]:
+                ref = include.get("ref", include.get("name", "N/A"))
+                resolved = include.get("resolved", False)
+                status = "✓" if resolved else "✗"
+                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`\n")
+                if include.get("path"):
+                    f.write(f"{indent_prefix}  - Path: `{include.get('path')}`\n")
+            else:
+                ref = include.get("ref", str(include))
+                resolved = include.get("resolved", False)
+                status = "✓" if resolved else "✗"
+                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`\n")
+
+            # Write nested includes
+            nested_includes = include.get("includes", [])
+            if nested_includes:
+                self._write_includes_markdown(f, nested_includes, indent + 1)
 
 
 class AnsibleStructureAnalyzer:
@@ -1332,9 +1446,8 @@ class AnsibleStructureAnalyzer:
     "--output-dir",
     "output_dir",
     type=click.Path(file_okay=False, path_type=Path),
-    default=".",
-    show_default=True,
-    help="Directory for output files.",
+    default=None,
+    help="Directory for output files (default: tmp/ in current directory).",
 )
 @click.option(
     "--max-depth",
@@ -1353,7 +1466,7 @@ class AnsibleStructureAnalyzer:
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging.")
 @click.option("--debug", "-d", is_flag=True, help="Enable debug logging (same as --verbose).")
-def main(
+def main(  # noqa: C901
     input_path: Path,
     repo_root: Path,
     output_dir: Path,
@@ -1408,6 +1521,16 @@ def main(
 
     logger.info(f"Resolved input path: {resolved_input_path}")
     input_path = resolved_input_path
+
+    # Set default output directory to tmp/ if not specified
+    if output_dir is None:
+        output_dir = Path.cwd() / "tmp"
+        logger.debug(f"Using default output directory: {output_dir}")
+
+    # Ensure output directory exists
+    output_dir = Path(output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logger.debug(f"Output directory: {output_dir}")
 
     # Generate base filename from input path
     if input_path.is_file():

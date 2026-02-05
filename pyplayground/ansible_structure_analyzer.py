@@ -1266,8 +1266,8 @@ class AnsibleStructureAnalyzer:
     "--input",
     "input_path",
     required=True,
-    type=click.Path(exists=True, path_type=Path),
-    help="Single playbook file or top-level directory containing playbooks.",
+    type=click.Path(path_type=Path),
+    help="Single playbook file or top-level directory containing playbooks (can be relative to repo-root).",
 )
 @click.option(
     "--repo-root",
@@ -1300,6 +1300,7 @@ class AnsibleStructureAnalyzer:
     help="Output format: json, markdown, or both.",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging.")
+@click.option("--debug", "-d", is_flag=True, help="Enable debug logging (same as --verbose).")
 def main(
     input_path: Path,
     repo_root: Path,
@@ -1307,14 +1308,53 @@ def main(
     max_depth: int,
     output_format: str,
     verbose: bool,
+    debug: bool,
 ):
     """Analyzes Ansible playbooks and roles to document structure, includes, and templates."""
-    # Setup logging
-    log_level = logging.DEBUG if verbose else logging.INFO
+    # Setup logging early
+    log_level = logging.DEBUG if (verbose or debug) else logging.INFO
     script_name = Path(__file__).stem
     setup_logging(level=log_level, script_name=script_name)
+    logger.info("Ansible Structure Analyzer started")
 
-    console = Console()
+    # Log file location info
+    from pyplayground.utils.logging_utils import DEFAULT_LOG_DIR
+
+    log_dir = Path(DEFAULT_LOG_DIR)
+    if log_dir.exists():
+        log_files = sorted(
+            log_dir.glob(f"{script_name}_*.log"), key=lambda p: p.stat().st_mtime, reverse=True
+        )
+        if log_files:
+            console = Console()
+            console.print(f"[dim]Log file: {log_files[0]}[/dim]")
+
+    # Resolve input path - try relative to current directory first, then relative to repo-root
+    resolved_input_path = None
+
+    # Try 1: Absolute path or relative to current directory
+    if input_path.is_absolute():
+        resolved_input_path = input_path
+    else:
+        resolved_input_path = Path.cwd() / input_path
+
+    # Try 2: Relative to repo-root if not found
+    if not resolved_input_path.exists():
+        repo_root_path = Path(repo_root).resolve()
+        resolved_input_path = repo_root_path / input_path
+        logger.debug(f"Trying input path relative to repo-root: {resolved_input_path}")
+
+    # Validate resolved path
+    if not resolved_input_path.exists():
+        logger.error(
+            f"Input path not found: {input_path} (tried: {Path.cwd() / input_path}, {Path(repo_root) / input_path})"
+        )
+        raise FileNotFoundError(
+            f"Input path '{input_path}' not found. Tried relative to current directory and repo-root."
+        )
+
+    logger.info(f"Resolved input path: {resolved_input_path}")
+    input_path = resolved_input_path
 
     try:
         with console.status("[bold green]Analyzing Ansible structure..."):

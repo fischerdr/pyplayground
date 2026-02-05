@@ -438,15 +438,42 @@ class IncludeResolver:
         elif isinstance(content, list):
             logger.debug(f"_parse_includes: list content length={len(content)}")
             # Check if list contains plays vs tasks
-            # Plays have keys like "hosts", "name", "tasks", "pre_tasks"
-            # Tasks are just task dictionaries with module keys
+            # Plays MUST have "hosts" OR have "tasks"/"pre_tasks" keys
+            # Tasks are dictionaries with module keys (ansible.builtin.*) or just "name"
+            # If file is in tasks/ directory, it's almost certainly a task list
             if content and isinstance(content[0], dict):
                 first_item = content[0]
                 first_item_keys = list(first_item.keys())[:10]  # First 10 keys
                 logger.debug(f"_parse_includes: first list item keys (first 10): {first_item_keys}")
-                # Check if first item looks like a play
-                is_play = any(key in first_item for key in ["hosts", "name", "tasks", "pre_tasks"])
-                logger.debug(f"_parse_includes: first list item looks like play={is_play}")
+                
+                # Check if we're in a tasks directory - if so, almost certainly a task list
+                is_in_tasks_dir = current_file.parent.name == "tasks"
+                logger.debug(f"_parse_includes: file is in tasks directory: {is_in_tasks_dir}")
+                
+                # Plays MUST have "hosts" OR have "tasks"/"pre_tasks" keys
+                # Tasks NEVER have "hosts" - that's a play-level key
+                # Just having "name" is not enough - tasks can have names too
+                has_hosts = "hosts" in first_item
+                has_tasks_key = "tasks" in first_item or "pre_tasks" in first_item
+                
+                # If file is in tasks/ directory, treat as task list (very reliable indicator)
+                # Exception: if it has "hosts", it might be a play (unusual but possible)
+                # Otherwise, if it has "hosts" or "tasks"/"pre_tasks", it's a play
+                if is_in_tasks_dir and not has_hosts:
+                    is_play = False
+                    logger.debug("_parse_includes: file in tasks/ directory without hosts → treating as task list")
+                elif has_hosts or has_tasks_key:
+                    is_play = True
+                    logger.debug(f"_parse_includes: item has hosts={has_hosts} or tasks_key={has_tasks_key} → treating as play")
+                else:
+                    # Default to task list if uncertain (safer for includes)
+                    is_play = False
+                    logger.debug("_parse_includes: no clear play indicators → treating as task list")
+                
+                logger.debug(
+                    f"_parse_includes: play detection - has_hosts={has_hosts}, has_tasks_key={has_tasks_key}, "
+                    f"has_module_key={has_module_key}, is_in_tasks_dir={is_in_tasks_dir}, is_play={is_play}"
+                )
 
                 if is_play:
                     # Process as list of plays

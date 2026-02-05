@@ -83,3 +83,88 @@
 - docs/progress.md: Updated with bug fix entry
 
 **Next Steps**: Test with real Ansible repository to verify fixes work correctly
+
+---
+
+### Bug Fix: Playbook List Structure Handling
+
+**Status**: ✅ Complete  
+**Date**: 2026-02-05  
+**Branch**: main  
+**Commit**: [to be added after commit]
+
+**Changes Made**:
+- Fixed playbook list structure handling - playbooks are lists of play dictionaries, not task lists
+- Removed duplicate debug logging block that was interfering with play detection
+- Updated `_parse_includes()` to detect if list contains plays vs tasks
+- Detection: Check if list items have play keys ("hosts", "name", "tasks", "pre_tasks")
+- If plays: Iterate through list and recursively process each play dict
+- If tasks: Use existing `_parse_task_includes()` logic
+- Added comprehensive debug logging to trace execution path
+- Added debug logging to `_parse_task_includes()` for task processing details
+
+**Tests**:
+- Manual: Tested with `etcd_db_backup_aap.yml` playbook
+- Results: Now correctly detects 2 includes (was 0 before):
+  - `ansible.builtin.include_role: name: setup_env` (from pre_tasks)
+  - `ansible.builtin.include_tasks: file: roles/upgrade_clusters/tasks/etcd_backup_aap.yml` (from tasks)
+- Results: Correctly detects 1 role (setup_env) with nested includes
+- Debug logs: Show correct play detection and processing path
+
+**Logging Added/Verified**:
+- Debug logging in `_parse_includes()`: Content type, structure, play vs task detection
+- Debug logging in `_parse_task_includes()`: Task count, task keys, include key detection
+- Debug logs show: "treating list as playbook with 1 plays" and "processing play 1"
+- All logging follows project standards with appropriate levels
+
+**Issues Found**:
+- See debugging.md entry: "Playbook List Structure Not Handled - Includes Not Detected (FIXED)"
+- Root cause: Code treated all lists as task lists, but playbooks are lists of play dictionaries
+- Additional issue: Duplicate debug logging block created scope confusion
+
+**Files Modified**:
+- pyplayground/ansible_structure_analyzer.py: Fixed play detection logic, added debug logging, removed duplicate block
+- docs/debugging.md: Added fix documentation
+- docs/progress.md: Updated with bug fix entry
+
+**Next Steps**: All planned tasks complete - ready for final testing and commit
+
+---
+
+### Enhancement: Default Output Directory Changed to tmp/
+
+**Status**: ✅ Complete  
+**Date**: 2026-02-05  
+**Branch**: main  
+**Commit**: [to be added after commit]
+
+**Changes Made**:
+- Changed default output directory from `.` (current directory) to `tmp/` in current working directory
+- Added automatic directory creation: `tmp/` directory is created if it doesn't exist using `mkdir(parents=True, exist_ok=True)`
+- Updated `--output-dir` CLI option: Changed default from `"."` to `None` to allow dynamic default
+- Updated help text: "Directory for output files (default: tmp/ in current directory)"
+- Added logic in `main()` to set `output_dir = Path.cwd() / "tmp"` when `output_dir is None`
+- Added debug logging: `logger.debug(f"Using default output directory: {output_dir}")` and `logger.debug(f"Output directory: {output_dir}")`
+
+**Tests**:
+- Manual: Verified output files are created in `tmp/` directory
+- Manual: Verified `tmp/` directory is auto-created if missing
+- Manual: Verified `--output-dir` option still works to override default
+- Manual: Code quality checks passed (black, isort, flake8)
+
+**Logging Added/Verified**:
+- Debug logging for default directory selection: `logger.debug(f"Using default output directory: {output_dir}")`
+- Debug logging for output directory path: `logger.debug(f"Output directory: {output_dir}")`
+- All logging follows project standards with appropriate levels
+
+**Files Modified**:
+- pyplayground/ansible_structure_analyzer.py (+13, -1 lines): Updated output directory default and directory creation logic
+- docs/progress.md: Added enhancement entry
+
+**Code Quality**:
+- ✅ Black formatting: Passed
+- ✅ isort import sorting: Passed
+- ✅ flake8 linting: Passed
+- ✅ Syntax validation: Passed
+
+**Next Steps**: Ready for commit

@@ -267,3 +267,91 @@
 - ✅ Syntax validation: Passed
 
 **Next Steps**: User will test to verify validate_dns_record.yml and other nested includes are now found correctly
+
+---
+
+### Enhancement: Task Detection for Unnamed Tasks
+
+**Status**: ✅ Complete  
+**Date**: 2026-02-05  
+**Branch**: main  
+**Commit**: 67d1c96
+
+**Changes Made**:
+- Enhanced play vs task detection to handle unnamed tasks
+- Added detection for module keys (ansible.builtin.*, kubernetes.*, etc.)
+- Added detection for include keys (include_tasks, include_role, etc.)
+- Added detection for task-specific indicators (block, when, register, loop, etc.)
+- Tasks can be unnamed, so detection now relies on module/include keys rather than just 'name'
+- Improved detection logic: if item has module/include/task indicators, treat as task
+- This ensures unnamed tasks are correctly identified and their includes are found
+
+**Tests**:
+- Manual: Code quality checks passed (black, isort, flake8)
+- Validation: Logic verified against Ansible structure patterns
+
+**Logging Added/Verified**:
+- Enhanced debug logging to show all detection criteria (has_module_key, has_include_key, has_task_indicators)
+- Added debug logging for play detection decision process with all criteria
+- All logging follows project standards with appropriate levels
+
+**Issues Found**:
+- Previous detection logic relied on 'name' key, but tasks can be unnamed
+- Unnamed tasks with module keys (e.g., ansible.builtin.shell) were not being detected as tasks
+- Solution: Check for module keys, include keys, and task indicators in addition to file location
+
+**Files Modified**:
+- pyplayground/ansible_structure_analyzer.py (+86, -17 lines): Enhanced task detection logic
+
+**Code Quality**:
+- ✅ Black formatting: Passed
+- ✅ isort import sorting: Passed
+- ✅ flake8 linting: Passed
+- ✅ Syntax validation: Passed
+
+**Next Steps**: User will test to verify unnamed tasks are correctly detected
+
+---
+
+### Enhancement: Template Detection for FQCN and Unnamed Templates
+
+**Status**: ✅ Complete  
+**Date**: 2026-02-05  
+**Branch**: main  
+**Commit**: 61e4a81
+
+**Changes Made**:
+- Added _get_template_key() method to detect template module keys (short and FQCN forms)
+- Updated find_templates() to use _get_template_key() instead of hardcoded 'template' check
+- Templates can be unnamed and may have with_items or loop_control - these are still template tasks
+- Now detects: 'template', 'ansible.builtin.template', 'ansible.legacy.template', 'ansible.posix.template'
+- Added debug logging for template key detection and extraction
+- This ensures unnamed templates and templates with loop control are correctly detected
+
+**Tests**:
+- Manual: Code quality checks passed (black, isort, flake8)
+- Validation: Logic verified against Ansible template module patterns
+
+**Logging Added/Verified**:
+- Added debug logging for template key detection (_get_template_key)
+- Added debug logging for template extraction (template path found)
+- Added debug logging for total templates found per file
+- All logging follows project standards with appropriate levels
+
+**Issues Found**:
+- Previous template detection only checked for 'template' key (short form)
+- FQCN templates (ansible.builtin.template) were not being detected
+- Unnamed templates were not being detected if they used FQCN form
+- Templates with with_items or loop_control were not being detected if they used FQCN form
+- Solution: Added _get_template_key() helper method similar to _get_include_key() to check both short and FQCN forms
+
+**Files Modified**:
+- pyplayground/ansible_structure_analyzer.py (+37, -3 lines): Enhanced template detection logic
+
+**Code Quality**:
+- ✅ Black formatting: Passed
+- ✅ isort import sorting: Passed
+- ✅ flake8 linting: Passed
+- ✅ Syntax validation: Passed
+
+**Next Steps**: User will test to verify unnamed templates and templates with with_items/loop_control are detected

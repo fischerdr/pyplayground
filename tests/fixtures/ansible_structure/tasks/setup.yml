@@ -1,0 +1,5 @@
+---
+# Setup tasks
+# Tests: Task file included with loops
+- name: Setup item
+  command: echo "setting up {{ item.name }}"

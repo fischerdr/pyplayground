@@ -1,0 +1,10 @@
+---
+# Complex nested structure test
+# Tests: Deep nesting, mix of includes and roles, templates at various levels
+- hosts: all
+  roles:
+    - nested_role
+
+  tasks:
+    - name: Include task that includes role
+      include_tasks: tasks/common_tasks.yml

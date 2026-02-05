@@ -1,0 +1,7 @@
+---
+# Playbook testing circular dependency detection
+# Tests: True circular dependencies, false positives from different branches
+- hosts: all
+  tasks:
+    - name: Start circular chain
+      include_tasks: tasks/task_a.yml

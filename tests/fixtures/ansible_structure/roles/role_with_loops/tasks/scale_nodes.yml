@@ -1,0 +1,6 @@
+---
+# Task file that includes another task with with_sequence
+# Tests: Loop context preservation, nested includes in loops
+- name: Scale node
+  include_tasks: post_provision.yml
+  with_sequence: start=1 end={{ node_count | default(3) }}

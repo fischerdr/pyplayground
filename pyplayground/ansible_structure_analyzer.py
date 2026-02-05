@@ -226,12 +226,31 @@ class IncludeResolver:
 
         return None
 
-    def resolve_includes(
+    def _has_loop(self, task: Dict[str, Any]) -> Optional[str]:
+        """Check if task has a loop construct.
+
+        Args:
+            task: Task dictionary
+
+        Returns:
+            Loop type string or None
+        """
+        if "with_sequence" in task:
+            return "with_sequence"
+        if "with_items" in task:
+            return "with_items"
+        if "loop" in task:
+            return "loop"
+        # Note: loop_control alone doesn't indicate a loop, only when used with loop
+        return None
+
+    def resolve_includes(  # noqa: C901
         self,
         file_path: Path,
         visited: Optional[Set[Path]] = None,
         depth: int = 0,
         include_chain: Optional[List[Path]] = None,
+        loop_context: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Recursively resolve includes from a playbook or task file.
 
@@ -240,6 +259,7 @@ class IncludeResolver:
             visited: Set of already visited files (for circular dependency detection)
             depth: Current recursion depth
             include_chain: Chain of includes leading to this file
+            loop_context: Loop context if this file is included from a loop (with_sequence, with_items, loop)
 
         Returns:
             Dictionary containing resolved includes information
@@ -252,6 +272,8 @@ class IncludeResolver:
         logger.debug(
             f"resolve_includes: starting resolution from {file_path} (depth: {depth}/{self.max_depth})"
         )
+        if loop_context:
+            logger.debug(f"resolve_includes: Processing {file_path.name} [loop: {loop_context}]")
         if include_chain:
             chain_str = " -> ".join(str(p.name) for p in include_chain[-3:])
             logger.debug(f"resolve_includes: include chain (last 3): ... -> {chain_str}")
@@ -270,8 +292,10 @@ class IncludeResolver:
                 )
                 return {"file": str(file_path), "includes": [], "error": "MAX_DEPTH_EXCEEDED"}
 
-            # Check for circular dependency
-            if file_path in visited:
+            # Check for circular dependency - only flag if file is in current execution path
+            # This prevents false positives when same file is included from different branches
+            if file_path in include_chain:
+                # True circular dependency - file appears twice in same execution path
                 circular_chain = include_chain + [file_path]
                 # Find where in the chain this file was first visited
                 first_visit_index = None
@@ -290,10 +314,6 @@ class IncludeResolver:
                     logger.debug(
                         f"resolve_includes: Circular loop: {' -> '.join(str(p.name) for p in circular_chain[first_visit_index:])}"
                     )
-                else:
-                    logger.debug(
-                        f"resolve_includes: File {file_path.name} was visited earlier but not found in current chain"
-                    )
 
                 # Try to parse the file to see what it includes (for debugging)
                 try:
@@ -307,7 +327,9 @@ class IncludeResolver:
                                     if isinstance(task, dict):
                                         include_key = self._get_include_key(task, "include_tasks")
                                         if include_key:
-                                            temp_includes.append(f"include_tasks: {task[include_key]}")
+                                            temp_includes.append(
+                                                f"include_tasks: {task[include_key]}"
+                                            )
                         elif isinstance(content, list):
                             for item in content[:3]:  # Check first 3 items
                                 if isinstance(item, dict):
@@ -328,6 +350,17 @@ class IncludeResolver:
                     {"include_chain": [str(p) for p in circular_chain]},
                 )
                 return {"file": str(file_path), "includes": [], "error": "CIRCULAR_DEPENDENCY"}
+            elif file_path in visited:
+                # File was visited from different branch - skip processing but don't flag as circular
+                logger.debug(
+                    f"resolve_includes: File {file_path.name} already visited from different branch, skipping"
+                )
+                return {
+                    "file": str(file_path),
+                    "includes": [],
+                    "skipped": True,
+                    "reason": "already_visited",
+                }
 
             # Mark as visited
             visited.add(file_path)
@@ -345,12 +378,17 @@ class IncludeResolver:
                 return {"file": str(file_path), "includes": []}
 
             # Find includes
-            includes = self._parse_includes(content, file_path, visited, depth, current_chain)
+            includes = self._parse_includes(
+                content, file_path, visited, depth, current_chain, loop_context
+            )
             logger.debug(
                 f"resolve_includes: found {len(includes)} includes in {file_path} at depth {depth}"
             )
 
-            return {"file": str(file_path), "includes": includes}
+            result = {"file": str(file_path), "includes": includes}
+            if loop_context:
+                result["loop_context"] = loop_context
+            return result
 
         except Exception as e:
             logger.error(f"Error resolving includes from {file_path}: {e}", exc_info=True)
@@ -398,6 +436,7 @@ class IncludeResolver:
         visited: Set[Path],
         depth: int,
         include_chain: List[Path],
+        loop_context: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Parse includes from YAML content.
 
@@ -407,6 +446,7 @@ class IncludeResolver:
             visited: Set of visited files
             depth: Current recursion depth
             include_chain: Chain of includes
+            loop_context: Loop context if this file is included from a loop
 
         Returns:
             List of resolved includes
@@ -426,19 +466,29 @@ class IncludeResolver:
             if "tasks" in content:
                 includes.extend(
                     self._parse_task_includes(
-                        content["tasks"], current_file, visited, depth, include_chain
+                        content["tasks"], current_file, visited, depth, include_chain, loop_context
                     )
                 )
             if "pre_tasks" in content:
                 includes.extend(
                     self._parse_task_includes(
-                        content["pre_tasks"], current_file, visited, depth, include_chain
+                        content["pre_tasks"],
+                        current_file,
+                        visited,
+                        depth,
+                        include_chain,
+                        loop_context,
                     )
                 )
             if "post_tasks" in content:
                 includes.extend(
                     self._parse_task_includes(
-                        content["post_tasks"], current_file, visited, depth, include_chain
+                        content["post_tasks"],
+                        current_file,
+                        visited,
+                        depth,
+                        include_chain,
+                        loop_context,
                     )
                 )
             if "roles" in content:
@@ -453,7 +503,12 @@ class IncludeResolver:
             if include_tasks_key:
                 includes.append(
                     self._resolve_include_task(
-                        content[include_tasks_key], current_file, visited, depth, include_chain
+                        content[include_tasks_key],
+                        current_file,
+                        visited,
+                        depth,
+                        include_chain,
+                        loop_context,
                     )
                 )
 
@@ -462,7 +517,12 @@ class IncludeResolver:
             if import_tasks_key:
                 includes.append(
                     self._resolve_import_task(
-                        content[import_tasks_key], current_file, visited, depth, include_chain
+                        content[import_tasks_key],
+                        current_file,
+                        visited,
+                        depth,
+                        include_chain,
+                        loop_context,
                     )
                 )
 
@@ -471,7 +531,12 @@ class IncludeResolver:
             if include_role_key:
                 includes.append(
                     self._resolve_include_role(
-                        content[include_role_key], current_file, visited, depth, include_chain
+                        content[include_role_key],
+                        current_file,
+                        visited,
+                        depth,
+                        include_chain,
+                        loop_context,
                     )
                 )
 
@@ -480,7 +545,12 @@ class IncludeResolver:
             if import_role_key:
                 includes.append(
                     self._resolve_import_role(
-                        content[import_role_key], current_file, visited, depth, include_chain
+                        content[import_role_key],
+                        current_file,
+                        visited,
+                        depth,
+                        include_chain,
+                        loop_context,
                     )
                 )
 
@@ -595,7 +665,7 @@ class IncludeResolver:
                             logger.debug(f"_parse_includes: processing play {play_index + 1}")
                             # Recursively process each play dict
                             play_includes = self._parse_includes(
-                                play, current_file, visited, depth, include_chain
+                                play, current_file, visited, depth, include_chain, loop_context
                             )
                             includes.extend(play_includes)
                 else:
@@ -605,7 +675,7 @@ class IncludeResolver:
                     )
                     includes.extend(
                         self._parse_task_includes(
-                            content, current_file, visited, depth, include_chain
+                            content, current_file, visited, depth, include_chain, loop_context
                         )
                     )
             else:
@@ -614,7 +684,9 @@ class IncludeResolver:
                     f"_parse_includes: treating list as task list (empty or non-dict items={len(content)})"
                 )
                 includes.extend(
-                    self._parse_task_includes(content, current_file, visited, depth, include_chain)
+                    self._parse_task_includes(
+                        content, current_file, visited, depth, include_chain, loop_context
+                    )
                 )
 
         logger.debug(f"_parse_includes: returning {len(includes)} total includes")
@@ -627,6 +699,7 @@ class IncludeResolver:
         visited: Set[Path],
         depth: int,
         include_chain: List[Path],
+        loop_context: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Parse includes from a list of tasks.
 
@@ -636,6 +709,7 @@ class IncludeResolver:
             visited: Set of visited files
             depth: Current recursion depth
             include_chain: Chain of includes
+            loop_context: Loop context if this file is included from a loop
 
         Returns:
             List of resolved includes
@@ -653,6 +727,11 @@ class IncludeResolver:
                 f"_parse_task_includes: task {task_index} keys (first 10): {task_keys}, name={task.get('name', 'N/A')}"
             )
 
+            # Detect loop in this task
+            task_loop_context = self._has_loop(task)
+            # Use task's loop context if present, otherwise inherit from parent
+            current_loop_context = task_loop_context if task_loop_context else loop_context
+
             # Check for include_tasks (short or FQCN)
             include_tasks_key = self._get_include_key(task, "include_tasks")
             if include_tasks_key:
@@ -661,7 +740,12 @@ class IncludeResolver:
                 )
                 includes.append(
                     self._resolve_include_task(
-                        task[include_tasks_key], current_file, visited, depth, include_chain
+                        task[include_tasks_key],
+                        current_file,
+                        visited,
+                        depth,
+                        include_chain,
+                        current_loop_context,
                     )
                 )
 
@@ -670,7 +754,12 @@ class IncludeResolver:
             if import_tasks_key:
                 includes.append(
                     self._resolve_import_task(
-                        task[import_tasks_key], current_file, visited, depth, include_chain
+                        task[import_tasks_key],
+                        current_file,
+                        visited,
+                        depth,
+                        include_chain,
+                        current_loop_context,
                     )
                 )
 
@@ -682,7 +771,12 @@ class IncludeResolver:
                 )
                 includes.append(
                     self._resolve_include_role(
-                        task[include_role_key], current_file, visited, depth, include_chain
+                        task[include_role_key],
+                        current_file,
+                        visited,
+                        depth,
+                        include_chain,
+                        current_loop_context,
                     )
                 )
 
@@ -691,7 +785,12 @@ class IncludeResolver:
             if import_role_key:
                 includes.append(
                     self._resolve_import_role(
-                        task[import_role_key], current_file, visited, depth, include_chain
+                        task[import_role_key],
+                        current_file,
+                        visited,
+                        depth,
+                        include_chain,
+                        current_loop_context,
                     )
                 )
 
@@ -699,7 +798,12 @@ class IncludeResolver:
             if "block" in task:
                 includes.extend(
                     self._parse_task_includes(
-                        task["block"], current_file, visited, depth, include_chain
+                        task["block"],
+                        current_file,
+                        visited,
+                        depth,
+                        include_chain,
+                        current_loop_context,
                     )
                 )
 
@@ -754,6 +858,7 @@ class IncludeResolver:
         visited: Set[Path],
         depth: int,
         include_chain: List[Path],
+        loop_context: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Resolve an include_tasks reference.
 
@@ -763,6 +868,7 @@ class IncludeResolver:
             visited: Set of visited files
             depth: Current recursion depth
             include_chain: Chain of includes
+            loop_context: Loop context if this include is from a loop
 
         Returns:
             Dictionary with resolved include information
@@ -770,6 +876,8 @@ class IncludeResolver:
         logger.debug(
             f"_resolve_include_task: resolving include_ref={include_ref}, from={current_file}, depth={depth}"
         )
+        if loop_context:
+            logger.debug(f"_resolve_include_task: loop context: {loop_context}")
 
         if isinstance(include_ref, dict):
             include_ref = include_ref.get("file", include_ref.get("name"))
@@ -790,6 +898,8 @@ class IncludeResolver:
             "ref": include_ref,
             "resolved": resolved_path is not None,
         }
+        if loop_context:
+            result["loop_context"] = loop_context
 
         if resolved_path:
             result["path"] = str(resolved_path)
@@ -797,7 +907,9 @@ class IncludeResolver:
                 f"_resolve_include_task: resolved path={resolved_path}, recursing with depth={depth + 1}"
             )
             # Recursively resolve includes from this file
-            nested = self.resolve_includes(resolved_path, visited, depth + 1, include_chain)
+            nested = self.resolve_includes(
+                resolved_path, visited, depth + 1, include_chain, loop_context
+            )
             nested_includes = nested.get("includes", [])
             result["includes"] = nested_includes
             logger.debug(
@@ -817,6 +929,7 @@ class IncludeResolver:
         visited: Set[Path],
         depth: int,
         include_chain: List[Path],
+        loop_context: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Resolve an import_tasks reference.
 
@@ -826,6 +939,7 @@ class IncludeResolver:
             visited: Set of visited files
             depth: Current recursion depth
             include_chain: Chain of includes
+            loop_context: Loop context if this import is from a loop
 
         Returns:
             Dictionary with resolved import information
@@ -843,11 +957,15 @@ class IncludeResolver:
 
         resolved_path = self._find_include_path(import_ref, current_file)
         result = {"type": "import_tasks", "ref": import_ref, "resolved": resolved_path is not None}
+        if loop_context:
+            result["loop_context"] = loop_context
 
         if resolved_path:
             result["path"] = str(resolved_path)
             # Recursively resolve includes from this file
-            nested = self.resolve_includes(resolved_path, visited, depth + 1, include_chain)
+            nested = self.resolve_includes(
+                resolved_path, visited, depth + 1, include_chain, loop_context
+            )
             result["includes"] = nested.get("includes", [])
 
         return result
@@ -859,6 +977,7 @@ class IncludeResolver:
         visited: Set[Path],
         depth: int,
         include_chain: List[Path],
+        loop_context: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Resolve an include_role reference.
 
@@ -868,6 +987,7 @@ class IncludeResolver:
             visited: Set of visited files
             depth: Current recursion depth
             include_chain: Chain of includes
+            loop_context: Loop context if this include is from a loop
 
         Returns:
             Dictionary with resolved role include information
@@ -883,7 +1003,9 @@ class IncludeResolver:
                 "error": "Invalid reference",
             }
 
-        return self._resolve_role(include_ref, current_file, visited, depth, include_chain)
+        return self._resolve_role(
+            include_ref, current_file, visited, depth, include_chain, loop_context
+        )
 
     def _resolve_import_role(
         self,
@@ -892,6 +1014,7 @@ class IncludeResolver:
         visited: Set[Path],
         depth: int,
         include_chain: List[Path],
+        loop_context: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Resolve an import_role reference.
 
@@ -901,6 +1024,7 @@ class IncludeResolver:
             visited: Set of visited files
             depth: Current recursion depth
             include_chain: Chain of includes
+            loop_context: Loop context if this import is from a loop
 
         Returns:
             Dictionary with resolved role import information
@@ -916,7 +1040,9 @@ class IncludeResolver:
                 "error": "Invalid reference",
             }
 
-        return self._resolve_role(import_ref, current_file, visited, depth, include_chain)
+        return self._resolve_role(
+            import_ref, current_file, visited, depth, include_chain, loop_context
+        )
 
     def _resolve_role(
         self,
@@ -925,6 +1051,7 @@ class IncludeResolver:
         visited: Set[Path],
         depth: int,
         include_chain: List[Path],
+        loop_context: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Resolve a role reference.
 
@@ -934,6 +1061,7 @@ class IncludeResolver:
             visited: Set of visited files
             depth: Current recursion depth
             include_chain: Chain of includes
+            loop_context: Loop context if this role is included from a loop
 
         Returns:
             Dictionary with resolved role information
@@ -941,10 +1069,14 @@ class IncludeResolver:
         logger.debug(
             f"_resolve_role: resolving role={role_name}, from={current_file}, depth={depth}"
         )
+        if loop_context:
+            logger.debug(f"_resolve_role: loop context: {loop_context}")
 
         # Find role directory
         role_path = self._find_role_path(role_name)
         result = {"type": "role", "name": role_name, "resolved": role_path is not None}
+        if loop_context:
+            result["loop_context"] = loop_context
 
         if role_path:
             result["path"] = str(role_path)
@@ -960,7 +1092,9 @@ class IncludeResolver:
                     f"_resolve_role: found main tasks file: {main_tasks}, recursing with depth={depth + 1}"
                 )
                 # Recursively resolve includes from role tasks
-                nested = self.resolve_includes(main_tasks, visited, depth + 1, include_chain)
+                nested = self.resolve_includes(
+                    main_tasks, visited, depth + 1, include_chain, loop_context
+                )
                 nested_includes = nested.get("includes", [])
                 result["includes"] = nested_includes
                 logger.debug(
@@ -1530,32 +1664,35 @@ class OutputGenerator:
         indent_prefix = "  " * indent
         for include in includes:
             include_type = include.get("type", "unknown")
+            loop_context = include.get("loop_context")
+            loop_suffix = f" [{loop_context}]" if loop_context else ""
+
             if include_type == "role":
                 role_name = include.get("name", "N/A")
                 resolved = include.get("resolved", False)
                 status = "✓" if resolved else "✗"
-                f.write(f"{indent_prefix}- {status} **Role**: `{role_name}`\n")
+                f.write(f"{indent_prefix}- {status} **Role**: `{role_name}`{loop_suffix}\n")
                 if include.get("path"):
                     f.write(f"{indent_prefix}  - Path: `{include.get('path')}`\n")
             elif include_type in ["include_tasks", "import_tasks"]:
                 ref = include.get("ref", "N/A")
                 resolved = include.get("resolved", False)
                 status = "✓" if resolved else "✗"
-                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`\n")
+                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}\n")
                 if include.get("path"):
                     f.write(f"{indent_prefix}  - Path: `{include.get('path')}`\n")
             elif include_type in ["include_role", "import_role"]:
                 ref = include.get("ref", include.get("name", "N/A"))
                 resolved = include.get("resolved", False)
                 status = "✓" if resolved else "✗"
-                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`\n")
+                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}\n")
                 if include.get("path"):
                     f.write(f"{indent_prefix}  - Path: `{include.get('path')}`\n")
             else:
                 ref = include.get("ref", str(include))
                 resolved = include.get("resolved", False)
                 status = "✓" if resolved else "✗"
-                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`\n")
+                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}\n")
 
             # Write nested includes
             nested_includes = include.get("includes", [])

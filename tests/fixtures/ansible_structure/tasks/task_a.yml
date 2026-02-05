@@ -1,0 +1,5 @@
+---
+# Task A - part of circular dependency chain
+# Chain: A -> B -> C -> A (true circular)
+- name: Task A
+  include_tasks: task_b.yml

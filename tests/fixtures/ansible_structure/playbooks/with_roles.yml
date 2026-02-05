@@ -1,0 +1,14 @@
+---
+# Playbook testing role inclusion
+# Tests: Simple roles, roles with vars, nested includes in roles
+- hosts: all
+  roles:
+    - simple_role
+    - role: template_role
+      vars:
+        template_var: test_value
+    - nested_role
+
+  tasks:
+    - name: Additional task after roles
+      command: echo "roles completed"

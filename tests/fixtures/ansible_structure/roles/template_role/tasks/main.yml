@@ -1,0 +1,35 @@
+---
+# Role with various template forms
+# Tests: Short form, FQCN, unnamed templates, templates with loops
+- name: Simple template
+  template:
+    src: simple.j2
+    dest: /tmp/simple.conf
+
+- name: FQCN template
+  ansible.builtin.template:
+    src: with_vars.j2
+    dest: /tmp/with_vars.conf
+
+- name: Unnamed template
+  template:
+    src: nested/deep.j2
+    dest: /tmp/deep.conf
+
+- name: Template with items
+  template:
+    src: simple.j2
+    dest: "/tmp/{{ item }}.conf"
+  with_items:
+    - file1
+    - file2
+
+- name: Template with loop
+  ansible.builtin.template:
+    src: simple.j2
+    dest: "/tmp/{{ item.name }}.conf"
+  loop:
+    - name: file1
+    - name: file2
+  loop_control:
+    label: "{{ item.name }}"

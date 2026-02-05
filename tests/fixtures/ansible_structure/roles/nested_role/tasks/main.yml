@@ -1,0 +1,9 @@
+---
+# Nested role main tasks
+# Tests: Role that includes other roles and tasks
+- name: Include another role
+  include_role:
+    name: simple_role
+
+- name: Include task file
+  include_tasks: post_provision.yml

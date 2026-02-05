@@ -1,0 +1,8 @@
+---
+# Common tasks shared across playbooks
+# Tests: Shared task file includes
+- name: Common task 1
+  command: echo "common task 1"
+
+- name: Common task 2
+  command: echo "common task 2"

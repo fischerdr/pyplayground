@@ -1,0 +1,27 @@
+---
+# Playbook testing loops with includes
+# Tests: include_tasks with with_sequence, with_items, loop
+- hosts: all
+  tasks:
+    - name: Include with sequence
+      include_tasks: tasks/scale_nodes.yml
+      with_sequence: start=1 end=3
+
+    - name: Include with items
+      include_tasks: tasks/validation.yml
+      with_items:
+        - item1
+        - item2
+
+    - name: Include with loop
+      include_tasks: tasks/setup.yml
+      loop:
+        - name: node1
+        - name: node2
+
+    - name: Include role with loop
+      include_role:
+        name: role_with_loops
+      loop:
+        - count: 1
+        - count: 2

@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Tests for ansible_structure_analyzer.py"""
+"""Tests for ansible_structure_analyzer.py."""
 
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
-import yaml
 
 from pyplayground.ansible_structure_analyzer import (
     AnsibleStructureAnalyzer,
@@ -278,7 +275,9 @@ class TestAnsibleStructureAnalyzer:
         analyzer = AnsibleStructureAnalyzer(repo_root)
 
         playbook = tmp_path / "playbook.yml"
-        playbook.write_text("---\n- hosts: all\n  tasks:\n    - name: test\n      command: echo hello\n")
+        playbook.write_text(
+            "---\n- hosts: all\n  tasks:\n    - name: test\n      command: echo hello\n"
+        )
 
         result = analyzer.analyze(playbook)
 
@@ -313,7 +312,9 @@ class TestAnsibleStructureAnalyzer:
 
         # Create playbook that includes it
         playbook = tmp_path / "playbook.yml"
-        playbook.write_text("---\n- hosts: all\n  tasks:\n    - include_tasks: tasks/included.yml\n")
+        playbook.write_text(
+            "---\n- hosts: all\n  tasks:\n    - include_tasks: tasks/included.yml\n"
+        )
 
         result = analyzer.analyze(playbook)
 
@@ -321,3 +322,292 @@ class TestAnsibleStructureAnalyzer:
         assert len(result["playbooks"]) == 1
         # Should have resolved the include
         assert len(result["playbooks"][0].get("includes", [])) > 0
+
+
+@pytest.fixture
+def fixture_dir():
+    """Get path to test fixtures directory."""
+    return Path(__file__).parent / "fixtures" / "ansible_structure"
+
+
+@pytest.fixture
+def fixture_repo_root(fixture_dir):
+    """Get repo root for fixture directory."""
+    return fixture_dir
+
+
+class TestLoopHandling:
+    """Tests for loop handling in includes and breadcrumbs."""
+
+    def test_has_loop_with_sequence(self):
+        """Test _has_loop() detects with_sequence."""
+        repo_root = Path("/tmp")
+        error_collector = ErrorCollector()
+        resolver = IncludeResolver(repo_root, error_collector)
+
+        task = {"name": "test", "include_tasks": "file.yml", "with_sequence": "start=1 end=5"}
+        result = resolver._has_loop(task)
+
+        assert result == "with_sequence"
+
+    def test_has_loop_with_items(self):
+        """Test _has_loop() detects with_items."""
+        repo_root = Path("/tmp")
+        error_collector = ErrorCollector()
+        resolver = IncludeResolver(repo_root, error_collector)
+
+        task = {"name": "test", "include_tasks": "file.yml", "with_items": ["item1", "item2"]}
+        result = resolver._has_loop(task)
+
+        assert result == "with_items"
+
+    def test_has_loop_loop(self):
+        """Test _has_loop() detects loop."""
+        repo_root = Path("/tmp")
+        error_collector = ErrorCollector()
+        resolver = IncludeResolver(repo_root, error_collector)
+
+        task = {"name": "test", "include_tasks": "file.yml", "loop": ["item1", "item2"]}
+        result = resolver._has_loop(task)
+
+        assert result == "loop"
+
+    def test_has_loop_no_loop(self):
+        """Test _has_loop() returns None for tasks without loops."""
+        repo_root = Path("/tmp")
+        error_collector = ErrorCollector()
+        resolver = IncludeResolver(repo_root, error_collector)
+
+        task = {"name": "test", "include_tasks": "file.yml"}
+        result = resolver._has_loop(task)
+
+        assert result is None
+
+    def test_include_with_sequence(self, fixture_dir, fixture_repo_root):
+        """Test includes with with_sequence are detected and loop context preserved."""
+        if not fixture_dir.exists():
+            pytest.skip("Test fixtures not found")
+
+        analyzer = AnsibleStructureAnalyzer(fixture_repo_root)
+        playbook = fixture_dir / "playbooks" / "with_loops.yml"
+
+        if not playbook.exists():
+            pytest.skip("with_loops.yml fixture not found")
+
+        result = analyzer.analyze(playbook)
+
+        # Find includes with with_sequence
+        includes = result["playbooks"][0].get("includes", [])
+        with_sequence_found = False
+        for include in includes:
+            if include.get("loop_context") == "with_sequence":
+                with_sequence_found = True
+                break
+
+        assert with_sequence_found, "Should find include with with_sequence loop context"
+
+    def test_include_with_items(self, fixture_dir, fixture_repo_root):
+        """Test includes with with_items are detected and loop context preserved."""
+        if not fixture_dir.exists():
+            pytest.skip("Test fixtures not found")
+
+        analyzer = AnsibleStructureAnalyzer(fixture_repo_root)
+        playbook = fixture_dir / "playbooks" / "with_loops.yml"
+
+        if not playbook.exists():
+            pytest.skip("with_loops.yml fixture not found")
+
+        result = analyzer.analyze(playbook)
+
+        # Find includes with with_items
+        includes = result["playbooks"][0].get("includes", [])
+        with_items_found = False
+        for include in includes:
+            if include.get("loop_context") == "with_items":
+                with_items_found = True
+                break
+
+        assert with_items_found, "Should find include with with_items loop context"
+
+    def test_include_with_loop(self, fixture_dir, fixture_repo_root):
+        """Test includes with loop are detected and loop context preserved."""
+        if not fixture_dir.exists():
+            pytest.skip("Test fixtures not found")
+
+        analyzer = AnsibleStructureAnalyzer(fixture_repo_root)
+        playbook = fixture_dir / "playbooks" / "with_loops.yml"
+
+        if not playbook.exists():
+            pytest.skip("with_loops.yml fixture not found")
+
+        result = analyzer.analyze(playbook)
+
+        # Find includes with loop
+        includes = result["playbooks"][0].get("includes", [])
+        loop_found = False
+        for include in includes:
+            if include.get("loop_context") == "loop":
+                loop_found = True
+                break
+
+        assert loop_found, "Should find include with loop context"
+
+    def test_role_with_loops(self, fixture_dir, fixture_repo_root):
+        """Test role task files with loops are processed correctly."""
+        if not fixture_dir.exists():
+            pytest.skip("Test fixtures not found")
+
+        analyzer = AnsibleStructureAnalyzer(fixture_repo_root)
+        # Use a playbook that includes the role_with_loops role
+        playbook = fixture_dir / "playbooks" / "with_loops.yml"
+
+        if not playbook.exists():
+            pytest.skip("with_loops.yml fixture not found")
+
+        result = analyzer.analyze(playbook)
+
+        # Find role_with_loops role
+        roles = result.get("roles", [])
+        role_found = False
+        scale_nodes_found = False
+        post_provision_found = False
+
+        for role in roles:
+            if role.get("name") == "role_with_loops":
+                role_found = True
+                # Check includes in role
+                role_includes = role.get("includes", [])
+                for include in role_includes:
+                    if "scale_nodes.yml" in include.get("ref", ""):
+                        scale_nodes_found = True
+                        # Check nested includes
+                        nested = include.get("includes", [])
+                        for nested_include in nested:
+                            if "post_provision.yml" in nested_include.get("ref", ""):
+                                post_provision_found = True
+                                break
+                    if scale_nodes_found and post_provision_found:
+                        break
+                break
+
+        assert role_found, "Should find role_with_loops role"
+        assert scale_nodes_found, "Should find scale_nodes.yml include"
+        assert post_provision_found, "Should find post_provision.yml nested include"
+
+    def test_circular_dependency_with_loops_no_false_positive(self, fixture_dir, fixture_repo_root):
+        """Test that scale_nodes.yml including post_provision.yml with with_sequence does NOT create false positive."""
+        if not fixture_dir.exists():
+            pytest.skip("Test fixtures not found")
+
+        analyzer = AnsibleStructureAnalyzer(fixture_repo_root)
+        playbook = fixture_dir / "playbooks" / "with_loops.yml"
+
+        if not playbook.exists():
+            pytest.skip("with_loops.yml fixture not found")
+
+        result = analyzer.analyze(playbook)
+
+        # Check for false positive circular dependencies
+        errors = result.get("errors", [])
+        false_positives = [
+            e
+            for e in errors
+            if e.get("type") == "CIRCULAR_DEPENDENCY"
+            and "scale_nodes.yml" in str(e.get("file", ""))
+            and "post_provision.yml" in str(e.get("file", ""))
+        ]
+
+        assert (
+            len(false_positives) == 0
+        ), "Should not have false positive circular dependency for scale_nodes -> post_provision"
+
+    def test_true_circular_dependency_still_detected(self, fixture_dir, fixture_repo_root):
+        """Test true circular dependency (A -> B -> C -> A) is still detected."""
+        if not fixture_dir.exists():
+            pytest.skip("Test fixtures not found")
+
+        analyzer = AnsibleStructureAnalyzer(fixture_repo_root)
+        playbook = fixture_dir / "playbooks" / "circular_dependency.yml"
+
+        if not playbook.exists():
+            pytest.skip("circular_dependency.yml fixture not found")
+
+        result = analyzer.analyze(playbook)
+
+        # Should detect circular dependency
+        errors = result.get("errors", [])
+        circular_errors = [e for e in errors if e.get("type") == "CIRCULAR_DEPENDENCY"]
+
+        assert len(circular_errors) > 0, "Should detect true circular dependency"
+
+    def test_loop_context_in_output_json(self, fixture_dir, fixture_repo_root, tmp_path):
+        """Test loop context appears in JSON output."""
+        if not fixture_dir.exists():
+            pytest.skip("Test fixtures not found")
+
+        analyzer = AnsibleStructureAnalyzer(fixture_repo_root)
+        playbook = fixture_dir / "playbooks" / "with_loops.yml"
+
+        if not playbook.exists():
+            pytest.skip("with_loops.yml fixture not found")
+
+        result = analyzer.analyze(playbook)
+
+        # Check JSON structure has loop_context
+        includes = result["playbooks"][0].get("includes", [])
+        has_loop_context = False
+        for include in includes:
+            if "loop_context" in include:
+                has_loop_context = True
+                break
+
+        assert has_loop_context, "JSON output should include loop_context field"
+
+    def test_loop_context_in_output_markdown(self, fixture_dir, fixture_repo_root, tmp_path):
+        """Test loop context appears in Markdown output."""
+        if not fixture_dir.exists():
+            pytest.skip("Test fixtures not found")
+
+        analyzer = AnsibleStructureAnalyzer(fixture_repo_root)
+        playbook = fixture_dir / "playbooks" / "with_loops.yml"
+
+        if not playbook.exists():
+            pytest.skip("with_loops.yml fixture not found")
+
+        result = analyzer.analyze(playbook)
+
+        # Generate markdown
+        output_gen = OutputGenerator(tmp_path)
+        md_path = output_gen.generate_markdown(result)
+
+        # Check markdown content
+        content = md_path.read_text()
+        assert (
+            "[with_sequence]" in content or "[with_items]" in content or "[loop]" in content
+        ), "Markdown should show loop context"
+
+    def test_breadcrumbs_with_loop_context(self, fixture_dir, fixture_repo_root):
+        """Test include chain shows loop context in debug logs."""
+        if not fixture_dir.exists():
+            pytest.skip("Test fixtures not found")
+
+        repo_root = fixture_repo_root
+        error_collector = ErrorCollector()
+        resolver = IncludeResolver(repo_root, error_collector)
+
+        # Test with a role that has loops
+        role_path = fixture_dir / "roles" / "role_with_loops"
+        if not role_path.exists():
+            pytest.skip("role_with_loops fixture not found")
+
+        main_tasks = role_path / "tasks" / "main.yml"
+        if not main_tasks.exists():
+            pytest.skip("role_with_loops/tasks/main.yml not found")
+
+        # This should process includes and preserve loop context
+        result = resolver.resolve_includes(main_tasks)
+
+        # Check that includes are found
+        assert "includes" in result
+        includes = result.get("includes", [])
+        assert len(includes) > 0, "Should find includes in role_with_loops"

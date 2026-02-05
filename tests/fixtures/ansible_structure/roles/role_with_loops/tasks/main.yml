@@ -1,0 +1,5 @@
+---
+# Role main tasks file that includes tasks with loops
+# Tests: Role with loop includes, nested includes
+- name: Include scale nodes task
+  include_tasks: scale_nodes.yml

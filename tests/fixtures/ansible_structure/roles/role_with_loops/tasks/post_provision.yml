@@ -1,0 +1,5 @@
+---
+# Post provision task file
+# Tests: Task included from loop, should not create false circular dependency
+- name: Post provision task
+  command: echo "provisioned"

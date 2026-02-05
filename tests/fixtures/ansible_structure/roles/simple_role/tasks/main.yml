@@ -1,0 +1,10 @@
+---
+# Simple role main tasks
+# Tests: Basic role structure, role includes
+- name: Simple role task
+  command: echo "simple role"
+
+- name: Use template
+  template:
+    src: config.j2
+    dest: /tmp/config.conf

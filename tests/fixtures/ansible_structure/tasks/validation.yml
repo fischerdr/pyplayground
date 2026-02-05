@@ -1,0 +1,5 @@
+---
+# Validation tasks
+# Tests: Task file included with loops
+- name: Validate item
+  command: echo "validating {{ item }}"

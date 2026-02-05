@@ -1,0 +1,8 @@
+---
+# Post provision tasks for nested role
+# Tests: Task file included from role
+- name: Post provision step 1
+  command: echo "post provision 1"
+
+- name: Post provision step 2
+  command: echo "post provision 2"

@@ -1,0 +1,25 @@
+---
+# Playbook testing various include types
+# Tests: include_tasks (short and FQCN), import_tasks, include_role, import_role
+- hosts: all
+  tasks:
+    - name: Include tasks (short form)
+      include_tasks: tasks/common_tasks.yml
+
+    - name: Include tasks (FQCN)
+      ansible.builtin.include_tasks: tasks/validation.yml
+
+    - name: Import tasks
+      import_tasks: tasks/setup.yml
+
+    - name: Include role (short form)
+      include_role:
+        name: simple_role
+
+    - name: Include role (FQCN)
+      ansible.builtin.include_role:
+        name: template_role
+
+    - name: Import role
+      import_role:
+        name: nested_role

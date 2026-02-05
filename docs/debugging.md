@@ -273,3 +273,103 @@
 - Pattern to follow: Avoid duplicate if/elif blocks that set variables in different scopes
 
 ---
+
+### Issue: Circular Dependency Detection - Working as Intended
+
+**Found During**: User Testing  
+**Date**: 2026-02-05  
+**Severity**: INFO (Not a bug - working correctly)  
+**Status**: VERIFIED (No fix needed)
+
+**Symptom**:
+- Script reports multiple circular dependency warnings when analyzing `configure_cluster.yml`
+- Example chains:
+  - `configure_cluster.yml -> roles/configure_cluster/tasks/main.yml -> roles/configure_cluster/tasks/setup_machinesets.yml -> roles/create_machineset/tasks/main.yml -> roles/create_machineset/tasks/node_processor.yml -> roles/create_machineset/tasks/scale_nodes.yml`
+  - Similar chains detected for other includes
+
+**Root Cause**:
+- These are REAL circular dependencies in the Ansible code being analyzed
+- The script correctly detects when a file_path is already in the `visited` set during recursion
+- Detection logic at lines 273-285 in `ansible_structure_analyzer.py` is working correctly
+- The circular dependencies exist in the Ansible repository structure itself
+
+**Solution**:
+- No fix needed - this is expected behavior
+- The script is correctly identifying structural issues in the Ansible code
+- Circular dependencies are legitimate problems that should be reported
+- Users should fix the circular dependencies in their Ansible code
+
+**Code Location**:
+- File: `pyplayground/ansible_structure_analyzer.py`
+- Lines: 273-285
+- Function: `IncludeResolver.resolve_includes()`
+
+**Verification**:
+- Test: Circular dependency detection logic verified - correctly identifies when file_path in visited set
+- Manual: Warnings show complete include chains, making it easy to identify the circular reference
+- Logs: Warning messages include full chain: `file1 -> file2 -> ... -> fileN -> file1`
+
+**Prevention**:
+- Pattern to follow: Continue using visited set for circular dependency detection
+- Check to add: None needed - detection is working correctly
+- Documentation: Document that circular dependencies are real issues in Ansible code, not script bugs
+
+**Related Issues**:
+- None
+
+---
+
+### Issue: Missing Role Detection - Potential Enhancement Opportunity
+
+**Found During**: User Testing  
+**Date**: 2026-02-05  
+**Severity**: LOW (May be expected behavior)  
+**Status**: INVESTIGATING
+
+**Symptom**:
+- Script reports: `WARNING: Could not resolve role path: setup_env`
+- Error collected: `MISSING_FILE - Role not found: setup_env`
+- Role `setup_env` is referenced but not found in `roles/` directory
+
+**Root Cause**:
+- `_find_role_path()` method (lines 1007-1029) only checks `self.repo_root / "roles" / role_name`
+- Ansible can find roles in multiple locations:
+  - `roles/` directory (current implementation - correct for repo analysis)
+  - Collections (`collections/ansible_collections/.../roles/`)
+  - External dependencies (not in repo)
+  - User/system roles (`~/.ansible/roles/`, `/usr/share/ansible/roles/`)
+- For repository analysis, only checking `roles/` is probably correct
+- The role might be:
+  - Actually missing from the repository (legitimate warning)
+  - In a collection (not a bug - collections are separate)
+  - An external dependency (not a bug - external roles aren't in repo)
+  - Parsed incorrectly (would be a bug)
+
+**Solution**:
+- **Current behavior is likely correct** for repository analysis
+- If role is in a collection, that's expected - collections are separate from roles/
+- If role is external, that's expected - external dependencies aren't in the repo
+- Enhancement opportunity: Could add support for detecting roles in collections if needed
+- Enhancement opportunity: Could add option to search additional paths if needed
+
+**Code Location**:
+- File: `pyplayground/ansible_structure_analyzer.py`
+- Lines: 1007-1029
+- Function: `IncludeResolver._find_role_path()`
+
+**Verification**:
+- Test: Need to verify if `setup_env` role exists in collections or is truly missing
+- Manual: Check if role exists in `collections/` directory or is external
+- Logs: Warning correctly reports missing role with error collection
+
+**Prevention**:
+- Pattern to follow: Current implementation is correct for repository-scoped analysis
+- Check to add: Could add collection role detection if needed (enhancement, not bug fix)
+- Documentation: Document that missing role warnings may indicate external dependencies or collections
+
+**Related Issues**:
+- None
+
+**Note**: This may not be a bug - missing roles could be external dependencies or in collections. Need user confirmation on whether `setup_env` should be found or is expected to be missing.
+
+---

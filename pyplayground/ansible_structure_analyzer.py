@@ -249,45 +249,57 @@ class IncludeResolver:
         if include_chain is None:
             include_chain = []
 
-        logger.debug(f"Resolving includes from: {file_path} (depth: {depth})")
+        logger.debug(
+            f"resolve_includes: starting resolution from {file_path} (depth: {depth}/{self.max_depth})"
+        )
+        if include_chain:
+            chain_str = " -> ".join(str(p.name) for p in include_chain[-3:])
+            logger.debug(f"resolve_includes: include chain (last 3): ... -> {chain_str}")
 
         try:
             # Check recursion depth
             if depth >= self.max_depth:
+                logger.warning(
+                    f"resolve_includes: MAX DEPTH EXCEEDED at depth {depth} for {file_path}"
+                )
                 self.error_collector.add_error(
                     "MAX_DEPTH_EXCEEDED",
                     f"Maximum recursion depth ({self.max_depth}) exceeded",
                     file_path,
                     {"depth": depth, "include_chain": [str(p) for p in include_chain]},
                 )
-                logger.warning(f"Maximum depth exceeded at: {file_path}")
                 return {"file": str(file_path), "includes": [], "error": "MAX_DEPTH_EXCEEDED"}
 
             # Check for circular dependency
             if file_path in visited:
                 circular_chain = include_chain + [file_path]
+                logger.warning(
+                    f"resolve_includes: CIRCULAR DEPENDENCY detected: {' -> '.join(str(p) for p in circular_chain)}"
+                )
                 self.error_collector.add_error(
                     "CIRCULAR_DEPENDENCY",
                     "Circular dependency detected",
                     file_path,
                     {"include_chain": [str(p) for p in circular_chain]},
                 )
-                logger.warning(
-                    f"Circular dependency detected: {' -> '.join(str(p) for p in circular_chain)}"
-                )
                 return {"file": str(file_path), "includes": [], "error": "CIRCULAR_DEPENDENCY"}
 
             # Mark as visited
             visited.add(file_path)
             current_chain = include_chain + [file_path]
+            logger.debug(f"resolve_includes: marked {file_path} as visited (total visited: {len(visited)})")
 
             # Parse file
             content = self._parse_yaml_file(file_path)
             if content is None:
+                logger.debug(f"resolve_includes: content is None for {file_path}, returning empty includes")
                 return {"file": str(file_path), "includes": []}
 
             # Find includes
             includes = self._parse_includes(content, file_path, visited, depth, current_chain)
+            logger.debug(
+                f"resolve_includes: found {len(includes)} includes in {file_path} at depth {depth}"
+            )
 
             return {"file": str(file_path), "includes": includes}
 
@@ -618,10 +630,15 @@ class IncludeResolver:
         Returns:
             Dictionary with resolved include information
         """
+        logger.debug(
+            f"_resolve_include_task: resolving include_ref={include_ref}, from={current_file}, depth={depth}"
+        )
+
         if isinstance(include_ref, dict):
             include_ref = include_ref.get("file", include_ref.get("name"))
 
         if not isinstance(include_ref, str):
+            logger.debug(f"_resolve_include_task: invalid reference type: {type(include_ref)}")
             return {
                 "type": "include_tasks",
                 "ref": str(include_ref),
@@ -629,6 +646,7 @@ class IncludeResolver:
                 "error": "Invalid reference",
             }
 
+        logger.debug(f"_resolve_include_task: finding path for include_ref={include_ref}")
         resolved_path = self._find_include_path(include_ref, current_file)
         result = {
             "type": "include_tasks",
@@ -638,9 +656,20 @@ class IncludeResolver:
 
         if resolved_path:
             result["path"] = str(resolved_path)
+            logger.debug(
+                f"_resolve_include_task: resolved path={resolved_path}, recursing with depth={depth + 1}"
+            )
             # Recursively resolve includes from this file
             nested = self.resolve_includes(resolved_path, visited, depth + 1, include_chain)
-            result["includes"] = nested.get("includes", [])
+            nested_includes = nested.get("includes", [])
+            result["includes"] = nested_includes
+            logger.debug(
+                f"_resolve_include_task: found {len(nested_includes)} nested includes in {resolved_path}"
+            )
+        else:
+            logger.warning(
+                f"_resolve_include_task: could not resolve path for include_ref={include_ref} from {current_file}"
+            )
 
         return result
 
@@ -772,7 +801,7 @@ class IncludeResolver:
         Returns:
             Dictionary with resolved role information
         """
-        logger.debug(f"Resolving role: {role_name}")
+        logger.debug(f"_resolve_role: resolving role={role_name}, from={current_file}, depth={depth}")
 
         # Find role directory
         role_path = self._find_role_path(role_name)
@@ -780,6 +809,7 @@ class IncludeResolver:
 
         if role_path:
             result["path"] = str(role_path)
+            logger.debug(f"_resolve_role: found role path: {role_path}")
             # Find main tasks file
             main_tasks = role_path / "tasks" / "main.yml"
             if not main_tasks.exists():
@@ -787,9 +817,18 @@ class IncludeResolver:
 
             if main_tasks.exists():
                 result["main_tasks"] = str(main_tasks)
+                logger.debug(
+                    f"_resolve_role: found main tasks file: {main_tasks}, recursing with depth={depth + 1}"
+                )
                 # Recursively resolve includes from role tasks
                 nested = self.resolve_includes(main_tasks, visited, depth + 1, include_chain)
-                result["includes"] = nested.get("includes", [])
+                nested_includes = nested.get("includes", [])
+                result["includes"] = nested_includes
+                logger.debug(
+                    f"_resolve_role: found {len(nested_includes)} nested includes in role {role_name}"
+                )
+            else:
+                logger.debug(f"_resolve_role: no main tasks file found for role {role_name}")
 
         return result
 
@@ -809,46 +848,65 @@ class IncludeResolver:
             Resolved path or None if not found
         """
         logger.debug(f"Finding include path for: {include_ref} (from {current_file})")
+        attempted_paths = []
 
         # Try 1: Relative to current file
         path1 = current_file.parent / include_ref
+        attempted_paths.append(str(path1))
+        logger.debug(f"_find_include_path: trying path1 (relative to file): {path1}")
         if path1.exists() and path1.is_file():
             logger.debug(f"Found include path (relative to file): {path1}")
             return path1
+        else:
+            logger.debug("_find_include_path: path1 does not exist or is not a file")
 
         # Try 2: From repo root
         path2 = self.repo_root / include_ref
+        attempted_paths.append(str(path2))
+        logger.debug(f"_find_include_path: trying path2 (from repo root): {path2}")
         if path2.exists() and path2.is_file():
             logger.debug(f"Found include path (from repo root): {path2}")
             return path2
+        else:
+            logger.debug("_find_include_path: path2 does not exist or is not a file")
 
         # Try 3: Standard Ansible paths
         # Try tasks/ directory relative to current file
         if current_file.parent.name == "tasks":
             path3 = current_file.parent / include_ref
+            attempted_paths.append(str(path3))
+            logger.debug(f"_find_include_path: trying path3 (tasks directory): {path3}")
             if path3.exists() and path3.is_file():
                 logger.debug(f"Found include path (tasks directory): {path3}")
                 return path3
+            else:
+                logger.debug("_find_include_path: path3 does not exist or is not a file")
 
         # Try roles/*/tasks/ directory
         roles_dir = self.repo_root / "roles"
         if roles_dir.exists():
+            logger.debug(f"_find_include_path: searching in roles directory: {roles_dir}")
             for role_dir in roles_dir.iterdir():
                 if role_dir.is_dir():
                     tasks_dir = role_dir / "tasks"
                     if tasks_dir.exists():
                         path4 = tasks_dir / include_ref
+                        attempted_paths.append(str(path4))
+                        logger.debug(f"_find_include_path: trying path4 (role tasks): {path4}")
                         if path4.exists() and path4.is_file():
                             logger.debug(f"Found include path (role tasks): {path4}")
                             return path4
 
         # Not found
-        logger.warning(f"Could not resolve include path: {include_ref}")
+        logger.warning(
+            f"Could not resolve include path: {include_ref} (attempted {len(attempted_paths)} paths)"
+        )
+        logger.debug(f"_find_include_path: attempted paths: {attempted_paths}")
         self.error_collector.add_error(
             "MISSING_FILE",
             f"Include file not found: {include_ref}",
             current_file,
-            {"include_ref": include_ref, "attempted_paths": [str(path1), str(path2)]},
+            {"include_ref": include_ref, "attempted_paths": attempted_paths},
         )
         return None
 
@@ -1019,6 +1077,67 @@ class TemplateFinder:
                     templates.append(template_file)
                     logger.debug(f"Found template file: {template_file}")
 
+        return templates
+
+    def find_templates_in_role_tasks(  # noqa: C901
+        self, role_path: Path, include_resolver: "IncludeResolver"
+    ) -> List[Dict[str, Any]]:
+        """Find templates used in role task files.
+
+        Scans all task files in a role and finds template module usage.
+
+        Args:
+            role_path: Path to role directory
+            include_resolver: IncludeResolver instance for parsing YAML files
+
+        Returns:
+            List of template usage information
+        """
+        logger.debug(f"Finding templates in role tasks: {role_path}")
+        templates = []
+
+        tasks_dir = role_path / "tasks"
+        if not tasks_dir.exists() or not tasks_dir.is_dir():
+            logger.debug(f"No tasks directory found in role: {role_path}")
+            return templates
+
+        # Scan all YAML files in tasks directory
+        for task_file in tasks_dir.rglob("*"):
+            if task_file.is_file() and task_file.suffix in YAML_EXTENSIONS:
+                logger.debug(f"Scanning task file for templates: {task_file}")
+                try:
+                    # Parse task file
+                    content = include_resolver._parse_yaml_file(task_file)
+                    if content is None:
+                        continue
+
+                    # Extract tasks from content
+                    tasks = []
+                    if isinstance(content, list):
+                        # List of tasks
+                        tasks = content
+                    elif isinstance(content, dict):
+                        # Could be a single task or a play
+                        if "tasks" in content:
+                            tasks = content["tasks"]
+                        elif any(key in content for key in ["name", "hosts"]):
+                            # It's a play, extract tasks
+                            tasks = content.get("tasks", [])
+                        else:
+                            # Single task dict
+                            tasks = [content]
+
+                    # Find templates in tasks
+                    file_templates = self.find_templates(tasks, task_file)
+                    templates.extend(file_templates)
+                    logger.debug(
+                        f"Found {len(file_templates)} templates in task file: {task_file}"
+                    )
+
+                except Exception as e:
+                    logger.warning(f"Error scanning task file {task_file} for templates: {e}", exc_info=True)
+
+        logger.debug(f"Found {len(templates)} total templates in role tasks: {role_path}")
         return templates
 
 
@@ -1403,13 +1522,22 @@ class AnsibleStructureAnalyzer:
                     if role_name and role_name not in all_roles:
                         role_path = self.include_resolver._find_role_path(role_name)
                         if role_path:
-                            # Scan role templates
-                            role_templates = self.template_finder.scan_role_templates(role_path)
+                            # Scan role templates directory for .j2 files
+                            role_template_files = self.template_finder.scan_role_templates(role_path)
+                            # Find templates used in role task files
+                            role_task_templates = self.template_finder.find_templates_in_role_tasks(
+                                role_path, self.include_resolver
+                            )
+                            # Collect templates from role tasks
+                            all_templates.extend(role_task_templates)
+                            logger.debug(
+                                f"Found {len(role_task_templates)} templates in role {role_name} tasks"
+                            )
                             all_roles[role_name] = {
                                 "name": role_name,
                                 "path": str(role_path.relative_to(self.repo_root)),
                                 "templates": [
-                                    str(t.relative_to(self.repo_root)) for t in role_templates
+                                    str(t.relative_to(self.repo_root)) for t in role_template_files
                                 ],
                                 "includes": include.get("includes", []),
                             }
@@ -1423,7 +1551,7 @@ class AnsibleStructureAnalyzer:
         # Process playbook includes
         process_includes(playbook_result.get("includes", []))
 
-        # Collect templates
+        # Collect templates from playbook
         all_templates.extend(playbook_result.get("templates", []))
 
 

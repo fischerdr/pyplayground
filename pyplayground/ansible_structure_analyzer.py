@@ -1043,8 +1043,37 @@ class TemplateFinder:
         self.error_collector = error_collector
         logger.debug(f"TemplateFinder initialized with repo_root: {repo_root}")
 
+    def _get_template_key(self, task: Dict[str, Any]) -> Optional[str]:
+        """Get template key from task, checking both short and FQCN forms.
+
+        Args:
+            task: Task dictionary
+
+        Returns:
+            Key name if found (short or FQCN), None otherwise
+        """
+        # Check short form first
+        if "template" in task:
+            return "template"
+
+        # Check FQCN form
+        fqcn_name = "ansible.builtin.template"
+        if fqcn_name in task:
+            return fqcn_name
+
+        # Check other common FQCN forms
+        for collection in ["ansible.legacy", "ansible.posix"]:
+            fqcn_alt = f"{collection}.template"
+            if fqcn_alt in task:
+                return fqcn_alt
+
+        return None
+
     def find_templates(self, tasks: List[Dict[str, Any]], file_path: Path) -> List[Dict[str, Any]]:
         """Find template files used in tasks.
+
+        Templates can be unnamed and may have with_items or loop_control.
+        This method detects templates using both short and FQCN module names.
 
         Args:
             tasks: List of task dictionaries
@@ -1060,16 +1089,21 @@ class TemplateFinder:
             if not isinstance(task, dict):
                 continue
 
-            # Check for template module usage
-            if "template" in task:
-                template_info = self._extract_template_usage(task["template"], file_path)
+            # Check for template module usage (short or FQCN)
+            # Templates can be unnamed and may have with_items/loop_control
+            template_key = self._get_template_key(task)
+            if template_key:
+                logger.debug(f"Found template task with key: {template_key}")
+                template_info = self._extract_template_usage(task[template_key], file_path)
                 if template_info:
                     templates.append(template_info)
+                    logger.debug(f"Extracted template: {template_info.get('template', 'N/A')}")
 
             # Check blocks
             if "block" in task:
                 templates.extend(self.find_templates(task["block"], file_path))
 
+        logger.debug(f"Found {len(templates)} templates in tasks from: {file_path}")
         return templates
 
     def _extract_template_usage(

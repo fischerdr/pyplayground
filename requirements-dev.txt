@@ -235,7 +235,7 @@ python-dotenv==1.1.0
     # via pyplayground (pyproject.toml)
 pyvmomi==8.0.3.0.1
     # via pyplayground (pyproject.toml)
-pyyaml==6.0.2
+pyyaml==6.0.3
     # via
     #   ansible-builder
     #   ansible-core

@@ -47,7 +47,7 @@ distro==1.9.0
     # via bindep
 durationpy==0.9
     # via kubernetes
-filelock==3.18.0
+filelock==3.20.3
     # via pyplayground (pyproject.toml)
 flexcache==0.3
     # via pint
@@ -107,9 +107,10 @@ psycopg2-binary==2.9.10
     # via pyplayground (pyproject.toml)
 ptyprocess==0.7.0
     # via pexpect
-pyasn1==0.6.1
+pyasn1==0.6.2
     # via
     #   pyasn1-modules
+    #   pyplayground (pyproject.toml)
     #   rsa
 pyasn1-modules==0.4.2
     # via google-auth
@@ -141,7 +142,7 @@ referencing==0.36.2
     # via
     #   jsonschema
     #   jsonschema-specifications
-requests==2.32.3
+requests==2.32.5
     # via
     #   awxkit
     #   hvac

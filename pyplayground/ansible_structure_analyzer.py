@@ -1706,14 +1706,6 @@ class IncludeResolver:
             logger.debug(f"Found role path: {role_path}")
             return role_path
 
-        # Not found - check if it's an excluded role (external from requirements.yml)
-        if not hasattr(self, "_excluded_roles"):
-            self._excluded_roles = self._load_excluded_roles()
-
-        if role_name in self._excluded_roles:
-            logger.debug(f"Role {role_name} is excluded (external role from requirements.yml), skipping")
-            return None
-
         # Not found - use deduplication to avoid spam for same missing role across multiple playbooks
         self.error_collector.add_error(
             "MISSING_FILE",

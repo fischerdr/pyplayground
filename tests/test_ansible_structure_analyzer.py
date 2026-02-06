@@ -266,6 +266,94 @@ class TestOutputGenerator:
         assert "Ansible Structure Analysis" in content
         assert "playbook.yml" in content
 
+    def test_generate_markdown_no_diagrams(self, tmp_path):
+        """Test that include_diagrams=False produces no mermaid blocks."""
+        generator = OutputGenerator(tmp_path)
+        structure = {
+            "metadata": {"analyzed_at": "2026-01-01T00:00:00", "repo_root": "/test"},
+            "playbooks": [{"file": "pb.yml", "includes": [{"type": "role", "name": "r1"}]}],
+            "roles": [],
+            "templates": [],
+            "errors": [],
+            "statistics": {},
+            "dependency_graph": {"nodes": ["r1"], "edges": []},
+        }
+        path = generator.generate_markdown(structure, include_diagrams=False)
+        content = path.read_text()
+        assert "```mermaid" not in content
+
+    def test_generate_markdown_diagram_scope_per_playbook(self, tmp_path):
+        """Test diagram_scope per_playbook: per-playbook diagram only, no global section."""
+        generator = OutputGenerator(tmp_path)
+        structure = {
+            "metadata": {"analyzed_at": "2026-01-01T00:00:00", "repo_root": "/test"},
+            "playbooks": [
+                {
+                    "file": "pb.yml",
+                    "includes": [{"type": "role", "name": "my_role", "includes": []}],
+                }
+            ],
+            "roles": [],
+            "templates": [],
+            "errors": [],
+            "statistics": {},
+            "dependency_graph": {"nodes": ["my_role"], "edges": []},
+        }
+        path = generator.generate_markdown(
+            structure, include_diagrams=True, diagram_scope="per_playbook"
+        )
+        content = path.read_text()
+        assert "```mermaid" in content
+        assert "Execution flow" in content
+        assert "Role Dependency Graph" not in content
+
+    def test_generate_markdown_diagram_scope_global(self, tmp_path):
+        """Test diagram_scope global: only Role Dependency Graph, no per-playbook Execution flow."""
+        generator = OutputGenerator(tmp_path)
+        structure = {
+            "metadata": {"analyzed_at": "2026-01-01T00:00:00", "repo_root": "/test"},
+            "playbooks": [
+                {
+                    "file": "pb.yml",
+                    "includes": [{"type": "role", "name": "my_role", "includes": []}],
+                }
+            ],
+            "roles": [],
+            "templates": [],
+            "errors": [],
+            "statistics": {},
+            "dependency_graph": {"nodes": ["my_role"], "edges": []},
+        }
+        path = generator.generate_markdown(
+            structure, include_diagrams=True, diagram_scope="global"
+        )
+        content = path.read_text()
+        assert "Role Dependency Graph" in content
+        assert "Execution flow" not in content
+
+    def test_generate_playbook_mermaid_diagram_empty(self, tmp_path):
+        """Test generate_playbook_mermaid_diagram returns empty string when no includes."""
+        generator = OutputGenerator(tmp_path)
+        playbook = {"file": "pb.yml", "includes": []}
+        result = generator.generate_playbook_mermaid_diagram(playbook)
+        assert result == ""
+
+    def test_generate_playbook_mermaid_diagram_with_includes(self, tmp_path):
+        """Test generate_playbook_mermaid_diagram returns valid mermaid for playbook with includes."""
+        generator = OutputGenerator(tmp_path)
+        playbook = {
+            "file": "upgrade.yml",
+            "includes": [
+                {"type": "role", "name": "upgrade_cluster", "includes": []},
+                {"type": "include_tasks", "ref": "node_status.yml", "includes": []},
+            ],
+        }
+        result = generator.generate_playbook_mermaid_diagram(playbook)
+        assert result
+        assert "graph TD" in result or "graph LR" in result
+        assert "upgrade_cluster" in result
+        assert "node_status" in result or "node_status.yml" in result
+
 
 class TestAnsibleStructureAnalyzer:
     """Tests for AnsibleStructureAnalyzer orchestrator."""

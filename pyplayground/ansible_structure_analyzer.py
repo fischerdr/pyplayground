@@ -27,7 +27,11 @@ Output Formats:
 - JSON (comprehensive structured data)
 - Markdown (human-readable reports with refactoring analysis)
 - CSV (multiple files for data analysis: roles, dependencies, coupling matrix, etc.)
-- Mermaid (dependency graph visualization embedded in markdown with configurable layout and simplified labels)
+- Mermaid (optional dependency graph visualization embedded in markdown):
+  - Per-playbook execution flow diagrams (playbook -> roles -> tasks -> nested includes)
+  - Global role dependency graph (all roles and their relationships)
+  - Configurable scope: per-playbook only, global only, or both
+  - Configurable layout (top-down or left-to-right) and simplified labels
 
 Performance Features:
 - Incremental batch processing for large repositories
@@ -40,7 +44,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Literal, Optional, Set
 
 import click
 import yaml
@@ -3563,13 +3567,21 @@ class OutputGenerator:
             raise
 
     def generate_markdown(
-        self, structure: Dict[str, Any], filename: str = "ansible_structure.md"
+        self,
+        structure: Dict[str, Any],
+        filename: str = "ansible_structure.md",
+        include_diagrams: bool = True,
+        diagram_scope: Literal["per_playbook", "global", "both"] = "per_playbook",
     ) -> Path:
         """Generate Markdown output file.
 
         Args:
             structure: Structure dictionary to output
             filename: Output filename
+            include_diagrams: If True, include Mermaid diagrams in output
+            diagram_scope: Which diagrams to emit when include_diagrams is True:
+                "per_playbook" (only per-playbook execution flow), "global" (only
+                role dependency graph), or "both"
 
         Returns:
             Path to generated file
@@ -3578,6 +3590,7 @@ class OutputGenerator:
             IOError: If file cannot be written
         """
         logger.info(f"Generating Markdown output: {filename}")
+        logger.debug(f"Diagram scope: {diagram_scope}, include_diagrams: {include_diagrams}")
 
         try:
             output_path = self.output_dir / filename
@@ -3605,6 +3618,20 @@ class OutputGenerator:
                     if includes:
                         f.write(f"#### Includes ({len(includes)} items)\n\n")
                         self._write_includes_markdown(f, includes, indent=0)
+                    if include_diagrams and diagram_scope in ("per_playbook", "both"):
+                        pb_diagram = self.generate_playbook_mermaid_diagram(
+                            pb, simplify_labels=True, layout="TD"
+                        )
+                        if pb_diagram:
+                            logger.debug(f"Emitting per-playbook diagram for {pb.get('file')}")
+                            f.write("\n#### Execution flow\n\n")
+                            f.write("```mermaid\n")
+                            f.write(pb_diagram)
+                            f.write("\n```\n\n")
+                        else:
+                            logger.debug(
+                                f"Skipping per-playbook diagram for {pb.get('file')}: no includes"
+                            )
                     f.write("\n")
 
                 # Roles
@@ -3707,31 +3734,37 @@ class OutputGenerator:
                             )
                         f.write("\n")
 
-                # Dependency Graph Visualization (Mermaid)
-                dependency_graph = structure.get("dependency_graph", {})
-                if dependency_graph.get("nodes"):
-                    f.write("## Role Dependency Graph\n\n")
-                    f.write(
-                        "The following diagram shows the dependency relationships between roles:\n\n"
-                    )
-                    mermaid_diagram = self.generate_mermaid_diagram(
-                        structure,
-                        highlight_merge_candidates=True,
-                        highlight_extraction_candidates=True,
-                        simplify_labels=True,
-                        layout="LR",
-                    )
-                    f.write("```mermaid\n")
-                    f.write(mermaid_diagram)
-                    f.write("\n```\n\n")
-                    f.write(
-                        "**Legend**:\n"
-                        "- Solid arrows (-->) indicate role dependencies\n"
-                        "- Dashed arrows (-.->) indicate task includes\n"
-                        "- Thick arrows (==>) indicate template usage\n"
-                        "- Green nodes indicate merge candidates\n"
-                        "- Yellow nodes indicate extraction candidates\n\n"
-                    )
+                # Dependency Graph Visualization (Mermaid) - only when scope allows
+                if include_diagrams and diagram_scope in ("global", "both"):
+                    dependency_graph = structure.get("dependency_graph", {})
+                    if dependency_graph.get("nodes"):
+                        logger.debug("Emitting global role dependency graph")
+                        f.write("## Role Dependency Graph\n\n")
+                        f.write(
+                            "The following diagram shows the dependency relationships between roles:\n\n"
+                        )
+                        mermaid_diagram = self.generate_mermaid_diagram(
+                            structure,
+                            highlight_merge_candidates=True,
+                            highlight_extraction_candidates=True,
+                            simplify_labels=True,
+                            layout="LR",
+                        )
+                        f.write("```mermaid\n")
+                        f.write(mermaid_diagram)
+                        f.write("\n```\n\n")
+                        f.write(
+                            "**Legend**:\n"
+                            "- Solid arrows (-->) indicate role dependencies\n"
+                            "- Dashed arrows (-.->) indicate task includes\n"
+                            "- Thick arrows (==>) indicate template usage\n"
+                            "- Green nodes indicate merge candidates\n"
+                            "- Yellow nodes indicate extraction candidates\n\n"
+                        )
+                    else:
+                        logger.debug("Skipping global diagram: no dependency graph nodes")
+                elif include_diagrams:
+                    logger.debug("Skipping global diagram: scope is per_playbook only")
 
                 # Role Refactoring Analysis sections
                 self._write_refactoring_analysis_markdown(f, structure)
@@ -4329,6 +4362,110 @@ class OutputGenerator:
                 logger.debug(
                     f"No extraction candidates found in node list (candidates: {list(extraction_candidates)})"
                 )
+
+        return "\n".join(lines)
+
+    def generate_playbook_mermaid_diagram(
+        self,
+        playbook: Dict[str, Any],
+        simplify_labels: bool = True,
+        layout: str = "TD",
+    ) -> str:
+        """Generate Mermaid diagram for a single playbook's execution hierarchy.
+
+        Shows playbook -> roles -> tasks -> nested includes. Returns empty string
+        if the playbook has no includes.
+
+        Args:
+            playbook: Playbook dictionary with 'file' and 'includes'
+            simplify_labels: If True, use short or no edge labels
+            layout: Graph layout - "TD" (top-down) or "LR" (left-to-right)
+
+        Returns:
+            Mermaid diagram syntax as string, or "" if no includes
+        """
+        includes = playbook.get("includes", [])
+        if not includes:
+            logger.debug(f"Playbook {playbook.get('file', '?')} has no includes, skipping diagram")
+            return ""
+
+        pb_file = playbook.get("file", "playbook")
+        logger.debug(f"Generating playbook diagram for {pb_file}")
+
+        def escape_id(s: str) -> str:
+            out = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in s)
+            return out or "n"
+
+        def escape_label(s: str) -> str:
+            return s.replace('"', "&quot;").replace("'", "&#39;")
+
+        base = escape_id(str(pb_file))
+        node_ids: Dict[str, str] = {}
+        used: Set[str] = set()
+        edges: List[tuple] = []  # (from_id, to_id, edge_type, ref)
+
+        def make_node_id(label: str, kind: str) -> str:
+            raw = f"{base}_{kind}_{escape_id(label)}"
+            nid = raw
+            i = 0
+            while nid in used:
+                i += 1
+                nid = f"{raw}_{i}"
+            used.add(nid)
+            return nid
+
+        def walk(incl_list: List[Dict[str, Any]], parent_id: str) -> None:
+            for inc in incl_list:
+                inc_type = inc.get("type", "")
+                name = inc.get("name") or inc.get("ref") or inc.get("path") or "?"
+                name_str = str(name)
+                if inc_type in ("role", "include_role", "import_role"):
+                    role_name = inc.get("name") or inc.get("ref") or name_str
+                    nid = make_node_id(role_name, "role")
+                    node_ids[nid] = escape_label(str(role_name))
+                    edges.append((parent_id, nid, "role", ""))
+                    for nested in inc.get("includes") or []:
+                        walk([nested], nid)
+                elif inc_type in ("include_tasks", "import_tasks"):
+                    ref = inc.get("ref") or inc.get("path") or name_str
+                    nid = make_node_id(ref, "task")
+                    node_ids[nid] = escape_label(ref)
+                    ref_short = ref if len(ref) <= 20 else ref[:17] + "..."
+                    edges.append((parent_id, nid, "tasks", ref_short))
+                    for nested in inc.get("includes") or []:
+                        walk([nested], nid)
+                else:
+                    ref = inc.get("ref") or name_str
+                    nid = make_node_id(ref, "inc")
+                    node_ids[nid] = escape_label(str(ref))
+                    edges.append((parent_id, nid, "include", str(ref)))
+                    for nested in inc.get("includes") or []:
+                        walk([nested], nid)
+
+        root_id = f"{base}_root"
+        used.add(root_id)
+        node_ids[root_id] = escape_label(pb_file)
+        walk(includes, root_id)
+
+        lines = [f"graph {layout}"]
+        for nid, label in node_ids.items():
+            lines.append(f'    {nid}["{label}"]')
+        for from_id, to_id, etype, ref in edges:
+            if simplify_labels and etype == "role":
+                lines.append(f"    {from_id} --> {to_id}")
+            elif simplify_labels and etype == "tasks":
+                lab = (ref[:15] + "..." if len(ref) > 15 else ref) if ref else "tasks"
+                lab_esc = lab.replace('"', "&quot;").replace("'", "&#39;")
+                lines.append(f'    {from_id} -.->|"{lab_esc}"| {to_id}')
+            elif etype == "tasks":
+                lab_esc = (ref or "tasks").replace('"', "&quot;").replace("'", "&#39;")
+                lines.append(f'    {from_id} -.->|"{lab_esc}"| {to_id}')
+            else:
+                lab_esc = (ref or etype).replace('"', "&quot;").replace("'", "&#39;")
+                if lab_esc:
+                    lines.append(f'    {from_id} -->|"{lab_esc}"| {to_id}')
+                else:
+                    lines.append(f"    {from_id} --> {to_id}")
 
         return "\n".join(lines)
 
@@ -5025,6 +5162,21 @@ class AnsibleStructureAnalyzer:
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging.")
 @click.option("--debug", "-d", is_flag=True, help="Enable debug logging (same as --verbose).")
+@click.option(
+    "--no-diagrams",
+    "no_diagrams",
+    is_flag=True,
+    default=False,
+    help="Skip generating Mermaid diagrams in markdown output.",
+)
+@click.option(
+    "--diagram-scope",
+    "diagram_scope",
+    type=click.Choice(["per-playbook", "global", "both"], case_sensitive=False),
+    default="per-playbook",
+    show_default=True,
+    help="Which diagrams to include when diagrams are enabled: per-playbook only, global role graph only, or both.",
+)
 def main(
     input_path: Path,
     repo_root: Path,
@@ -5037,6 +5189,8 @@ def main(
     max_workers: int,
     verbose: bool,
     debug: bool,
+    no_diagrams: bool,
+    diagram_scope: str,
 ):
     """Analyzes Ansible playbooks and roles to document structure, includes, and templates."""
     # Setup logging early
@@ -5135,7 +5289,15 @@ def main(
 
             if output_format in ["markdown", "both", "all"]:
                 md_filename = f"{base_name}_structure.md"
-                md_path = output_gen.generate_markdown(structure, filename=md_filename)
+                scope_value: Literal["per_playbook", "global", "both"] = (
+                    "per_playbook" if diagram_scope == "per-playbook" else diagram_scope
+                )
+                md_path = output_gen.generate_markdown(
+                    structure,
+                    filename=md_filename,
+                    include_diagrams=not no_diagrams,
+                    diagram_scope=scope_value,
+                )
                 console.print(f"[bold green]Markdown output saved to: {md_path}[/bold green]")
 
             if output_format in ["csv", "all"]:

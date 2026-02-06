@@ -1,5 +1,101 @@
 # Project Progress Tracking
 
+## Phase: Optional Per-Playbook Mermaid Diagrams
+
+### Task 1: Add include_diagrams and diagram_scope to generate_markdown; guard global diagram section
+
+**Status**: Complete  
+**Date**: 2026-02-06  
+**Branch**: main  
+
+**Changes Made**:
+- Added `include_diagrams: bool = True` and `diagram_scope: Literal["per_playbook", "global", "both"] = "per_playbook"` to `OutputGenerator.generate_markdown`
+- Global "Role Dependency Graph" section now runs only when `include_diagrams` is True and `diagram_scope in ("global", "both")`
+- Added `Literal` to typing imports
+- Docstring updated with new parameters; debug logging for diagram scope and skip/emit decisions
+
+**Tests**: pytest (ansible_structure_analyzer tests); py_compile  
+**Logging**: logger.debug for diagram_scope/include_diagrams and when skipping/emitting global diagram  
+**Files Modified**: pyplayground/ansible_structure_analyzer.py
+
+---
+
+### Task 2: Implement generate_playbook_mermaid_diagram with recursive include traversal
+
+**Status**: Complete  
+**Date**: 2026-02-06  
+
+**Changes Made**:
+- New method `OutputGenerator.generate_playbook_mermaid_diagram(playbook, simplify_labels=True, layout="TD")` returning Mermaid string or "" if no includes
+- Recursive walk over playbook includes; nodes for playbook root, roles, and task files; solid edges for roles, dashed for tasks
+- Node IDs escaped and unique per playbook; optional short edge labels
+
+**Tests**: pytest; py_compile  
+**Logging**: logger.debug when generating diagram and when playbook has no includes  
+**Files Modified**: pyplayground/ansible_structure_analyzer.py
+
+---
+
+### Task 3: Emit per-playbook diagrams in Playbooks loop when scope allows
+
+**Status**: Complete  
+**Date**: 2026-02-06  
+
+**Changes Made**:
+- In markdown Playbooks loop, when `include_diagrams` and `diagram_scope in ("per_playbook", "both")`, call `generate_playbook_mermaid_diagram(playbook)` after each playbook's Includes
+- If result non-empty, write "#### Execution flow" and mermaid code block
+- Debug logging when emitting or skipping per-playbook diagram
+
+**Tests**: pytest; py_compile  
+**Files Modified**: pyplayground/ansible_structure_analyzer.py
+
+---
+
+### Task 4: Add CLI --no-diagrams and --diagram-scope; wire to generate_markdown
+
+**Status**: Complete  
+**Date**: 2026-02-06  
+
+**Changes Made**:
+- CLI option `--no-diagrams` (flag) to disable all diagrams
+- CLI option `--diagram-scope` with choices `per-playbook` | `global` | `both`, default `per-playbook`
+- main() passes `include_diagrams=not no_diagrams` and `diagram_scope` (mapped to per_playbook/global/both) into `generate_markdown`
+
+**Tests**: pytest; py_compile  
+**Files Modified**: pyplayground/ansible_structure_analyzer.py
+
+---
+
+### Task 5: Add tests for diagram disable and scope
+
+**Status**: Complete  
+**Date**: 2026-02-06  
+
+**Changes Made**:
+- test_generate_markdown_no_diagrams: assert no mermaid blocks when include_diagrams=False
+- test_generate_markdown_diagram_scope_per_playbook: assert Execution flow present, Role Dependency Graph absent
+- test_generate_markdown_diagram_scope_global: assert Role Dependency Graph present, Execution flow absent
+- test_generate_playbook_mermaid_diagram_empty: assert empty string for playbook with no includes
+- test_generate_playbook_mermaid_diagram_with_includes: assert valid mermaid output for playbook with includes
+
+**Tests**: All five new tests pass  
+**Files Modified**: tests/test_ansible_structure_analyzer.py
+
+---
+
+### Task 6: Update docs/progress.md and docstrings
+
+**Status**: Complete  
+**Date**: 2026-02-06  
+
+**Changes Made**:
+- progress.md updated with phase and tasks 1-6 per DEVELOPMENT_STANDARDS
+- Docstrings already added for generate_markdown (new args), generate_playbook_mermaid_diagram (full Args/Returns)
+
+**Files Modified**: docs/progress.md
+
+---
+
 ## Phase 1: Ansible Structure Analyzer Implementation
 
 ### Task 1.1-1.11: Ansible Structure Analyzer Complete Implementation

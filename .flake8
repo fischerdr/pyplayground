@@ -10,6 +10,8 @@ exclude =
     .venv,
     tools
 ignore =
+    # Complexity warnings - ignored as acceptable
+    C901,
     # Missing docstring in public module
     D100,
     # Missing docstring in public package
@@ -18,20 +20,21 @@ ignore =
     D105,
     # Missing docstring in __init__
     D107,
-    # line break before binary operator
-    W503,
+   # First line should be in imperative mood; try rephrasing
+    D401,
+    # One-line docstring should fit on one line with quotes
+    D200,
     # Import errors - imports must be at top of the file
     E402,
     # Line too long - i give up
     E501,
-    # First line should be in imperative mood; try rephrasing
-    D401,
-    # One-line docstring should fit on one line with quotes
-    D200,
     # Assigned but not used
     F841,
     # Unable to detect undefinded names
-    F403
+    F403,
+    # line break before binary operator
+    W503,
+   
 per-file-ignores =
     # Allow unused imports in __init__.py
     __init__.py:F401

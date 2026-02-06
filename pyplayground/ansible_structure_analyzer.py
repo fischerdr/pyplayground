@@ -220,7 +220,7 @@ class FileDiscovery:
 
                 return False
         except Exception as e:
-            logger.debug(f"Error validating playbook {file_path}: {e}")
+            logger.warning(f"Error validating playbook {file_path}: {e}", exc_info=True)
             return False  # Conservative: don't treat as playbook if we can't validate
 
     def discover_all_playbooks(self, repo_root: Path) -> List[Path]:
@@ -313,7 +313,7 @@ class FileDiscovery:
                         playbook_files.append(item)
 
         except Exception as e:
-            logger.warning(f"Error scanning directory {directory}: {e}")
+            logger.warning(f"Error scanning directory {directory}: {e}", exc_info=True)
 
         return playbook_files
 
@@ -341,7 +341,7 @@ class FileDiscovery:
                     patterns.append(line)
             logger.debug(f"Loaded {len(patterns)} .gitignore patterns")
         except Exception as e:
-            logger.warning(f"Error loading .gitignore: {e}")
+            logger.warning(f"Error loading .gitignore: {e}", exc_info=True)
 
         return patterns
 
@@ -677,7 +677,8 @@ class IncludeResolver:
                             logger.debug(
                                 f"resolve_includes: File {file_path.name} includes: {', '.join(temp_includes[:5])}"
                             )
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Error during debug logging (non-critical): {e}", exc_info=True)
                     pass  # Ignore errors during debug logging
 
                 self.error_collector.add_error(
@@ -2617,7 +2618,7 @@ class ResourceAnalyzer:
                             if template_role not in var_to_roles[var_name]:
                                 var_to_roles[var_name].append(template_role)
             except Exception as e:
-                logger.debug(f"Error reading template {template_path} for variable analysis: {e}")
+                logger.warning(f"Error reading template {template_path} for variable analysis: {e}", exc_info=True)
 
         # Filter to only shared variables (used by 2+ roles)
         shared = {var: roles_list for var, roles_list in var_to_roles.items() if len(roles_list) > 1}
@@ -2743,7 +2744,8 @@ class ResourceAnalyzer:
                         # Limit regex processing to prevent DoS (pattern is safe, but large files can be slow)
                         vars_found = re.findall(var_pattern, content)
                         shared_vars.update(vars_found)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Error processing template variable extraction: {e}", exc_info=True)
                 pass
 
         return sorted(list(shared_vars))
@@ -3531,10 +3533,12 @@ class OutputGenerator:
 
         try:
             output_path = self.output_dir / filename
+            logger.debug(f"Opening output file for writing: {output_path}")
 
             with output_path.open("w", encoding="utf-8") as f:
                 json.dump(structure, f, indent=2, ensure_ascii=False)
 
+            logger.debug(f"Closed output file: {output_path}")
             logger.info(f"JSON output saved to: {output_path}")
             return output_path
 
@@ -3561,6 +3565,7 @@ class OutputGenerator:
 
         try:
             output_path = self.output_dir / filename
+            logger.debug(f"Opening output file for writing: {output_path}")
 
             with output_path.open("w", encoding="utf-8") as f:
                 f.write("# Ansible Structure Analysis\n\n")
@@ -3687,6 +3692,7 @@ class OutputGenerator:
                 # Role Refactoring Analysis sections
                 self._write_refactoring_analysis_markdown(f, structure)
 
+            logger.debug(f"Closed output file: {output_path}")
             logger.info(f"Markdown output saved to: {output_path}")
             return output_path
 
@@ -4376,6 +4382,7 @@ class AnsibleStructureAnalyzer:
         Returns:
             Dictionary containing complete structure analysis
         """
+        logger.info(f"Starting standard analysis of {len(playbook_files)} playbook file(s)")
         if not playbook_files:
             logger.warning("No playbook files found")
             return self.structure_builder.build_structure(

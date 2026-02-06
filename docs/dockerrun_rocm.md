@@ -277,49 +277,52 @@ export VLLM_USE_TRITON_FLASH_ATTN=0; vllm serve Qwen/Qwen3-30B-A3B-GPTQ-Int4 \
 # llama.cpp command lines
 ```bash
 
+### Codeing type llm
+llama-server --alias "locmod-code" --host 192.168.100.10 --port 10000 -hf lmstudio-community/Codestral-22B-v0.1-GGUF:Q5_K_M \
+    -ngl 99 --ctx-size 16486 --parallel 1  -fa on --seed 42 --alias "local-model-autoc" --jinja 
 
-llama-server --host 192.168.100.10 --port 10000 \
-    -hf unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M \
-    -ngl 999 -c 64738 -b 1024 --parallel 2 --mlock -fa on \
-    --seed 42 --alias "local-model" \
-    --temp 0.7 --top-p 0.9 --top-k 20 --min-p 0.0 \
-    --repeat-penalty 1.05 \
-    --jinja --no-mmap --no-webui --threads 12 --threads-batch 24
+llama-server --alias "locmod-codes" --host 192.168.100.10 --port 10000  -hf lmstudio-community/Codestral-22B-v0.1-GGUF:Q5_K_M \
+    -ngl 99 --parallel 1 -fa on --seed 42 --temp 0.4 --top-p 0.85 --top-k 40 --min-p 0.1 --repeat-penalty 1.1 \
+    --jinja --no-mmap  --mlock --no-webui --ctx-size 32768
 
-llama-server --host 192.168.100.10 --port 10000 \
-    -hf unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q5_K_M \
-    -ngl 999 -c 32768 -b 512 --parallel 2 --mlock -fa on \
-    --seed 42 --alias "local-model" \
-    --temp 0.7 --top-p 0.9 --top-k 20 --min-p 0.05 \
-    --repeat-penalty 1.1 --n-cpu-moe 16 \
-    --jinja --no-mmap --no-webui --threads 8 --threads-batch 16
+llama-server  --alias "locmod-qwen-code" --host 192.168.100.10 --port 10000 -hf unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q5_K_M \
+    -ngl 99  --parallel 1 -fa on --fit on \
+    --seed 42 --temp 0.7 --top-p 0.9 --top-k 20 --min-p 0.05 --repeat-penalty 1.1 \
+    --jinja --no-mmap  --mlock --no-webui --ctx-size 32768
 
-llama-server --host 192.168.100.10 --port 10000  \
-    -hf unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M \
-    -ngl 999 -c 64738 -b 1024 --threads 12 --threads-batch 24 --parallel 2 --mlock -fa on \
-    --seed 42 --alias "local-model" \
-    --temp 0.7 --top-p 0.9 --top-k 20 --min-p 0.0  --repeat-penalty 1.05 \
-    --jinja --no-mmap --no-webui
-
-llama-server --host 192.168.100.10 --port 10000 \
-    -hf unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q5_K_M \
-    -ngl 999 -c 32768 -b 1024 --threads 12 --threads-batch 24 --parallel 2 --mlock -fa on \
-    --seed 42 --alias "local-model" \
-    --temp 0.7 --top-p 0.9 --top-k 20 --min-p 0.05 --repeat-penalty 1.1  \
-    --jinja --no-mmap --no-webui 
+llama-server --alias "locmod-qwen-code" --host 192.168.100.10 --port 10000 -hf unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q5_K_M \
+    -ngl 99 -fa on --parallel 1 --fit on \
+    --seed 42  --temp 0.7 --top-p 1.0 --top-k 20 --min-p 0.1 --repeat-penalty 1.1 \
+    --mlock --no-mmap --jinja --no-webui --ctx-size 32768 -b 2048
+    
+## temp ex.     --temp 0.7 --top-p 0.9 --top-k 20 --min-p 0.05 --repeat-penalty 1.1 
+# more concise  --temp 0.4 --top-p 0.85 --top-k 40 --min-p 0.1 --repeat-penalty 1.1
+#
+llama-server  --alias "unsloth/GLM-4.7-Flash-NT"  --host 192.168.100.10 --port 10001 -hf unsloth/GLM-4.7-Flash-GGUF:Q8_0 \
+    --fit on --temp 1.0 --top-p 0.95 --min-p 0.01 --kv-unified  --cache-type-k q8_0 --cache-type-v q8_0  -fa on  \
+    --batch-size 4096 --ubatch-size 1024 --ctx-size 32768 -ngl 99 --parallel 1 --seed 42 \
+    --jinja  --no-webui --chat-template-kwargs "{"enable_thinking": false}"
 
 
-llama-server --host 192.168.100.10 --port 10001 \
-    -hf unsloth/gpt-oss-20b-GGUF:Q5_K_M \
-    -ngl 999 -b 1024 --threads 12 --threads-batch 24 --parallel 2 --mlock -fa on \
-    --seed 42 --alias "local-model-think" \
-    --temp 0.85 --top-p 0.9 --top-k 20 --min-p 0.05 --repeat-penalty 1.1 \
-    --jinja --no-webui 
 
-llama-server --host 192.168.100.10 --port 10001 \
-    -hf unsloth/gpt-oss-20b-GGUF:Q5_K_M \
-    -ngl 999 -c 0 -b 1024 --threads 12 --threads-batch 24 --parallel 2 --mlock -fa on \
-    --seed 42 --alias "local-model-think" --temp 0.85 --top-p 0.9 --top-k 20 --min-p 0.05 --repeat-penalty 1.1 \
-    --jinja --no-mmap --no-webui 
 
+#### Thinking/Images
+llama-server --alias "locmod-think-image" --host 192.168.100.10 --port 10001 -hf unsloth/Qwen3-VL-32B-Thinking-GGUF:Q4_K_M \
+    -ngl 99 --parallel 1 -fa on --seed 42  \
+    --temp 1.00 --top-p 0.95 --top-k 20 --min-p 0.05 --repeat-penalty 1.0 \
+    --fit on --mlock --no-mmap --jinja --no-webui --ctx-size 16386
+ 
+llama-server --alias "unsloth/Mistral-Small-3.2-24B-Instruct-2506" --host 192.168.100.10 --port 10001 -hf unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF:UD-Q4_K_XL  -ngl 99 --parallel 1 -fa on --seed 42 --temp 0.4 --top-p 0.95 --top-k 20 --min-p 0.05 --repeat-penalty 1.0 --fit on --mlock --no-mmap --jinja --ctx-size 32768 -b 4096
+
+    
+### Thinking
+llama-server --alias "unsloth/gpt-oss-20b" --host 192.168.100.10 --port 10001 -hf unsloth/gpt-oss-20b-GGUF:Q5_K_M \
+    -ngl 999  -b 1024 --threads 12 --threads-batch 24 --parallel 1 -fa on \
+    --seed 42  --temp 0.85 --top-p 0.9 --top-k 20 --min-p 0.05 --repeat-penalty 1.1 \
+    --jinja --no-mmap --mlock --ctx-size 32768
+
+llama-server  --alias "unsloth/GLM-4.7-Flash"  --host 192.168.100.10 --port 10001 -hf unsloth/GLM-4.7-Flash-GGUF:Q8_0 \
+    --fit on --temp 1.0 --top-p 0.95 --min-p 0.01 --kv-unified  --cache-type-k q8_0 --cache-type-v q8_0  -fa on  \
+    --batch-size 4096 --ubatch-size 1024 --ctx-size 32768 -ngl 99 --parallel 1 --seed 42 \
+    --jinja  --no-webui
 ```

@@ -101,7 +101,7 @@ pick==2.4.0
     # via pyplayground (pyproject.toml)
 pint==0.24.4
     # via pyplayground (pyproject.toml)
-platformdirs==4.3.7
+platformdirs==4.4.0
     # via pint
 psycopg2-binary==2.9.10
     # via pyplayground (pyproject.toml)

@@ -170,7 +170,7 @@ pint==0.24.4
     # via pyplayground (pyproject.toml)
 pip-tools==7.4.1
     # via pyplayground (pyproject.toml)
-platformdirs==4.3.7
+platformdirs==4.4.0
     # via
     #   black
     #   pint

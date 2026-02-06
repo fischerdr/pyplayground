@@ -176,9 +176,7 @@ platformdirs==4.3.7
     #   pint
     #   virtualenv
 pluggy==1.5.0
-    # via
-    #   pytest
-    #   pytest-qt
+    # via pytest
 pre-commit==4.2.0
     # via pyplayground (pyproject.toml)
 psycopg2-binary==2.9.11
@@ -218,13 +216,10 @@ pytest==8.3.5
     #   pyplayground (pyproject.toml)
     #   pytest-cov
     #   pytest-mock
-    #   pytest-qt
     #   pytest-xdist
 pytest-cov==6.1.1
     # via pyplayground (pyproject.toml)
 pytest-mock==3.15.1
-    # via pyplayground (pyproject.toml)
-pytest-qt==4.5.0
     # via pyplayground (pyproject.toml)
 pytest-xdist==3.8.0
     # via pyplayground (pyproject.toml)
@@ -269,9 +264,7 @@ rich==14.0.0
     #   pyplayground (pyproject.toml)
     #   typer
 roman-numerals==4.1.0
-    # via
-    #   roman-numerals-py
-    #   sphinx
+    # via roman-numerals-py
 roman-numerals-py==4.1.0
     # via sphinx
 rpds-py==0.30.0
@@ -339,12 +332,12 @@ typing-extensions==4.13.2
     #   mypy
     #   pint
     #   pymarkdownlnt
-    #   pytest-qt
     #   typer
-urllib3==2.4.0
+urllib3==2.6.3
     # via
     #   botocore
     #   kubernetes
+    #   pyplayground (pyproject.toml)
     #   requests
 virtualenv==20.30.0
     # via pre-commit

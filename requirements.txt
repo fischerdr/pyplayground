@@ -183,10 +183,11 @@ typing-extensions==4.13.2
     #   flexparser
     #   pint
     #   typer
-urllib3==2.4.0
+urllib3==2.6.3
     # via
     #   botocore
     #   kubernetes
+    #   pyplayground (pyproject.toml)
     #   requests
 websocket-client==1.8.0
     # via kubernetes

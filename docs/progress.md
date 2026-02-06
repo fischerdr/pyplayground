@@ -7,7 +7,7 @@
 **Status**: ✅ Complete  
 **Date**: 2026-02-05  
 **Branch**: main  
-**Commit: 3678606 after commit]
+**Commit**: 3678606
 
 **Changes Made**:
 - Created `pyplayground/ansible_structure_analyzer.py` with complete implementation
@@ -89,7 +89,7 @@
 **Status**: ✅ Complete  
 **Date**: 2026-02-05  
 **Branch**: main  
-**Commit: 3678606 after commit]
+**Commit**: 3678606
 
 **Changes Made**:
 - Added `_has_loop()` helper method to detect `with_sequence`, `with_items`, and `loop` constructs in tasks
@@ -180,7 +180,7 @@
 **Status**: ✅ Complete  
 **Date**: 2026-02-05  
 **Branch**: main  
-**Commit: 3678606 after commit]
+**Commit**: 3678606
 
 **Changes Made**:
 - Fixed include parsing to handle FQCN (ansible.builtin.include_tasks, ansible.builtin.include_role)
@@ -215,7 +215,7 @@
 **Status**: ✅ Complete  
 **Date**: 2026-02-05  
 **Branch**: main  
-**Commit: 3678606 after commit]
+**Commit**: 3678606
 
 **Changes Made**:
 - Fixed playbook list structure handling - playbooks are lists of play dictionaries, not task lists
@@ -260,7 +260,7 @@
 **Status**: ✅ Complete  
 **Date**: 2026-02-05  
 **Branch**: main  
-**Commit: 3678606 after commit]
+**Commit**: 3678606
 
 **Changes Made**:
 - Changed default output directory from `.` (current directory) to `tmp/` in current working directory
@@ -625,7 +625,7 @@
 **Status**: ✅ Complete  
 **Date**: 2026-02-05  
 **Branch**: main  
-**Commit: 3678606 after commit]
+**Commit**: 3678606
 
 **Changes Made**:
 - Added deduplication to `ErrorCollector.add_error()` method with optional `deduplicate` parameter

@@ -682,3 +682,45 @@
 - ✅ Syntax validation: Passed
 
 **Next Steps**: Test with actual repository containing roles/requirements.yml
+
+---
+
+### Task 3.4: Error Analysis and Reporting Enhancement
+
+**Status**: ✅ Complete  
+**Date**: 2026-02-05  
+**Branch**: main  
+**Commit: ef8fc92]
+
+**Changes Made**:
+- Enhanced `_calculate_statistics()` to include comprehensive error analysis
+- Added error breakdown by type (MISSING_FILE, PARSE_ERROR, etc.)
+- Added top errors tracking (most common error messages with counts)
+- Added missing roles extraction and listing
+- Enhanced console output with:
+  - Error breakdown by type
+  - Top 5 most common errors
+  - Missing roles summary (first 10, with count of remaining)
+- Enhanced Markdown output with:
+  - Error breakdown by type section
+  - Most common errors section (top 10)
+  - Missing roles list (all unique missing roles)
+  - Detailed error list with context
+- Added `get_error_statistics()` method to `ErrorCollector` class
+
+**Problem Solved**:
+- The 154 errors reported in analysis output were difficult to investigate
+- No visibility into error types or patterns
+- No way to identify most common issues
+- Missing roles were buried in individual error messages
+
+**Files Modified**:
+- pyplayground/ansible_structure_analyzer.py: Added error analysis and enhanced reporting
+
+**Code Quality**:
+- ✅ Black formatting: Passed
+- ✅ isort import sorting: Passed
+- ✅ flake8 linting: Passed
+- ✅ Syntax validation: Passed
+
+**Next Steps**: Test error analysis with actual repository to verify reporting accuracy

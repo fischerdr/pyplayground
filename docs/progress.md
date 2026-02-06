@@ -7,7 +7,7 @@
 **Status**: ✅ Complete  
 **Date**: 2026-02-05  
 **Branch**: main  
-**Commit**: [to be added after commit]
+**Commit: 3678606 after commit]
 
 **Changes Made**:
 - Created `pyplayground/ansible_structure_analyzer.py` with complete implementation
@@ -89,7 +89,7 @@
 **Status**: ✅ Complete  
 **Date**: 2026-02-05  
 **Branch**: main  
-**Commit**: [to be added after commit]
+**Commit: 3678606 after commit]
 
 **Changes Made**:
 - Added `_has_loop()` helper method to detect `with_sequence`, `with_items`, and `loop` constructs in tasks
@@ -180,7 +180,7 @@
 **Status**: ✅ Complete  
 **Date**: 2026-02-05  
 **Branch**: main  
-**Commit**: [to be added after commit]
+**Commit: 3678606 after commit]
 
 **Changes Made**:
 - Fixed include parsing to handle FQCN (ansible.builtin.include_tasks, ansible.builtin.include_role)
@@ -215,7 +215,7 @@
 **Status**: ✅ Complete  
 **Date**: 2026-02-05  
 **Branch**: main  
-**Commit**: [to be added after commit]
+**Commit: 3678606 after commit]
 
 **Changes Made**:
 - Fixed playbook list structure handling - playbooks are lists of play dictionaries, not task lists
@@ -260,7 +260,7 @@
 **Status**: ✅ Complete  
 **Date**: 2026-02-05  
 **Branch**: main  
-**Commit**: [to be added after commit]
+**Commit: 3678606 after commit]
 
 **Changes Made**:
 - Changed default output directory from `.` (current directory) to `tmp/` in current working directory
@@ -617,3 +617,35 @@
 - Enhanced error handling with security context
 
 **Next Steps**: Ready for security review and penetration testing
+
+---
+
+### Task 3.2: Log Noise Reduction
+
+**Status**: ✅ Complete  
+**Date**: 2026-02-05  
+**Branch**: main  
+**Commit: 3678606 after commit]
+
+**Changes Made**:
+- Added deduplication to `ErrorCollector.add_error()` method with optional `deduplicate` parameter
+- Missing role warnings now only logged once per unique role name
+- Subsequent occurrences logged at DEBUG level instead of WARNING
+- All errors still collected for error report (no data loss)
+- Added `_warned_missing_roles` tracking set to `IncludeResolver._find_role_path()`
+
+**Problem Solved**:
+- When the same missing role (e.g., `setup_env`) is referenced across 100+ playbooks, it was generating 100+ warning messages
+- This created excessive log noise making it hard to see other important warnings
+- Now each unique missing role is warned once, with subsequent occurrences at DEBUG level
+
+**Files Modified**:
+- pyplayground/ansible_structure_analyzer.py: Added deduplication logic
+
+**Code Quality**:
+- ✅ Black formatting: Passed
+- ✅ isort import sorting: Passed
+- ✅ flake8 linting: Passed
+- ✅ Syntax validation: Passed
+
+**Next Steps**: Monitor log output in production to verify improved readability

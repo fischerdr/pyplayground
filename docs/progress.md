@@ -649,3 +649,36 @@
 - ✅ Syntax validation: Passed
 
 **Next Steps**: Monitor log output in production to verify improved readability
+
+---
+
+### Task 3.3: Exclude External Roles from Analysis
+
+**Status**: ✅ Complete  
+**Date**: 2026-02-05  
+**Branch**: main  
+**Commit: 55a7a4c]
+
+**Changes Made**:
+- Added `_load_excluded_roles()` method to parse `roles/requirements.yml`
+- Extracts role names from both `name` field and `src` field (when `src` is a simple name, not URL)
+- Supports both list format (`- src: role.name`) and `roles:` key format
+- Modified `_find_role_path()` to check excluded roles and return None early
+- Excluded roles are skipped during analysis (no errors or warnings logged)
+- Handles vaulted `requirements.yml` files gracefully
+
+**Problem Solved**:
+- External roles imported via `roles/requirements.yml` (from Galaxy, git repos, etc.) were being analyzed as if they were part of the repository
+- This caused false "Role not found" errors for roles that are intentionally external
+- Now these roles are excluded from analysis entirely
+
+**Files Modified**:
+- pyplayground/ansible_structure_analyzer.py: Added exclusion logic
+
+**Code Quality**:
+- ✅ Black formatting: Passed
+- ✅ isort import sorting: Passed
+- ✅ flake8 linting: Passed
+- ✅ Syntax validation: Passed
+
+**Next Steps**: Test with actual repository containing roles/requirements.yml

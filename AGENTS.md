@@ -403,6 +403,8 @@ For detailed git workflow and branch strategy, see `docs/DEVELOPMENT_STANDARDS.m
 
 **IMPORTANT**: Do NOT add attribution or co-authorship to commit messages.
 
+**CRITICAL**: Never use `git commit --trailer` flags or add any trailers to commit messages.
+
 Commit messages should:
 
 - Follow conventional commit format when appropriate
@@ -410,6 +412,20 @@ Commit messages should:
 - Focus on the "why" rather than the "what"
 - Match the repository's existing commit style
 - **NOT include** any branding, attribution, or co-authorship footers
+- **NOT use** `--trailer` flags (e.g., `--trailer "Co-authored-by: ..."`)
+
+**Forbidden**:
+```bash
+# ❌ DO NOT USE
+git commit --trailer "Co-authored-by: Cursor <cursoragent@cursor.com>" -m "message"
+git commit -m "message" --trailer "Co-authored-by: ..."
+```
+
+**Correct**:
+```bash
+# ✅ USE THIS
+git commit -m "message"
+```
 
 ## System Commands Policy
 

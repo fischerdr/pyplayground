@@ -476,6 +476,45 @@ class ErrorCollector:
         """
         return len(self.errors) > 0
 
+    def get_error_statistics(self) -> Dict[str, Any]:
+        """Get error statistics and breakdown.
+
+        Returns:
+            Dictionary with error statistics including breakdown by type,
+            top errors, and missing roles/files
+        """
+        error_by_type: Dict[str, int] = {}
+        error_messages: Dict[str, int] = {}
+        missing_roles: Set[str] = set()
+        missing_files: Set[str] = set()
+
+        for error in self.errors:
+            error_type = error.get("type", "UNKNOWN")
+            error_by_type[error_type] = error_by_type.get(error_type, 0) + 1
+
+            message = error.get("message", "")
+            error_messages[message] = error_messages.get(message, 0) + 1
+
+            # Extract missing role names from error messages
+            if error_type == "MISSING_FILE":
+                if "Role not found:" in message:
+                    role_name = message.replace("Role not found: ", "").strip()
+                    missing_roles.add(role_name)
+                elif "Include file not found:" in message:
+                    file_ref = message.replace("Include file not found: ", "").strip()
+                    missing_files.add(file_ref)
+
+        # Get top 10 most common errors
+        top_errors = sorted(error_messages.items(), key=lambda x: x[1], reverse=True)[:10]
+
+        return {
+            "total": len(self.errors),
+            "by_type": error_by_type,
+            "top_errors": [{"message": msg, "count": count} for msg, count in top_errors],
+            "missing_roles": sorted(list(missing_roles)),
+            "missing_files_count": len(missing_files),
+        }
+
 
 class IncludeResolver:
     """Resolves Ansible includes and roles with path resolution."""
@@ -2061,11 +2100,37 @@ class StructureBuilder:
             errors: List of errors collected
 
         Returns:
-            Dictionary with statistics
+            Dictionary with statistics including error breakdown
         """
         total_includes = sum(len(pb.get("includes", [])) for pb in playbooks)
         total_roles = len(roles)
         total_templates = len(set(t.get("template") for t in templates if t.get("template")))
+
+        # Use ErrorCollector's statistics method if available, otherwise calculate inline
+        # For now, calculate inline since we're passing errors list, not ErrorCollector
+        error_by_type: Dict[str, int] = {}
+        error_messages: Dict[str, int] = {}
+        missing_roles: Set[str] = set()
+        missing_files: Set[str] = set()
+
+        for error in errors:
+            error_type = error.get("type", "UNKNOWN")
+            error_by_type[error_type] = error_by_type.get(error_type, 0) + 1
+
+            message = error.get("message", "")
+            error_messages[message] = error_messages.get(message, 0) + 1
+
+            # Extract missing role names from error messages
+            if error_type == "MISSING_FILE":
+                if "Role not found:" in message:
+                    role_name = message.replace("Role not found: ", "").strip()
+                    missing_roles.add(role_name)
+                elif "Include file not found:" in message:
+                    file_ref = message.replace("Include file not found: ", "").strip()
+                    missing_files.add(file_ref)
+
+        # Get top 10 most common errors
+        top_errors = sorted(error_messages.items(), key=lambda x: x[1], reverse=True)[:10]
 
         return {
             "total_playbooks": len(playbooks),
@@ -2073,6 +2138,10 @@ class StructureBuilder:
             "total_includes": total_includes,
             "total_templates": total_templates,
             "total_errors": len(errors),
+            "error_breakdown": error_by_type,
+            "top_errors": [{"message": msg, "count": count} for msg, count in top_errors],
+            "missing_roles": sorted(list(missing_roles)),
+            "missing_files_count": len(missing_files),
         }
 
 
@@ -3549,13 +3618,46 @@ class OutputGenerator:
 
                 # Errors
                 errors = structure.get("errors", [])
+                stats = structure.get("statistics", {})
                 if errors:
                     f.write("## Errors\n\n")
+                    f.write(f"**Total Errors**: {len(errors)}\n\n")
+
+                    # Error breakdown by type
+                    error_breakdown = stats.get("error_breakdown", {})
+                    if error_breakdown:
+                        f.write("### Error Breakdown by Type\n\n")
+                        for error_type, count in sorted(error_breakdown.items(), key=lambda x: x[1], reverse=True):
+                            f.write(f"- **{error_type}**: {count}\n")
+                        f.write("\n")
+
+                    # Top errors
+                    top_errors = stats.get("top_errors", [])
+                    if top_errors:
+                        f.write("### Most Common Errors\n\n")
+                        for error_info in top_errors[:10]:
+                            f.write(f"- **{error_info['count']}x**: {error_info['message']}\n")
+                        f.write("\n")
+
+                    # Missing roles summary
+                    missing_roles = stats.get("missing_roles", [])
+                    if missing_roles:
+                        f.write(f"### Missing Roles ({len(missing_roles)} unique)\n\n")
+                        for role in missing_roles:
+                            f.write(f"- `{role}`\n")
+                        f.write("\n")
+
+                    # Detailed error list
+                    f.write("### Detailed Error List\n\n")
                     for error in errors:
-                        f.write(f"### {error.get('type', 'Unknown')}\n\n")
+                        f.write(f"#### {error.get('type', 'Unknown')}\n\n")
                         f.write(f"- **Message**: {error.get('message', 'N/A')}\n")
                         if error.get("file"):
-                            f.write(f"- **File**: {error.get('file')}\n")
+                            f.write(f"- **File**: `{error.get('file')}`\n")
+                        if error.get("context"):
+                            context = error.get("context", {})
+                            if context:
+                                f.write(f"- **Context**: {context}\n")
                         f.write("\n")
 
                 # Cross-role summary
@@ -4936,7 +5038,33 @@ def main(
             console.print(f"  Roles: {stats.get('total_roles', 0)}")
             console.print(f"  Includes: {stats.get('total_includes', 0)}")
             console.print(f"  Templates: {stats.get('total_templates', 0)}")
-            console.print(f"  Errors: {stats.get('total_errors', 0)}")
+            total_errors = stats.get("total_errors", 0)
+            console.print(f"  Errors: {total_errors}")
+
+            # Display error breakdown if there are errors
+            if total_errors > 0:
+                error_breakdown = stats.get("error_breakdown", {})
+                if error_breakdown:
+                    console.print("\n[bold yellow]Error Breakdown:[/bold yellow]")
+                    for error_type, count in sorted(error_breakdown.items(), key=lambda x: x[1], reverse=True):
+                        console.print(f"  {error_type}: {count}")
+
+                # Show top errors
+                top_errors = stats.get("top_errors", [])
+                if top_errors:
+                    console.print("\n[bold yellow]Top Errors:[/bold yellow]")
+                    for error_info in top_errors[:5]:  # Show top 5
+                        console.print(f"  {error_info['count']}x: {error_info['message']}")
+
+                # Show missing roles summary
+                missing_roles = stats.get("missing_roles", [])
+                if missing_roles:
+                    console.print(f"\n[bold yellow]Missing Roles ({len(missing_roles)} unique):[/bold yellow]")
+                    # Show first 10 missing roles
+                    for role in missing_roles[:10]:
+                        console.print(f"  - {role}")
+                    if len(missing_roles) > 10:
+                        console.print(f"  ... and {len(missing_roles) - 10} more (see JSON/Markdown output for full list)")
 
     except Exception as e:
         logger.error(f"An error occurred during analysis: {e}", exc_info=True)

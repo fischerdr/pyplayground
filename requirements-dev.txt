@@ -94,7 +94,7 @@ flexparser==0.4
     # via pint
 google-auth==2.39.0
     # via kubernetes
-hvac==2.3.0
+hvac==2.4.0
     # via pyplayground (pyproject.toml)
 identify==2.6.9
     # via pre-commit

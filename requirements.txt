@@ -93,7 +93,7 @@ packaging==25.0
     #   bindep
 parsley==1.3
     # via bindep
-pbr==6.1.1
+pbr==7.0.3
     # via bindep
 pexpect==4.9.0
     # via ansible-runner

@@ -27,7 +27,7 @@ Output Formats:
 - JSON (comprehensive structured data)
 - Markdown (human-readable reports with refactoring analysis)
 - CSV (multiple files for data analysis: roles, dependencies, coupling matrix, etc.)
-- Mermaid (dependency graph visualization embedded in markdown)
+- Mermaid (dependency graph visualization embedded in markdown with configurable layout and simplified labels)
 
 Performance Features:
 - Incremental batch processing for large repositories
@@ -1670,11 +1670,18 @@ class IncludeResolver:
                 if "src" in role_entry:
                     src = role_entry["src"]
                     # If src is a simple name (no /, no :, no .git), treat as role name
-                    if isinstance(src, str) and "/" not in src and ":" not in src and ".git" not in src:
+                    if (
+                        isinstance(src, str)
+                        and "/" not in src
+                        and ":" not in src
+                        and ".git" not in src
+                    ):
                         excluded_roles.add(src)
                         logger.debug(f"Excluding external role (from src): {src}")
 
-            logger.info(f"Loaded {len(excluded_roles)} external roles from roles/requirements.yml to exclude")
+            logger.info(
+                f"Loaded {len(excluded_roles)} external roles from roles/requirements.yml to exclude"
+            )
             return excluded_roles
 
         except Exception as e:
@@ -1870,9 +1877,7 @@ class TemplateFinder:
             result["cross_role"] = False
         return result
 
-    def _find_template_path(
-        self, template_ref: str, current_file: Path
-    ) -> Optional[Path]:
+    def _find_template_path(self, template_ref: str, current_file: Path) -> Optional[Path]:
         """Find the path for a template reference.
 
         Security: All paths are validated to ensure they are within the repository root
@@ -1924,7 +1929,9 @@ class TemplateFinder:
                         if template_path.exists():
                             # Security check: ensure path is within repo root
                             if self._is_path_safe(template_path.resolve(), self.repo_root):
-                                logger.debug(f"Found template path (role templates): {template_path}")
+                                logger.debug(
+                                    f"Found template path (role templates): {template_path}"
+                                )
                                 return template_path
                             else:
                                 logger.warning(f"Path traversal attempt blocked: {template_path}")
@@ -2169,7 +2176,9 @@ class RoleDependencyGraph:
             self.reverse_graph[role_name] = []
 
         # Walk playbooks and roles to find cross-role dependencies
-        def walk_includes(includes: List[Dict[str, Any]], caller_role: Optional[str] = None) -> None:
+        def walk_includes(
+            includes: List[Dict[str, Any]], caller_role: Optional[str] = None
+        ) -> None:
             """Recursively walk includes to find cross-role dependencies."""
             for include in includes:
                 include_type = include.get("type")
@@ -2219,7 +2228,11 @@ class RoleDependencyGraph:
 
         # Process cross-role template usage
         for template in self.structure.get("templates", []):
-            if template.get("cross_role") and template.get("caller_role") and template.get("template_role"):
+            if (
+                template.get("cross_role")
+                and template.get("caller_role")
+                and template.get("template_role")
+            ):
                 caller_role = template["caller_role"]
                 template_role = template["template_role"]
                 if caller_role != template_role:
@@ -2239,7 +2252,9 @@ class RoleDependencyGraph:
                     if caller_role not in self.reverse_graph[template_role]:
                         self.reverse_graph[template_role].append(caller_role)
 
-        logger.info(f"Dependency graph built: {len(self.graph)} roles, {sum(len(deps) for deps in self.graph.values())} edges")
+        logger.info(
+            f"Dependency graph built: {len(self.graph)} roles, {sum(len(deps) for deps in self.graph.values())} edges"
+        )
         return self.graph
 
     def get_direct_dependencies(self, role_name: str) -> List[str]:
@@ -2533,7 +2548,9 @@ class ResourceAnalyzer:
         """
         self.structure = structure
         self.repo_root = repo_root
-        self.shared_resources: Dict[str, Dict[str, List[str]]] = {}  # (role_a, role_b) -> resource_type -> list
+        self.shared_resources: Dict[str, Dict[str, List[str]]] = (
+            {}
+        )  # (role_a, role_b) -> resource_type -> list
         logger.debug("ResourceAnalyzer initialized")
 
     def find_shared_templates(self, roles: List[str]) -> Dict[str, List[str]]:
@@ -2561,7 +2578,9 @@ class ResourceAnalyzer:
                     template_to_roles[template_path].append(role_name)
 
         # Filter to only shared templates (used by 2+ roles)
-        shared = {tpl: roles_list for tpl, roles_list in template_to_roles.items() if len(roles_list) > 1}
+        shared = {
+            tpl: roles_list for tpl, roles_list in template_to_roles.items() if len(roles_list) > 1
+        }
         return shared
 
     def find_shared_variables(self, roles: List[str]) -> Dict[str, List[str]]:
@@ -2601,6 +2620,7 @@ class ResourceAnalyzer:
                         content = f.read()
                         # Simple regex to find {{ var_name }} patterns
                         import re
+
                         var_pattern = r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}"
                         # Limit regex processing to prevent DoS (pattern is safe, but large files can be slow)
                         vars_found = re.findall(var_pattern, content)
@@ -2610,10 +2630,15 @@ class ResourceAnalyzer:
                             if template_role not in var_to_roles[var_name]:
                                 var_to_roles[var_name].append(template_role)
             except Exception as e:
-                logger.warning(f"Error reading template {template_path} for variable analysis: {e}", exc_info=True)
+                logger.warning(
+                    f"Error reading template {template_path} for variable analysis: {e}",
+                    exc_info=True,
+                )
 
         # Filter to only shared variables (used by 2+ roles)
-        shared = {var: roles_list for var, roles_list in var_to_roles.items() if len(roles_list) > 1}
+        shared = {
+            var: roles_list for var, roles_list in var_to_roles.items() if len(roles_list) > 1
+        }
         return shared
 
     def calculate_resource_overlap(self, role_a: str, role_b: str) -> float:
@@ -2732,6 +2757,7 @@ class ResourceAnalyzer:
                     with template_file.open("r", encoding="utf-8") as f:
                         content = f.read()
                         import re
+
                         var_pattern = r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}"
                         # Limit regex processing to prevent DoS (pattern is safe, but large files can be slow)
                         vars_found = re.findall(var_pattern, content)
@@ -2808,12 +2834,12 @@ class UsagePatternAnalyzer:
             "co_occurrence_matrix": self.co_occurrence_matrix,
             "role_clusters": self.role_clusters,
             "usage_frequency": role_usage_count,
-            "playbook_roles": {
-                pb: sorted(list(roles)) for pb, roles in playbook_roles.items()
-            },
+            "playbook_roles": {pb: sorted(list(roles)) for pb, roles in playbook_roles.items()},
         }
 
-        logger.info(f"Usage patterns analyzed: {len(all_roles)} roles, {len(self.role_clusters)} clusters")
+        logger.info(
+            f"Usage patterns analyzed: {len(all_roles)} roles, {len(self.role_clusters)} clusters"
+        )
         return result
 
     def _calculate_co_occurrence(
@@ -3089,7 +3115,7 @@ class ComplexityAnalyzer:
         role_list = sorted(all_roles)
         for i, role_a in enumerate(role_list):
             merge_scores[role_a] = {}
-            for role_b in role_list[i + 1:]:
+            for role_b in role_list[i + 1 :]:
                 merge_score = self.calculate_merge_complexity(role_a, role_b)
                 merge_scores[role_a][role_b] = merge_score
 
@@ -3343,7 +3369,7 @@ class MergeRecommendationEngine:
             base_name = None
             for provider in providers:
                 if role.startswith(f"{provider}_"):
-                    base_name = role[len(provider) + 1:]
+                    base_name = role[len(provider) + 1 :]
                 elif role.endswith(f"_{provider}"):
                     base_name = role[: -(len(provider) + 1)]
                 elif f"_{provider}_" in role:
@@ -3459,9 +3485,7 @@ class ExtractionRecommendationEngine:
         dependency_score = 1.0 - (min(dependency_count, 5) / 5.0)
 
         # Weighted average
-        confidence = (
-            complexity_score * 0.5 + self_contained_score * 0.3 + dependency_score * 0.2
-        )
+        confidence = complexity_score * 0.5 + self_contained_score * 0.3 + dependency_score * 0.2
 
         return min(confidence, 1.0)
 
@@ -3624,7 +3648,9 @@ class OutputGenerator:
                     error_breakdown = stats.get("error_breakdown", {})
                     if error_breakdown:
                         f.write("### Error Breakdown by Type\n\n")
-                        for error_type, count in sorted(error_breakdown.items(), key=lambda x: x[1], reverse=True):
+                        for error_type, count in sorted(
+                            error_breakdown.items(), key=lambda x: x[1], reverse=True
+                        ):
                             f.write(f"- **{error_type}**: {count}\n")
                         f.write("\n")
 
@@ -3685,11 +3711,15 @@ class OutputGenerator:
                 dependency_graph = structure.get("dependency_graph", {})
                 if dependency_graph.get("nodes"):
                     f.write("## Role Dependency Graph\n\n")
-                    f.write("The following diagram shows the dependency relationships between roles:\n\n")
+                    f.write(
+                        "The following diagram shows the dependency relationships between roles:\n\n"
+                    )
                     mermaid_diagram = self.generate_mermaid_diagram(
                         structure,
                         highlight_merge_candidates=True,
                         highlight_extraction_candidates=True,
+                        simplify_labels=True,
+                        layout="LR",
                     )
                     f.write("```mermaid\n")
                     f.write(mermaid_diagram)
@@ -3774,9 +3804,9 @@ class OutputGenerator:
                 f.write("### Role Usage Frequency\n\n")
                 f.write("| Role | Playbook Count |\n")
                 f.write("|------|----------------|\n")
-                sorted_roles = sorted(
-                    usage_frequency.items(), key=lambda x: x[1], reverse=True
-                )[:20]  # Top 20
+                sorted_roles = sorted(usage_frequency.items(), key=lambda x: x[1], reverse=True)[
+                    :20
+                ]  # Top 20
                 for role_name, count in sorted_roles:
                     f.write(f"| {role_name} | {count} |\n")
                 f.write("\n")
@@ -3793,7 +3823,9 @@ class OutputGenerator:
                 f.write("|------|------------------|\n")
                 sorted_extraction = sorted(
                     extraction_complexity.items(), key=lambda x: x[1], reverse=True
-                )[:20]  # Top 20 hardest to extract
+                )[
+                    :20
+                ]  # Top 20 hardest to extract
                 for role_name, score in sorted_extraction:
                     f.write(f"| {role_name} | {score:.1f} |\n")
                 f.write("\n")
@@ -3899,9 +3931,7 @@ class OutputGenerator:
             for role in roles:
                 role_name = role.get("name", "")
                 role_deps = [
-                    e
-                    for e in dependency_graph_data.get("edges", [])
-                    if e.get("from") == role_name
+                    e for e in dependency_graph_data.get("edges", []) if e.get("from") == role_name
                 ]
                 writer.writerow(
                     [
@@ -4124,6 +4154,8 @@ class OutputGenerator:
         highlight_merge_candidates: bool = False,
         highlight_extraction_candidates: bool = False,
         only_cross_role: bool = False,
+        simplify_labels: bool = True,
+        layout: str = "LR",
     ) -> str:
         """Generate Mermaid diagram syntax for role dependencies.
 
@@ -4132,6 +4164,8 @@ class OutputGenerator:
             highlight_merge_candidates: Highlight roles suggested for merging
             highlight_extraction_candidates: Highlight roles suggested for extraction
             only_cross_role: Only show cross-role dependencies
+            simplify_labels: If True, simplify edge labels for better readability
+            layout: Graph layout direction - "LR" (left-to-right) or "TD" (top-down)
 
         Returns:
             Mermaid diagram syntax as string
@@ -4149,21 +4183,27 @@ class OutputGenerator:
         if highlight_merge_candidates:
             strongly_coupled = structure.get("strongly_coupled_pairs", [])
             for pair in strongly_coupled:
-                merge_candidates.add(pair.get("role_a", ""))
-                merge_candidates.add(pair.get("role_b", ""))
+                role_a = pair.get("role_a", "")
+                role_b = pair.get("role_b", "")
+                if role_a:
+                    merge_candidates.add(role_a)
+                if role_b:
+                    merge_candidates.add(role_b)
 
         if highlight_extraction_candidates:
             extraction_recommendations = structure.get("extraction_recommendations", [])
             for rec in extraction_recommendations:
-                extraction_candidates.add(rec.get("role", ""))
+                role = rec.get("role", "")
+                if role:
+                    extraction_candidates.add(role)
 
         # Filter edges if needed
         if only_cross_role:
             edges = [e for e in edges if e.get("type") != "role"]
 
         # Build Mermaid diagram
-        lines = ["graph TD"]
-        
+        lines = [f"graph {layout}"]
+
         # Escape node names for Mermaid (replace special chars, spaces with underscores)
         def escape_node_name(name: str) -> str:
             """Escape node name for Mermaid syntax."""
@@ -4188,12 +4228,14 @@ class OutputGenerator:
         if merge_candidates:
             lines.append("    classDef mergeCandidate fill:#90EE90,stroke:#006400,stroke-width:2px")
         if extraction_candidates:
-            lines.append("    classDef extractCandidate fill:#FFE4B5,stroke:#FF8C00,stroke-width:2px")
+            lines.append(
+                "    classDef extractCandidate fill:#FFE4B5,stroke:#FF8C00,stroke-width:2px"
+            )
 
         # Add nodes
         for node in nodes:
             node_id = node_ids[node]
-            node_label = node.replace('"', '&quot;').replace("'", "&#39;")
+            node_label = node.replace('"', "&quot;").replace("'", "&#39;")
             lines.append(f'    {node_id}["{node_label}"]')
 
         # Add edges with labels
@@ -4209,36 +4251,84 @@ class OutputGenerator:
             from_id = node_ids[from_role]
             to_id = node_ids[to_role]
 
-            # Create edge label
-            if ref:
-                ref_short = ref if len(ref) < 20 else ref[:17] + "..."
-                label = f"{edge_type}: {ref_short}"
+            # Create edge label based on simplify_labels setting
+            if simplify_labels:
+                # Simplified labels for better readability
+                if edge_type in ("include_role", "import_role", "role"):
+                    # Role dependencies: no label (most common, self-explanatory)
+                    label_escaped = ""
+                elif edge_type in ("include_tasks", "import_tasks"):
+                    # Task includes: just "tasks" or short ref if available
+                    if ref:
+                        ref_short = ref if len(ref) < 15 else ref[:12] + "..."
+                        label_escaped = ref_short.replace('"', "&quot;").replace("'", "&#39;")
+                    else:
+                        label_escaped = "tasks"
+                elif edge_type == "template":
+                    # Templates: short ref if available, otherwise "template"
+                    if ref:
+                        ref_short = ref if len(ref) < 15 else ref[:12] + "..."
+                        label_escaped = ref_short.replace('"', "&quot;").replace("'", "&#39;")
+                    else:
+                        label_escaped = "template"
+                else:
+                    # Other types: use edge type
+                    label_escaped = edge_type.replace('"', "&quot;").replace("'", "&#39;")
             else:
-                label = edge_type
+                # Verbose labels (original behavior)
+                if ref:
+                    ref_short = ref if len(ref) < 20 else ref[:17] + "..."
+                    label = f"{edge_type}: {ref_short}"
+                else:
+                    label = edge_type
+                label_escaped = label.replace('"', "&quot;").replace("'", "&#39;")
 
-            # Escape label for Mermaid
-            label_escaped = label.replace('"', '&quot;').replace("'", "&#39;")
-
-            # Determine edge style based on type
+            # Determine edge style based on type and add label if present
             if edge_type in ("include_role", "import_role", "role"):
-                lines.append(f'    {from_id} -->|"{label_escaped}"| {to_id}')
+                if label_escaped:
+                    lines.append(f'    {from_id} -->|"{label_escaped}"| {to_id}')
+                else:
+                    lines.append(f"    {from_id} --> {to_id}")
             elif edge_type in ("include_tasks", "import_tasks"):
-                lines.append(f'    {from_id} -.->|"{label_escaped}"| {to_id}')
+                if label_escaped:
+                    lines.append(f'    {from_id} -.->|"{label_escaped}"| {to_id}')
+                else:
+                    lines.append(f"    {from_id} -.-> {to_id}")
             elif edge_type == "template":
-                lines.append(f'    {from_id} ==>|"{label_escaped}"| {to_id}')
+                if label_escaped:
+                    lines.append(f'    {from_id} ==>|"{label_escaped}"| {to_id}')
+                else:
+                    lines.append(f"    {from_id} ==> {to_id}")
             else:
-                lines.append(f'    {from_id} -->|"{label_escaped}"| {to_id}')
+                if label_escaped:
+                    lines.append(f'    {from_id} -->|"{label_escaped}"| {to_id}')
+                else:
+                    lines.append(f"    {from_id} --> {to_id}")
 
         # Apply styles to nodes
         if merge_candidates:
             merge_node_ids = [node_ids[n] for n in merge_candidates if n in node_ids]
             if merge_node_ids:
                 lines.append(f"    class {','.join(merge_node_ids)} mergeCandidate")
-        
+                logger.debug(
+                    f"Applied mergeCandidate class to {len(merge_node_ids)} nodes: {list(merge_candidates)}"
+                )
+            else:
+                logger.debug(
+                    f"No merge candidates found in node list (candidates: {list(merge_candidates)})"
+                )
+
         if extraction_candidates:
             extract_node_ids = [node_ids[n] for n in extraction_candidates if n in node_ids]
             if extract_node_ids:
                 lines.append(f"    class {','.join(extract_node_ids)} extractCandidate")
+                logger.debug(
+                    f"Applied extractCandidate class to {len(extract_node_ids)} nodes: {list(extraction_candidates)}"
+                )
+            else:
+                logger.debug(
+                    f"No extraction candidates found in node list (candidates: {list(extraction_candidates)})"
+                )
 
         return "\n".join(lines)
 
@@ -4397,9 +4487,7 @@ class AnsibleStructureAnalyzer:
                 playbook_files = self.file_discovery.discover_all_playbooks(self.repo_root)
                 logger.info(f"Found {len(playbook_files)} playbook file(s) in repository")
                 # Use incremental processing for whole-repo mode
-                return self._analyze_incremental(
-                    playbook_files, batch_size, parallel, max_workers
-                )
+                return self._analyze_incremental(playbook_files, batch_size, parallel, max_workers)
             else:
                 playbook_files = self.file_discovery.discover_files(input_path)
                 logger.info(f"Found {len(playbook_files)} playbook file(s) to analyze")
@@ -4544,7 +4632,7 @@ class AnsibleStructureAnalyzer:
 
         total = len(playbook_files)
         for i in range(0, total, batch_size):
-            batch = playbook_files[i:i + batch_size]
+            batch = playbook_files[i : i + batch_size]
             batch_num = i // batch_size + 1
             logger.info(
                 f"Processing batch {batch_num} ({i + 1}-{min(i + batch_size, total)}/{total})"
@@ -4555,9 +4643,7 @@ class AnsibleStructureAnalyzer:
             # Merge batch results
             for pb_result in batch_results:
                 all_playbooks.append(pb_result)
-                self._merge_roles_and_templates(
-                    pb_result, all_roles, all_templates, seen_templates
-                )
+                self._merge_roles_and_templates(pb_result, all_roles, all_templates, seen_templates)
 
         # Build structure
         structure = self.structure_builder.build_structure(
@@ -4675,11 +4761,7 @@ class AnsibleStructureAnalyzer:
             if score <= max_complexity:
                 # Get dependency count
                 dependency_graph = structure.get("dependency_graph", {})
-                deps = [
-                    e
-                    for e in dependency_graph.get("edges", [])
-                    if e.get("from") == role_name
-                ]
+                deps = [e for e in dependency_graph.get("edges", []) if e.get("from") == role_name]
                 candidates.append(
                     {
                         "role": role_name,
@@ -5058,7 +5140,9 @@ def main(
 
             if output_format in ["csv", "all"]:
                 csv_files = output_gen.generate_csv(structure)
-                console.print(f"[bold green]CSV output saved ({len(csv_files)} files):[/bold green]")
+                console.print(
+                    f"[bold green]CSV output saved ({len(csv_files)} files):[/bold green]"
+                )
                 for csv_file in csv_files:
                     console.print(f"  - {csv_file}")
 
@@ -5086,7 +5170,9 @@ def main(
                 error_breakdown = stats.get("error_breakdown", {})
                 if error_breakdown:
                     console.print("\n[bold yellow]Error Breakdown:[/bold yellow]")
-                    for error_type, count in sorted(error_breakdown.items(), key=lambda x: x[1], reverse=True):
+                    for error_type, count in sorted(
+                        error_breakdown.items(), key=lambda x: x[1], reverse=True
+                    ):
                         console.print(f"  {error_type}: {count}")
 
                 # Show top errors
@@ -5099,12 +5185,16 @@ def main(
                 # Show missing roles summary
                 missing_roles = stats.get("missing_roles", [])
                 if missing_roles:
-                    console.print(f"\n[bold yellow]Missing Roles ({len(missing_roles)} unique):[/bold yellow]")
+                    console.print(
+                        f"\n[bold yellow]Missing Roles ({len(missing_roles)} unique):[/bold yellow]"
+                    )
                     # Show first 10 missing roles
                     for role in missing_roles[:10]:
                         console.print(f"  - {role}")
                     if len(missing_roles) > 10:
-                        console.print(f"  ... and {len(missing_roles) - 10} more (see JSON/Markdown output for full list)")
+                        console.print(
+                            f"  ... and {len(missing_roles) - 10} more (see JSON/Markdown output for full list)"
+                        )
 
     except Exception as e:
         logger.error(f"An error occurred during analysis: {e}", exc_info=True)

@@ -1582,6 +1582,65 @@ class IncludeResolver:
         )
         return None
 
+    def _load_excluded_roles(self) -> Set[str]:
+        """Load roles from roles/requirements.yml that should be excluded from analysis.
+
+        These are external roles (from Galaxy, git repos, etc.) that are not
+        part of the repository structure.
+
+        Returns:
+            Set of role names to exclude from analysis
+        """
+        excluded_roles: Set[str] = set()
+        requirements_file = self.repo_root / "roles" / "requirements.yml"
+
+        if not requirements_file.exists():
+            logger.debug("No roles/requirements.yml found, no roles excluded")
+            return excluded_roles
+
+        try:
+            with requirements_file.open("r", encoding="utf-8") as f:
+                content = f.read()
+                if "ANSIBLE_VAULT" in content:
+                    logger.debug("roles/requirements.yml is vaulted, skipping exclusion parsing")
+                    return excluded_roles
+
+            custom_loader = create_custom_yaml_loader()
+            with requirements_file.open("r", encoding="utf-8") as f:
+                data = yaml.load(f, Loader=custom_loader)
+
+            if not data:
+                return excluded_roles
+
+            # Handle both formats:
+            # Format 1: List directly: - src: geerlingguy.docker
+            # Format 2: Under 'roles' key: roles: - src: geerlingguy.docker
+            roles_list = data if isinstance(data, list) else data.get("roles", [])
+
+            for role_entry in roles_list:
+                if not isinstance(role_entry, dict):
+                    continue
+
+                # Extract role name from 'name' field (explicit name)
+                if "name" in role_entry:
+                    excluded_roles.add(role_entry["name"])
+                    logger.debug(f"Excluding external role (from name): {role_entry['name']}")
+
+                # Extract role name from 'src' field if it's a simple name (not URL/path)
+                if "src" in role_entry:
+                    src = role_entry["src"]
+                    # If src is a simple name (no /, no :, no .git), treat as role name
+                    if isinstance(src, str) and "/" not in src and ":" not in src and ".git" not in src:
+                        excluded_roles.add(src)
+                        logger.debug(f"Excluding external role (from src): {src}")
+
+            logger.info(f"Loaded {len(excluded_roles)} external roles from roles/requirements.yml to exclude")
+            return excluded_roles
+
+        except Exception as e:
+            logger.warning(f"Error parsing roles/requirements.yml: {e}", exc_info=True)
+            return excluded_roles
+
     def _find_role_path(self, role_name: str) -> Optional[Path]:
         """Find the path for a role.
 
@@ -1593,11 +1652,27 @@ class IncludeResolver:
         """
         logger.debug(f"Finding role path for: {role_name}")
 
+        # Check if role is excluded (external role from requirements.yml)
+        if not hasattr(self, "_excluded_roles"):
+            self._excluded_roles = self._load_excluded_roles()
+
+        if role_name in self._excluded_roles:
+            logger.debug(f"Role {role_name} is excluded (external role from requirements.yml)")
+            return None
+
         # Try standard roles/ directory
         role_path = self.repo_root / "roles" / role_name
         if role_path.exists() and role_path.is_dir():
             logger.debug(f"Found role path: {role_path}")
             return role_path
+
+        # Not found - check if it's an excluded role (external from requirements.yml)
+        if not hasattr(self, "_excluded_roles"):
+            self._excluded_roles = self._load_excluded_roles()
+
+        if role_name in self._excluded_roles:
+            logger.debug(f"Role {role_name} is excluded (external role from requirements.yml), skipping")
+            return None
 
         # Not found - use deduplication to avoid spam for same missing role across multiple playbooks
         self.error_collector.add_error(

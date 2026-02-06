@@ -27,7 +27,7 @@ Output Formats:
 - JSON (comprehensive structured data)
 - Markdown (human-readable reports with refactoring analysis)
 - CSV (multiple files for data analysis: roles, dependencies, coupling matrix, etc.)
-- DOT/Graphviz (dependency graph visualization)
+- Mermaid (dependency graph visualization embedded in markdown)
 
 Performance Features:
 - Incremental batch processing for large repositories
@@ -3681,6 +3681,28 @@ class OutputGenerator:
                             )
                         f.write("\n")
 
+                # Dependency Graph Visualization (Mermaid)
+                dependency_graph = structure.get("dependency_graph", {})
+                if dependency_graph.get("nodes"):
+                    f.write("## Role Dependency Graph\n\n")
+                    f.write("The following diagram shows the dependency relationships between roles:\n\n")
+                    mermaid_diagram = self.generate_mermaid_diagram(
+                        structure,
+                        highlight_merge_candidates=True,
+                        highlight_extraction_candidates=True,
+                    )
+                    f.write("```mermaid\n")
+                    f.write(mermaid_diagram)
+                    f.write("\n```\n\n")
+                    f.write(
+                        "**Legend**:\n"
+                        "- Solid arrows (-->) indicate role dependencies\n"
+                        "- Dashed arrows (-.->) indicate task includes\n"
+                        "- Thick arrows (==>) indicate template usage\n"
+                        "- Green nodes indicate merge candidates\n"
+                        "- Yellow nodes indicate extraction candidates\n\n"
+                    )
+
                 # Role Refactoring Analysis sections
                 self._write_refactoring_analysis_markdown(f, structure)
 
@@ -4096,29 +4118,25 @@ class OutputGenerator:
         logger.debug("Generated complexity_scores.csv and merge_complexity.csv")
         return output_path
 
-    def generate_dot(
+    def generate_mermaid_diagram(
         self,
         structure: Dict[str, Any],
-        filename: str = "role_dependencies.dot",
         highlight_merge_candidates: bool = False,
         highlight_extraction_candidates: bool = False,
         only_cross_role: bool = False,
-    ) -> Path:
-        """Generate DOT/Graphviz visualization of role dependencies.
+    ) -> str:
+        """Generate Mermaid diagram syntax for role dependencies.
 
         Args:
             structure: Structure dictionary
-            filename: Output filename
             highlight_merge_candidates: Highlight roles suggested for merging
             highlight_extraction_candidates: Highlight roles suggested for extraction
             only_cross_role: Only show cross-role dependencies
 
         Returns:
-            Path to generated file
+            Mermaid diagram syntax as string
         """
-        logger.info(f"Generating DOT visualization: {filename}")
-
-        output_path = self.output_dir / filename
+        logger.debug("Generating Mermaid diagram for role dependencies")
 
         dependency_graph = structure.get("dependency_graph", {})
         nodes = dependency_graph.get("nodes", [])
@@ -4134,69 +4152,95 @@ class OutputGenerator:
                 merge_candidates.add(pair.get("role_a", ""))
                 merge_candidates.add(pair.get("role_b", ""))
 
+        if highlight_extraction_candidates:
+            extraction_recommendations = structure.get("extraction_recommendations", [])
+            for rec in extraction_recommendations:
+                extraction_candidates.add(rec.get("role", ""))
+
         # Filter edges if needed
         if only_cross_role:
             edges = [e for e in edges if e.get("type") != "role"]
 
-        with output_path.open("w", encoding="utf-8") as f:
-            f.write("digraph role_dependencies {\n")
-            f.write("  rankdir=LR;\n")
-            f.write("  node [shape=box, style=rounded];\n\n")
+        # Build Mermaid diagram
+        lines = ["graph TD"]
+        
+        # Escape node names for Mermaid (replace special chars, spaces with underscores)
+        def escape_node_name(name: str) -> str:
+            """Escape node name for Mermaid syntax."""
+            # Replace spaces and special chars with underscores, but keep alphanumeric
+            escaped = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in name)
+            return escaped or "node"
 
-            # Write nodes with colors
-            for node in nodes:
-                node_name = node.replace('"', '\\"')
-                color = "lightblue"
-                if node in merge_candidates:
-                    color = "lightgreen"
-                elif node in extraction_candidates:
-                    color = "lightyellow"
+        # Create node ID mapping (ensure uniqueness)
+        node_ids: Dict[str, str] = {}
+        used_ids: Set[str] = set()
+        for node in nodes:
+            base_id = escape_node_name(node)
+            node_id = base_id
+            idx = 0
+            while node_id in used_ids:
+                idx += 1
+                node_id = f"{base_id}_{idx}"
+            used_ids.add(node_id)
+            node_ids[node] = node_id
 
-                f.write(f'  "{node_name}" [fillcolor={color}, style="rounded,filled"];\n')
+        # Add style definitions first (before nodes)
+        if merge_candidates:
+            lines.append("    classDef mergeCandidate fill:#90EE90,stroke:#006400,stroke-width:2px")
+        if extraction_candidates:
+            lines.append("    classDef extractCandidate fill:#FFE4B5,stroke:#FF8C00,stroke-width:2px")
 
-            f.write("\n")
+        # Add nodes
+        for node in nodes:
+            node_id = node_ids[node]
+            node_label = node.replace('"', '&quot;').replace("'", "&#39;")
+            lines.append(f'    {node_id}["{node_label}"]')
 
-            # Write edges with labels
-            for edge in edges:
-                from_role = edge.get("from", "").replace('"', '\\"')
-                to_role = edge.get("to", "").replace('"', '\\"')
-                edge_type = edge.get("type", "")
-                ref = edge.get("ref", "")
+        # Add edges with labels
+        for edge in edges:
+            from_role = edge.get("from", "")
+            to_role = edge.get("to", "")
+            edge_type = edge.get("type", "")
+            ref = edge.get("ref", "")
 
-                # Color edges by type
-                color = "black"
-                if edge_type in ("include_role", "import_role", "role"):
-                    color = "blue"
-                elif edge_type in ("include_tasks", "import_tasks"):
-                    color = "green"
-                elif edge_type == "template":
-                    color = "orange"
+            if from_role not in node_ids or to_role not in node_ids:
+                continue
 
-                # Create label
-                label = f"{edge_type}"
-                if ref:
-                    # Truncate long refs
-                    ref_short = ref if len(ref) < 30 else ref[:27] + "..."
-                    label = f"{edge_type}\\n{ref_short}"
+            from_id = node_ids[from_role]
+            to_id = node_ids[to_role]
 
-                f.write(
-                    f'  "{from_role}" -> "{to_role}" [label="{label}", color={color}];\n'
-                )
+            # Create edge label
+            if ref:
+                ref_short = ref if len(ref) < 20 else ref[:17] + "..."
+                label = f"{edge_type}: {ref_short}"
+            else:
+                label = edge_type
 
-            # Add clusters for merge candidates
-            if merge_candidates and len(merge_candidates) > 1:
-                f.write("\n  subgraph cluster_merge_candidates {\n")
-                f.write("    label=\"Merge Candidates\";\n")
-                f.write("    style=dashed;\n")
-                for role in merge_candidates:
-                    role_escaped = role.replace('"', '\\"')
-                    f.write(f'    "{role_escaped}";\n')
-                f.write("  }\n")
+            # Escape label for Mermaid
+            label_escaped = label.replace('"', '&quot;').replace("'", "&#39;")
 
-            f.write("}\n")
+            # Determine edge style based on type
+            if edge_type in ("include_role", "import_role", "role"):
+                lines.append(f'    {from_id} -->|"{label_escaped}"| {to_id}')
+            elif edge_type in ("include_tasks", "import_tasks"):
+                lines.append(f'    {from_id} -.->|"{label_escaped}"| {to_id}')
+            elif edge_type == "template":
+                lines.append(f'    {from_id} ==>|"{label_escaped}"| {to_id}')
+            else:
+                lines.append(f'    {from_id} -->|"{label_escaped}"| {to_id}')
 
-        logger.info(f"DOT visualization saved to: {output_path}")
-        return output_path
+        # Apply styles to nodes
+        if merge_candidates:
+            merge_node_ids = [node_ids[n] for n in merge_candidates if n in node_ids]
+            if merge_node_ids:
+                lines.append(f"    class {','.join(merge_node_ids)} mergeCandidate")
+        
+        if extraction_candidates:
+            extract_node_ids = [node_ids[n] for n in extraction_candidates if n in node_ids]
+            if extract_node_ids:
+                lines.append(f"    class {','.join(extract_node_ids)} extractCandidate")
+
+        return "\n".join(lines)
 
     def _collect_cross_role_summary(self, structure: Dict[str, Any]) -> tuple:
         """Collect cross-role task includes, role includes, and template usage from structure.
@@ -5018,10 +5062,7 @@ def main(
                 for csv_file in csv_files:
                     console.print(f"  - {csv_file}")
 
-            if output_format == "all":
-                dot_filename = f"{base_name}_dependencies.dot"
-                dot_path = output_gen.generate_dot(structure, filename=dot_filename)
-                console.print(f"[bold green]DOT visualization saved to: {dot_path}[/bold green]")
+            # Note: Mermaid diagram is now embedded in markdown output, no separate file needed
 
             # Generate summary report
             stats = structure.get("statistics", {})

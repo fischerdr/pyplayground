@@ -55,6 +55,8 @@ MAX_RECURSION_DEPTH = 50
 YAML_EXTENSIONS = [".yml", ".yaml"]
 TEMPLATE_EXTENSIONS = [".j2"]
 INCLUDE_TYPES = ["include_tasks", "import_tasks", "include_role", "import_role", "roles"]
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB maximum file size to prevent DoS
+MAX_TEMPLATE_SIZE = 5 * 1024 * 1024  # 5 MB maximum template file size for regex processing
 
 logger = get_logger(__name__)
 
@@ -682,6 +684,8 @@ class IncludeResolver:
     def _parse_yaml_file(self, file_path: Path) -> Optional[Dict[str, Any]]:
         """Parse a YAML file.
 
+        Security: Validates file size to prevent DoS attacks and ensures path is within repo root.
+
         Args:
             file_path: Path to YAML file
 
@@ -691,6 +695,28 @@ class IncludeResolver:
         logger.debug(f"Parsing YAML file: {file_path}")
 
         try:
+            # Security check: ensure path is within repo root
+            if not self._is_path_safe(file_path.resolve(), self.repo_root):
+                logger.warning(f"Path traversal attempt blocked: {file_path}")
+                self.error_collector.add_error(
+                    "SECURITY_ERROR", f"Path outside repository root: {file_path}", file_path
+                )
+                return None
+
+            # Security check: validate file size to prevent DoS
+            file_size = file_path.stat().st_size
+            if file_size > MAX_FILE_SIZE:
+                logger.warning(
+                    f"File too large ({file_size} bytes > {MAX_FILE_SIZE} bytes): {file_path}"
+                )
+                self.error_collector.add_error(
+                    "FILE_TOO_LARGE",
+                    f"File exceeds maximum size: {file_size} bytes",
+                    file_path,
+                    {"file_size": file_size, "max_size": MAX_FILE_SIZE},
+                )
+                return None
+
             with file_path.open("r", encoding="utf-8") as f:
                 content = f.read()
 
@@ -699,7 +725,19 @@ class IncludeResolver:
                 logger.warning(f"Skipping vaulted file: {file_path}")
                 return None
 
+            # Security: Verify loader is SafeLoader-based (create_custom_yaml_loader uses SafeLoader)
             custom_loader = create_custom_yaml_loader()
+            if not issubclass(custom_loader, yaml.SafeLoader):
+                logger.error(
+                    f"Unsafe YAML loader detected: {custom_loader}. Expected SafeLoader-based loader."
+                )
+                self.error_collector.add_error(
+                    "SECURITY_ERROR",
+                    "Unsafe YAML loader detected",
+                    file_path,
+                )
+                return None
+
             data = yaml.load(content, Loader=custom_loader)
 
             return data
@@ -708,9 +746,13 @@ class IncludeResolver:
             logger.error(f"YAML parsing error in {file_path}: {e}", exc_info=True)
             self.error_collector.add_error("PARSE_ERROR", f"YAML parsing failed: {e}", file_path)
             return None
-        except Exception as e:
+        except OSError as e:
             logger.error(f"Error reading file {file_path}: {e}", exc_info=True)
             self.error_collector.add_error("PARSE_ERROR", f"File read error: {e}", file_path)
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error parsing file {file_path}: {e}", exc_info=True)
+            self.error_collector.add_error("PARSE_ERROR", f"Unexpected error: {e}", file_path)
             return None
 
     def _parse_includes(
@@ -1417,6 +1459,26 @@ class IncludeResolver:
 
         return result
 
+    def _is_path_safe(self, resolved_path: Path, base_path: Path) -> bool:
+        """Check if a resolved path is within the base path (prevents path traversal).
+
+        Args:
+            resolved_path: The resolved absolute path to check
+            base_path: The base path that resolved_path must be within
+
+        Returns:
+            True if path is safe (within base_path), False otherwise
+        """
+        try:
+            resolved_path.resolve().relative_to(base_path.resolve())
+            return True
+        except ValueError:
+            # Path is outside base_path
+            logger.warning(
+                f"Path traversal attempt detected: {resolved_path} is outside {base_path}"
+            )
+            return False
+
     def _find_include_path(self, include_ref: str, current_file: Path) -> Optional[Path]:
         """Find the path for an include reference.
 
@@ -1424,6 +1486,9 @@ class IncludeResolver:
         1. Relative to current file
         2. From repo root (roles/, tasks/, etc.)
         3. Standard Ansible paths
+
+        Security: All paths are validated to ensure they are within the repository root
+        to prevent path traversal attacks.
 
         Args:
             include_ref: Include reference string
@@ -1440,20 +1505,24 @@ class IncludeResolver:
         attempted_paths.append(str(path1))
         logger.debug(f"_find_include_path: trying path1 (relative to file): {path1}")
         if path1.exists() and path1.is_file():
-            logger.debug(f"Found include path (relative to file): {path1}")
-            return path1
-        else:
-            logger.debug("_find_include_path: path1 does not exist or is not a file")
+            # Security check: ensure path is within repo root
+            if self._is_path_safe(path1.resolve(), self.repo_root):
+                logger.debug(f"Found include path (relative to file): {path1}")
+                return path1
+            else:
+                logger.warning(f"Path traversal attempt blocked: {path1}")
 
         # Try 2: From repo root
         path2 = self.repo_root / include_ref
         attempted_paths.append(str(path2))
         logger.debug(f"_find_include_path: trying path2 (from repo root): {path2}")
         if path2.exists() and path2.is_file():
-            logger.debug(f"Found include path (from repo root): {path2}")
-            return path2
-        else:
-            logger.debug("_find_include_path: path2 does not exist or is not a file")
+            # Security check: ensure path is within repo root
+            if self._is_path_safe(path2.resolve(), self.repo_root):
+                logger.debug(f"Found include path (from repo root): {path2}")
+                return path2
+            else:
+                logger.warning(f"Path traversal attempt blocked: {path2}")
 
         # Try 3: Standard Ansible paths
         # Try tasks/ directory relative to current file
@@ -1462,10 +1531,12 @@ class IncludeResolver:
             attempted_paths.append(str(path3))
             logger.debug(f"_find_include_path: trying path3 (tasks directory): {path3}")
             if path3.exists() and path3.is_file():
-                logger.debug(f"Found include path (tasks directory): {path3}")
-                return path3
-            else:
-                logger.debug("_find_include_path: path3 does not exist or is not a file")
+                # Security check: ensure path is within repo root
+                if self._is_path_safe(path3.resolve(), self.repo_root):
+                    logger.debug(f"Found include path (tasks directory): {path3}")
+                    return path3
+                else:
+                    logger.warning(f"Path traversal attempt blocked: {path3}")
 
         # Try roles/*/tasks/ directory
         roles_dir = self.repo_root / "roles"
@@ -1479,8 +1550,12 @@ class IncludeResolver:
                         attempted_paths.append(str(path4))
                         logger.debug(f"_find_include_path: trying path4 (role tasks): {path4}")
                         if path4.exists() and path4.is_file():
-                            logger.debug(f"Found include path (role tasks): {path4}")
-                            return path4
+                            # Security check: ensure path is within repo root
+                            if self._is_path_safe(path4.resolve(), self.repo_root):
+                                logger.debug(f"Found include path (role tasks): {path4}")
+                                return path4
+                            else:
+                                logger.warning(f"Path traversal attempt blocked: {path4}")
 
         # Not found
         logger.warning(
@@ -1533,6 +1608,26 @@ class TemplateFinder:
         self.repo_root = repo_root
         self.error_collector = error_collector
         logger.debug(f"TemplateFinder initialized with repo_root: {repo_root}")
+
+    def _is_path_safe(self, resolved_path: Path, base_path: Path) -> bool:
+        """Check if a resolved path is within the base path (prevents path traversal).
+
+        Args:
+            resolved_path: The resolved absolute path to check
+            base_path: The base path that resolved_path must be within
+
+        Returns:
+            True if path is safe (within base_path), False otherwise
+        """
+        try:
+            resolved_path.resolve().relative_to(base_path.resolve())
+            return True
+        except ValueError:
+            # Path is outside base_path
+            logger.warning(
+                f"Path traversal attempt detected: {resolved_path} is outside {base_path}"
+            )
+            return False
 
     def _get_template_key(self, task: Dict[str, Any]) -> Optional[str]:
         """Get template key from task, checking both short and FQCN forms.
@@ -1650,6 +1745,9 @@ class TemplateFinder:
     ) -> Optional[Path]:
         """Find the path for a template reference.
 
+        Security: All paths are validated to ensure they are within the repository root
+        to prevent path traversal attacks.
+
         Args:
             template_ref: Template reference string
             current_file: Current file being processed
@@ -1666,18 +1764,42 @@ class TemplateFinder:
             if templates_dir.exists():
                 template_path = templates_dir / template_ref
                 if template_path.exists():
-                    logger.debug(f"Found template path (role templates): {template_path}")
-                    return template_path
+                    # Security check: ensure path is within repo root
+                    if self._is_path_safe(template_path.resolve(), self.repo_root):
+                        logger.debug(f"Found template path (role templates): {template_path}")
+                        return template_path
+                    else:
+                        logger.warning(f"Path traversal attempt blocked: {template_path}")
 
         # Try relative to repo root templates/
         templates_dir = self.repo_root / "templates"
         if templates_dir.exists():
             template_path = templates_dir / template_ref
             if template_path.exists():
-                logger.debug(f"Found template path (repo templates): {template_path}")
-                return template_path
+                # Security check: ensure path is within repo root
+                if self._is_path_safe(template_path.resolve(), self.repo_root):
+                    logger.debug(f"Found template path (repo templates): {template_path}")
+                    return template_path
+                else:
+                    logger.warning(f"Path traversal attempt blocked: {template_path}")
 
         # Try in roles/*/templates/
+        roles_dir = self.repo_root / "roles"
+        if roles_dir.exists():
+            for role_dir in roles_dir.iterdir():
+                if role_dir.is_dir():
+                    templates_dir = role_dir / "templates"
+                    if templates_dir.exists():
+                        template_path = templates_dir / template_ref
+                        if template_path.exists():
+                            # Security check: ensure path is within repo root
+                            if self._is_path_safe(template_path.resolve(), self.repo_root):
+                                logger.debug(f"Found template path (role templates): {template_path}")
+                                return template_path
+                            else:
+                                logger.warning(f"Path traversal attempt blocked: {template_path}")
+
+        return None
         roles_dir = self.repo_root / "roles"
         if roles_dir.exists():
             for role_dir in roles_dir.iterdir():
@@ -2307,11 +2429,20 @@ class ResourceAnalyzer:
             try:
                 template_file = self.repo_root / template_path
                 if template_file.exists():
+                    # Security: Check file size to prevent DoS
+                    file_size = template_file.stat().st_size
+                    if file_size > MAX_TEMPLATE_SIZE:
+                        logger.debug(
+                            f"Template file too large ({file_size} bytes) for regex processing: {template_path}"
+                        )
+                        continue
+
                     with template_file.open("r", encoding="utf-8") as f:
                         content = f.read()
                         # Simple regex to find {{ var_name }} patterns
                         import re
                         var_pattern = r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}"
+                        # Limit regex processing to prevent DoS (pattern is safe, but large files can be slow)
                         vars_found = re.findall(var_pattern, content)
                         for var_name in vars_found:
                             if var_name not in var_to_roles:
@@ -2430,10 +2561,19 @@ class ResourceAnalyzer:
             try:
                 template_file = self.repo_root / template_path
                 if template_file.exists():
+                    # Security: Check file size to prevent DoS
+                    file_size = template_file.stat().st_size
+                    if file_size > MAX_TEMPLATE_SIZE:
+                        logger.debug(
+                            f"Template file too large ({file_size} bytes) for regex processing: {template_path}"
+                        )
+                        continue
+
                     with template_file.open("r", encoding="utf-8") as f:
                         content = f.read()
                         import re
                         var_pattern = r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}"
+                        # Limit regex processing to prevent DoS (pattern is safe, but large files can be slow)
                         vars_found = re.findall(var_pattern, content)
                         shared_vars.update(vars_found)
             except Exception:
@@ -4587,8 +4727,10 @@ def main(
 
     log_dir = Path(DEFAULT_LOG_DIR)
     if log_dir.exists():
+        # Use st_ctime (creation time) for cross-platform compatibility
+        # st_mtime can have timezone issues on Windows
         log_files = sorted(
-            log_dir.glob(f"{script_name}_*.log"), key=lambda p: p.stat().st_mtime, reverse=True
+            log_dir.glob(f"{script_name}_*.log"), key=lambda p: p.stat().st_ctime, reverse=True
         )
         if log_files:
             console.print(f"[dim]Log file: {log_files[0]}[/dim]")
@@ -4616,6 +4758,13 @@ def main(
         raise FileNotFoundError(
             f"Input path '{input_path}' not found. Tried relative to current directory and repo-root."
         )
+
+    # Security: Validate that input path is within repo root (for whole-repo mode)
+    try:
+        resolved_input_path.resolve().relative_to(Path(repo_root).resolve())
+    except ValueError:
+        # Path is outside repo root - this is OK for single file analysis, but log it
+        logger.debug(f"Input path is outside repo root: {resolved_input_path}")
 
     logger.info(f"Resolved input path: {resolved_input_path}")
     input_path = resolved_input_path

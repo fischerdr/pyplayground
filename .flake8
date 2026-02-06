@@ -24,6 +24,8 @@ ignore =
     D401,
     # One-line docstring should fit on one line with quotes
     D200,
+    # Whitespace before ':'
+    E203,
     # Import errors - imports must be at top of the file
     E402,
     # Line too long - i give up

@@ -724,3 +724,46 @@
 - ✅ Syntax validation: Passed
 
 **Next Steps**: Test error analysis with actual repository to verify reporting accuracy
+
+---
+
+### Task 3.5: Logging Standards Compliance
+
+**Status**: ✅ Complete  
+**Date**: 2026-02-05  
+**Branch**: main  
+**Commit: ba4db06]
+
+**Changes Made**:
+- Fixed exception logging: Changed DEBUG level exceptions to WARNING/ERROR with exc_info=True
+- Added exc_info=True to all exception handlers that were missing it (lines 316, 344, 680, 2747)
+- Added entry logging to _analyze_standard() method
+- Added resource operation logging (file open/close) for JSON and Markdown generation
+- Fixed bare except clause at line 680 to include proper logging
+
+**Logging Improvements**:
+- Line 223: Changed logger.debug to logger.warning with exc_info=True for playbook validation errors
+- Line 316: Added exc_info=True to directory scanning error
+- Line 344: Added exc_info=True to .gitignore loading error  
+- Line 680: Added logging to bare except clause (was silently ignoring errors)
+- Line 2620: Changed logger.debug to logger.warning with exc_info=True for template reading errors
+- Line 2747: Added logging to exception handler for template variable extraction
+- Added resource logging for file operations in JSON/Markdown generation methods
+
+**Problem Solved**:
+- Code was not fully compliant with DEVELOPMENT_STANDARDS.md Section 5 (Logging Standards)
+- Some exceptions were logged at DEBUG level instead of WARNING/ERROR
+- Missing exc_info=True in exception handlers (required for stack traces)
+- Bare except clause was silently ignoring errors
+- Resource operations (file open/close) were not logged
+
+**Files Modified**:
+- pyplayground/ansible_structure_analyzer.py: Enhanced logging throughout
+
+**Code Quality**:
+- ✅ Black formatting: Passed
+- ✅ isort import sorting: Passed
+- ✅ flake8 linting: Passed
+- ✅ Syntax validation: Passed
+
+**Next Steps**: Continue monitoring logging compliance in future changes

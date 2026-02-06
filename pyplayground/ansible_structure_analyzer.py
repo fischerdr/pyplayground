@@ -7,9 +7,32 @@ This script analyzes Ansible playbooks and roles to document:
 - All template files used (via template module and .j2 files in templates/)
 - Hierarchical structure showing parent-child relationships
 - File locations and paths
+- Cross-role dependencies (task includes, role includes, template usage between roles)
 
-It supports analyzing either a single playbook file or a top-level directory
-(non-recursive) containing playbook files.
+It supports multiple analysis modes:
+- Single playbook file analysis
+- Directory analysis (non-recursive)
+- Whole-repository analysis (recursive, respects .gitignore)
+
+Role Refactoring Analysis:
+- Dependency graph construction and traversal
+- Coupling strength metrics between role pairs
+- Shared resource analysis (templates, variables, files)
+- Usage pattern analysis (co-occurrence, role clusters)
+- Complexity scoring (extraction and merge complexity)
+- Merge recommendations (identifies roles that should be combined)
+- Extraction recommendations (identifies roles suitable for separate repositories)
+
+Output Formats:
+- JSON (comprehensive structured data)
+- Markdown (human-readable reports with refactoring analysis)
+- CSV (multiple files for data analysis: roles, dependencies, coupling matrix, etc.)
+- DOT/Graphviz (dependency graph visualization)
+
+Performance Features:
+- Incremental batch processing for large repositories
+- Optional parallel processing with configurable workers
+- Memory-efficient data structures and deduplication
 """
 
 import csv

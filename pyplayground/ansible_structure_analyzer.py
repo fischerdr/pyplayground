@@ -421,6 +421,7 @@ class ErrorCollector:
     def __init__(self):
         """Initialize the ErrorCollector."""
         self.errors: List[Dict[str, Any]] = []
+        self._seen_errors: Set[str] = set()  # Track seen errors to avoid duplicates
         logger.debug("ErrorCollector initialized")
 
     def add_error(
@@ -429,6 +430,7 @@ class ErrorCollector:
         message: str,
         file_path: Optional[Path] = None,
         context: Optional[Dict[str, Any]] = None,
+        deduplicate: bool = False,
     ) -> None:
         """Add an error to the collection.
 
@@ -437,6 +439,7 @@ class ErrorCollector:
             message: Error message
             file_path: Optional file path where error occurred
             context: Optional additional context information
+            deduplicate: If True, only log warning once per unique error message
         """
         error = {
             "type": error_type,
@@ -446,6 +449,15 @@ class ErrorCollector:
             "timestamp": datetime.now().isoformat(),
         }
         self.errors.append(error)
+
+        # Deduplicate warnings for repeated errors (e.g., same missing role in multiple playbooks)
+        if deduplicate:
+            error_key = f"{error_type}:{message}"
+            if error_key in self._seen_errors:
+                logger.debug(f"Error collected (duplicate): {error_type} - {message}")
+                return
+            self._seen_errors.add(error_key)
+
         logger.warning(f"Error collected: {error_type} - {message}")
 
     def get_errors(self) -> List[Dict[str, Any]]:
@@ -1587,11 +1599,22 @@ class IncludeResolver:
             logger.debug(f"Found role path: {role_path}")
             return role_path
 
-        # Not found
-        logger.warning(f"Could not resolve role path: {role_name}")
+        # Not found - use deduplication to avoid spam for same missing role across multiple playbooks
         self.error_collector.add_error(
-            "MISSING_FILE", f"Role not found: {role_name}", None, {"role_name": role_name}
+            "MISSING_FILE",
+            f"Role not found: {role_name}",
+            None,
+            {"role_name": role_name},
+            deduplicate=True,
         )
+        # Only log warning once per unique role name
+        if role_name not in getattr(self, "_warned_missing_roles", set()):
+            if not hasattr(self, "_warned_missing_roles"):
+                self._warned_missing_roles = set()
+            self._warned_missing_roles.add(role_name)
+            logger.warning(f"Could not resolve role path: {role_name}")
+        else:
+            logger.debug(f"Could not resolve role path: {role_name} (already warned)")
         return None
 
 

@@ -12,6 +12,7 @@ It supports analyzing either a single playbook file or a top-level directory
 (non-recursive) containing playbook files.
 """
 
+import csv
 import json
 import logging
 from datetime import datetime
@@ -66,8 +67,14 @@ def _path_to_role_name(repo_root: Path, file_path: Path) -> Optional[str]:
 class FileDiscovery:
     """Handles discovery of Ansible playbook files from input."""
 
-    def __init__(self):
-        """Initialize the FileDiscovery."""
+    def __init__(self, repo_root: Optional[Path] = None):
+        """Initialize the FileDiscovery.
+
+        Args:
+            repo_root: Repository root directory (for .gitignore support)
+        """
+        self.repo_root = repo_root
+        self._gitignore_patterns: Optional[List[str]] = None
         logger.debug("FileDiscovery initialized")
 
     def discover_files(self, input_path: Path) -> List[Path]:
@@ -140,7 +147,16 @@ class FileDiscovery:
             raise
 
     def is_playbook_file(self, file_path: Path) -> bool:
-        """Check if a file is a YAML playbook file.
+        """Check if a file is a YAML playbook file (not a role task file).
+
+        Playbooks have:
+        - 'hosts:' key (required for playbook)
+        - Optional: 'name:', 'gather_facts:', 'tasks:', 'pre_tasks:', etc.
+
+        Role task files:
+        - Are in roles/*/tasks/ directories
+        - Are just lists of tasks (no 'hosts:' key)
+        - May have includes, modules, but no play structure
 
         Args:
             file_path: Path to file to check
@@ -154,7 +170,224 @@ class FileDiscovery:
         if file_path.suffix not in YAML_EXTENSIONS:
             return False
 
-        return True
+        # Exclude role task files explicitly
+        if "roles" in file_path.parts and "tasks" in file_path.parts:
+            logger.debug(f"Excluding role task file: {file_path}")
+            return False
+
+        # Validate by checking for playbook structure (hosts: key)
+        try:
+            with file_path.open("r", encoding="utf-8") as f:
+                content = f.read()
+                if "ANSIBLE_VAULT" in content:
+                    return False  # Skip vaulted files
+
+                custom_loader = create_custom_yaml_loader()
+                data = yaml.load(content, Loader=custom_loader)
+
+                if isinstance(data, list):
+                    # Check if first item is a play (has 'hosts')
+                    if data and isinstance(data[0], dict):
+                        return "hosts" in data[0]
+                elif isinstance(data, dict):
+                    # Single play - must have 'hosts'
+                    return "hosts" in data
+
+                return False
+        except Exception as e:
+            logger.debug(f"Error validating playbook {file_path}: {e}")
+            return False  # Conservative: don't treat as playbook if we can't validate
+
+    def discover_all_playbooks(self, repo_root: Path) -> List[Path]:
+        """Discover all playbooks in repository, excluding role task files and .gitignore patterns.
+
+        Strategy:
+        1. Load .gitignore patterns (if exists)
+        2. Scan playbooks/ directory (if exists) - highest priority
+        3. Scan root-level .yml/.yaml files (if not in roles/, collections/, etc.)
+        4. Exclude roles/*/tasks/ files explicitly
+        5. Exclude files/directories matching .gitignore patterns
+        6. Validate each file has playbook structure (hosts: key)
+
+        Args:
+            repo_root: Repository root directory
+
+        Returns:
+            List of playbook file paths
+        """
+        logger.info(f"Discovering all playbooks in repository: {repo_root}")
+        self.repo_root = repo_root
+
+        # Load .gitignore patterns
+        gitignore_patterns = self._load_gitignore_patterns(repo_root)
+
+        playbook_files = []
+
+        # Priority 1: playbooks/ directory
+        playbooks_dir = repo_root / "playbooks"
+        if playbooks_dir.exists() and not self._is_ignored(playbooks_dir, gitignore_patterns):
+            playbook_files.extend(
+                self._discover_from_directory_recursive(playbooks_dir, gitignore_patterns)
+            )
+
+        # Priority 2: Root-level files (but exclude known non-playbook dirs)
+        exclude_dirs = {"roles", "collections", "group_vars", "host_vars", "vars", "tasks", ".git"}
+        for item in repo_root.iterdir():
+            # Skip if ignored by .gitignore
+            if self._is_ignored(item, gitignore_patterns):
+                logger.debug(f"Skipping ignored file/directory: {item}")
+                continue
+
+            # Skip known non-playbook directories
+            if item.is_dir() and item.name in exclude_dirs:
+                continue
+
+            if item.is_file() and item.suffix in YAML_EXTENSIONS:
+                if self.is_playbook_file(item):  # Now validates structure
+                    playbook_files.append(item)
+            elif item.is_dir():
+                # Recursively scan other directories (but not roles/, collections/, etc.)
+                playbook_files.extend(
+                    self._discover_from_directory_recursive(item, gitignore_patterns)
+                )
+
+        logger.info(f"Found {len(playbook_files)} playbook files in repository")
+        return playbook_files
+
+    def _discover_from_directory_recursive(
+        self, directory: Path, gitignore_patterns: List[str]
+    ) -> List[Path]:
+        """Recursively discover playbook files from a directory.
+
+        Args:
+            directory: Directory to search
+            gitignore_patterns: List of .gitignore patterns
+
+        Returns:
+            List of playbook file paths found
+        """
+        playbook_files = []
+        exclude_dirs = {"roles", "collections", "group_vars", "host_vars", "vars", "tasks", ".git"}
+
+        try:
+            for item in directory.rglob("*"):
+                # Skip if ignored by .gitignore
+                if self._is_ignored(item, gitignore_patterns):
+                    continue
+
+                # Skip known non-playbook directories
+                if item.is_dir() and item.name in exclude_dirs:
+                    continue
+
+                # Skip role task files
+                if "roles" in item.parts and "tasks" in item.parts:
+                    continue
+
+                if item.is_file() and item.suffix in YAML_EXTENSIONS:
+                    if self.is_playbook_file(item):
+                        playbook_files.append(item)
+
+        except Exception as e:
+            logger.warning(f"Error scanning directory {directory}: {e}")
+
+        return playbook_files
+
+    def _load_gitignore_patterns(self, repo_root: Path) -> List[str]:
+        """Load .gitignore patterns from repository root.
+
+        Args:
+            repo_root: Repository root directory
+
+        Returns:
+            List of gitignore patterns (simplified - handles common cases)
+        """
+        gitignore_file = repo_root / ".gitignore"
+        if not gitignore_file.exists():
+            return []
+
+        patterns = []
+        try:
+            with gitignore_file.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    # Skip comments and empty lines
+                    if not line or line.startswith("#"):
+                        continue
+                    patterns.append(line)
+            logger.debug(f"Loaded {len(patterns)} .gitignore patterns")
+        except Exception as e:
+            logger.warning(f"Error loading .gitignore: {e}")
+
+        return patterns
+
+    def _is_ignored(self, path: Path, gitignore_patterns: List[str]) -> bool:
+        """Check if path matches any .gitignore pattern.
+
+        Simplified implementation - handles common patterns:
+        - Exact matches
+        - Directory patterns (ends with /)
+        - Wildcard patterns (*)
+        - Path patterns (relative to repo root)
+
+        Args:
+            path: Path to check
+            gitignore_patterns: List of .gitignore patterns
+
+        Returns:
+            True if path should be ignored
+        """
+        if not gitignore_patterns or not self.repo_root:
+            return False
+
+        # Get relative path from repo root
+        try:
+            rel_path = path.relative_to(self.repo_root)
+            rel_str = str(rel_path)
+        except ValueError:
+            return False
+
+        for pattern in gitignore_patterns:
+            # Simple pattern matching (can be enhanced with pathspec library)
+            if self._matches_pattern(rel_str, pattern):
+                return True
+
+        return False
+
+    def _matches_pattern(self, path: str, pattern: str) -> bool:
+        """Simple pattern matching for .gitignore patterns.
+
+        Handles:
+        - Exact matches
+        - Wildcards (*)
+        - Directory patterns (ends with /)
+        - Leading/trailing slashes
+
+        Args:
+            path: Relative path to check
+            pattern: Gitignore pattern
+
+        Returns:
+            True if path matches pattern
+        """
+        # Normalize pattern
+        pattern = pattern.strip()
+        if not pattern:
+            return False
+
+        # Directory pattern (ends with /)
+        if pattern.endswith("/"):
+            pattern = pattern[:-1]
+            if path.startswith(pattern + "/") or path == pattern:
+                return True
+
+        # Wildcard pattern
+        if "*" in pattern:
+            import fnmatch
+
+            return fnmatch.fnmatch(path, pattern)
+
+        # Exact match
+        return path == pattern or path.endswith("/" + pattern)
 
 
 class ErrorCollector:
@@ -272,7 +505,7 @@ class IncludeResolver:
         # Note: loop_control alone doesn't indicate a loop, only when used with loop
         return None
 
-    def resolve_includes(  # noqa: C901
+    def resolve_includes(
         self,
         file_path: Path,
         visited: Optional[Set[Path]] = None,
@@ -457,7 +690,7 @@ class IncludeResolver:
             self.error_collector.add_error("PARSE_ERROR", f"File read error: {e}", file_path)
             return None
 
-    def _parse_includes(  # noqa: C901
+    def _parse_includes(
         self,
         content: Any,
         current_file: Path,
@@ -1389,7 +1622,7 @@ class TemplateFinder:
             result["cross_role"] = False
         return result
 
-    def _find_template_path(  # noqa: C901
+    def _find_template_path(
         self, template_ref: str, current_file: Path
     ) -> Optional[Path]:
         """Find the path for a template reference.
@@ -1458,7 +1691,7 @@ class TemplateFinder:
 
         return templates
 
-    def find_templates_in_role_tasks(  # noqa: C901
+    def find_templates_in_role_tasks(
         self, role_path: Path, include_resolver: "IncludeResolver"
     ) -> List[Dict[str, Any]]:
         """Find templates used in role task files.
@@ -1600,6 +1833,1343 @@ class StructureBuilder:
         }
 
 
+class RoleDependencyGraph:
+    """Builds and manages a directed graph of role dependencies."""
+
+    def __init__(self, structure: Dict[str, Any], repo_root: Path):
+        """Initialize the RoleDependencyGraph.
+
+        Args:
+            structure: Structure dictionary from analyzer
+            repo_root: Repository root directory
+        """
+        self.repo_root = repo_root
+        self.structure = structure
+        self.graph: Dict[str, List[Dict[str, Any]]] = {}  # role_name -> list of dependencies
+        self.reverse_graph: Dict[str, List[str]] = {}  # role_name -> list of dependents
+        logger.debug("RoleDependencyGraph initialized")
+
+    def build_graph(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Build dependency graph from structure.
+
+        Returns:
+            Dictionary mapping role names to their dependencies
+        """
+        logger.info("Building role dependency graph")
+
+        # Initialize graph with all roles as nodes
+        all_roles = {role.get("name") for role in self.structure.get("roles", [])}
+        for role_name in all_roles:
+            self.graph[role_name] = []
+            self.reverse_graph[role_name] = []
+
+        # Walk playbooks and roles to find cross-role dependencies
+        def walk_includes(includes: List[Dict[str, Any]], caller_role: Optional[str] = None) -> None:
+            """Recursively walk includes to find cross-role dependencies."""
+            for include in includes:
+                include_type = include.get("type")
+                cross_role = include.get("cross_role", False)
+
+                if cross_role and caller_role:
+                    target_role = include.get("target_role")
+                    if target_role and target_role != caller_role:
+                        # Add edge: caller_role -> target_role
+                        edge_metadata = {
+                            "type": include_type,
+                            "target_role": target_role,
+                            "ref": include.get("ref") or include.get("name") or "?",
+                            "path": include.get("path"),
+                            "resolved": include.get("resolved", False),
+                        }
+                        if edge_metadata not in self.graph[caller_role]:
+                            self.graph[caller_role].append(edge_metadata)
+                            logger.debug(
+                                f"Added dependency edge: {caller_role} -> {target_role} ({include_type})"
+                            )
+                        # Update reverse graph
+                        if caller_role not in self.reverse_graph[target_role]:
+                            self.reverse_graph[target_role].append(caller_role)
+
+                # Determine current role context for nested includes
+                current_role = caller_role
+                if include_type == "role":
+                    role_name = include.get("name")
+                    if role_name:
+                        current_role = role_name
+
+                # Process nested includes
+                nested_includes = include.get("includes", [])
+                if nested_includes:
+                    walk_includes(nested_includes, current_role)
+
+        # Process playbook includes (caller_role is None for playbooks)
+        for playbook in self.structure.get("playbooks", []):
+            walk_includes(playbook.get("includes", []), None)
+
+        # Process role includes
+        for role in self.structure.get("roles", []):
+            role_name = role.get("name")
+            if role_name:
+                walk_includes(role.get("includes", []), role_name)
+
+        # Process cross-role template usage
+        for template in self.structure.get("templates", []):
+            if template.get("cross_role") and template.get("caller_role") and template.get("template_role"):
+                caller_role = template["caller_role"]
+                template_role = template["template_role"]
+                if caller_role != template_role:
+                    edge_metadata = {
+                        "type": "template",
+                        "target_role": template_role,
+                        "ref": template.get("template", "?"),
+                        "path": template.get("resolved_path"),
+                        "resolved": template.get("found", False),
+                    }
+                    if edge_metadata not in self.graph[caller_role]:
+                        self.graph[caller_role].append(edge_metadata)
+                        logger.debug(
+                            f"Added template dependency edge: {caller_role} -> {template_role}"
+                        )
+                    # Update reverse graph
+                    if caller_role not in self.reverse_graph[template_role]:
+                        self.reverse_graph[template_role].append(caller_role)
+
+        logger.info(f"Dependency graph built: {len(self.graph)} roles, {sum(len(deps) for deps in self.graph.values())} edges")
+        return self.graph
+
+    def get_direct_dependencies(self, role_name: str) -> List[str]:
+        """Get direct dependencies of a role.
+
+        Args:
+            role_name: Name of the role
+
+        Returns:
+            List of role names that this role directly depends on
+        """
+        if role_name not in self.graph:
+            return []
+        return [dep["target_role"] for dep in self.graph[role_name] if dep.get("target_role")]
+
+    def get_indirect_dependencies(self, role_name: str) -> List[str]:
+        """Get indirect (transitive) dependencies of a role.
+
+        Args:
+            role_name: Name of the role
+
+        Returns:
+            List of role names that this role indirectly depends on
+        """
+        indirect = set()
+        visited = set()
+
+        def traverse(current_role: str) -> None:
+            if current_role in visited:
+                return
+            visited.add(current_role)
+            for dep in self.get_direct_dependencies(current_role):
+                indirect.add(dep)
+                traverse(dep)
+
+        traverse(role_name)
+        # Remove direct dependencies (we want only indirect)
+        indirect -= set(self.get_direct_dependencies(role_name))
+        return sorted(list(indirect))
+
+    def get_dependents(self, role_name: str) -> List[str]:
+        """Get roles that depend on this role (reverse dependencies).
+
+        Args:
+            role_name: Name of the role
+
+        Returns:
+            List of role names that depend on this role
+        """
+        return self.reverse_graph.get(role_name, []).copy()
+
+    def find_cycles(self) -> List[List[str]]:
+        """Find cycles in the dependency graph.
+
+        Returns:
+            List of cycles, where each cycle is a list of role names forming a cycle
+        """
+        cycles = []
+        visited = set()
+        rec_stack = set()
+
+        def dfs(role_name: str, path: List[str]) -> None:
+            """Depth-first search to find cycles."""
+            if role_name in rec_stack:
+                # Found a cycle
+                cycle_start = path.index(role_name)
+                cycle = path[cycle_start:] + [role_name]
+                cycles.append(cycle)
+                return
+
+            if role_name in visited:
+                return
+
+            visited.add(role_name)
+            rec_stack.add(role_name)
+
+            for dep_role in self.get_direct_dependencies(role_name):
+                dfs(dep_role, path + [role_name])
+
+            rec_stack.remove(role_name)
+
+        for role_name in self.graph.keys():
+            if role_name not in visited:
+                dfs(role_name, [])
+
+        return cycles
+
+    def get_dependency_path(self, from_role: str, to_role: str) -> List[str]:
+        """Get shortest dependency path from one role to another.
+
+        Args:
+            from_role: Source role name
+            to_role: Target role name
+
+        Returns:
+            List of role names forming the path, or empty list if no path exists
+        """
+        if from_role == to_role:
+            return [from_role]
+
+        # BFS to find shortest path
+        queue = [(from_role, [from_role])]
+        visited = {from_role}
+
+        while queue:
+            current_role, path = queue.pop(0)
+            for dep_role in self.get_direct_dependencies(current_role):
+                if dep_role == to_role:
+                    return path + [dep_role]
+                if dep_role not in visited:
+                    visited.add(dep_role)
+                    queue.append((dep_role, path + [dep_role]))
+
+        return []
+
+
+class CouplingAnalyzer:
+    """Calculates coupling strength metrics between role pairs."""
+
+    def __init__(self, dependency_graph: RoleDependencyGraph, structure: Dict[str, Any]):
+        """Initialize the CouplingAnalyzer.
+
+        Args:
+            dependency_graph: RoleDependencyGraph instance
+            structure: Structure dictionary from analyzer
+        """
+        self.dependency_graph = dependency_graph
+        self.structure = structure
+        self.coupling_matrix: Dict[str, Dict[str, float]] = {}
+        logger.debug("CouplingAnalyzer initialized")
+
+    def calculate_coupling_matrix(self) -> Dict[str, Dict[str, float]]:
+        """Calculate coupling strength between all role pairs.
+
+        Returns:
+            Dictionary mapping (role_a, role_b) to coupling score (0.0-1.0)
+        """
+        logger.info("Calculating coupling matrix")
+
+        all_roles = set(self.dependency_graph.graph.keys())
+        self.coupling_matrix = {}
+
+        for role_a in all_roles:
+            self.coupling_matrix[role_a] = {}
+            for role_b in all_roles:
+                if role_a == role_b:
+                    self.coupling_matrix[role_a][role_b] = 1.0
+                else:
+                    score = self._calculate_coupling_score(role_a, role_b)
+                    self.coupling_matrix[role_a][role_b] = score
+
+        logger.info(f"Coupling matrix calculated for {len(all_roles)} roles")
+        return self.coupling_matrix
+
+    def _calculate_coupling_score(self, role_a: str, role_b: str) -> float:
+        """Calculate coupling strength between two roles.
+
+        Args:
+            role_a: First role name
+            role_b: Second role name
+
+        Returns:
+            Coupling score between 0.0 and 1.0
+        """
+        score = 0.0
+
+        # Weight factors for different dependency types
+        weights = {
+            "role": 1.0,  # Highest weight for role includes
+            "include_role": 1.0,
+            "import_role": 1.0,
+            "include_tasks": 0.6,  # Medium weight for task includes
+            "import_tasks": 0.6,
+            "template": 0.3,  # Lower weight for template usage
+        }
+
+        # Count dependencies from A to B
+        deps_a_to_b = self.dependency_graph.get_direct_dependencies(role_a)
+        if role_b in deps_a_to_b:
+            # Count dependency types and weight them
+            for dep in self.dependency_graph.graph.get(role_a, []):
+                if dep.get("target_role") == role_b:
+                    dep_type = dep.get("type", "")
+                    weight = weights.get(dep_type, 0.5)
+                    score += weight
+
+        # Count dependencies from B to A (bidirectional coupling)
+        deps_b_to_a = self.dependency_graph.get_direct_dependencies(role_b)
+        if role_a in deps_b_to_a:
+            for dep in self.dependency_graph.graph.get(role_b, []):
+                if dep.get("target_role") == role_a:
+                    dep_type = dep.get("type", "")
+                    weight = weights.get(dep_type, 0.5)
+                    score += weight
+
+        # Normalize score (max possible: 2.0 for bidirectional role includes)
+        # Normalize to 0.0-1.0 range
+        normalized_score = min(score / 2.0, 1.0)
+
+        # Add shared resources bonus
+        shared_resources_count = self._count_shared_resources(role_a, role_b)
+        if shared_resources_count > 0:
+            # Add up to 0.2 bonus for shared resources
+            resource_bonus = min(shared_resources_count * 0.05, 0.2)
+            normalized_score = min(normalized_score + resource_bonus, 1.0)
+
+        return normalized_score
+
+    def _count_shared_resources(self, role_a: str, role_b: str) -> int:
+        """Count shared resources (templates, vars) between two roles.
+
+        Args:
+            role_a: First role name
+            role_b: Second role name
+
+        Returns:
+            Count of shared resources
+        """
+        # Get templates for each role
+        templates_a = set()
+        templates_b = set()
+
+        for role in self.structure.get("roles", []):
+            if role.get("name") == role_a:
+                templates_a = set(role.get("templates", []))
+            elif role.get("name") == role_b:
+                templates_b = set(role.get("templates", []))
+
+        # Count shared templates
+        shared = len(templates_a & templates_b)
+        return shared
+
+    def get_bidirectional_coupling(self, role_a: str, role_b: str) -> bool:
+        """Check if two roles have bidirectional coupling.
+
+        Args:
+            role_a: First role name
+            role_b: Second role name
+
+        Returns:
+            True if both roles depend on each other
+        """
+        deps_a = self.dependency_graph.get_direct_dependencies(role_a)
+        deps_b = self.dependency_graph.get_direct_dependencies(role_b)
+        return role_b in deps_a and role_a in deps_b
+
+    def get_strongly_coupled_pairs(self, threshold: float = 0.7) -> List[tuple]:
+        """Get role pairs with coupling strength above threshold.
+
+        Args:
+            threshold: Minimum coupling score (default: 0.7)
+
+        Returns:
+            List of (role_a, role_b, score) tuples
+        """
+        if not self.coupling_matrix:
+            self.calculate_coupling_matrix()
+
+        strongly_coupled = []
+        processed_pairs = set()
+
+        for role_a in self.coupling_matrix:
+            for role_b in self.coupling_matrix[role_a]:
+                if role_a == role_b:
+                    continue
+
+                # Avoid duplicates (A-B same as B-A)
+                pair_key = tuple(sorted([role_a, role_b]))
+                if pair_key in processed_pairs:
+                    continue
+
+                score = self.coupling_matrix[role_a][role_b]
+                if score >= threshold:
+                    strongly_coupled.append((role_a, role_b, score))
+                    processed_pairs.add(pair_key)
+
+        # Sort by score descending
+        strongly_coupled.sort(key=lambda x: x[2], reverse=True)
+        return strongly_coupled
+
+
+class ResourceAnalyzer:
+    """Identifies shared resources (templates, vars, files) between roles."""
+
+    def __init__(self, structure: Dict[str, Any], repo_root: Path):
+        """Initialize the ResourceAnalyzer.
+
+        Args:
+            structure: Structure dictionary from analyzer
+            repo_root: Repository root directory
+        """
+        self.structure = structure
+        self.repo_root = repo_root
+        self.shared_resources: Dict[str, Dict[str, List[str]]] = {}  # (role_a, role_b) -> resource_type -> list
+        logger.debug("ResourceAnalyzer initialized")
+
+    def find_shared_templates(self, roles: List[str]) -> Dict[str, List[str]]:
+        """Find templates shared by multiple roles.
+
+        Args:
+            roles: List of role names to check
+
+        Returns:
+            Dictionary mapping template path to list of roles that use it
+        """
+        template_to_roles: Dict[str, List[str]] = {}
+
+        # Collect templates from each role
+        for role in self.structure.get("roles", []):
+            role_name = role.get("name")
+            if role_name not in roles:
+                continue
+
+            templates = role.get("templates", [])
+            for template_path in templates:
+                if template_path not in template_to_roles:
+                    template_to_roles[template_path] = []
+                if role_name not in template_to_roles[template_path]:
+                    template_to_roles[template_path].append(role_name)
+
+        # Filter to only shared templates (used by 2+ roles)
+        shared = {tpl: roles_list for tpl, roles_list in template_to_roles.items() if len(roles_list) > 1}
+        return shared
+
+    def find_shared_variables(self, roles: List[str]) -> Dict[str, List[str]]:
+        """Find variables/defaults shared by multiple roles.
+
+        Args:
+            roles: List of role names to check
+
+        Returns:
+            Dictionary mapping variable name to list of roles that use it
+        """
+        # This is a simplified implementation
+        # Full implementation would require parsing vars/defaults files
+        # For now, we'll identify variables referenced in templates
+        var_to_roles: Dict[str, List[str]] = {}
+
+        # Scan templates for variable references ({{ var_name }})
+        for template in self.structure.get("templates", []):
+            template_role = template.get("template_role")
+            if not template_role or template_role not in roles:
+                continue
+
+            template_path = template.get("template", "")
+            # Try to read template file and extract variable references
+            try:
+                template_file = self.repo_root / template_path
+                if template_file.exists():
+                    with template_file.open("r", encoding="utf-8") as f:
+                        content = f.read()
+                        # Simple regex to find {{ var_name }} patterns
+                        import re
+                        var_pattern = r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}"
+                        vars_found = re.findall(var_pattern, content)
+                        for var_name in vars_found:
+                            if var_name not in var_to_roles:
+                                var_to_roles[var_name] = []
+                            if template_role not in var_to_roles[var_name]:
+                                var_to_roles[var_name].append(template_role)
+            except Exception as e:
+                logger.debug(f"Error reading template {template_path} for variable analysis: {e}")
+
+        # Filter to only shared variables (used by 2+ roles)
+        shared = {var: roles_list for var, roles_list in var_to_roles.items() if len(roles_list) > 1}
+        return shared
+
+    def calculate_resource_overlap(self, role_a: str, role_b: str) -> float:
+        """Calculate resource overlap score between two roles.
+
+        Args:
+            role_a: First role name
+            role_b: Second role name
+
+        Returns:
+            Overlap score between 0.0 and 1.0
+        """
+        # Get templates for each role
+        templates_a = set()
+        templates_b = set()
+
+        for role in self.structure.get("roles", []):
+            if role.get("name") == role_a:
+                templates_a = set(role.get("templates", []))
+            elif role.get("name") == role_b:
+                templates_b = set(role.get("templates", []))
+
+        if not templates_a and not templates_b:
+            return 0.0
+
+        # Calculate Jaccard similarity (intersection / union)
+        intersection = len(templates_a & templates_b)
+        union = len(templates_a | templates_b)
+
+        if union == 0:
+            return 0.0
+
+        return intersection / union
+
+    def analyze_shared_resources(self) -> Dict[str, Dict[str, Any]]:
+        """Analyze all shared resources between role pairs.
+
+        Returns:
+            Dictionary mapping (role_a, role_b) to shared resource data
+        """
+        logger.info("Analyzing shared resources")
+
+        all_roles = {role.get("name") for role in self.structure.get("roles", [])}
+        shared_resources_map: Dict[str, Dict[str, Any]] = {}
+
+        for role_a in all_roles:
+            for role_b in all_roles:
+                if role_a >= role_b:  # Avoid duplicates
+                    continue
+
+                shared_templates = self._get_shared_templates_pair(role_a, role_b)
+                shared_vars = self._get_shared_variables_pair(role_a, role_b)
+                overlap_score = self.calculate_resource_overlap(role_a, role_b)
+
+                if shared_templates or shared_vars or overlap_score > 0:
+                    key = f"{role_a}::{role_b}"
+                    shared_resources_map[key] = {
+                        "role_a": role_a,
+                        "role_b": role_b,
+                        "shared_templates": shared_templates,
+                        "shared_variables": shared_vars,
+                        "overlap_score": overlap_score,
+                    }
+
+        self.shared_resources = shared_resources_map
+        logger.info(f"Found shared resources for {len(shared_resources_map)} role pairs")
+        return shared_resources_map
+
+    def _get_shared_templates_pair(self, role_a: str, role_b: str) -> List[str]:
+        """Get templates shared between two roles.
+
+        Args:
+            role_a: First role name
+            role_b: Second role name
+
+        Returns:
+            List of shared template paths
+        """
+        templates_a = set()
+        templates_b = set()
+
+        for role in self.structure.get("roles", []):
+            if role.get("name") == role_a:
+                templates_a = set(role.get("templates", []))
+            elif role.get("name") == role_b:
+                templates_b = set(role.get("templates", []))
+
+        return sorted(list(templates_a & templates_b))
+
+    def _get_shared_variables_pair(self, role_a: str, role_b: str) -> List[str]:
+        """Get variables shared between two roles.
+
+        Args:
+            role_a: First role name
+            role_b: Second role name
+
+        Returns:
+            List of shared variable names
+        """
+        # Simplified: find variables from shared templates
+        shared_templates = self._get_shared_templates_pair(role_a, role_b)
+        shared_vars = set()
+
+        for template_path in shared_templates:
+            try:
+                template_file = self.repo_root / template_path
+                if template_file.exists():
+                    with template_file.open("r", encoding="utf-8") as f:
+                        content = f.read()
+                        import re
+                        var_pattern = r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}"
+                        vars_found = re.findall(var_pattern, content)
+                        shared_vars.update(vars_found)
+            except Exception:
+                pass
+
+        return sorted(list(shared_vars))
+
+
+class UsagePatternAnalyzer:
+    """Analyzes usage patterns and co-occurrence of roles in playbooks."""
+
+    def __init__(self, structure: Dict[str, Any]):
+        """Initialize the UsagePatternAnalyzer.
+
+        Args:
+            structure: Structure dictionary from analyzer
+        """
+        self.structure = structure
+        self.co_occurrence_matrix: Dict[str, Dict[str, float]] = {}
+        self.role_clusters: List[List[str]] = []
+        logger.debug("UsagePatternAnalyzer initialized")
+
+    def analyze_usage_patterns(self) -> Dict[str, Any]:
+        """Analyze role usage patterns across playbooks.
+
+        Returns:
+            Dictionary with co-occurrence matrix, clusters, and usage frequency
+        """
+        logger.info("Analyzing role usage patterns")
+
+        # Build playbook-to-roles mapping
+        playbook_roles: Dict[str, Set[str]] = {}
+        role_usage_count: Dict[str, int] = {}
+
+        for playbook in self.structure.get("playbooks", []):
+            playbook_name = playbook.get("file", "unknown")
+            roles_in_pb = set()
+
+            def collect_roles(includes: List[Dict[str, Any]], roles_set: Set[str]) -> None:
+                """Recursively collect role names from includes."""
+                for include in includes:
+                    if include.get("type") == "role":
+                        role_name = include.get("name")
+                        if role_name:
+                            roles_set.add(role_name)
+                            role_usage_count[role_name] = role_usage_count.get(role_name, 0) + 1
+                    # Process nested includes
+                    if "includes" in include:
+                        collect_roles(include.get("includes", []), roles_set)
+
+            collect_roles(playbook.get("includes", []), roles_in_pb)
+            playbook_roles[playbook_name] = roles_in_pb
+
+        # Calculate co-occurrence matrix
+        all_roles = set(role_usage_count.keys())
+        self.co_occurrence_matrix = {}
+
+        for role_a in all_roles:
+            self.co_occurrence_matrix[role_a] = {}
+            for role_b in all_roles:
+                if role_a == role_b:
+                    self.co_occurrence_matrix[role_a][role_b] = 1.0
+                else:
+                    co_occurrence = self._calculate_co_occurrence(role_a, role_b, playbook_roles)
+                    self.co_occurrence_matrix[role_a][role_b] = co_occurrence
+
+        # Identify role clusters
+        self.role_clusters = self._identify_clusters(threshold=0.8)
+
+        result = {
+            "co_occurrence_matrix": self.co_occurrence_matrix,
+            "role_clusters": self.role_clusters,
+            "usage_frequency": role_usage_count,
+            "playbook_roles": {
+                pb: sorted(list(roles)) for pb, roles in playbook_roles.items()
+            },
+        }
+
+        logger.info(f"Usage patterns analyzed: {len(all_roles)} roles, {len(self.role_clusters)} clusters")
+        return result
+
+    def _calculate_co_occurrence(
+        self, role_a: str, role_b: str, playbook_roles: Dict[str, Set[str]]
+    ) -> float:
+        """Calculate co-occurrence score between two roles.
+
+        Args:
+            role_a: First role name
+            role_b: Second role name
+            playbook_roles: Dictionary mapping playbook names to sets of role names
+
+        Returns:
+            Co-occurrence score between 0.0 and 1.0
+        """
+        total_playbooks = len(playbook_roles)
+        if total_playbooks == 0:
+            return 0.0
+
+        co_occurrence_count = 0
+        role_a_count = 0
+
+        for roles in playbook_roles.values():
+            if role_a in roles:
+                role_a_count += 1
+                if role_b in roles:
+                    co_occurrence_count += 1
+
+        if role_a_count == 0:
+            return 0.0
+
+        # Calculate: how often role_b appears when role_a appears
+        return co_occurrence_count / role_a_count
+
+    def _identify_clusters(self, threshold: float = 0.8) -> List[List[str]]:
+        """Identify clusters of roles that frequently co-occur.
+
+        Args:
+            threshold: Minimum co-occurrence score for clustering (default: 0.8)
+
+        Returns:
+            List of role clusters (each cluster is a list of role names)
+        """
+        clusters = []
+        processed = set()
+
+        all_roles = set(self.co_occurrence_matrix.keys())
+
+        for role_a in all_roles:
+            if role_a in processed:
+                continue
+
+            # Find all roles that co-occur with role_a above threshold
+            cluster = [role_a]
+            for role_b in all_roles:
+                if role_b == role_a or role_b in processed:
+                    continue
+
+                # Check bidirectional co-occurrence
+                score_ab = self.co_occurrence_matrix[role_a].get(role_b, 0.0)
+                score_ba = self.co_occurrence_matrix[role_b].get(role_a, 0.0)
+
+                # Both directions should be high
+                if score_ab >= threshold and score_ba >= threshold:
+                    cluster.append(role_b)
+                    processed.add(role_b)
+
+            if len(cluster) > 1:
+                clusters.append(sorted(cluster))
+                processed.add(role_a)
+
+        return clusters
+
+    def get_co_occurrence_score(self, role_a: str, role_b: str) -> float:
+        """Get co-occurrence score between two roles.
+
+        Args:
+            role_a: First role name
+            role_b: Second role name
+
+        Returns:
+            Co-occurrence score (0.0-1.0)
+        """
+        if not self.co_occurrence_matrix:
+            self.analyze_usage_patterns()
+
+        return self.co_occurrence_matrix.get(role_a, {}).get(role_b, 0.0)
+
+    def get_role_clusters(self, threshold: float = 0.8) -> List[List[str]]:
+        """Get role clusters with given threshold.
+
+        Args:
+            threshold: Minimum co-occurrence score for clustering
+
+        Returns:
+            List of role clusters
+        """
+        if not self.role_clusters:
+            self.analyze_usage_patterns()
+
+        # Recalculate with new threshold if needed
+        if threshold != 0.8:
+            return self._identify_clusters(threshold)
+
+        return self.role_clusters
+
+
+class ComplexityAnalyzer:
+    """Calculates extraction and merge complexity scores for roles."""
+
+    def __init__(
+        self,
+        dependency_graph: RoleDependencyGraph,
+        coupling_analyzer: CouplingAnalyzer,
+        resource_analyzer: ResourceAnalyzer,
+    ):
+        """Initialize the ComplexityAnalyzer.
+
+        Args:
+            dependency_graph: RoleDependencyGraph instance
+            coupling_analyzer: CouplingAnalyzer instance
+            resource_analyzer: ResourceAnalyzer instance
+        """
+        self.dependency_graph = dependency_graph
+        self.coupling_analyzer = coupling_analyzer
+        self.resource_analyzer = resource_analyzer
+        self.extraction_complexity: Dict[str, float] = {}
+        self.merge_complexity: Dict[str, Dict[str, float]] = {}
+        logger.debug("ComplexityAnalyzer initialized")
+
+    def calculate_extraction_complexity(self, role_name: str) -> float:
+        """Calculate extraction complexity for a role.
+
+        Args:
+            role_name: Name of the role
+
+        Returns:
+            Complexity score 0-100 (higher = harder to extract)
+        """
+        score = 0.0
+
+        # Factor 1: Number of cross-role dependencies (0-30 points)
+        direct_deps = self.dependency_graph.get_direct_dependencies(role_name)
+        indirect_deps = self.dependency_graph.get_indirect_dependencies(role_name)
+        dep_count = len(direct_deps) + len(indirect_deps)
+        score += min(dep_count * 2, 30)
+
+        # Factor 2: Number of dependents (reverse dependencies) (0-25 points)
+        dependents = self.dependency_graph.get_dependents(role_name)
+        score += min(len(dependents) * 2.5, 25)
+
+        # Factor 3: Depth in dependency chain (0-20 points)
+        # Find maximum depth by traversing reverse dependencies
+        max_depth = self._calculate_max_depth(role_name)
+        score += min(max_depth * 4, 20)
+
+        # Factor 4: Shared resources (0-15 points)
+        # Count roles that share resources with this role
+        shared_resource_count = 0
+        for role in self.dependency_graph.graph.keys():
+            if role != role_name:
+                overlap = self.resource_analyzer.calculate_resource_overlap(role_name, role)
+                if overlap > 0.1:  # Significant overlap
+                    shared_resource_count += 1
+        score += min(shared_resource_count * 3, 15)
+
+        # Factor 5: Bidirectional coupling (0-10 points)
+        bidirectional_count = sum(
+            1
+            for dep in direct_deps
+            if self.coupling_analyzer.get_bidirectional_coupling(role_name, dep)
+        )
+        score += min(bidirectional_count * 5, 10)
+
+        return min(score, 100.0)
+
+    def calculate_merge_complexity(self, role_a: str, role_b: str) -> float:
+        """Calculate merge complexity for two roles.
+
+        Args:
+            role_a: First role name
+            role_b: Second role name
+
+        Returns:
+            Complexity score 0-100 (higher = harder to merge)
+        """
+        score = 0.0
+
+        # Factor 1: Number of conflicts (overlapping dependencies) (0-30 points)
+        deps_a = set(self.dependency_graph.get_direct_dependencies(role_a))
+        deps_b = set(self.dependency_graph.get_direct_dependencies(role_b))
+        # Dependencies that both roles have but point to different targets
+        conflicts = len((deps_a & deps_b) - {role_a, role_b})
+        score += min(conflicts * 5, 30)
+
+        # Factor 2: Resource consolidation effort (0-25 points)
+        overlap = self.resource_analyzer.calculate_resource_overlap(role_a, role_b)
+        # Low overlap = more consolidation needed
+        consolidation_effort = (1.0 - overlap) * 25
+        score += consolidation_effort
+
+        # Factor 3: Dependency simplification potential (0-20 points)
+        # If roles have many shared dependencies, merging simplifies
+        shared_deps = deps_a & deps_b
+        unique_deps_a = deps_a - deps_b - {role_b}
+        unique_deps_b = deps_b - deps_a - {role_a}
+        # More unique dependencies = more complexity
+        score += min((len(unique_deps_a) + len(unique_deps_b)) * 2, 20)
+
+        # Factor 4: Circular dependency risk (0-15 points)
+        # Check if merging would create cycles
+        if self._would_create_cycle(role_a, role_b):
+            score += 15
+
+        # Factor 5: Coupling strength (0-10 points)
+        # High coupling = easier to merge (lower complexity)
+        coupling_score = self.coupling_analyzer.coupling_matrix.get(role_a, {}).get(role_b, 0.0)
+        score += (1.0 - coupling_score) * 10  # Invert: high coupling = low complexity
+
+        return min(score, 100.0)
+
+    def calculate_refactoring_benefit(self, role_a: str, role_b: str) -> float:
+        """Calculate expected benefit from merging two roles.
+
+        Args:
+            role_a: First role name
+            role_b: Second role name
+
+        Returns:
+            Benefit score 0-100 (higher = more beneficial)
+        """
+        benefit = 0.0
+
+        # Factor 1: Dependency reduction (0-40 points)
+        deps_a = set(self.dependency_graph.get_direct_dependencies(role_a))
+        deps_b = set(self.dependency_graph.get_direct_dependencies(role_b))
+        # Shared dependencies would be consolidated
+        shared_deps = deps_a & deps_b
+        benefit += min(len(shared_deps) * 5, 40)
+
+        # Factor 2: Coupling strength (0-30 points)
+        coupling_score = self.coupling_analyzer.coupling_matrix.get(role_a, {}).get(role_b, 0.0)
+        benefit += coupling_score * 30
+
+        # Factor 3: Co-occurrence (0-20 points)
+        # If roles are always used together, merging simplifies usage
+        # This would require UsagePatternAnalyzer - simplified for now
+        benefit += 10  # Placeholder
+
+        # Factor 4: Resource consolidation (0-10 points)
+        overlap = self.resource_analyzer.calculate_resource_overlap(role_a, role_b)
+        benefit += overlap * 10
+
+        return min(benefit, 100.0)
+
+    def analyze_all_complexities(self) -> Dict[str, Any]:
+        """Calculate complexity scores for all roles and pairs.
+
+        Returns:
+            Dictionary with extraction and merge complexity scores
+        """
+        logger.info("Calculating complexity scores")
+
+        all_roles = set(self.dependency_graph.graph.keys())
+
+        # Calculate extraction complexity for each role
+        extraction_scores = {}
+        for role_name in all_roles:
+            extraction_scores[role_name] = self.calculate_extraction_complexity(role_name)
+
+        # Calculate merge complexity for all pairs
+        merge_scores = {}
+        role_list = sorted(all_roles)
+        for i, role_a in enumerate(role_list):
+            merge_scores[role_a] = {}
+            for role_b in role_list[i + 1:]:
+                merge_score = self.calculate_merge_complexity(role_a, role_b)
+                merge_scores[role_a][role_b] = merge_score
+
+        self.extraction_complexity = extraction_scores
+        self.merge_complexity = merge_scores
+
+        result = {
+            "extraction_complexity": extraction_scores,
+            "merge_complexity": merge_scores,
+        }
+
+        logger.info(f"Complexity scores calculated for {len(all_roles)} roles")
+        return result
+
+    def _calculate_max_depth(self, role_name: str) -> int:
+        """Calculate maximum depth of role in dependency chain.
+
+        Args:
+            role_name: Name of the role
+
+        Returns:
+            Maximum depth
+        """
+        visited = set()
+
+        def dfs(current_role: str, depth: int) -> int:
+            if current_role in visited:
+                return depth
+            visited.add(current_role)
+
+            max_d = depth
+            for dependent in self.dependency_graph.get_dependents(current_role):
+                d = dfs(dependent, depth + 1)
+                max_d = max(max_d, d)
+
+            visited.remove(current_role)
+            return max_d
+
+        return dfs(role_name, 0)
+
+    def _would_create_cycle(self, role_a: str, role_b: str) -> bool:
+        """Check if merging two roles would create a cycle.
+
+        Args:
+            role_a: First role name
+            role_b: Second role name
+
+        Returns:
+            True if merging would create a cycle
+        """
+        # Check if role_a depends on role_b or vice versa
+        deps_a = self.dependency_graph.get_direct_dependencies(role_a)
+        deps_b = self.dependency_graph.get_direct_dependencies(role_b)
+
+        # If A depends on B and B depends on A, merging would create self-cycle
+        if role_b in deps_a and role_a in deps_b:
+            return True
+
+        # Check indirect cycles through dependencies
+        # If A -> B -> C -> A, merging A and B would create A -> C -> A
+        path_b_to_a = self.dependency_graph.get_dependency_path(role_b, role_a)
+        if path_b_to_a:
+            return True
+
+        return False
+
+
+class MergeRecommendationEngine:
+    """Identifies role pairs/groups that should be merged."""
+
+    def __init__(
+        self,
+        dependency_graph: RoleDependencyGraph,
+        coupling_analyzer: CouplingAnalyzer,
+        resource_analyzer: ResourceAnalyzer,
+        usage_analyzer: UsagePatternAnalyzer,
+        complexity_analyzer: ComplexityAnalyzer,
+    ):
+        """Initialize the MergeRecommendationEngine.
+
+        Args:
+            dependency_graph: RoleDependencyGraph instance
+            coupling_analyzer: CouplingAnalyzer instance
+            resource_analyzer: ResourceAnalyzer instance
+            usage_analyzer: UsagePatternAnalyzer instance
+            complexity_analyzer: ComplexityAnalyzer instance
+        """
+        self.dependency_graph = dependency_graph
+        self.coupling_analyzer = coupling_analyzer
+        self.resource_analyzer = resource_analyzer
+        self.usage_analyzer = usage_analyzer
+        self.complexity_analyzer = complexity_analyzer
+        logger.debug("MergeRecommendationEngine initialized")
+
+    def find_merge_candidates(
+        self,
+        coupling_threshold: float = 0.7,
+        co_occurrence_threshold: float = 0.8,
+        detect_provider_variants: bool = True,
+        detect_naming_patterns: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Find role pairs that should be merged.
+
+        Args:
+            coupling_threshold: Minimum coupling score (default: 0.7)
+            co_occurrence_threshold: Minimum co-occurrence score (default: 0.8)
+            detect_provider_variants: Detect provider-specific variants (default: True)
+            detect_naming_patterns: Detect naming pattern variants (default: True)
+
+        Returns:
+            List of merge candidate dictionaries
+        """
+        logger.info("Finding merge candidates")
+
+        candidates = []
+
+        # Get strongly coupled pairs
+        strongly_coupled = self.coupling_analyzer.get_strongly_coupled_pairs(
+            threshold=coupling_threshold
+        )
+
+        for role_a, role_b, coupling_score in strongly_coupled:
+            # Calculate additional metrics
+            co_occurrence = self.usage_analyzer.get_co_occurrence_score(role_a, role_b)
+            merge_complexity = self.complexity_analyzer.calculate_merge_complexity(role_a, role_b)
+            refactoring_benefit = self.complexity_analyzer.calculate_refactoring_benefit(
+                role_a, role_b
+            )
+
+            # Calculate confidence score
+            confidence = self._calculate_merge_confidence(
+                coupling_score, co_occurrence, merge_complexity, refactoring_benefit
+            )
+
+            if confidence >= 0.6:  # Minimum confidence threshold
+                candidates.append(
+                    {
+                        "role_a": role_a,
+                        "role_b": role_b,
+                        "confidence": confidence,
+                        "coupling_score": coupling_score,
+                        "co_occurrence": co_occurrence,
+                        "merge_complexity": merge_complexity,
+                        "refactoring_benefit": refactoring_benefit,
+                        "rationale": self._generate_merge_rationale(
+                            role_a, role_b, coupling_score, co_occurrence, merge_complexity
+                        ),
+                    }
+                )
+
+        # Detect provider variants if enabled
+        if detect_provider_variants:
+            provider_variants = self.detect_provider_variants()
+            for variant_group in provider_variants:
+                if len(variant_group) >= 2:
+                    # Suggest merging all variants
+                    candidates.append(
+                        {
+                            "role_a": variant_group[0],
+                            "role_b": variant_group[1] if len(variant_group) > 1 else None,
+                            "variant_group": variant_group,
+                            "confidence": 0.85,  # High confidence for provider variants
+                            "rationale": f"Provider-specific variants: {', '.join(variant_group)}",
+                            "merge_strategy": "multi-part_role",
+                        }
+                    )
+
+        # Sort by confidence descending
+        candidates.sort(key=lambda x: x["confidence"], reverse=True)
+
+        logger.info(f"Found {len(candidates)} merge candidates")
+        return candidates
+
+    def _calculate_merge_confidence(
+        self,
+        coupling_score: float,
+        co_occurrence: float,
+        merge_complexity: float,
+        refactoring_benefit: float,
+    ) -> float:
+        """Calculate confidence score for merge recommendation.
+
+        Args:
+            coupling_score: Coupling strength (0-1)
+            co_occurrence: Co-occurrence score (0-1)
+            merge_complexity: Merge complexity (0-100, lower is easier)
+            refactoring_benefit: Refactoring benefit (0-100, higher is better)
+
+        Returns:
+            Confidence score (0-1)
+        """
+        # Normalize complexity (invert: lower complexity = higher score)
+        complexity_score = 1.0 - (merge_complexity / 100.0)
+
+        # Weighted average
+        confidence = (
+            coupling_score * 0.4
+            + co_occurrence * 0.3
+            + complexity_score * 0.2
+            + (refactoring_benefit / 100.0) * 0.1
+        )
+
+        return min(confidence, 1.0)
+
+    def _generate_merge_rationale(
+        self,
+        role_a: str,
+        role_b: str,
+        coupling_score: float,
+        co_occurrence: float,
+        merge_complexity: float,
+    ) -> str:
+        """Generate rationale for merge recommendation.
+
+        Args:
+            role_a: First role name
+            role_b: Second role name
+            coupling_score: Coupling strength
+            co_occurrence: Co-occurrence score
+            merge_complexity: Merge complexity
+
+        Returns:
+            Rationale string
+        """
+        reasons = []
+        if coupling_score >= 0.7:
+            reasons.append(f"high coupling ({coupling_score:.2f})")
+        if co_occurrence >= 0.8:
+            reasons.append(f"frequently used together ({co_occurrence:.2f})")
+        if merge_complexity <= 30:
+            reasons.append(f"low merge complexity ({merge_complexity:.1f})")
+
+        if reasons:
+            return f"Roles {role_a} and {role_b} should be merged due to: {', '.join(reasons)}"
+        return f"Roles {role_a} and {role_b} have moderate coupling"
+
+    def detect_provider_variants(self) -> List[List[str]]:
+        """Detect provider-specific role variants (e.g., create_aws_cluster, create_gcp_cluster).
+
+        Returns:
+            List of variant groups (each group is a list of role names)
+        """
+        all_roles = list(self.dependency_graph.graph.keys())
+        variants: Dict[str, List[str]] = {}
+
+        # Pattern: base_name_provider or provider_base_name
+        providers = ["aws", "gcp", "azure", "onprem", "on_prem"]
+
+        for role in all_roles:
+            # Try to extract base name
+            base_name = None
+            for provider in providers:
+                if role.startswith(f"{provider}_"):
+                    base_name = role[len(provider) + 1:]
+                elif role.endswith(f"_{provider}"):
+                    base_name = role[: -(len(provider) + 1)]
+                elif f"_{provider}_" in role:
+                    parts = role.split(f"_{provider}_")
+                    if len(parts) == 2:
+                        base_name = f"{parts[0]}_{parts[1]}"
+
+                if base_name:
+                    if base_name not in variants:
+                        variants[base_name] = []
+                    variants[base_name].append(role)
+                    break
+
+        # Return groups with 2+ variants
+        return [group for group in variants.values() if len(group) >= 2]
+
+
+class ExtractionRecommendationEngine:
+    """Identifies roles that can be extracted into separate repositories."""
+
+    def __init__(
+        self,
+        dependency_graph: RoleDependencyGraph,
+        resource_analyzer: ResourceAnalyzer,
+        complexity_analyzer: ComplexityAnalyzer,
+    ):
+        """Initialize the ExtractionRecommendationEngine.
+
+        Args:
+            dependency_graph: RoleDependencyGraph instance
+            resource_analyzer: ResourceAnalyzer instance
+            complexity_analyzer: ComplexityAnalyzer instance
+        """
+        self.dependency_graph = dependency_graph
+        self.resource_analyzer = resource_analyzer
+        self.complexity_analyzer = complexity_analyzer
+        logger.debug("ExtractionRecommendationEngine initialized")
+
+    def find_extraction_candidates(
+        self, max_dependencies: int = 2, min_self_contained_score: float = 0.8
+    ) -> List[Dict[str, Any]]:
+        """Find roles that can be extracted.
+
+        Args:
+            max_dependencies: Maximum cross-role dependencies allowed (default: 2)
+            min_self_contained_score: Minimum self-contained score (default: 0.8)
+
+        Returns:
+            List of extraction candidate dictionaries
+        """
+        logger.info("Finding extraction candidates")
+
+        candidates = []
+        all_roles = list(self.dependency_graph.graph.keys())
+
+        for role_name in all_roles:
+            # Check dependency count
+            direct_deps = self.dependency_graph.get_direct_dependencies(role_name)
+            if len(direct_deps) > max_dependencies:
+                continue
+
+            # Check extraction complexity
+            extraction_complexity = self.complexity_analyzer.calculate_extraction_complexity(
+                role_name
+            )
+
+            # Calculate self-contained score (simplified)
+            dependents = self.dependency_graph.get_dependents(role_name)
+            self_contained_score = 1.0 - (len(dependents) * 0.1)  # Penalize if many dependents
+
+            if extraction_complexity <= 30 and self_contained_score >= min_self_contained_score:
+                confidence = self._calculate_extraction_confidence(
+                    extraction_complexity, len(direct_deps), self_contained_score
+                )
+
+                candidates.append(
+                    {
+                        "role": role_name,
+                        "confidence": confidence,
+                        "extraction_complexity": extraction_complexity,
+                        "dependency_count": len(direct_deps),
+                        "dependent_count": len(dependents),
+                        "self_contained_score": self_contained_score,
+                        "rationale": self._generate_extraction_rationale(
+                            role_name, extraction_complexity, len(direct_deps), len(dependents)
+                        ),
+                    }
+                )
+
+        # Sort by confidence descending
+        candidates.sort(key=lambda x: x["confidence"], reverse=True)
+
+        logger.info(f"Found {len(candidates)} extraction candidates")
+        return candidates
+
+    def _calculate_extraction_confidence(
+        self, extraction_complexity: float, dependency_count: int, self_contained_score: float
+    ) -> float:
+        """Calculate confidence score for extraction recommendation.
+
+        Args:
+            extraction_complexity: Extraction complexity (0-100, lower is easier)
+            dependency_count: Number of cross-role dependencies
+            self_contained_score: Self-contained score (0-1, higher is better)
+
+        Returns:
+            Confidence score (0-1)
+        """
+        # Normalize complexity (invert: lower complexity = higher score)
+        complexity_score = 1.0 - (extraction_complexity / 100.0)
+
+        # Penalize high dependency count
+        dependency_score = 1.0 - (min(dependency_count, 5) / 5.0)
+
+        # Weighted average
+        confidence = (
+            complexity_score * 0.5 + self_contained_score * 0.3 + dependency_score * 0.2
+        )
+
+        return min(confidence, 1.0)
+
+    def _generate_extraction_rationale(
+        self, role_name: str, complexity: float, dep_count: int, dependent_count: int
+    ) -> str:
+        """Generate rationale for extraction recommendation.
+
+        Args:
+            role_name: Role name
+            complexity: Extraction complexity
+            dep_count: Dependency count
+            dependent_count: Dependent count
+
+        Returns:
+            Rationale string
+        """
+        reasons = []
+        if complexity <= 20:
+            reasons.append(f"low extraction complexity ({complexity:.1f})")
+        if dep_count == 0:
+            reasons.append("no cross-role dependencies")
+        elif dep_count <= 2:
+            reasons.append(f"minimal dependencies ({dep_count})")
+        if dependent_count == 0:
+            reasons.append("no dependents")
+
+        if reasons:
+            return f"Role {role_name} is a good extraction candidate due to: {', '.join(reasons)}"
+        return f"Role {role_name} has moderate extraction readiness"
+
+
 class OutputGenerator:
     """Generates JSON and Markdown output reports."""
 
@@ -1642,7 +3212,7 @@ class OutputGenerator:
             logger.error(f"Error generating JSON output: {e}", exc_info=True)
             raise
 
-    def generate_markdown(  # noqa: C901
+    def generate_markdown(
         self, structure: Dict[str, Any], filename: str = "ansible_structure.md"
     ) -> Path:
         """Generate Markdown output file.
@@ -1751,6 +3321,9 @@ class OutputGenerator:
                             )
                         f.write("\n")
 
+                # Role Refactoring Analysis sections
+                self._write_refactoring_analysis_markdown(f, structure)
+
             logger.info(f"Markdown output saved to: {output_path}")
             return output_path
 
@@ -1758,7 +3331,513 @@ class OutputGenerator:
             logger.error(f"Error generating Markdown output: {e}", exc_info=True)
             raise
 
-    def _collect_cross_role_summary(self, structure: Dict[str, Any]) -> tuple:  # noqa: C901
+    def _write_refactoring_analysis_markdown(self, f, structure: Dict[str, Any]) -> None:
+        """Write refactoring analysis sections to markdown.
+
+        Args:
+            f: File handle to write to
+            structure: Structure dictionary
+        """
+        # Role Coupling Analysis
+        coupling_matrix = structure.get("coupling_matrix", {})
+        strongly_coupled = structure.get("strongly_coupled_pairs", [])
+
+        if coupling_matrix or strongly_coupled:
+            f.write("## Role Coupling Analysis\n\n")
+
+            if strongly_coupled:
+                f.write("### Strongly Coupled Role Pairs\n\n")
+                f.write("| Role A | Role B | Coupling Score |\n")
+                f.write("|--------|--------|----------------|\n")
+                for pair in strongly_coupled[:20]:  # Limit to top 20
+                    f.write(
+                        f"| {pair.get('role_a', '')} | {pair.get('role_b', '')} | {pair.get('score', 0.0):.2f} |\n"
+                    )
+                f.write("\n")
+
+        # Shared Resources
+        shared_resources = structure.get("shared_resources", {})
+        if shared_resources:
+            f.write("## Shared Resources Analysis\n\n")
+            f.write("| Role A | Role B | Shared Templates | Shared Variables | Overlap Score |\n")
+            f.write("|--------|--------|------------------|-----------------|---------------|\n")
+            count = 0
+            for _key, data in list(shared_resources.items())[:20]:  # Limit to top 20
+                f.write(
+                    f"| {data.get('role_a', '')} | {data.get('role_b', '')} | "
+                    f"{len(data.get('shared_templates', []))} | "
+                    f"{len(data.get('shared_variables', []))} | "
+                    f"{data.get('overlap_score', 0.0):.2f} |\n"
+                )
+                count += 1
+                if count >= 20:
+                    break
+            f.write("\n")
+
+        # Usage Patterns
+        usage_patterns = structure.get("usage_patterns", {})
+        if usage_patterns:
+            f.write("## Usage Pattern Analysis\n\n")
+
+            role_clusters = usage_patterns.get("role_clusters", [])
+            if role_clusters:
+                f.write("### Role Clusters (Frequently Used Together)\n\n")
+                for i, cluster in enumerate(role_clusters[:10], 1):  # Limit to top 10
+                    f.write(f"{i}. {', '.join(cluster)}\n")
+                f.write("\n")
+
+            usage_frequency = usage_patterns.get("usage_frequency", {})
+            if usage_frequency:
+                f.write("### Role Usage Frequency\n\n")
+                f.write("| Role | Playbook Count |\n")
+                f.write("|------|----------------|\n")
+                sorted_roles = sorted(
+                    usage_frequency.items(), key=lambda x: x[1], reverse=True
+                )[:20]  # Top 20
+                for role_name, count in sorted_roles:
+                    f.write(f"| {role_name} | {count} |\n")
+                f.write("\n")
+
+        # Complexity Analysis
+        complexity_scores = structure.get("complexity_scores", {})
+        if complexity_scores:
+            f.write("## Complexity Analysis\n\n")
+
+            extraction_complexity = complexity_scores.get("extraction_complexity", {})
+            if extraction_complexity:
+                f.write("### Extraction Complexity Scores\n\n")
+                f.write("| Role | Complexity Score |\n")
+                f.write("|------|------------------|\n")
+                sorted_extraction = sorted(
+                    extraction_complexity.items(), key=lambda x: x[1], reverse=True
+                )[:20]  # Top 20 hardest to extract
+                for role_name, score in sorted_extraction:
+                    f.write(f"| {role_name} | {score:.1f} |\n")
+                f.write("\n")
+
+                f.write(
+                    "*Lower scores indicate roles that are easier to extract into separate repositories.*\n\n"
+                )
+
+    def generate_csv(self, structure: Dict[str, Any]) -> List[Path]:
+        """Generate CSV output files for analysis.
+
+        Args:
+            structure: Structure dictionary to output
+
+        Returns:
+            List of paths to generated CSV files
+
+        Raises:
+            IOError: If files cannot be written
+        """
+        logger.info("Generating CSV output files")
+
+        generated_files = []
+
+        try:
+            # 1. Roles CSV
+            roles_file = self._generate_roles_csv(structure)
+            generated_files.append(roles_file)
+
+            # 2. Dependency edges CSV
+            edges_file = self._generate_dependency_edges_csv(structure)
+            generated_files.append(edges_file)
+
+            # 3. Coupling matrix CSV
+            coupling_file = self._generate_coupling_matrix_csv(structure)
+            if coupling_file:
+                generated_files.append(coupling_file)
+
+            # 4. Shared resources CSV
+            shared_resources_file = self._generate_shared_resources_csv(structure)
+            if shared_resources_file:
+                generated_files.append(shared_resources_file)
+
+            # 5. Usage patterns CSV
+            usage_patterns_file = self._generate_usage_patterns_csv(structure)
+            if usage_patterns_file:
+                generated_files.append(usage_patterns_file)
+
+            # 6. Playbook roles CSV
+            playbook_roles_file = self._generate_playbook_roles_csv(structure)
+            if playbook_roles_file:
+                generated_files.append(playbook_roles_file)
+
+            # 7. Complexity scores CSV
+            complexity_file = self._generate_complexity_scores_csv(structure)
+            if complexity_file:
+                generated_files.append(complexity_file)
+
+            logger.info(f"Generated {len(generated_files)} CSV files")
+            return generated_files
+
+        except Exception as e:
+            logger.error(f"Error generating CSV output: {e}", exc_info=True)
+            raise
+
+    def _generate_roles_csv(self, structure: Dict[str, Any]) -> Path:
+        """Generate roles.csv file.
+
+        Args:
+            structure: Structure dictionary
+
+        Returns:
+            Path to generated file
+        """
+        output_path = self.output_dir / "roles.csv"
+
+        with output_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    "role_name",
+                    "path",
+                    "template_count",
+                    "dependency_count",
+                    "dependent_count",
+                    "extraction_complexity",
+                ]
+            )
+
+            roles = structure.get("roles", [])
+            dependency_graph_data = structure.get("dependency_graph", {})
+            complexity_scores = structure.get("complexity_scores", {}).get(
+                "extraction_complexity", {}
+            )
+
+            # Build reverse dependency map
+            reverse_deps: Dict[str, int] = {}
+            for edge in dependency_graph_data.get("edges", []):
+                to_role = edge.get("to")
+                if to_role:
+                    reverse_deps[to_role] = reverse_deps.get(to_role, 0) + 1
+
+            for role in roles:
+                role_name = role.get("name", "")
+                role_deps = [
+                    e
+                    for e in dependency_graph_data.get("edges", [])
+                    if e.get("from") == role_name
+                ]
+                writer.writerow(
+                    [
+                        role_name,
+                        role.get("path", ""),
+                        len(role.get("templates", [])),
+                        len(role_deps),
+                        reverse_deps.get(role_name, 0),
+                        complexity_scores.get(role_name, 0.0),
+                    ]
+                )
+
+        logger.debug(f"Generated roles.csv: {output_path}")
+        return output_path
+
+    def _generate_dependency_edges_csv(self, structure: Dict[str, Any]) -> Path:
+        """Generate dependency_edges.csv file.
+
+        Args:
+            structure: Structure dictionary
+
+        Returns:
+            Path to generated file
+        """
+        output_path = self.output_dir / "dependency_edges.csv"
+
+        with output_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["from_role", "to_role", "type", "ref", "path"])
+
+            for edge in structure.get("dependency_graph", {}).get("edges", []):
+                writer.writerow(
+                    [
+                        edge.get("from", ""),
+                        edge.get("to", ""),
+                        edge.get("type", ""),
+                        edge.get("ref", ""),
+                        edge.get("path", ""),
+                    ]
+                )
+
+        logger.debug(f"Generated dependency_edges.csv: {output_path}")
+        return output_path
+
+    def _generate_coupling_matrix_csv(self, structure: Dict[str, Any]) -> Optional[Path]:
+        """Generate coupling_matrix.csv file.
+
+        Args:
+            structure: Structure dictionary
+
+        Returns:
+            Path to generated file, or None if no coupling data
+        """
+        coupling_matrix = structure.get("coupling_matrix", {})
+        if not coupling_matrix:
+            return None
+
+        output_path = self.output_dir / "coupling_matrix.csv"
+
+        all_roles = sorted(set(coupling_matrix.keys()))
+        with output_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["role_a", "role_b", "coupling_score"])
+
+            for role_a in all_roles:
+                for role_b in all_roles:
+                    if role_a < role_b:  # Avoid duplicates
+                        score = coupling_matrix.get(role_a, {}).get(role_b, 0.0)
+                        if score > 0:  # Only write non-zero scores
+                            writer.writerow([role_a, role_b, score])
+
+        logger.debug(f"Generated coupling_matrix.csv: {output_path}")
+        return output_path
+
+    def _generate_shared_resources_csv(self, structure: Dict[str, Any]) -> Optional[Path]:
+        """Generate shared_resources.csv file.
+
+        Args:
+            structure: Structure dictionary
+
+        Returns:
+            Path to generated file, or None if no shared resources data
+        """
+        shared_resources = structure.get("shared_resources", {})
+        if not shared_resources:
+            return None
+
+        output_path = self.output_dir / "shared_resources.csv"
+
+        with output_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    "role_a",
+                    "role_b",
+                    "shared_templates",
+                    "shared_variables",
+                    "overlap_score",
+                ]
+            )
+
+            for _key, data in shared_resources.items():
+                writer.writerow(
+                    [
+                        data.get("role_a", ""),
+                        data.get("role_b", ""),
+                        ",".join(data.get("shared_templates", [])),
+                        ",".join(data.get("shared_variables", [])),
+                        data.get("overlap_score", 0.0),
+                    ]
+                )
+
+        logger.debug(f"Generated shared_resources.csv: {output_path}")
+        return output_path
+
+    def _generate_usage_patterns_csv(self, structure: Dict[str, Any]) -> Optional[Path]:
+        """Generate usage_patterns.csv file.
+
+        Args:
+            structure: Structure dictionary
+
+        Returns:
+            Path to generated file, or None if no usage patterns data
+        """
+        usage_patterns = structure.get("usage_patterns", {})
+        if not usage_patterns:
+            return None
+
+        output_path = self.output_dir / "usage_patterns.csv"
+
+        co_occurrence_matrix = usage_patterns.get("co_occurrence_matrix", {})
+        if not co_occurrence_matrix:
+            return None
+
+        all_roles = sorted(set(co_occurrence_matrix.keys()))
+        with output_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["role_a", "role_b", "co_occurrence_score"])
+
+            for role_a in all_roles:
+                for role_b in all_roles:
+                    if role_a < role_b:  # Avoid duplicates
+                        score = co_occurrence_matrix.get(role_a, {}).get(role_b, 0.0)
+                        if score > 0:  # Only write non-zero scores
+                            writer.writerow([role_a, role_b, score])
+
+        logger.debug(f"Generated usage_patterns.csv: {output_path}")
+        return output_path
+
+    def _generate_playbook_roles_csv(self, structure: Dict[str, Any]) -> Optional[Path]:
+        """Generate playbook_roles.csv file.
+
+        Args:
+            structure: Structure dictionary
+
+        Returns:
+            Path to generated file, or None if no usage patterns data
+        """
+        usage_patterns = structure.get("usage_patterns", {})
+        if not usage_patterns:
+            return None
+
+        playbook_roles = usage_patterns.get("playbook_roles", {})
+        if not playbook_roles:
+            return None
+
+        output_path = self.output_dir / "playbook_roles.csv"
+
+        with output_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["playbook", "roles"])
+
+            for playbook, roles in playbook_roles.items():
+                writer.writerow([playbook, ",".join(roles)])
+
+        logger.debug(f"Generated playbook_roles.csv: {output_path}")
+        return output_path
+
+    def _generate_complexity_scores_csv(self, structure: Dict[str, Any]) -> Optional[Path]:
+        """Generate complexity_scores.csv file.
+
+        Args:
+            structure: Structure dictionary
+
+        Returns:
+            Path to generated file, or None if no complexity scores data
+        """
+        complexity_scores = structure.get("complexity_scores", {})
+        if not complexity_scores:
+            return None
+
+        output_path = self.output_dir / "complexity_scores.csv"
+
+        extraction_complexity = complexity_scores.get("extraction_complexity", {})
+        merge_complexity = complexity_scores.get("merge_complexity", {})
+
+        with output_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["role", "extraction_complexity"])
+
+            for role_name, score in extraction_complexity.items():
+                writer.writerow([role_name, score])
+
+        # Also generate merge complexity CSV
+        merge_output_path = self.output_dir / "merge_complexity.csv"
+        with merge_output_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["role_a", "role_b", "merge_complexity"])
+
+            for role_a, role_b_scores in merge_complexity.items():
+                for role_b, score in role_b_scores.items():
+                    writer.writerow([role_a, role_b, score])
+
+        logger.debug("Generated complexity_scores.csv and merge_complexity.csv")
+        return output_path
+
+    def generate_dot(
+        self,
+        structure: Dict[str, Any],
+        filename: str = "role_dependencies.dot",
+        highlight_merge_candidates: bool = False,
+        highlight_extraction_candidates: bool = False,
+        only_cross_role: bool = False,
+    ) -> Path:
+        """Generate DOT/Graphviz visualization of role dependencies.
+
+        Args:
+            structure: Structure dictionary
+            filename: Output filename
+            highlight_merge_candidates: Highlight roles suggested for merging
+            highlight_extraction_candidates: Highlight roles suggested for extraction
+            only_cross_role: Only show cross-role dependencies
+
+        Returns:
+            Path to generated file
+        """
+        logger.info(f"Generating DOT visualization: {filename}")
+
+        output_path = self.output_dir / filename
+
+        dependency_graph = structure.get("dependency_graph", {})
+        nodes = dependency_graph.get("nodes", [])
+        edges = dependency_graph.get("edges", [])
+
+        # Get merge/extract candidates if available
+        merge_candidates: Set[str] = set()
+        extraction_candidates: Set[str] = set()
+
+        if highlight_merge_candidates:
+            strongly_coupled = structure.get("strongly_coupled_pairs", [])
+            for pair in strongly_coupled:
+                merge_candidates.add(pair.get("role_a", ""))
+                merge_candidates.add(pair.get("role_b", ""))
+
+        # Filter edges if needed
+        if only_cross_role:
+            edges = [e for e in edges if e.get("type") != "role"]
+
+        with output_path.open("w", encoding="utf-8") as f:
+            f.write("digraph role_dependencies {\n")
+            f.write("  rankdir=LR;\n")
+            f.write("  node [shape=box, style=rounded];\n\n")
+
+            # Write nodes with colors
+            for node in nodes:
+                node_name = node.replace('"', '\\"')
+                color = "lightblue"
+                if node in merge_candidates:
+                    color = "lightgreen"
+                elif node in extraction_candidates:
+                    color = "lightyellow"
+
+                f.write(f'  "{node_name}" [fillcolor={color}, style="rounded,filled"];\n')
+
+            f.write("\n")
+
+            # Write edges with labels
+            for edge in edges:
+                from_role = edge.get("from", "").replace('"', '\\"')
+                to_role = edge.get("to", "").replace('"', '\\"')
+                edge_type = edge.get("type", "")
+                ref = edge.get("ref", "")
+
+                # Color edges by type
+                color = "black"
+                if edge_type in ("include_role", "import_role", "role"):
+                    color = "blue"
+                elif edge_type in ("include_tasks", "import_tasks"):
+                    color = "green"
+                elif edge_type == "template":
+                    color = "orange"
+
+                # Create label
+                label = f"{edge_type}"
+                if ref:
+                    # Truncate long refs
+                    ref_short = ref if len(ref) < 30 else ref[:27] + "..."
+                    label = f"{edge_type}\\n{ref_short}"
+
+                f.write(
+                    f'  "{from_role}" -> "{to_role}" [label="{label}", color={color}];\n'
+                )
+
+            # Add clusters for merge candidates
+            if merge_candidates and len(merge_candidates) > 1:
+                f.write("\n  subgraph cluster_merge_candidates {\n")
+                f.write("    label=\"Merge Candidates\";\n")
+                f.write("    style=dashed;\n")
+                for role in merge_candidates:
+                    role_escaped = role.replace('"', '\\"')
+                    f.write(f'    "{role_escaped}";\n')
+                f.write("  }\n")
+
+            f.write("}\n")
+
+        logger.info(f"DOT visualization saved to: {output_path}")
+        return output_path
+
+    def _collect_cross_role_summary(self, structure: Dict[str, Any]) -> tuple:
         """Collect cross-role task includes, role includes, and template usage from structure.
 
         Args:
@@ -1879,61 +3958,377 @@ class AnsibleStructureAnalyzer:
             logger.error(f"Repository root not found: {self.repo_root}")
             raise NotADirectoryError(f"Repository root not found: {self.repo_root}")
 
-        self.file_discovery = FileDiscovery()
+        self.file_discovery = FileDiscovery(repo_root=self.repo_root)
         self.error_collector = ErrorCollector()
         self.include_resolver = IncludeResolver(self.repo_root, self.error_collector, max_depth)
         self.template_finder = TemplateFinder(self.repo_root, self.error_collector)
         self.structure_builder = StructureBuilder(self.repo_root)
 
-    def analyze(self, input_path: Path) -> Dict[str, Any]:
+    def analyze(
+        self,
+        input_path: Path,
+        whole_repo: bool = False,
+        batch_size: int = 50,
+        parallel: bool = False,
+        max_workers: int = 4,
+    ) -> Dict[str, Any]:
         """Run the analysis on input playbook(s).
 
         Args:
-            input_path: Single playbook file or directory containing playbooks
+            input_path: Single playbook file or directory containing playbooks (ignored if whole_repo=True)
+            whole_repo: If True, analyze entire repository; if False, use input_path
+            batch_size: Batch size for incremental processing (default: 50)
+            parallel: Enable parallel processing (default: False)
+            max_workers: Maximum workers for parallel processing (default: 4)
 
         Returns:
             Dictionary containing complete structure analysis
         """
-        logger.info(f"Starting analysis of: {input_path}")
+        logger.info(f"Starting analysis of: {input_path} (whole_repo={whole_repo})")
 
         try:
             # Discover files
-            playbook_files = self.file_discovery.discover_files(input_path)
-            logger.info(f"Found {len(playbook_files)} playbook file(s) to analyze")
-
-            if not playbook_files:
-                logger.warning("No playbook files found")
-                return self.structure_builder.build_structure(
-                    [], [], [], self.error_collector.get_errors()
+            if whole_repo:
+                playbook_files = self.file_discovery.discover_all_playbooks(self.repo_root)
+                logger.info(f"Found {len(playbook_files)} playbook file(s) in repository")
+                # Use incremental processing for whole-repo mode
+                return self._analyze_incremental(
+                    playbook_files, batch_size, parallel, max_workers
                 )
-
-            # Analyze each playbook
-            playbooks = []
-            all_roles = {}
-            all_templates = []
-
-            for pb_file in playbook_files:
-                logger.info(f"Analyzing playbook: {pb_file}")
-                playbook_result = self._analyze_playbook(pb_file)
-                playbooks.append(playbook_result)
-
-                # Collect roles and templates
-                self._collect_roles_and_templates(playbook_result, all_roles, all_templates)
-
-            # Build structure
-            structure = self.structure_builder.build_structure(
-                playbooks,
-                list(all_roles.values()),
-                all_templates,
-                self.error_collector.get_errors(),
-            )
-
-            logger.info("Analysis complete")
-            return structure
+            else:
+                playbook_files = self.file_discovery.discover_files(input_path)
+                logger.info(f"Found {len(playbook_files)} playbook file(s) to analyze")
+                return self._analyze_standard(playbook_files)
 
         except Exception as e:
             logger.error(f"Error during analysis: {e}", exc_info=True)
             raise
+
+    def _analyze_standard(self, playbook_files: List[Path]) -> Dict[str, Any]:
+        """Analyze playbooks using standard (non-incremental) approach.
+
+        Args:
+            playbook_files: List of playbook file paths
+
+        Returns:
+            Dictionary containing complete structure analysis
+        """
+        if not playbook_files:
+            logger.warning("No playbook files found")
+            return self.structure_builder.build_structure(
+                [], [], [], self.error_collector.get_errors()
+            )
+
+        # Analyze each playbook
+        playbooks = []
+        all_roles = {}
+        all_templates = []
+
+        for pb_file in playbook_files:
+            logger.info(f"Analyzing playbook: {pb_file}")
+            playbook_result = self._analyze_playbook(pb_file)
+            playbooks.append(playbook_result)
+
+            # Collect roles and templates
+            self._collect_roles_and_templates(playbook_result, all_roles, all_templates)
+
+        # Build structure
+        structure = self.structure_builder.build_structure(
+            playbooks,
+            list(all_roles.values()),
+            all_templates,
+            self.error_collector.get_errors(),
+        )
+
+        # Build dependency graph
+        dependency_graph = RoleDependencyGraph(structure, self.repo_root)
+        graph_data = dependency_graph.build_graph()
+
+        # Add dependency graph to structure
+        structure["dependency_graph"] = {
+            "nodes": list(graph_data.keys()),
+            "edges": [
+                {
+                    "from": role_name,
+                    "to": dep["target_role"],
+                    "type": dep["type"],
+                    "ref": dep.get("ref"),
+                    "path": dep.get("path"),
+                }
+                for role_name, deps in graph_data.items()
+                for dep in deps
+                if dep.get("target_role")
+            ],
+        }
+
+        # Calculate coupling metrics
+        coupling_analyzer = CouplingAnalyzer(dependency_graph, structure)
+        coupling_matrix = coupling_analyzer.calculate_coupling_matrix()
+        structure["coupling_matrix"] = coupling_matrix
+        structure["strongly_coupled_pairs"] = [
+            {"role_a": a, "role_b": b, "score": score}
+            for a, b, score in coupling_analyzer.get_strongly_coupled_pairs(threshold=0.7)
+        ]
+
+        # Analyze shared resources
+        resource_analyzer = ResourceAnalyzer(structure, self.repo_root)
+        shared_resources = resource_analyzer.analyze_shared_resources()
+        structure["shared_resources"] = shared_resources
+
+        # Analyze usage patterns
+        usage_analyzer = UsagePatternAnalyzer(structure)
+        usage_patterns = usage_analyzer.analyze_usage_patterns()
+        structure["usage_patterns"] = usage_patterns
+
+        # Calculate complexity scores
+        complexity_analyzer = ComplexityAnalyzer(
+            dependency_graph, coupling_analyzer, resource_analyzer
+        )
+        complexity_scores = complexity_analyzer.analyze_all_complexities()
+        structure["complexity_scores"] = complexity_scores
+
+        # Generate merge recommendations
+        merge_engine = MergeRecommendationEngine(
+            dependency_graph,
+            coupling_analyzer,
+            resource_analyzer,
+            usage_analyzer,
+            complexity_analyzer,
+        )
+        merge_candidates = merge_engine.find_merge_candidates()
+        structure["merge_recommendations"] = merge_candidates
+
+        # Generate extraction recommendations
+        extraction_engine = ExtractionRecommendationEngine(
+            dependency_graph, resource_analyzer, complexity_analyzer
+        )
+        extraction_candidates = extraction_engine.find_extraction_candidates()
+        structure["extraction_recommendations"] = extraction_candidates
+
+        logger.info("Analysis complete")
+        return structure
+
+    def _analyze_incremental(
+        self,
+        playbook_files: List[Path],
+        batch_size: int = 50,
+        parallel: bool = False,
+        max_workers: int = 4,
+    ) -> Dict[str, Any]:
+        """Process playbooks in batches to manage memory.
+
+        Args:
+            playbook_files: List of playbook file paths
+            batch_size: Number of playbooks to process per batch
+            parallel: Enable parallel processing
+            max_workers: Maximum workers for parallel processing
+
+        Returns:
+            Dictionary containing complete structure analysis
+        """
+        logger.info(
+            f"Processing {len(playbook_files)} playbooks in batches of {batch_size} "
+            f"(parallel={parallel}, max_workers={max_workers})"
+        )
+
+        all_playbooks = []
+        all_roles: Dict[str, Dict[str, Any]] = {}  # Dict[str, Dict] - role name -> role data
+        all_templates: List[Dict[str, Any]] = []
+        seen_templates: Set[str] = set()  # Set of template paths for deduplication
+
+        total = len(playbook_files)
+        for i in range(0, total, batch_size):
+            batch = playbook_files[i:i + batch_size]
+            batch_num = i // batch_size + 1
+            logger.info(
+                f"Processing batch {batch_num} ({i + 1}-{min(i + batch_size, total)}/{total})"
+            )
+
+            batch_results = self._process_batch(batch, parallel, max_workers)
+
+            # Merge batch results
+            for pb_result in batch_results:
+                all_playbooks.append(pb_result)
+                self._merge_roles_and_templates(
+                    pb_result, all_roles, all_templates, seen_templates
+                )
+
+        # Build structure
+        structure = self.structure_builder.build_structure(
+            all_playbooks,
+            list(all_roles.values()),
+            all_templates,
+            self.error_collector.get_errors(),
+        )
+
+        # Build dependency graph and calculate metrics (same as _analyze_standard)
+        dependency_graph = RoleDependencyGraph(structure, self.repo_root)
+        graph_data = dependency_graph.build_graph()
+
+        structure["dependency_graph"] = {
+            "nodes": list(graph_data.keys()),
+            "edges": [
+                {
+                    "from": role_name,
+                    "to": dep["target_role"],
+                    "type": dep["type"],
+                    "ref": dep.get("ref"),
+                    "path": dep.get("path"),
+                }
+                for role_name, deps in graph_data.items()
+                for dep in deps
+                if dep.get("target_role")
+            ],
+        }
+
+        # Calculate coupling metrics
+        coupling_analyzer = CouplingAnalyzer(dependency_graph, structure)
+        coupling_matrix = coupling_analyzer.calculate_coupling_matrix()
+        structure["coupling_matrix"] = coupling_matrix
+        structure["strongly_coupled_pairs"] = [
+            {"role_a": a, "role_b": b, "score": score}
+            for a, b, score in coupling_analyzer.get_strongly_coupled_pairs(threshold=0.7)
+        ]
+
+        # Analyze shared resources
+        resource_analyzer = ResourceAnalyzer(structure, self.repo_root)
+        shared_resources = resource_analyzer.analyze_shared_resources()
+        structure["shared_resources"] = shared_resources
+
+        # Analyze usage patterns
+        usage_analyzer = UsagePatternAnalyzer(structure)
+        usage_patterns = usage_analyzer.analyze_usage_patterns()
+        structure["usage_patterns"] = usage_patterns
+
+        # Calculate complexity scores
+        complexity_analyzer = ComplexityAnalyzer(
+            dependency_graph, coupling_analyzer, resource_analyzer
+        )
+        complexity_scores = complexity_analyzer.analyze_all_complexities()
+        structure["complexity_scores"] = complexity_scores
+
+        # Generate merge recommendations
+        merge_engine = MergeRecommendationEngine(
+            dependency_graph,
+            coupling_analyzer,
+            resource_analyzer,
+            usage_analyzer,
+            complexity_analyzer,
+        )
+        merge_candidates = merge_engine.find_merge_candidates()
+        structure["merge_recommendations"] = merge_candidates
+
+        # Generate extraction recommendations
+        extraction_engine = ExtractionRecommendationEngine(
+            dependency_graph, resource_analyzer, complexity_analyzer
+        )
+        extraction_candidates = extraction_engine.find_extraction_candidates()
+        structure["extraction_recommendations"] = extraction_candidates
+
+        logger.info("Incremental analysis complete")
+        return structure
+
+    @staticmethod
+    def get_merge_candidates(
+        structure: Dict[str, Any], min_confidence: float = 0.7
+    ) -> List[Dict[str, Any]]:
+        """Get merge candidate recommendations from analyzed structure.
+
+        Args:
+            structure: Structure dictionary from analyze()
+            min_confidence: Minimum coupling score threshold (default: 0.7)
+
+        Returns:
+            List of merge candidate dictionaries with role_a, role_b, score
+        """
+        strongly_coupled = structure.get("strongly_coupled_pairs", [])
+        return [
+            {"role_a": pair["role_a"], "role_b": pair["role_b"], "score": pair["score"]}
+            for pair in strongly_coupled
+            if pair.get("score", 0.0) >= min_confidence
+        ]
+
+    @staticmethod
+    def get_extraction_candidates(
+        structure: Dict[str, Any], max_complexity: float = 30.0
+    ) -> List[Dict[str, Any]]:
+        """Get extraction candidate recommendations from analyzed structure.
+
+        Args:
+            structure: Structure dictionary from analyze()
+            max_complexity: Maximum extraction complexity score (default: 30.0, lower is easier)
+
+        Returns:
+            List of extraction candidate dictionaries
+        """
+        complexity_scores = structure.get("complexity_scores", {})
+        extraction_complexity = complexity_scores.get("extraction_complexity", {})
+
+        candidates = []
+        for role_name, score in extraction_complexity.items():
+            if score <= max_complexity:
+                # Get dependency count
+                dependency_graph = structure.get("dependency_graph", {})
+                deps = [
+                    e
+                    for e in dependency_graph.get("edges", [])
+                    if e.get("from") == role_name
+                ]
+                candidates.append(
+                    {
+                        "role": role_name,
+                        "extraction_complexity": score,
+                        "dependency_count": len(deps),
+                    }
+                )
+
+        return sorted(candidates, key=lambda x: x["extraction_complexity"])
+
+    @staticmethod
+    def get_coupling_matrix(structure: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
+        """Get coupling matrix for all role pairs from analyzed structure.
+
+        Args:
+            structure: Structure dictionary from analyze()
+
+        Returns:
+            Dictionary mapping role_a to dict of role_b -> coupling score
+        """
+        return structure.get("coupling_matrix", {})
+
+    @staticmethod
+    def get_role_metrics(structure: Dict[str, Any], role_name: str) -> Dict[str, Any]:
+        """Get comprehensive metrics for a specific role from analyzed structure.
+
+        Args:
+            structure: Structure dictionary from analyze()
+            role_name: Name of the role
+
+        Returns:
+            Dictionary with role metrics (dependencies, dependents, complexity, etc.)
+        """
+        dependency_graph = structure.get("dependency_graph", {})
+        complexity_scores = structure.get("complexity_scores", {})
+        usage_patterns = structure.get("usage_patterns", {})
+
+        # Build dependency graph for querying
+        from pyplayground.ansible_structure_analyzer import RoleDependencyGraph
+
+        dep_graph = RoleDependencyGraph(structure, Path("."))
+        dep_graph.build_graph()
+
+        metrics = {
+            "role_name": role_name,
+            "direct_dependencies": dep_graph.get_direct_dependencies(role_name),
+            "indirect_dependencies": dep_graph.get_indirect_dependencies(role_name),
+            "dependents": dep_graph.get_dependents(role_name),
+            "extraction_complexity": complexity_scores.get("extraction_complexity", {}).get(
+                role_name, 0.0
+            ),
+            "usage_frequency": usage_patterns.get("usage_frequency", {}).get(role_name, 0),
+        }
+
+        return metrics
 
     def _analyze_playbook(self, playbook_path: Path) -> Dict[str, Any]:
         """Analyze a single playbook file.
@@ -1971,6 +4366,54 @@ class AnsibleStructureAnalyzer:
             "includes": include_result.get("includes", []),
             "templates": templates,
         }
+
+    def _process_batch(
+        self, batch: List[Path], parallel: bool, max_workers: int
+    ) -> List[Dict[str, Any]]:
+        """Process a batch of playbooks, optionally in parallel.
+
+        Args:
+            batch: List of playbook file paths
+            parallel: Enable parallel processing
+            max_workers: Maximum workers for parallel processing
+
+        Returns:
+            List of playbook analysis results
+        """
+        if parallel:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [executor.submit(self._analyze_playbook, pb) for pb in batch]
+                return [f.result() for f in futures]
+        else:
+            return [self._analyze_playbook(pb) for pb in batch]
+
+    def _merge_roles_and_templates(
+        self,
+        playbook_result: Dict[str, Any],
+        all_roles: Dict[str, Dict[str, Any]],
+        all_templates: List[Dict[str, Any]],
+        seen_templates: Set[str],
+    ) -> None:
+        """Efficiently merge roles and templates, deduplicating.
+
+        Args:
+            playbook_result: Playbook analysis result
+            all_roles: Dictionary to merge roles into (role name -> role data)
+            all_templates: List to merge templates into
+            seen_templates: Set of template paths for deduplication
+        """
+        # Collect roles and templates (roles are deduplicated by name in _collect_roles_and_templates)
+        temp_templates = []
+        self._collect_roles_and_templates(playbook_result, all_roles, temp_templates)
+
+        # Deduplicate templates before adding to all_templates
+        for template in temp_templates:
+            template_path = template.get("template") or template.get("resolved_path", "")
+            if template_path and template_path not in seen_templates:
+                seen_templates.add(template_path)
+                all_templates.append(template)
 
     def _collect_roles_and_templates(
         self,
@@ -2060,19 +4503,50 @@ class AnsibleStructureAnalyzer:
 @click.option(
     "--format",
     "output_format",
-    type=click.Choice(["json", "markdown", "both"], case_sensitive=False),
+    type=click.Choice(["json", "markdown", "csv", "both", "all"], case_sensitive=False),
     default="both",
     show_default=True,
-    help="Output format: json, markdown, or both.",
+    help="Output format: json, markdown, csv, both (json+markdown), or all (json+markdown+csv).",
+)
+@click.option(
+    "--whole-repo",
+    "whole_repo",
+    is_flag=True,
+    default=False,
+    help="Analyze entire repository (discovers all playbooks recursively, respects .gitignore).",
+)
+@click.option(
+    "--batch-size",
+    type=int,
+    default=50,
+    show_default=True,
+    help="Batch size for incremental processing in whole-repo mode.",
+)
+@click.option(
+    "--parallel",
+    is_flag=True,
+    default=False,
+    help="Enable parallel processing for whole-repo mode (uses ThreadPoolExecutor).",
+)
+@click.option(
+    "--max-workers",
+    type=int,
+    default=4,
+    show_default=True,
+    help="Maximum workers for parallel processing.",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging.")
 @click.option("--debug", "-d", is_flag=True, help="Enable debug logging (same as --verbose).")
-def main(  # noqa: C901
+def main(
     input_path: Path,
     repo_root: Path,
     output_dir: Path,
     max_depth: int,
     output_format: str,
+    whole_repo: bool,
+    batch_size: int,
+    parallel: bool,
+    max_workers: int,
     verbose: bool,
     debug: bool,
 ):
@@ -2134,7 +4608,9 @@ def main(  # noqa: C901
     logger.debug(f"Output directory: {output_dir}")
 
     # Generate base filename from input path
-    if input_path.is_file():
+    if whole_repo:
+        base_name = "ansible_structure_whole_repo"
+    elif input_path.is_file():
         base_name = input_path.stem
     else:
         # For directories, use directory name
@@ -2144,20 +4620,37 @@ def main(  # noqa: C901
     try:
         with console.status("[bold green]Analyzing Ansible structure..."):
             analyzer = AnsibleStructureAnalyzer(repo_root, max_depth)
-            structure = analyzer.analyze(input_path)
+            structure = analyzer.analyze(
+                input_path,
+                whole_repo=whole_repo,
+                batch_size=batch_size,
+                parallel=parallel,
+                max_workers=max_workers,
+            )
 
             # Generate output with base filename
             output_gen = OutputGenerator(output_dir)
 
-            if output_format in ["json", "both"]:
+            if output_format in ["json", "both", "all"]:
                 json_filename = f"{base_name}_structure.json"
                 json_path = output_gen.generate_json(structure, filename=json_filename)
                 console.print(f"[bold green]JSON output saved to: {json_path}[/bold green]")
 
-            if output_format in ["markdown", "both"]:
+            if output_format in ["markdown", "both", "all"]:
                 md_filename = f"{base_name}_structure.md"
                 md_path = output_gen.generate_markdown(structure, filename=md_filename)
                 console.print(f"[bold green]Markdown output saved to: {md_path}[/bold green]")
+
+            if output_format in ["csv", "all"]:
+                csv_files = output_gen.generate_csv(structure)
+                console.print(f"[bold green]CSV output saved ({len(csv_files)} files):[/bold green]")
+                for csv_file in csv_files:
+                    console.print(f"  - {csv_file}")
+
+            if output_format == "all":
+                dot_filename = f"{base_name}_dependencies.dot"
+                dot_path = output_gen.generate_dot(structure, filename=dot_filename)
+                console.print(f"[bold green]DOT visualization saved to: {dot_path}[/bold green]")
 
             # Generate summary report
             stats = structure.get("statistics", {})

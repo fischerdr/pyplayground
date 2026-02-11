@@ -144,7 +144,7 @@ oauthlib==3.2.2
     # via
     #   kubernetes
     #   requests-oauthlib
-packaging==24.2
+packaging==26.0
     # via
     #   ansible-builder
     #   ansible-core

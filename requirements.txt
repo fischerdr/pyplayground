@@ -118,7 +118,7 @@ pycparser==2.22
     # via cffi
 pygments==2.19.1
     # via rich
-pyopenssl==25.0.0
+pyopenssl==25.3.0
     # via pyplayground (pyproject.toml)
 python-daemon==3.1.2
     # via ansible-runner

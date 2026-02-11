@@ -78,7 +78,7 @@ filelock==3.20.3
     # via
     #   pyplayground (pyproject.toml)
     #   virtualenv
-flake8==7.2.0
+flake8==7.3.0
     # via
     #   flake8-bugbear
     #   flake8-docstrings

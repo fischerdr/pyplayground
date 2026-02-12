@@ -322,7 +322,7 @@ tomli==2.3.0
     # via application-properties
 toolz==1.1.0
     # via columnar
-typer==0.15.2
+typer==0.21.2
     # via pyplayground (pyproject.toml)
 types-pillow==10.2.0.20240822
     # via pyplayground (pyproject.toml)

@@ -207,7 +207,7 @@ pyjson5==2.0.0
     # via application-properties
 pymarkdownlnt==0.9.34
     # via pyplayground (pyproject.toml)
-pyopenssl==25.0.0
+pyopenssl==25.3.0
     # via pyplayground (pyproject.toml)
 pyproject-hooks==1.2.0
     # via

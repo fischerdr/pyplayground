@@ -233,7 +233,7 @@ python-dateutil==2.9.0.post0
     #   kubernetes
 python-dotenv==1.1.0
     # via pyplayground (pyproject.toml)
-pyvmomi==8.0.3.0.1
+pyvmomi==9.0.0.0
     # via pyplayground (pyproject.toml)
 pyyaml==6.0.2
     # via

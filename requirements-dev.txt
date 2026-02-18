@@ -318,7 +318,7 @@ structlog==25.2.0
     # via pyplayground (pyproject.toml)
 tenacity==9.1.2
     # via pyplayground (pyproject.toml)
-tomli==2.3.0
+tomli==2.4.0
     # via application-properties
 toolz==1.1.0
     # via columnar

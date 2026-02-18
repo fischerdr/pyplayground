@@ -298,7 +298,7 @@ sphinx==8.2.3
     #   sphinxcontrib-jquery
 sphinx-autodoc-typehints==3.5.2
     # via pyplayground (pyproject.toml)
-sphinx-rtd-theme==3.0.2
+sphinx-rtd-theme==3.1.0
     # via pyplayground (pyproject.toml)
 sphinxcontrib-applehelp==2.0.0
     # via sphinx

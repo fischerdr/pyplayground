@@ -96,7 +96,7 @@ google-auth==2.39.0
     # via kubernetes
 hvac==2.3.0
     # via pyplayground (pyproject.toml)
-identify==2.6.9
+identify==2.6.15
     # via pre-commit
 idna==3.10
     # via requests

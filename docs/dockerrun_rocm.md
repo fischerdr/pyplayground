@@ -140,7 +140,7 @@ podman run -d -p 3000:8080 \
 **Use case**: Standard Ollama setup with flash attention enabled.
 
 ```bash
-podman run -d \
+podman run -d --replace \
   --name ollama-rocm \
   --device=/dev/kfd \
   --device=/dev/dri \
@@ -148,6 +148,29 @@ podman run -d \
   -e HSA_OVERRIDE_GFX_VERSION=11.0.0 \
   -e HIP_VISIBLE_DEVICES=0 \
   -e OLLAMA_FLASH_ATTENTION=true \
+  -v ollama:/root/.ollama \
+  -p 11434:11434 \
+  ollama/ollama:rocm
+```
+
+## Ollama with ROCm (Vulkan Configuration)
+
+**Use case**: Ollama setup with Vulkan backend.
+
+```bash
+podman run -d \
+  --name ollama-rocm \
+  --device=/dev/kfd \
+  --device=/dev/dri \
+  --group-add video \
+  -e "OLLAMA_VULKAN=1" \
+  -e "HIP_VISIBLE_DEVICES=-1" \
+  -e "GGML_VK_VISIBLE_DEVICES=0" \
+  -e "OLLAMA_NUM_PARALLEL=4" \
+  -e "OLLAMA_MAX_LOADED_MODELS=4" \
+  -e "OLLAMA_FLASH_ATTENTION=1" \
+  -e "OLLAMA_MAX_QUEUE=1024" \
+  -e "OLLAMA_KEEP_ALIVE=12h" \
   -v ollama:/root/.ollama \
   -p 11434:11434 \
   ollama/ollama:rocm

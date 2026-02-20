@@ -427,6 +427,14 @@ Before diving into specific models, here are the common parameters used across c
 --ctx-size 32768  # 32k tokens (budget, ~15GB VRAM)
 ```
 
+### Router Mode Configuration
+
+**Use case**: Router mode for routing requests between multiple models with optimized settings.
+
+```bash
+llama-server --host 0.0.0.0 --port 10000 --temp 1.0 --top-p 0.95 --min-p 0.01 --kv-unified --cache-type-k q8_0 --cache-type-v q8_0 -fa on -ngl 99 --seed 42 --fit on --jinja --batch-size 4096 --ubatch-size 1024 --ctx-size 65536 --log-prefix --log-timestamps
+```
+
 ### Code Generation Models
 
 Optimized for code generation, completion, and technical writing tasks.

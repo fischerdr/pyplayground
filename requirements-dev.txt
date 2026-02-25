@@ -104,7 +104,7 @@ imagesize==1.4.1
     # via sphinx
 iniconfig==2.1.0
     # via pytest
-isort==6.0.1
+isort==6.1.0
     # via pyplayground (pyproject.toml)
 jinja2==3.1.6
     # via

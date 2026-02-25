@@ -96,7 +96,7 @@ google-auth==2.39.0
     # via kubernetes
 hvac==2.3.0
     # via pyplayground (pyproject.toml)
-identify==2.6.9
+identify==2.6.15
     # via pre-commit
 idna==3.10
     # via requests
@@ -104,7 +104,7 @@ imagesize==1.4.1
     # via sphinx
 iniconfig==2.1.0
     # via pytest
-isort==6.0.1
+isort==6.1.0
     # via pyplayground (pyproject.toml)
 jinja2==3.1.6
     # via
@@ -134,7 +134,7 @@ mdurl==0.1.2
     # via markdown-it-py
 mypy==1.15.0
     # via pyplayground (pyproject.toml)
-mypy-extensions==1.0.0
+mypy-extensions==1.1.0
     # via
     #   black
     #   mypy
@@ -169,7 +169,7 @@ pick==2.4.0
     # via pyplayground (pyproject.toml)
 pint==0.24.4
     # via pyplayground (pyproject.toml)
-pip-tools==7.4.1
+pip-tools==7.5.3
     # via pyplayground (pyproject.toml)
 platformdirs==4.3.7
     # via
@@ -199,7 +199,7 @@ pydocstyle==6.3.0
     # via flake8-docstrings
 pyflakes==3.3.2
     # via flake8
-pygments==2.19.1
+pygments==2.19.2
     # via
     #   rich
     #   sphinx
@@ -298,7 +298,7 @@ sphinx==8.2.3
     #   sphinxcontrib-jquery
 sphinx-autodoc-typehints==3.5.2
     # via pyplayground (pyproject.toml)
-sphinx-rtd-theme==3.0.2
+sphinx-rtd-theme==3.1.0
     # via pyplayground (pyproject.toml)
 sphinxcontrib-applehelp==2.0.0
     # via sphinx
@@ -314,11 +314,11 @@ sphinxcontrib-qthelp==2.0.0
     # via sphinx
 sphinxcontrib-serializinghtml==2.0.0
     # via sphinx
-structlog==25.2.0
+structlog==25.5.0
     # via pyplayground (pyproject.toml)
 tenacity==9.1.2
     # via pyplayground (pyproject.toml)
-tomli==2.3.0
+tomli==2.4.0
     # via application-properties
 toolz==1.1.0
     # via columnar

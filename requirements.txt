@@ -8,7 +8,7 @@ annotated-doc==0.0.4
     # via typer
 ansible-builder==3.1.1
     # via pyplayground (pyproject.toml)
-ansible-core==2.19.0
+ansible-core==2.20.3
     # via pyplayground (pyproject.toml)
 ansible-runner==2.4.2
     # via pyplayground (pyproject.toml)
@@ -20,27 +20,25 @@ awxkit==24.6.1
     # via pyplayground (pyproject.toml)
 bindep==2.13.0
     # via ansible-builder
-boto3==1.37.37
+boto3==1.42.56
     # via pyplayground (pyproject.toml)
-botocore==1.37.37
+botocore==1.42.56
     # via
     #   boto3
     #   s3transfer
-cachetools==5.5.2
-    # via google-auth
 certifi==2025.1.31
     # via
     #   kubernetes
     #   requests
-cffi==1.17.1
+cffi==2.0.0
     # via cryptography
 charset-normalizer==3.4.4
     # via requests
-click==8.1.8
+click==8.3.1
     # via
     #   pyplayground (pyproject.toml)
     #   typer
-cryptography==46.0.0
+cryptography==46.0.5
     # via
     #   ansible-core
     #   pyopenssl
@@ -49,15 +47,13 @@ distro==1.9.0
     # via bindep
 durationpy==0.9
     # via kubernetes
-filelock==3.20.3
+filelock==3.24.3
     # via pyplayground (pyproject.toml)
 flexcache==0.3
     # via pint
 flexparser==0.4
     # via pint
-google-auth==2.39.0
-    # via kubernetes
-hvac==2.3.0
+hvac==2.4.0
     # via pyplayground (pyproject.toml)
 idna==3.10
     # via requests
@@ -71,11 +67,11 @@ jsonschema==4.25.0
     # via ansible-builder
 jsonschema-specifications==2025.4.1
     # via jsonschema
-kubernetes==32.0.1
+kubernetes==35.0.0
     # via pyplayground (pyproject.toml)
 lockfile==0.12.2
     # via python-daemon
-markdown==3.8
+markdown==3.10.2
     # via pyplayground (pyproject.toml)
 markdown-it-py==3.0.0
     # via rich
@@ -84,9 +80,7 @@ markupsafe==3.0.2
 mdurl==0.1.2
     # via markdown-it-py
 oauthlib==3.2.2
-    # via
-    #   kubernetes
-    #   requests-oauthlib
+    # via requests-oauthlib
 packaging==26.0
     # via
     #   ansible-builder
@@ -101,21 +95,16 @@ pexpect==4.9.0
     # via ansible-runner
 pick==2.4.0
     # via pyplayground (pyproject.toml)
-pint==0.24.4
+pint==0.25.2
     # via pyplayground (pyproject.toml)
 platformdirs==4.3.7
     # via pint
-psycopg2-binary==2.9.10
+psycopg2-binary==2.9.11
     # via pyplayground (pyproject.toml)
 ptyprocess==0.7.0
     # via pexpect
 pyasn1==0.6.2
-    # via
-    #   pyasn1-modules
-    #   pyplayground (pyproject.toml)
-    #   rsa
-pyasn1-modules==0.4.2
-    # via google-auth
+    # via pyplayground (pyproject.toml)
 pycparser==2.22
     # via cffi
 pygments==2.19.2
@@ -128,11 +117,11 @@ python-dateutil==2.9.0.post0
     # via
     #   botocore
     #   kubernetes
-python-dotenv==1.1.0
+python-dotenv==1.2.1
     # via pyplayground (pyproject.toml)
 pyvmomi==9.0.0.0
     # via pyplayground (pyproject.toml)
-pyyaml==6.0.2
+pyyaml==6.0.3
     # via
     #   ansible-builder
     #   ansible-core
@@ -155,7 +144,7 @@ requests-oauthlib==2.0.0
     # via kubernetes
 resolvelib==1.2.1
     # via ansible-core
-rich==14.0.0
+rich==14.3.3
     # via
     #   pyplayground (pyproject.toml)
     #   typer
@@ -163,9 +152,7 @@ rpds-py==0.26.0
     # via
     #   jsonschema
     #   referencing
-rsa==4.9.1
-    # via google-auth
-s3transfer==0.11.5
+s3transfer==0.16.0
     # via boto3
 shellingham==1.5.4
     # via typer
@@ -175,9 +162,9 @@ six==1.17.0
     #   python-dateutil
 structlog==25.5.0
     # via pyplayground (pyproject.toml)
-tenacity==9.1.2
+tenacity==9.1.4
     # via pyplayground (pyproject.toml)
-typer==0.21.2
+typer==0.24.1
     # via pyplayground (pyproject.toml)
 typing-extensions==4.13.2
     # via

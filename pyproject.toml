@@ -94,7 +94,7 @@ dev = [
 
 [tool.black]
 line-length = 180
-target-version = ["py39"]
+target-version = ["py313"]
 include = '\.pyi?$'
 
 [tool.pytest.ini_options]

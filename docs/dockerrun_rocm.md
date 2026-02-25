@@ -474,6 +474,24 @@ llama-server --alias "Qwen-Coder-30B" --host 0.0.0.0 --port 10000 \
   --ctx-size 65536 --log-prefix --log-timestamps
 ```
 
+#### Qwen3-Coder-Next (Balanced code generation)
+
+- **Model**: Unsloth Qwen3-Coder-Next
+- **Quantization**: UD-Q4_K_XL
+- **Context**: 64k tokens
+- **VRAM**: ~20GB
+- **Use case**: Code generation with balanced temperature (temp 0.7)
+
+```bash
+llama-server --alias "Qwen3-Coder-Next" --host 0.0.0.0 --port 10000 \
+  -hf unsloth/Qwen3-Coder-Next-GGUF:UD-Q4_K_XL \
+  --ctx-size 98304 --temp 0.7 --top-p 0.9 --min-p 0.05 --top-k 40 \
+  --kv-unified --cache-type-k q8_0 --cache-type-v q8_0 \
+  --batch-size 4096 --ubatch-size 256 \
+  -fa on -ngl 99 --seed 42 --fit on --jinja --log-prefix --log-timestamps --no-mmap \
+  --metrics --keep 8192 --ctx-checkpoints 128 --cache-reuse 64 --mlock --swa-full -np 1
+```
+
 #### GLM-4.7-Flash-Coder (Fast Code Generation)
 
 - **Model**: Zhipu AI's fast code model

@@ -324,9 +324,7 @@ class TestOutputGenerator:
             "statistics": {},
             "dependency_graph": {"nodes": ["my_role"], "edges": []},
         }
-        path = generator.generate_markdown(
-            structure, include_diagrams=True, diagram_scope="global"
-        )
+        path = generator.generate_markdown(structure, include_diagrams=True, diagram_scope="global")
         content = path.read_text()
         assert "Role Dependency Graph" in content
         assert "Execution flow" not in content

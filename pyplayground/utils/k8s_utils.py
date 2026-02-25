@@ -193,7 +193,9 @@ def get_machine_for_node(
             # Type cast: machines["items"] is Any due to incomplete kubernetes type stubs
             machine_dict = cast(Dict[str, Any], machine)
             if machine_dict["status"]["nodeRef"]["name"] == node_name:
-                logger.info(f"Found Machine {machine_dict['metadata']['name']} for Node {node_name}")
+                logger.info(
+                    f"Found Machine {machine_dict['metadata']['name']} for Node {node_name}"
+                )
                 return machine_dict
         logger.warning(f"No Machine found for Node {node_name}. This might be UPI.")
         return None
@@ -227,7 +229,9 @@ def get_machineset_for_machine(
             # Type cast: machinesets["items"] is Any due to incomplete kubernetes type stubs
             ms_dict = cast(Dict[str, Any], ms)
             if ms_dict["metadata"]["name"] in machine_name:
-                logger.info(f"Found MachineSet {ms_dict['metadata']['name']} for Machine {machine_name}")
+                logger.info(
+                    f"Found MachineSet {ms_dict['metadata']['name']} for Machine {machine_name}"
+                )
                 return ms_dict
         logger.warning(f"No MachineSet found for Machine {machine_name}.")
         return None

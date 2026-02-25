@@ -147,11 +147,7 @@ class Encoder:
             f.write(b"".join(self.audio_pcm))
 
         video_out = os.path.join(self.output_dir, "output.mp4")
-        os.system(
-            f"ffmpeg -framerate {self.fps} -i {self.output_dir}/frame_%04d.png "
-            f"-f s16le -ar 44100 -ac 1 -i {audio_path} "
-            f"-pix_fmt yuv420p -y {video_out}"
-        )
+        os.system(f"ffmpeg -framerate {self.fps} -i {self.output_dir}/frame_%04d.png " f"-f s16le -ar 44100 -ac 1 -i {audio_path} " f"-pix_fmt yuv420p -y {video_out}")
 
         # Attempt to open the video with the default system player
         if os.path.exists(video_out):
@@ -180,9 +176,7 @@ class AudioProcessor:
     and providing audio-reactive data for the visualizer.
     """
 
-    def __init__(
-        self, path: str, bands: int, sr: int = 44100, hop: int = 512, thresh: float = 0.5
-    ) -> None:
+    def __init__(self, path: str, bands: int, sr: int = 44100, hop: int = 512, thresh: float = 0.5) -> None:
         """Initialize the audio processor with an audio file.
 
         Args:
@@ -196,9 +190,7 @@ class AudioProcessor:
         self.raw, _ = librosa.load(path, sr=sr)
         self.frames = 1 + len(self.raw) // hop
         mag = np.abs(librosa.stft(self.raw, hop_length=hop))
-        basis = librosa.filters.mel(
-            sr=sr, n_fft=mag.shape[0] * 2 - 2, n_mels=bands, fmin=50.0, fmax=20000.0
-        )
+        basis = librosa.filters.mel(sr=sr, n_fft=mag.shape[0] * 2 - 2, n_mels=bands, fmin=50.0, fmax=20000.0)
         db = librosa.power_to_db(basis @ mag, ref=np.max)
         self.spec = (db - db.min()) / (db.max() - db.min())
         self.thresh = thresh
@@ -297,9 +289,7 @@ class Visualizer:
                                 x,
                                 y,
                                 z,
-                                interpolate_color(
-                                    [(255, 94, 0), (255, 42, 100), (180, 0, 255)], y_norm
-                                ),
+                                interpolate_color([(255, 94, 0), (255, 42, 100), (180, 0, 255)], y_norm),
                             )
         return sun
 
@@ -363,9 +353,7 @@ class Visualizer:
         for x in range(0, w, spacing):
             for z in range(min_z, max_z, spacing):
                 y = int(height(x, z))
-                col = interpolate_color(
-                    [(25, 214, 252), (255, 20, 147), (232, 103, 23), (232, 224, 16)], y / h
-                )
+                col = interpolate_color([(25, 214, 252), (255, 20, 147), (232, 103, 23), (232, 224, 16)], y / h)
                 frame.set_voxel(x, y, int(z - z_base), col)
         return dims, frame, spacing, z_base
 

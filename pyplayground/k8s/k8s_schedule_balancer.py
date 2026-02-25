@@ -24,9 +24,7 @@ def setup_logging(log_file_path: str):
     log_dir = os.path.dirname(log_file_path)
     os.makedirs(log_dir, exist_ok=True)
 
-    log_formatter_file = logging.Formatter(
-        "%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s"
-    )
+    log_formatter_file = logging.Formatter("%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s")
     log_formatter_console = logging.Formatter("%(levelname)s: %(message)s")
 
     root_logger = logging.getLogger()
@@ -156,9 +154,7 @@ def main(
         namespaces_data = process_input_csv(input_csv, weight_pvc, weight_core, weight_cr)
 
         if not namespaces_data:
-            console.print(
-                "[bold yellow]Warning:[/bold yellow] No valid namespace data found in the input CSV."
-            )
+            console.print("[bold yellow]Warning:[/bold yellow] No valid namespace data found in the input CSV.")
             logging.warning("No valid namespace data found in the input CSV. Exiting.")
             sys.exit(0)
 
@@ -182,9 +178,7 @@ def main(
         sys.exit(1)
 
     console.print("\n[bold green]Balancing complete.[/bold green]")
-    console.print(
-        f"Detailed group assignments saved to: {final_output_json_path}"
-    )  # Use timestamped path
+    console.print(f"Detailed group assignments saved to: {final_output_json_path}")  # Use timestamped path
     console.print(f"Summary saved to: {final_output_summary_path}")  # Use timestamped path
     logging.info("Schedule balancer finished.")
 
@@ -192,9 +186,7 @@ def main(
 # --- Core Logic Functions --- #
 
 
-def process_input_csv(
-    input_csv_path: str, weight_pvc: float, weight_core: float, weight_cr: float
-) -> List[Dict[str, Any]]:
+def process_input_csv(input_csv_path: str, weight_pvc: float, weight_core: float, weight_cr: float) -> List[Dict[str, Any]]:
     """Reads the input CSV, calculates weights, and returns processed data."""
     namespaces_data: List[Dict[str, Any]] = []
     logging.info(f"Reading and processing CSV: {input_csv_path}")
@@ -203,9 +195,7 @@ def process_input_csv(
             reader = csv.DictReader(csvfile)
             if "Namespace" not in reader.fieldnames:
                 logging.error(f"Input CSV '{input_csv_path}' missing required 'Namespace' column.")
-                raise ValueError(
-                    f"Input CSV '{input_csv_path}' missing required 'Namespace' column."
-                )
+                raise ValueError(f"Input CSV '{input_csv_path}' missing required 'Namespace' column.")
 
             for row in reader:
                 ns_name = row.get("Namespace", "")
@@ -219,9 +209,7 @@ def process_input_csv(
                     try:
                         return float(val_str)
                     except (ValueError, TypeError):
-                        logging.warning(
-                            f"Invalid value '{val_str}' for {field_name} in namespace {ns_name}, using 0."
-                        )
+                        logging.warning(f"Invalid value '{val_str}' for {field_name} in namespace {ns_name}, using 0.")
                         return 0.0
 
                 pvc_gib = get_size("TotalPVCCapacityGiB")
@@ -251,9 +239,7 @@ def process_input_csv(
     return namespaces_data
 
 
-def balance_namespaces_greedy(
-    namespaces_data: List[Dict[str, Any]], num_groups: int
-) -> List[Dict[str, Any]]:
+def balance_namespaces_greedy(namespaces_data: List[Dict[str, Any]], num_groups: int) -> List[Dict[str, Any]]:
     """Distributes namespaces into groups using a greedy algorithm based on weight."""
     if not namespaces_data:
         return []
@@ -314,9 +300,7 @@ def write_json_output(groups: List[Dict[str, Any]], output_json_path: str):
         raise  # Re-raise to be caught by main
 
 
-def generate_and_write_summary(
-    groups: List[Dict[str, Any]], output_summary_path: str, console: Console
-):
+def generate_and_write_summary(groups: List[Dict[str, Any]], output_summary_path: str, console: Console):
     """Generates summary, prints to console, and writes to text file."""
     logging.info(f"Generating summary for console and {output_summary_path}")
     if not groups:
@@ -342,9 +326,7 @@ def generate_and_write_summary(
         pvc_str = f"{group['sum_pvc_gib']:.2f}"
         core_str = f"{group['sum_core_kib']:.2f}"
         cr_str = f"{group['sum_cr_kib']:.2f}"
-        summary_table.add_row(
-            group["id"], str(group["namespace_count"]), weight_str, pvc_str, core_str, cr_str
-        )
+        summary_table.add_row(group["id"], str(group["namespace_count"]), weight_str, pvc_str, core_str, cr_str)
         line = f"{group['id']:<12} {group['namespace_count']:>12} {weight_str:>18} {pvc_str:>18} {core_str:>18} {cr_str:>18}"
         summary_lines.append(line)
 
@@ -366,15 +348,11 @@ def generate_and_write_summary(
     except OSError as e:
         logging.error(f"Could not write summary file '{output_summary_path}': {e}")
         # Don't exit, just log the error and notify user
-        console.print(
-            f"[bold red]Error:[/bold red] Could not write summary file '{output_summary_path}': {e}"
-        )
+        console.print(f"[bold red]Error:[/bold red] Could not write summary file '{output_summary_path}': {e}")
     except Exception:  # Remove unused 'e' variable
         logging.exception(f"Unexpected error writing summary file: {output_summary_path}")
         # Print generic error to console, details are in the log
-        console.print(
-            "[bold red]Error:[/bold red] Unexpected error writing summary file. See log for details."
-        )
+        console.print("[bold red]Error:[/bold red] Unexpected error writing summary file. See log for details.")
 
 
 if __name__ == "__main__":

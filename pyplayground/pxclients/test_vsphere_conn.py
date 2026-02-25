@@ -266,9 +266,7 @@ def test_connection(
 
         else:
             # connect() returned None, indicating failure
-            fail_msg = (
-                f"Failed to connect to vSphere: {vsphere_config.host}. Check logs for details."
-            )
+            fail_msg = f"Failed to connect to vSphere: {vsphere_config.host}. Check logs for details."
             logger.error(fail_msg)
             click.echo(click.style(f"FAILED: {fail_msg}", fg="red"), err=True)
 

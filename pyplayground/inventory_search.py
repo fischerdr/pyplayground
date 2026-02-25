@@ -301,9 +301,7 @@ def cli(  # noqa: C901
     # Configure SSL verification
     if no_verify_ssl:
         verify_ssl = False
-        logger.warning(
-            "SSL certificate verification is disabled. This is not recommended for production use."
-        )
+        logger.warning("SSL certificate verification is disabled. This is not recommended for production use.")
     elif cert_path:
         verify_ssl = True
         logger.debug(f"Using custom certificate path: {cert_path}")
@@ -375,9 +373,7 @@ def cli(  # noqa: C901
             logger.debug(f"Request parameters: {json.dumps(params_log, default=str, indent=2)}")
 
         # Load field configuration if specified
-        fields_config = load_fields_configuration(
-            display_fields_only, fields, display_fields_config
-        )
+        fields_config = load_fields_configuration(display_fields_only, fields, display_fields_config)
 
         # Search for inventory
         logger.info("Searching inventory...")
@@ -422,9 +418,7 @@ def cli(  # noqa: C901
         sys.exit(1)
 
 
-def load_fields_configuration(  # noqa: C901
-    display_fields_only: Optional[str], extra_fields: Optional[str], config_file: Optional[str]
-) -> dict:
+def load_fields_configuration(display_fields_only: Optional[str], extra_fields: Optional[str], config_file: Optional[str]) -> dict:  # noqa: C901
     """Load and process field display configuration from various sources.
 
     Priority order:
@@ -543,12 +537,7 @@ def get_display_fields(clusters: list, fields_config: dict) -> tuple:  # noqa: C
             # Include all fields except complex objects
             if clusters:
                 for field in clusters[0].keys():
-                    if (
-                        field not in display_fields
-                        and field not in skip_fields
-                        and not isinstance(clusters[0].get(field), (dict, list))
-                        and "_timestamp" not in field
-                    ):
+                    if field not in display_fields and field not in skip_fields and not isinstance(clusters[0].get(field), (dict, list)) and "_timestamp" not in field:
                         display_fields.append(field)
         else:
             # Include only the specified extra fields
@@ -787,10 +776,7 @@ def process_extra_fields(clusters: list, extra_fields: Optional[str] = None) -> 
                 additional_fields = [
                     field
                     for field in clusters[0].keys()
-                    if field not in priority_fields
-                    and field not in skip_fields
-                    and not isinstance(clusters[0].get(field), (dict, list))
-                    and "_timestamp" not in field
+                    if field not in priority_fields and field not in skip_fields and not isinstance(clusters[0].get(field), (dict, list)) and "_timestamp" not in field
                 ]
         else:
             # Include only the specified extra fields

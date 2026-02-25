@@ -25,22 +25,16 @@ setup_logging(script_name=os.path.basename(__file__).replace(".py", ""))
 logger = get_logger(__name__)
 
 
-def import_job_templates_from_data(
-    tower_url: str, headers: dict, job_templates: list, verify: bool = True
-):
+def import_job_templates_from_data(tower_url: str, headers: dict, job_templates: list, verify: bool = True):
     """Import job templates into AWX from a list of data."""
     logger.info(f"Importing {len(job_templates)} job templates into AWX...")
     for template_data in job_templates:
         template_name = template_data.get("name")
         try:
             # Check if job template already exists
-            existing_template = find_resource_by_name(
-                tower_url, headers, "job_templates", template_name, verify
-            )
+            existing_template = find_resource_by_name(tower_url, headers, "job_templates", template_name, verify)
             if not existing_template:
-                created_template = create_resource(
-                    tower_url, headers, "job_templates", template_data, verify
-                )
+                created_template = create_resource(tower_url, headers, "job_templates", template_data, verify)
                 if created_template:
                     logger.info(f"Successfully imported job template: {template_name}")
                 else:
@@ -59,13 +53,9 @@ def import_workflows_from_data(tower_url: str, headers: dict, workflows: list, v
         workflow_name = workflow_data.get("name")
         try:
             # Check if workflow already exists
-            existing_workflow = find_resource_by_name(
-                tower_url, headers, "workflow_job_templates", workflow_name, verify
-            )
+            existing_workflow = find_resource_by_name(tower_url, headers, "workflow_job_templates", workflow_name, verify)
             if not existing_workflow:
-                created_workflow = create_resource(
-                    tower_url, headers, "workflow_job_templates", workflow_data, verify
-                )
+                created_workflow = create_resource(tower_url, headers, "workflow_job_templates", workflow_data, verify)
                 if created_workflow:
                     logger.info(f"Successfully imported workflow: {workflow_name}")
                 else:

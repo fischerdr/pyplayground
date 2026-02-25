@@ -49,9 +49,7 @@ def normalize_secret_name(secret_key: str, pvc_name: str) -> Tuple[str, bool]:
             prefix = normalized[:-4][:max_prefix_length].rstrip("-")
             old_normalized = normalized
             normalized = f"{prefix}-pvc"
-            logger.debug(
-                f"Preserved -pvc suffix during truncation: '{old_normalized}' → '{normalized}'"
-            )
+            logger.debug(f"Preserved -pvc suffix during truncation: '{old_normalized}' → '{normalized}'")
         else:
             normalized = normalized[:MAX_SECRET_NAME_LENGTH].rstrip("-")
 
@@ -109,19 +107,13 @@ def validate_pvc_entry(pvc_entry: Dict[str, Any]) -> Optional[Dict[str, str]]:
 
     for field in required_fields:
         if field not in pvc_entry:
-            logger.warning(
-                f"Missing required field '{field}' in PVC entry: {pvc_entry.get('pvc', 'unknown')}"
-            )
+            logger.warning(f"Missing required field '{field}' in PVC entry: {pvc_entry.get('pvc', 'unknown')}")
             return None
 
     # Check for vault_data errors
     vault_data = pvc_entry["vault_data"]
     if not isinstance(vault_data, dict) or "error" in vault_data:
-        error_msg = (
-            vault_data.get("error", "Unknown vault error")
-            if isinstance(vault_data, dict)
-            else "Invalid vault data"
-        )
+        error_msg = vault_data.get("error", "Unknown vault error") if isinstance(vault_data, dict) else "Invalid vault data"
         logger.warning(f"Vault data error for PVC '{pvc_entry['pvc']}': {error_msg}")
         return None
 

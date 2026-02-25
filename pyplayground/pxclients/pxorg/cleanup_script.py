@@ -30,9 +30,7 @@ def clean_cloud_drive_json(input_file, output_file):
     embedded_json = json.loads(embedded_json_str)
 
     # Remove entries where 'Configs' is null
-    cleaned_data = {
-        key: value for key, value in embedded_json.items() if value.get("Configs") is not None
-    }
+    cleaned_data = {key: value for key, value in embedded_json.items() if value.get("Configs") is not None}
 
     # Update the main JSON with the cleaned data, removing newlines and extra spaces for the cleaned_data only
     main_json["data"]["cloud-drive"] = json.dumps(cleaned_data, separators=(",", ":"))

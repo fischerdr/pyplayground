@@ -51,13 +51,9 @@ def import_projects(
             project_name = project_data.get("name")
             try:
                 # Check if project already exists
-                existing_project = find_resource_by_name(
-                    tower_url, headers, "projects", project_name, verify
-                )
+                existing_project = find_resource_by_name(tower_url, headers, "projects", project_name, verify)
                 if not existing_project:
-                    created_project = create_resource(
-                        tower_url, headers, "projects", project_data, verify
-                    )
+                    created_project = create_resource(tower_url, headers, "projects", project_data, verify)
                     if created_project:
                         logger.info(f"Successfully imported project: {project_name}")
                     else:

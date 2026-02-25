@@ -122,14 +122,10 @@ def connect(args) -> Optional[vim.ServiceInstance]:
 
                 context = ssl._create_unverified_context()
             except ImportError:
-                logger.warning(
-                    "Could not import ssl module. Proceeding without specific SSL context."
-                )
+                logger.warning("Could not import ssl module. Proceeding without specific SSL context.")
                 # context remains None
             except AttributeError:
-                logger.warning(
-                    "ssl._create_unverified_context not available. Proceeding without specific SSL context."
-                )
+                logger.warning("ssl._create_unverified_context not available. Proceeding without specific SSL context.")
                 # context remains None
 
             logger.debug(
@@ -154,9 +150,7 @@ def connect(args) -> Optional[vim.ServiceInstance]:
                 args.user,
                 args.port,
             )
-            service_instance = SmartConnect(
-                host=args.host, user=args.user, pwd=args.password, port=args.port
-            )
+            service_instance = SmartConnect(host=args.host, user=args.user, pwd=args.password, port=args.port)
 
         # Ensure connection was successful before registering disconnect
         if service_instance:
@@ -165,9 +159,7 @@ def connect(args) -> Optional[vim.ServiceInstance]:
             return service_instance  # Return on success
         else:
             # This case might occur if SmartConnect returns None without raising an exception
-            logger.error(
-                "SmartConnect returned None without raising an exception for host %s", args.host
-            )
+            logger.error("SmartConnect returned None without raising an exception for host %s", args.host)
             return None
 
     except vim.fault.InvalidLogin as e:
@@ -177,9 +169,7 @@ def connect(args) -> Optional[vim.ServiceInstance]:
         logger.error("vSphere connection error for host %s: %s", args.host, str(e))
         return None
     except Exception as e:  # Catch other potential exceptions during connect
-        logger.error(
-            "Unexpected error connecting to vSphere host %s: %s", args.host, str(e), exc_info=True
-        )
+        logger.error("Unexpected error connecting to vSphere host %s: %s", args.host, str(e), exc_info=True)
         return None
 
     # This part should ideally not be reached if logic above is correct
@@ -283,9 +273,7 @@ def get_container_view(si, obj_type, container=None):
     if not container:
         container = si.content.rootFolder
 
-    view_ref = si.content.viewManager.CreateContainerView(
-        container=container, type=obj_type, recursive=True
-    )
+    view_ref = si.content.viewManager.CreateContainerView(container=container, type=obj_type, recursive=True)
     return view_ref
 
 

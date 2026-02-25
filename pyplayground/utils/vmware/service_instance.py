@@ -36,9 +36,7 @@ def connect(args):
                 disableSslCertValidation=True,
             )
         else:
-            service_instance = SmartConnect(
-                host=args.host, user=args.user, pwd=args.password, port=args.port
-            )
+            service_instance = SmartConnect(host=args.host, user=args.user, pwd=args.password, port=args.port)
 
         # doing this means you don't need to remember to disconnect your script/objects
         atexit.register(Disconnect, service_instance)

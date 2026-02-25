@@ -47,15 +47,11 @@ from kubernetes import client, config
 
 # Define the command-line interface
 @click.command()
-@click.option(
-    "--kubeconfig", type=click.Path(exists=True), help="Path to kubeconfig file", required=True
-)
+@click.option("--kubeconfig", type=click.Path(exists=True), help="Path to kubeconfig file", required=True)
 @click.option("--namespace", help="Kubernetes namespace", required=True)
 @click.option("--label-selector", help="Label selector to filter pods", required=True)
 @click.option("--command", help="Command to run on each pod", required=True)
-@click.option(
-    "--threads", default=5, help="Number of threads for parallel execution", show_default=True
-)
+@click.option("--threads", default=5, help="Number of threads for parallel execution", show_default=True)
 @click.option(
     "--pass-keyword",
     default="success",

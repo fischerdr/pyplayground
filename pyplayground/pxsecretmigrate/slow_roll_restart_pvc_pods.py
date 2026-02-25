@@ -76,9 +76,7 @@ def load_export_data(file_path: str) -> Dict[str, List[Dict[str, Any]]]:
         sys.exit(1)
 
 
-def get_pods_using_pvcs(
-    core_v1: client.CoreV1Api, namespace: str, pvc_names: Set[str]
-) -> List[str]:
+def get_pods_using_pvcs(core_v1: client.CoreV1Api, namespace: str, pvc_names: Set[str]) -> List[str]:
     """Find all pods in a namespace that mount any of the specified PVCs.
 
     Args:
@@ -110,9 +108,7 @@ def get_pods_using_pvcs(
                 claim_name = vol.persistent_volume_claim.claim_name
                 if claim_name in pvc_names:
                     target_pods.append(pod.metadata.name)
-                    logger.debug(
-                        f"Found pod {namespace}/{pod.metadata.name} using PVC {claim_name}"
-                    )
+                    logger.debug(f"Found pod {namespace}/{pod.metadata.name} using PVC {claim_name}")
                     break
 
     return target_pods
@@ -167,9 +163,7 @@ def get_pod_events(core_v1: client.CoreV1Api, namespace: str, pod_name: str) -> 
         # Get last 10 events
         event_messages = []
         for event in sorted_events[:10]:
-            timestamp = (
-                event.last_timestamp or event.event_time or event.metadata.creation_timestamp
-            )
+            timestamp = event.last_timestamp or event.event_time or event.metadata.creation_timestamp
             message = f"[{event.type}] {event.reason}: {event.message} (at {timestamp})"
             event_messages.append(message)
         return event_messages
@@ -178,9 +172,7 @@ def get_pod_events(core_v1: client.CoreV1Api, namespace: str, pod_name: str) -> 
         return []
 
 
-def check_pod_health(
-    core_v1: client.CoreV1Api, namespace: str, pod_name: str
-) -> tuple[bool, Optional[str]]:
+def check_pod_health(core_v1: client.CoreV1Api, namespace: str, pod_name: str) -> tuple[bool, Optional[str]]:
     """Check if a pod is healthy or has failed.
 
     Args:
@@ -215,8 +207,7 @@ def check_pod_health(
                     if cs.state.terminated.exit_code != 0:
                         return (
                             False,
-                            f"Container {cs.name} terminated with exit code "
-                            f"{cs.state.terminated.exit_code}: {cs.state.terminated.reason}",
+                            f"Container {cs.name} terminated with exit code " f"{cs.state.terminated.exit_code}: {cs.state.terminated.reason}",
                         )
 
         return True, None
@@ -225,9 +216,7 @@ def check_pod_health(
         return True, None  # Assume healthy if we can't check
 
 
-def check_new_pod_status(
-    core_v1: client.CoreV1Api, namespace: str, pod_name: str
-) -> tuple[bool, bool]:
+def check_new_pod_status(core_v1: client.CoreV1Api, namespace: str, pod_name: str) -> tuple[bool, bool]:
     """Check if a new pod is ready or has failed.
 
     Args:
@@ -306,9 +295,7 @@ def wait_for_new_pods_ready(
     start_time = time.time()
     check_interval = 5  # Check every 5 seconds
 
-    logger.debug(
-        f"Waiting for new pods in {namespace} using PVCs {pvc_names} (excluding {old_pod_names})"
-    )
+    logger.debug(f"Waiting for new pods in {namespace} using PVCs {pvc_names} (excluding {old_pod_names})")
 
     while time.time() - start_time < timeout:
         current_pods = get_pods_using_pvcs(core_v1, namespace, pvc_names)
@@ -328,9 +315,7 @@ def wait_for_new_pods_ready(
                     break
 
             if all_ready:
-                logger.info(
-                    f"All new pods in {namespace} using PVCs {pvc_names} are ready: {new_pods}"
-                )
+                logger.info(f"All new pods in {namespace} using PVCs {pvc_names} are ready: {new_pods}")
                 return True
 
         elapsed = int(time.time() - start_time)
@@ -386,13 +371,8 @@ def restart_pods_in_namespace(
 
                 # Wait for new pod to be ready if requested
                 if wait_ready and pod_pvcs:
-                    console.print(
-                        f"[yellow]  Waiting for new pod in {namespace} to be ready "
-                        f"(timeout: {wait_timeout}s)...[/yellow]"
-                    )
-                    with console.status(
-                        f"[bold yellow]Waiting for new pod in {namespace}...[/bold yellow]"
-                    ):
+                    console.print(f"[yellow]  Waiting for new pod in {namespace} to be ready " f"(timeout: {wait_timeout}s)...[/yellow]")
+                    with console.status(f"[bold yellow]Waiting for new pod in {namespace}...[/bold yellow]"):
                         is_ready = wait_for_new_pods_ready(
                             core_v1=core_v1,
                             namespace=namespace,
@@ -405,13 +385,8 @@ def restart_pods_in_namespace(
                         console.print(f"[green]  New pod in {namespace} is ready[/green]")
                         logger.info(f"New pod in {namespace} using PVCs {pod_pvcs} is ready")
                     else:
-                        console.print(
-                            f"[bold yellow]  Warning: New pod in {namespace} "
-                            f"did not become ready within {wait_timeout}s[/bold yellow]"
-                        )
-                        logger.warning(
-                            f"New pod in {namespace} using PVCs {pod_pvcs} did not become ready within timeout"
-                        )
+                        console.print(f"[bold yellow]  Warning: New pod in {namespace} " f"did not become ready within {wait_timeout}s[/bold yellow]")
+                        logger.warning(f"New pod in {namespace} using PVCs {pod_pvcs} did not become ready within timeout")
 
                 if pod_pause > 0:
                     console.print(f"[dim]  Pausing {pod_pause}s before next pod...[/dim]")
@@ -419,9 +394,7 @@ def restart_pods_in_namespace(
 
             except ApiException as e:
                 logger.error(f"Failed to delete pod {namespace}/{pod_name}: {e}", exc_info=True)
-                console.print(
-                    f"[bold red]  Failed to delete {namespace}/{pod_name}: {e}[/bold red]"
-                )
+                console.print(f"[bold red]  Failed to delete {namespace}/{pod_name}: {e}[/bold red]")
 
     return success_count
 
@@ -467,10 +440,7 @@ def process_namespaces(
 
         # Pause before processing this namespace
         if namespace_pause > 0:
-            console.print(
-                f"\n[bold yellow]Processing namespace: {ns}[/bold yellow] "
-                f"[dim](pausing {namespace_pause}s before start...)[/dim]"
-            )
+            console.print(f"\n[bold yellow]Processing namespace: {ns}[/bold yellow] " f"[dim](pausing {namespace_pause}s before start...)[/dim]")
             time.sleep(namespace_pause)
         else:
             console.print(f"\n[bold yellow]Processing namespace: {ns}[/bold yellow]")
@@ -489,9 +459,7 @@ def process_namespaces(
             console.print(f"    - {pod_name}")
 
         # Restart the pods
-        success_count = restart_pods_in_namespace(
-            core_v1, ns, target_pods, pod_pause, dry_run, wait_ready, wait_timeout
-        )
+        success_count = restart_pods_in_namespace(core_v1, ns, target_pods, pod_pause, dry_run, wait_ready, wait_timeout)
 
         status = "Dry-Run" if dry_run else "Completed"
         results[ns] = {
@@ -500,9 +468,7 @@ def process_namespaces(
             "status": status,
         }
 
-        logger.info(
-            f"Namespace '{ns}' processing complete: {success_count}/{len(target_pods)} pods processed"
-        )
+        logger.info(f"Namespace '{ns}' processing complete: {success_count}/{len(target_pods)} pods processed")
 
     return results
 
@@ -656,15 +622,12 @@ def main(
 
     # Log wait-ready mode if enabled
     if wait_ready:
-        logger.info(
-            f"--wait-ready flag enabled: Will wait up to {wait_timeout}s for each pod to be ready."
-        )
+        logger.info(f"--wait-ready flag enabled: Will wait up to {wait_timeout}s for each pod to be ready.")
 
     # Display mode indicator
     if dry_run:
         panel = Panel(
-            "[bold yellow]DRY RUN MODE[/bold yellow]\n"
-            "No pods will be deleted. This is a preview of what would happen.",
+            "[bold yellow]DRY RUN MODE[/bold yellow]\n" "No pods will be deleted. This is a preview of what would happen.",
             title="Operation Mode",
             border_style="yellow",
         )
@@ -700,9 +663,7 @@ def main(
 
     # Process all namespaces
     with console.status("[bold green]Processing namespaces...") as status:
-        results = process_namespaces(
-            core_v1, data, namespace_pause, pod_pause, dry_run, wait_ready, wait_timeout
-        )
+        results = process_namespaces(core_v1, data, namespace_pause, pod_pause, dry_run, wait_ready, wait_timeout)
 
     # Display summary
     display_summary(results, dry_run)

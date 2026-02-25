@@ -53,9 +53,7 @@ def get_vault_client(
         typer.Exit: If authentication fails or required parameters are missing
     """
     try:
-        return create_vault_client(
-            url=vault_addr, token=vault_token, namespace=namespace, load_env=True
-        )
+        return create_vault_client(url=vault_addr, token=vault_token, namespace=namespace, load_env=True)
     except (VaultError, InvalidRequest, ValueError) as e:
         logger.error(str(e))
         raise typer.Exit(1)
@@ -106,9 +104,7 @@ def _list_secret_keys(client: hvac.Client, path: str, mount_point: str) -> List[
         return []
 
 
-def _check_keys_for_data(
-    client: hvac.Client, keys: List[str], current_path: str, mount_point: str
-) -> List[str]:
+def _check_keys_for_data(client: hvac.Client, keys: List[str], current_path: str, mount_point: str) -> List[str]:
     """Helper function to check which keys contain data.
 
     Args:
@@ -129,9 +125,7 @@ def _check_keys_for_data(
     return data_keys
 
 
-def list_kv_secrets(
-    client: hvac.Client, mount_point: str = "static_secrets", path: str = ""
-) -> Dict[str, Any]:
+def list_kv_secrets(client: hvac.Client, mount_point: str = "static_secrets", path: str = "") -> Dict[str, Any]:
     """List keys and identify data nodes in the specified KV store path.
 
     Args:
@@ -242,9 +236,7 @@ def _display_secrets_results(
             formatted_data = format_data(result["data"], 2, mask_values)
             console.print(formatted_data)
             if not mask_values:
-                console.print(
-                    "\n⚠️  [yellow]Warning: Displaying unmasked sensitive values![/yellow]"
-                )
+                console.print("\n⚠️  [yellow]Warning: Displaying unmasked sensitive values![/yellow]")
         else:
             console.print("\n📋 Secret data is available (use --show-data to view)")
 
@@ -304,31 +296,19 @@ def _handle_interactive_mode(
 
 @app.command()
 def list_keys(
-    mount_point: str = typer.Option(
-        "static_secrets", "--mount-point", "-m", help="KV store mount point"
-    ),
+    mount_point: str = typer.Option("static_secrets", "--mount-point", "-m", help="KV store mount point"),
     path: str = typer.Option("", "--path", "-p", help="Path within the KV store"),
-    vault_addr: Optional[str] = typer.Option(
-        None, "--vault-addr", help="Vault server address (or use VAULT_ADDR env var)"
-    ),
-    vault_token: Optional[str] = typer.Option(
-        None, "--vault-token", help="Vault token (or use VAULT_TOKEN env var)"
-    ),
+    vault_addr: Optional[str] = typer.Option(None, "--vault-addr", help="Vault server address (or use VAULT_ADDR env var)"),
+    vault_token: Optional[str] = typer.Option(None, "--vault-token", help="Vault token (or use VAULT_TOKEN env var)"),
     namespace: Optional[str] = typer.Option(
         None,
         "--namespace",
         "-n",
         help="Vault namespace (or use VAULT_NAMESPACE env var)",
     ),
-    show_data: bool = typer.Option(
-        True, "--show-data/--no-data", help="Show secret data when available"
-    ),
-    mask_values: bool = typer.Option(
-        True, "--mask/--no-mask", help="Mask sensitive values in output"
-    ),
-    interactive: bool = typer.Option(
-        True, "--interactive/--no-interactive", help="Enable/disable interactive mode"
-    ),
+    show_data: bool = typer.Option(True, "--show-data/--no-data", help="Show secret data when available"),
+    mask_values: bool = typer.Option(True, "--mask/--no-mask", help="Mask sensitive values in output"),
+    interactive: bool = typer.Option(True, "--interactive/--no-interactive", help="Enable/disable interactive mode"),
 ) -> None:
     """List keys and optionally show data in a Vault KV store path."""
     try:
@@ -364,9 +344,7 @@ def list_keys(
             interactive=interactive,
         )
 
-    except (
-        typer.Exit
-    ):  # Re-raise Typer Exit exceptions to prevent them from being caught by the generic one
+    except typer.Exit:  # Re-raise Typer Exit exceptions to prevent them from being caught by the generic one
         raise
     except Exception as e:
         logger.error(f"Unexpected error in list_keys: {str(e)}")

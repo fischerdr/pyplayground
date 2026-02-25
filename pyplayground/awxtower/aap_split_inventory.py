@@ -157,10 +157,7 @@ def _parse_string_variables(variables_str: str, host_name: str) -> Dict[str, Any
             logger.debug(f"Successfully parsed YAML variables for {host_name}")
             return result
         except yaml.YAMLError as yaml_e:
-            logger.warning(
-                f"YAML parse error for host {host_name}: {yaml_e}. "
-                f"Variables content: {repr(variables_str)}"
-            )
+            logger.warning(f"YAML parse error for host {host_name}: {yaml_e}. " f"Variables content: {repr(variables_str)}")
             return {}
 
 
@@ -185,15 +182,9 @@ def _parse_host_variables(host: Dict[str, Any]) -> Dict[str, Any]:
                 existing_vars = host["variables"]
                 logger.debug(f"Variables already in dict format for {host_name}")
         except TypeError as e:
-            logger.warning(
-                f"Type error for host {host_name}: {e}. "
-                f"Variables type: {type(host['variables'])}, content: {repr(host['variables'])}"
-            )
+            logger.warning(f"Type error for host {host_name}: {e}. " f"Variables type: {type(host['variables'])}, content: {repr(host['variables'])}")
         except Exception as e:
-            logger.warning(
-                f"Unexpected error parsing variables for host {host_name}: {e}. "
-                f"Variables type: {type(host['variables'])}, content: {repr(host['variables'])}"
-            )
+            logger.warning(f"Unexpected error parsing variables for host {host_name}: {e}. " f"Variables type: {type(host['variables'])}, content: {repr(host['variables'])}")
 
     return existing_vars
 
@@ -247,9 +238,7 @@ def add_host_variables(hosts: List[Dict[str, Any]]) -> None:
             logger.debug(f"Updated variables for host {host_name}: {existing_vars}")
 
 
-def process_inventory_entry(
-    item: Dict[str, Any], output_dir: Path, target_org: str = "HYDRA-ENG"
-) -> Optional[str]:
+def process_inventory_entry(item: Dict[str, Any], output_dir: Path, target_org: str = "HYDRA-ENG") -> Optional[str]:
     """Process a single inventory entry.
 
     Args:
@@ -371,9 +360,7 @@ def _create_output_directory(output_dir: str) -> Optional[Path]:
         return None
 
 
-def split_json_file(
-    input_file: str, output_dir: str = "output", target_org: str = "HYDRA-ENG"
-) -> bool:
+def split_json_file(input_file: str, output_dir: str = "output", target_org: str = "HYDRA-ENG") -> bool:
     """Split JSON file containing inventory entries into individual files.
 
     Args:
@@ -408,9 +395,7 @@ def split_json_file(
         if filepath:
             successful_files += 1
 
-    logger.info(
-        f"Successfully processed {successful_files} out of {len(inventory_entries)} inventory entries."
-    )
+    logger.info(f"Successfully processed {successful_files} out of {len(inventory_entries)} inventory entries.")
     return successful_files > 0
 
 

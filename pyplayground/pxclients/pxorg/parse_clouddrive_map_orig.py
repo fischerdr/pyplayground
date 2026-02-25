@@ -100,9 +100,7 @@ def create_drive_mappings(all_drives: Dict[str, float]) -> Tuple[Dict[float, str
     return all_drives_map, good
 
 
-def process_configs(
-    configs: Dict[str, Any], all_drives: Dict[str, float], good: bool
-) -> Tuple[List[str], Dict[float, str], bool, bool]:
+def process_configs(configs: Dict[str, Any], all_drives: Dict[str, float], good: bool) -> Tuple[List[str], Dict[float, str], bool, bool]:
     """Process configuration mismatches and return expected configs and mappings."""
     expected = []
     exp_map = {}

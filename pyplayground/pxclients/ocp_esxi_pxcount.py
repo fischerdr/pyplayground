@@ -70,9 +70,7 @@ class VSphereConnectionParams:
     effective_cert_path: Optional[str]
 
 
-def get_vmware_credentials_from_secret(
-    namespace: str, secret_name: str
-) -> Optional[Dict[str, str]]:
+def get_vmware_credentials_from_secret(namespace: str, secret_name: str) -> Optional[Dict[str, str]]:
     """Retrieve VMware credentials from a Kubernetes Secrets.
 
     Args:
@@ -94,17 +92,13 @@ def get_vmware_credentials_from_secret(
         credentials = {}
 
         if "VSPHERE_USER" in secret_obj.data:
-            credentials["username"] = (
-                base64.b64decode(secret_obj.data["VSPHERE_USER"]).decode("utf-8").strip()
-            )
+            credentials["username"] = base64.b64decode(secret_obj.data["VSPHERE_USER"]).decode("utf-8").strip()
         else:
             logger.error(f"VMware username not found in Secrets {secret_name}")
             return None
 
         if "VSPHERE_PASSWORD" in secret_obj.data:
-            credentials["password"] = (
-                base64.b64decode(secret_obj.data["VSPHERE_PASSWORD"]).decode("utf-8").strip()
-            )
+            credentials["password"] = base64.b64decode(secret_obj.data["VSPHERE_PASSWORD"]).decode("utf-8").strip()
         else:
             logger.error(f"VMware password not found in Secrets {secret_name}")
             return None
@@ -129,21 +123,16 @@ def _get_effective_vsphere_cert_path(vsphere_cert_path_cli: Optional[str]) -> Op
 
     env_cert_path = get_env_var("VSPHERE_SSL_CERT_PATH", required=False)
     if env_cert_path:
-        logger.info(
-            f"Using vSphere SSL certificate path from VSPHERE_SSL_CERT_PATH env var: {env_cert_path}"
-        )
+        logger.info(f"Using vSphere SSL certificate path from VSPHERE_SSL_CERT_PATH env var: {env_cert_path}")
         return env_cert_path
 
     # Check if fallback exists and is a file. If not, treat as no specific path provided for custom cert loading.
     if os.path.isfile(DEFAULT_FALLBACK_CERT_PATH):
-        logger.info(
-            f"Using vSphere SSL certificate path from default fallback: {DEFAULT_FALLBACK_CERT_PATH}"
-        )
+        logger.info(f"Using vSphere SSL certificate path from default fallback: {DEFAULT_FALLBACK_CERT_PATH}")
         return DEFAULT_FALLBACK_CERT_PATH
     else:
         logger.info(
-            f"Default fallback SSL certificate not found at: {DEFAULT_FALLBACK_CERT_PATH}. "
-            "Will use system's default CAs if SSL is enabled and no other path is specified."
+            f"Default fallback SSL certificate not found at: {DEFAULT_FALLBACK_CERT_PATH}. " "Will use system's default CAs if SSL is enabled and no other path is specified."
         )
         return None
 
@@ -162,24 +151,13 @@ def _create_ssl_context(disable_ssl: bool, effective_cert_path: Optional[str]) -
     if effective_cert_path and os.path.isfile(effective_cert_path):
         try:
             context.load_verify_locations(effective_cert_path)
-            logger.info(
-                f"Loaded SSL certificate for vSphere connection from: {effective_cert_path}"
-            )
+            logger.info(f"Loaded SSL certificate for vSphere connection from: {effective_cert_path}")
         except Exception as cert_error:
-            logger.warning(
-                f"Failed to load SSL certificate from {effective_cert_path}: {cert_error}. "
-                "Falling back to default SSL verification using system CAs."
-            )
+            logger.warning(f"Failed to load SSL certificate from {effective_cert_path}: {cert_error}. " "Falling back to default SSL verification using system CAs.")
     elif effective_cert_path and not os.path.isfile(effective_cert_path):
-        logger.warning(
-            f"Specified SSL certificate file not found at {effective_cert_path}. "
-            "Falling back to default SSL verification using system CAs."
-        )
+        logger.warning(f"Specified SSL certificate file not found at {effective_cert_path}. " "Falling back to default SSL verification using system CAs.")
     else:
-        logger.info(
-            "No custom SSL certificate path provided or resolved path not found. "
-            "Using default SSL verification with system CAs."
-        )
+        logger.info("No custom SSL certificate path provided or resolved path not found. " "Using default SSL verification with system CAs.")
     return context
 
 
@@ -198,9 +176,7 @@ def connect_to_vsphere(
         # Use parameters from the dataclass
         context = _create_ssl_context(params.disable_ssl, params.effective_cert_path)
 
-        si = SmartConnect(
-            host=params.host, user=params.user, pwd=params.password, sslContext=context
-        )
+        si = SmartConnect(host=params.host, user=params.user, pwd=params.password, sslContext=context)
         if not si:
             logger.error(f"Failed to connect to vSphere host: {params.host}")
             return None
@@ -313,9 +289,7 @@ def extract_vmware_clusters_from_machinesets(
     return list(cluster_names)
 
 
-def get_filtered_clusters(
-    si: vim.ServiceInstance, cluster_names: list[str]
-) -> list[vim.ClusterComputeResource]:
+def get_filtered_clusters(si: vim.ServiceInstance, cluster_names: list[str]) -> list[vim.ClusterComputeResource]:
     """Get filtered VMware clusters by name using PropertyCollector for efficiency.
 
     Args:
@@ -329,9 +303,7 @@ def get_filtered_clusters(
         content = si.RetrieveContent()
 
         # Create a view of the inventory
-        container_view = content.viewManager.CreateContainerView(
-            content.rootFolder, [vim.ClusterComputeResource], True
-        )
+        container_view = content.viewManager.CreateContainerView(content.rootFolder, [vim.ClusterComputeResource], True)
 
         # Create property specification to specify which properties to retrieve
         property_spec = vim.PropertySpec(type=vim.ClusterComputeResource, pathSet=["name"])
@@ -342,11 +314,7 @@ def get_filtered_clusters(
                 vim.ObjectSpec(
                     obj=container_view,
                     skip=False,
-                    selectSet=[
-                        vim.TraversalSpec(
-                            name="traverseEntities", type=vim.ContainerView, path="view", skip=False
-                        )
-                    ],
+                    selectSet=[vim.TraversalSpec(name="traverseEntities", type=vim.ContainerView, path="view", skip=False)],
                 )
             ],
             propSet=[property_spec],
@@ -355,9 +323,7 @@ def get_filtered_clusters(
 
         # Perform the query using PropertyCollector
         collector = content.propertyCollector
-        query_result = collector.RetrievePropertiesEx(
-            specSet=[filter_spec], options=vim.RetrieveOptions()
-        )
+        query_result = collector.RetrievePropertiesEx(specSet=[filter_spec], options=vim.RetrieveOptions())
 
         cluster_list = []
         if query_result:  # Check if query_result is not None
@@ -369,9 +335,7 @@ def get_filtered_clusters(
         # Destroy the container view
         container_view.Destroy()
 
-        logger.info(
-            f"Found {len(cluster_list)} VMware clusters matching the filter criteria (out of {len(cluster_names)} requested)"
-        )
+        logger.info(f"Found {len(cluster_list)} VMware clusters matching the filter criteria (out of {len(cluster_names)} requested)")
         return cluster_list
     except Exception as e:
         logger.error(f"Failed to retrieve filtered clusters: {e}")
@@ -384,9 +348,7 @@ def get_filtered_clusters(
     wait=wait_fixed(5),  # Wait 5 seconds between attempts
     retry=retry_if_exception_type(Exception),  # Retry on any exception
 )
-def get_esxi_hosts_per_cluster(
-    si: vim.ServiceInstance, cluster_names: list[str]
-) -> dict[str, list[dict[str, any]]]:
+def get_esxi_hosts_per_cluster(si: vim.ServiceInstance, cluster_names: list[str]) -> dict[str, list[dict[str, any]]]:
     """Get all ESXi hosts per VMware cluster.
 
     Args:
@@ -415,9 +377,7 @@ def get_esxi_hosts_per_cluster(
                 hosts.append(host_info)
             clusters_hosts[cluster_name] = hosts
 
-        logger.info(
-            f"Retrieved ESXi hosts from {len(clusters_hosts)} VMware clusters (filtered from {len(cluster_names)} requested clusters)"
-        )
+        logger.info(f"Retrieved ESXi hosts from {len(clusters_hosts)} VMware clusters (filtered from {len(cluster_names)} requested clusters)")
         return clusters_hosts
     except Exception as e:
         logger.error(f"Failed to retrieve ESXi hosts per cluster: {e}")
@@ -444,9 +404,7 @@ def _get_cluster_name_from_resource_pool(resource_pool: str) -> Optional[str]:
         # The cluster name should be the part immediately after 'host'
         if host_index + 1 < len(parts):
             cluster_name = parts[host_index + 1]
-            logger.debug(
-                f"Parsed cluster name '{cluster_name}' from resource pool '{resource_pool}'"
-            )
+            logger.debug(f"Parsed cluster name '{cluster_name}' from resource pool '{resource_pool}'")
             return cluster_name
     except (ValueError, IndexError):
         # Handle cases where 'host' is not found or the structure is unexpected
@@ -454,9 +412,7 @@ def _get_cluster_name_from_resource_pool(resource_pool: str) -> Optional[str]:
     return None
 
 
-def _find_cluster_match(
-    candidate_name: Optional[str], server_name: str, known_clusters: List[str]
-) -> Optional[str]:
+def _find_cluster_match(candidate_name: Optional[str], server_name: str, known_clusters: List[str]) -> Optional[str]:
     """Find the best matching known cluster name based on candidate and server names.
 
     Tries direct match on candidate, then server, then partial match on candidate.
@@ -483,13 +439,9 @@ def _find_cluster_match(
     if candidate_name:
         for known_cluster in known_clusters:
             if candidate_name in known_cluster:
-                logger.debug(
-                    f"Partial match found for candidate '{candidate_name}' -> '{known_cluster}'"
-                )
+                logger.debug(f"Partial match found for candidate '{candidate_name}' -> '{known_cluster}'")
                 return known_cluster
-    logger.debug(
-        f"No match found for candidate='{candidate_name}', server='{server_name}' in known clusters."
-    )
+    logger.debug(f"No match found for candidate='{candidate_name}', server='{server_name}' in known clusters.")
     return None
 
 
@@ -521,9 +473,7 @@ def map_machinesets_to_clusters(
         matched_cluster_name = _find_cluster_match(candidate_name, server_name, known_cluster_names)
 
         # Populate the mapping based on the match result
-        if (
-            matched_cluster_name and matched_cluster_name in clusters_hosts
-        ):  # Check if matched_cluster_name is valid key
+        if matched_cluster_name and matched_cluster_name in clusters_hosts:  # Check if matched_cluster_name is valid key
             hosts = clusters_hosts[matched_cluster_name]
             mapping[machineset_name] = {
                 "cluster_name": matched_cluster_name,
@@ -535,13 +485,10 @@ def map_machinesets_to_clusters(
         else:
             # Handle cases where no match was found or matched_cluster_name is not in clusters_hosts
             logger.warning(
-                f"No valid VMware cluster match for MachineSet {machineset_name}. "
-                f"Candidate: {candidate_name}, Server: {server_name}, Matched: {matched_cluster_name}"
+                f"No valid VMware cluster match for MachineSet {machineset_name}. " f"Candidate: {candidate_name}, Server: {server_name}, Matched: {matched_cluster_name}"
             )
             mapping[machineset_name] = {
-                "cluster_name": (
-                    "Unknown" if not matched_cluster_name else matched_cluster_name
-                ),  # Keep matched name if it exists but not in hosts
+                "cluster_name": ("Unknown" if not matched_cluster_name else matched_cluster_name),  # Keep matched name if it exists but not in hosts
                 "host_count": 0,
                 "hosts": [],
                 "datacenter": vsphere_info_item.get("datacenter", ""),
@@ -676,9 +623,7 @@ def _generate_brief_json_data(  # noqa: C901
     # Create brief JSON output
     output_data = {
         "portworx_pods_count": total_px_pods_count,
-        "total_esxi_hosts": len(
-            globally_unique_esxi_hosts
-        ),  # Use the count of globally unique hosts
+        "total_esxi_hosts": len(globally_unique_esxi_hosts),  # Use the count of globally unique hosts
         "clusters": {},
     }
 
@@ -697,16 +642,11 @@ def _generate_brief_json_data(  # noqa: C901
             }
             ocp_px_counts_recorded.add(ocp_cluster)
         # If OCP cluster already exists, but px_pod_count wasn't set (e.g. older logic)
-        elif (
-            "px_pod_count" not in output_data["clusters"][ocp_cluster]
-            and ocp_cluster not in ocp_px_counts_recorded
-        ):
+        elif "px_pod_count" not in output_data["clusters"][ocp_cluster] and ocp_cluster not in ocp_px_counts_recorded:
             output_data["clusters"][ocp_cluster]["px_pod_count"] = data["px_pod_count"]
             ocp_px_counts_recorded.add(ocp_cluster)
 
-        output_data["clusters"][ocp_cluster]["vmware_clusters"][vmware_cluster] = {
-            "hosts_count": data["host_count"]
-        }
+        output_data["clusters"][ocp_cluster]["vmware_clusters"][vmware_cluster] = {"hosts_count": data["host_count"]}
     return output_data
 
 
@@ -776,9 +716,7 @@ def _generate_detailed_json_data(all_clusters_data: Dict[str, Dict[str, Any]]) -
                 host_list = sorted(list(vmware_cluster_data["hosts"]))
                 hosts_count = len(host_list)
 
-                report_data[cluster_name]["datacenters"][datacenter_name][
-                    vmware_cluster_name_item
-                ] = {
+                report_data[cluster_name]["datacenters"][datacenter_name][vmware_cluster_name_item] = {
                     "hosts": host_list,
                     "hosts_count": hosts_count,
                 }
@@ -926,22 +864,16 @@ def _derive_vsphere_host_from_machinesets(
 ) -> Optional[str]:
     """Derives vSphere host from the first MachineSet's providerSpec if available."""
     if not machineset_vsphere_info:
-        logger.debug(
-            f"Cannot derive vSphere host: machineset_vsphere_info is empty for {ocp_cluster_name}."
-        )
+        logger.debug(f"Cannot derive vSphere host: machineset_vsphere_info is empty for {ocp_cluster_name}.")
         return None
     first_machineset_key = next(iter(machineset_vsphere_info), None)
     if first_machineset_key:
         derived_host = machineset_vsphere_info[first_machineset_key].get("server")
         if derived_host:
-            logger.info(
-                f"Derived vSphere host '{derived_host}' from MachineSet providerSpec for OCP cluster {ocp_cluster_name}."
-            )
+            logger.info(f"Derived vSphere host '{derived_host}' from MachineSet providerSpec for OCP cluster {ocp_cluster_name}.")
             return derived_host
         else:
-            logger.debug(
-                f"No 'server' field in first machineset for {ocp_cluster_name} to derive host."
-            )
+            logger.debug(f"No 'server' field in first machineset for {ocp_cluster_name} to derive host.")
     else:
         logger.debug(f"No machinesets available to derive host for {ocp_cluster_name}.")
     return None
@@ -955,9 +887,7 @@ def _determine_host_parameter(
 ) -> Optional[str]:
     """Determines the final vSphere host parameter."""
     if cli_vsphere_host:
-        logger.info(
-            f"Using vSphere host from CLI option: {cli_vsphere_host} for {ocp_cluster_name}."
-        )
+        logger.info(f"Using vSphere host from CLI option: {cli_vsphere_host} for {ocp_cluster_name}.")
         return cli_vsphere_host
     if use_secret_workflow:
         # Attempt to derive host if CLI didn't provide it and secret workflow is active
@@ -999,10 +929,7 @@ def _determine_password_parameter(
     # Fallback to env var if CLI and secret didn't provide it
     env_password = get_env_var("VSPHERE_PASSWORD", required=False)
     if env_password:
-        logger.info(
-            "Using vSphere password from VSPHERE_PASSWORD environment variable "
-            f"for OCP cluster {ocp_cluster_name}."
-        )
+        logger.info("Using vSphere password from VSPHERE_PASSWORD environment variable " f"for OCP cluster {ocp_cluster_name}.")
         return env_password
     return None
 
@@ -1027,9 +954,7 @@ def _get_vsphere_connection_details(
             f"for OCP cluster {ocp_cluster_name}."
         )
         # get_vmware_credentials_from_secret already logs success/failure of retrieval
-        secret_creds_retrieved = get_vmware_credentials_from_secret(
-            credentials_secret_namespace, credentials_secret_name
-        )
+        secret_creds_retrieved = get_vmware_credentials_from_secret(credentials_secret_namespace, credentials_secret_name)
 
     final_host = _determine_host_parameter(
         cli_vsphere_host,
@@ -1037,12 +962,8 @@ def _get_vsphere_connection_details(
         machineset_vsphere_info,
         ocp_cluster_name,
     )
-    final_user = _determine_user_parameter(
-        cli_vsphere_user, secret_creds_retrieved, ocp_cluster_name
-    )
-    final_password = _determine_password_parameter(
-        cli_vsphere_password, secret_creds_retrieved, ocp_cluster_name
-    )
+    final_user = _determine_user_parameter(cli_vsphere_user, secret_creds_retrieved, ocp_cluster_name)
+    final_password = _determine_password_parameter(cli_vsphere_password, secret_creds_retrieved, ocp_cluster_name)
 
     # Validate required VMware credentials
     missing_creds = []
@@ -1073,9 +994,7 @@ def _get_vsphere_connection_details(
     )
 
 
-def _initialize_ocp_connection_and_get_machinesets(
-    kubeconfig_file_path: str, machineset_namespace: str
-) -> tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
+def _initialize_ocp_connection_and_get_machinesets(kubeconfig_file_path: str, machineset_namespace: str) -> tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
     """Initialize OCP connection and retrieve MachineSets."""
     try:
         if not os.path.isfile(kubeconfig_file_path):
@@ -1093,17 +1012,13 @@ def _initialize_ocp_connection_and_get_machinesets(
         custom_api = get_custom_objects_api()
         machinesets = get_machinesets(custom_api, machineset_namespace)
         if not machinesets:
-            logger.warning(
-                f"No MachineSets found in namespace '{machineset_namespace}' for OCP cluster {ocp_cluster_name}"
-            )
+            logger.warning(f"No MachineSets found in namespace '{machineset_namespace}' for OCP cluster {ocp_cluster_name}")
             # Return cluster name even if no machinesets, as PX pods can still be counted
             return ocp_cluster_name, []
 
         return ocp_cluster_name, machinesets
     except Exception as e:
-        logger.error(
-            f"Error during OCP initialization or MachineSet retrieval for {kubeconfig_file_path}: {str(e)}"
-        )
+        logger.error(f"Error during OCP initialization or MachineSet retrieval for {kubeconfig_file_path}: {str(e)}")
         return None, None
 
 
@@ -1119,16 +1034,10 @@ def _extract_vsphere_info_and_params(
     vsphere_cert_path_cli: Optional[str],
 ) -> tuple[Optional[Dict[str, Dict[str, Any]]], Optional[VSphereConnectionParams]]:
     """Extract vSphere info from MachineSets and get connection parameters."""
-    logger.info(
-        f"Extracting vSphere information from MachineSets in OCP cluster {ocp_cluster_name}"
-    )
+    logger.info(f"Extracting vSphere information from MachineSets in OCP cluster {ocp_cluster_name}")
     machineset_vsphere_data = extract_vsphere_info_from_machinesets(machinesets)
-    if (
-        not machineset_vsphere_data and machinesets
-    ):  # Only warn if machinesets existed but no vsphere info
-        logger.warning(
-            f"No vSphere provider information found in the retrieved MachineSets for OCP cluster {ocp_cluster_name}"
-        )
+    if not machineset_vsphere_data and machinesets:  # Only warn if machinesets existed but no vsphere info
+        logger.warning(f"No vSphere provider information found in the retrieved MachineSets for OCP cluster {ocp_cluster_name}")
         # Allow proceeding if machinesets is empty (no warning needed then, already logged by caller)
 
     vsphere_conn_params = _get_vsphere_connection_details(
@@ -1142,12 +1051,8 @@ def _extract_vsphere_info_and_params(
         disable_ssl_vsphere,
         vsphere_cert_path_cli,
     )
-    if (
-        not vsphere_conn_params and machineset_vsphere_data
-    ):  # Only fail hard if we had vsphere data but couldn't get params
-        logger.error(
-            f"Could not determine vSphere connection parameters for {ocp_cluster_name} despite having MachineSet vSphere data."
-        )
+    if not vsphere_conn_params and machineset_vsphere_data:  # Only fail hard if we had vsphere data but couldn't get params
+        logger.error(f"Could not determine vSphere connection parameters for {ocp_cluster_name} despite having MachineSet vSphere data.")
         return machineset_vsphere_data, None  # Return data for partial reporting
 
     # If vsphere_conn_params is None but machineset_vsphere_data is also empty/None, it's fine, means no vSphere work to do.
@@ -1162,55 +1067,35 @@ def _connect_and_gather_vsphere_mapping(
     """Connect to vSphere, gather ESXi info, and map to MachineSets. Returns mapping and service instance."""
     si = None
     if not vsphere_conn_params or not machineset_vsphere_data:
-        logger.info(
-            f"Skipping vSphere connection and mapping for {ocp_cluster_name} due to missing "
-            "connection parameters or vSphere data from MachineSets."
-        )
+        logger.info(f"Skipping vSphere connection and mapping for {ocp_cluster_name} due to missing " "connection parameters or vSphere data from MachineSets.")
         # Return an empty mapping if there's no data, so PX count can still be added
         return {}, None  # No mapping, no service instance
 
     try:
-        logger.info(
-            f"Connecting to vSphere host: {vsphere_conn_params.host} for OCP cluster {ocp_cluster_name}"
-        )
+        logger.info(f"Connecting to vSphere host: {vsphere_conn_params.host} for OCP cluster {ocp_cluster_name}")
         si = connect_to_vsphere(vsphere_conn_params)
         if not si:
-            logger.error(
-                f"Failed to establish connection to vSphere: {vsphere_conn_params.host} "
-                f"for OCP cluster {ocp_cluster_name}"
-            )
+            logger.error(f"Failed to establish connection to vSphere: {vsphere_conn_params.host} " f"for OCP cluster {ocp_cluster_name}")
             # Return an empty mapping but no service instance, error already logged.
             return {}, None
 
-        logger.info(
-            f"Retrieving ESXi hosts information from vSphere for OCP cluster {ocp_cluster_name}"
-        )
+        logger.info(f"Retrieving ESXi hosts information from vSphere for OCP cluster {ocp_cluster_name}")
         vmware_cluster_names = extract_vmware_clusters_from_machinesets(machineset_vsphere_data)
         esxi_hosts_per_vmware_cluster = get_esxi_hosts_per_cluster(si, vmware_cluster_names)
         if not esxi_hosts_per_vmware_cluster:
-            logger.warning(
-                f"No VMware clusters found or error retrieving ESXi hosts for OCP cluster {ocp_cluster_name}"
-            )
+            logger.warning(f"No VMware clusters found or error retrieving ESXi hosts for OCP cluster {ocp_cluster_name}")
             # Fallthrough to map_machinesets_to_clusters which can handle empty hosts
 
-        logger.info(
-            f"Mapping OpenShift MachineSets to VMware clusters for OCP cluster {ocp_cluster_name}"
-        )
-        machineset_to_vmware_map = map_machinesets_to_clusters(
-            machineset_vsphere_data, esxi_hosts_per_vmware_cluster
-        )
+        logger.info(f"Mapping OpenShift MachineSets to VMware clusters for OCP cluster {ocp_cluster_name}")
+        machineset_to_vmware_map = map_machinesets_to_clusters(machineset_vsphere_data, esxi_hosts_per_vmware_cluster)
         if not machineset_to_vmware_map:
-            logger.warning(
-                f"Could not map any MachineSets to VMware clusters for OCP cluster {ocp_cluster_name}"
-            )
+            logger.warning(f"Could not map any MachineSets to VMware clusters for OCP cluster {ocp_cluster_name}")
             # Return empty mapping if no maps could be made
             return {}, si
 
         return machineset_to_vmware_map, si
     except Exception as e:
-        logger.error(
-            f"Error during vSphere connection or data gathering for {ocp_cluster_name}: {str(e)}"
-        )
+        logger.error(f"Error during vSphere connection or data gathering for {ocp_cluster_name}: {str(e)}")
         # Return empty mapping and service instance (if it exists) for cleanup
         return {}, si
 
@@ -1228,9 +1113,7 @@ def _process_single_kubeconfig(
     portworx_namespace: str,
 ) -> Optional[Dict[str, Any]]:
     """Processes a single OpenShift cluster to gather vSphere and Portworx data."""
-    ocp_cluster_name, machinesets = _initialize_ocp_connection_and_get_machinesets(
-        kubeconfig_file_path, machineset_namespace
-    )
+    ocp_cluster_name, machinesets = _initialize_ocp_connection_and_get_machinesets(kubeconfig_file_path, machineset_namespace)
 
     if ocp_cluster_name is None:  # Indicates a fatal error during init
         return None
@@ -1257,22 +1140,16 @@ def _process_single_kubeconfig(
     # it's an issue with vSphere creds/params for an expected vSphere setup.
     # However, if machineset_vsphere_data is empty, not having vSphere params is fine.
     if vsphere_conn_params is None and machineset_vsphere_data:
-        logger.warning(
-            f"Proceeding with partial data for {ocp_cluster_name} due to missing vSphere connection parameters."
-        )
+        logger.warning(f"Proceeding with partial data for {ocp_cluster_name} due to missing vSphere connection parameters.")
         # We can still count PX pods. The mapping will be empty.
         machineset_to_vmware_map = {}
         si = None
     elif not machineset_vsphere_data:  # No vsphere data from machinesets implies no vsphere work.
-        logger.info(
-            f"No vSphere MachineSets found or no vSphere provider info for {ocp_cluster_name}. Skipping vSphere specific steps."
-        )
+        logger.info(f"No vSphere MachineSets found or no vSphere provider info for {ocp_cluster_name}. Skipping vSphere specific steps.")
         machineset_to_vmware_map = {}
         si = None
     else:  # We have vsphere_conn_params and potentially machineset_vsphere_data
-        machineset_to_vmware_map, si = _connect_and_gather_vsphere_mapping(
-            ocp_cluster_name, vsphere_conn_params, machineset_vsphere_data
-        )
+        machineset_to_vmware_map, si = _connect_and_gather_vsphere_mapping(ocp_cluster_name, vsphere_conn_params, machineset_vsphere_data)
         # If machineset_to_vmware_map is None from this call, it means a vSphere connection/processing error.
         # The helper function already logs this. Set to {} for consistent return type if None.
         if machineset_to_vmware_map is None:
@@ -1281,9 +1158,7 @@ def _process_single_kubeconfig(
     try:
         # Portworx pod count is independent of vSphere processing
         px_pod_count = count_portworx_pods(portworx_namespace)
-        logger.info(
-            f"Found {px_pod_count} Portworx pods in namespace '{portworx_namespace}' for OCP cluster {ocp_cluster_name}"
-        )
+        logger.info(f"Found {px_pod_count} Portworx pods in namespace '{portworx_namespace}' for OCP cluster {ocp_cluster_name}")
 
         return {
             "ocp_cluster_name": ocp_cluster_name,
@@ -1336,12 +1211,8 @@ def _generate_brief_table_report(
                     for host in ms_info["hosts"]:
                         globally_unique_esxi_hosts_set.add(host["name"])
 
-    console_instance.print(
-        f"[bold]Total Portworx pods across all clusters:[/bold] {total_px_pods_count}"
-    )
-    console_instance.print(
-        f"[bold]Total unique ESXi hosts across all clusters:[/bold] {len(globally_unique_esxi_hosts_set)}"
-    )
+    console_instance.print(f"[bold]Total Portworx pods across all clusters:[/bold] {total_px_pods_count}")
+    console_instance.print(f"[bold]Total unique ESXi hosts across all clusters:[/bold] {len(globally_unique_esxi_hosts_set)}")
     console_instance.print("")
 
     table = Table(title="OpenShift and VMware Clusters Summary")
@@ -1387,17 +1258,11 @@ def _generate_detailed_table_report_for_cluster(  # noqa: C901
                 cluster_unique_hosts.add(host["name"])
 
     console_instance.print(f"[bold]Cluster: {ocp_cluster_name}[/bold]")
-    console_instance.print(
-        f"[bold]Portworx pods in namespace '{px_namespace}':[/bold] {px_pod_count}"
-    )
-    console_instance.print(
-        f"[bold]Total unique ESXi hosts in this cluster:[/bold] {len(cluster_unique_hosts)}"
-    )
+    console_instance.print(f"[bold]Portworx pods in namespace '{px_namespace}':[/bold] {px_pod_count}")
+    console_instance.print(f"[bold]Total unique ESXi hosts in this cluster:[/bold] {len(cluster_unique_hosts)}")
     console_instance.print("")
 
-    ms_table = Table(
-        title=f"OpenShift MachineSets to VMware ESXi Clusters Mapping for {ocp_cluster_name}"
-    )
+    ms_table = Table(title=f"OpenShift MachineSets to VMware ESXi Clusters Mapping for {ocp_cluster_name}")
     ms_table.add_column("MachineSet", style="cyan")
     ms_table.add_column("Datacenter", style="magenta")
     ms_table.add_column("VMware Cluster", style="green")
@@ -1425,9 +1290,7 @@ def _generate_detailed_table_report_for_cluster(  # noqa: C901
             for host_detail in ms_info["hosts"]:
                 host_key = (vmware_cluster_for_ms, host_detail["name"])
                 if host_key not in seen_host_in_ocp_cluster_scope:
-                    detailed_hosts_info_list.append(
-                        {"vmware_cluster": vmware_cluster_for_ms, "host": host_detail}
-                    )
+                    detailed_hosts_info_list.append({"vmware_cluster": vmware_cluster_for_ms, "host": host_detail})
                     seen_host_in_ocp_cluster_scope.add(host_key)
 
     if detailed_hosts_info_list:
@@ -1462,17 +1325,13 @@ def _generate_detailed_table_report(
     sorted_ocp_cluster_names = sorted(all_clusters_data.keys())
     for ocp_cluster_name in sorted_ocp_cluster_names:
         cluster_data = all_clusters_data[ocp_cluster_name]
-        _generate_detailed_table_report_for_cluster(
-            ocp_cluster_name, cluster_data, console_instance, px_namespace
-        )
+        _generate_detailed_table_report_for_cluster(ocp_cluster_name, cluster_data, console_instance, px_namespace)
 
 
 # --- Main Click Command ---
 @click.command()
 @click.option("--kubeconfig", help="Path to a kubeconfig file for a single OpenShift cluster")
-@click.option(
-    "--clusterlist", help="Path to a file containing a list of kubeconfig files (one per line)"
-)
+@click.option("--clusterlist", help="Path to a file containing a list of kubeconfig files (one per line)")
 @click.option(
     "--vsphere-host",
     help="VMware vSphere host address (optional if using secret or derived from MachineSet)",
@@ -1480,8 +1339,7 @@ def _generate_detailed_table_report(
 @click.option("--vsphere-user", help="VMware vSphere username (optional if using secret)")
 @click.option(
     "--vsphere-password",
-    help="VMware vSphere password (if not provided, "
-    "will use environment variable VSPHERE_PASSWORD or secret)",
+    help="VMware vSphere password (if not provided, " "will use environment variable VSPHERE_PASSWORD or secret)",
 )
 @click.option(
     "--namespace",
@@ -1514,9 +1372,7 @@ def _generate_detailed_table_report(
     show_default=True,
     help="Namespace containing the VMware credentials Secret",
 )
-@click.option(
-    "--timeout", default=30, type=int, show_default=True, help="Timeout in seconds for API calls"
-)
+@click.option("--timeout", default=30, type=int, show_default=True, help="Timeout in seconds for API calls")
 @click.option(
     "--px-namespace",
     default="portworx",

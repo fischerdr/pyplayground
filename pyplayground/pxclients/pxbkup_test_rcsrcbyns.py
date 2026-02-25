@@ -61,13 +61,7 @@ def get_namespace_data(excluded_namespaces):  # noqa: C901
         crds = crd_api.list_custom_resource_definition().items
 
         # Initialize data structure
-        namespace_data = {
-            label_key: {
-                label_value: {"namespaces": [], "total_resource_count": 0}
-                for label_value in LABEL_VALUES
-            }
-            for label_key in LABEL_KEYS
-        }
+        namespace_data = {label_key: {label_value: {"namespaces": [], "total_resource_count": 0} for label_value in LABEL_VALUES} for label_key in LABEL_KEYS}
         unassigned_data = {"namespaces": [], "total_resource_count": 0}
 
         # Fetch all namespaces
@@ -111,9 +105,7 @@ def get_namespace_data(excluded_namespaces):  # noqa: C901
 
             if assigned_label_key and assigned_label_value:
                 namespace_data[assigned_label_key][assigned_label_value]["namespaces"].append(name)
-                namespace_data[assigned_label_key][assigned_label_value][
-                    "total_resource_count"
-                ] += resource_count
+                namespace_data[assigned_label_key][assigned_label_value]["total_resource_count"] += resource_count
             else:
                 unassigned_data["namespaces"].append(name)
                 unassigned_data["total_resource_count"] += resource_count
@@ -140,12 +132,8 @@ def get_namespace_data(excluded_namespaces):  # noqa: C901
 
             # Update the data with balanced namespaces
             for label_value in LABEL_VALUES:
-                namespace_data[label_key][label_value]["namespaces"] = [
-                    ns["name"] for ns in balanced_namespaces[label_value]
-                ]
-                namespace_data[label_key][label_value]["total_resource_count"] = sum(
-                    ns["resource_count"] for ns in balanced_namespaces[label_value]
-                )
+                namespace_data[label_key][label_value]["namespaces"] = [ns["name"] for ns in balanced_namespaces[label_value]]
+                namespace_data[label_key][label_value]["total_resource_count"] = sum(ns["resource_count"] for ns in balanced_namespaces[label_value])
 
         return namespace_data, unassigned_data
 

@@ -25,9 +25,7 @@ def _prompt_for_password(args: argparse.Namespace) -> argparse.Namespace:
         argparse.Namespace: Updated arguments namespace with password set.
     """
     if not args.password:
-        args.password = getpass.getpass(
-            prompt='"Please enter password for host %s and user %s: ' % (args.host, args.user)
-        )
+        args.password = getpass.getpass(prompt='"Please enter password for host %s and user %s: ' % (args.host, args.user))
     return args
 
 
@@ -77,12 +75,7 @@ def get_jwt_token(consumer_key: str, consumer_secret: str, url: str) -> str:
         json.JSONDecodeError: If the response is not valid JSON.
         KeyError: If the response does not contain an access_token.
     """
-    data = (
-        "grant_type=client_credentials&client_id="
-        + consumer_key
-        + "&client_secret="
-        + consumer_secret
-    )
+    data = "grant_type=client_credentials&client_id=" + consumer_key + "&client_secret=" + consumer_secret
     header = {"Content-type": "application/x-www-form-urlencoded"}
     try:
         response = requests.post(url, data=data, headers=header)

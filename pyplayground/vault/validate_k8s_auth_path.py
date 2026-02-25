@@ -53,9 +53,7 @@ def get_vault_k8s_auth_config(vault_client: hvac.Client, auth_path: str) -> dict
         raise
 
 
-def create_custom_k8s_client(
-    k8s_host: str, ca_cert_path: str, reviewer_jwt: str, no_verify_ssl: bool
-) -> client.AuthenticationV1Api:
+def create_custom_k8s_client(k8s_host: str, ca_cert_path: str, reviewer_jwt: str, no_verify_ssl: bool) -> client.AuthenticationV1Api:
     """Creates a Kubernetes client dynamically configured with Vault data."""
     config = client.Configuration.get_default_copy()
     config.host = k8s_host
@@ -68,24 +66,16 @@ def create_custom_k8s_client(
 
 def _perform_ca_pre_check(k8s_host: str, ca_cert_path: str, console: Console):
     """Performs a direct TLS check to validate the CA cert against the K8s host."""
-    console.print(
-        f"--> Performing pre-check: Validating CA certificate against [magenta]{k8s_host}[/magenta]..."
-    )
+    console.print(f"--> Performing pre-check: Validating CA certificate against [magenta]{k8s_host}[/magenta]...")
     try:
         # Make a simple GET request, telling `requests` to use our temp file as the only trusted CA
         requests.get(k8s_host, verify=ca_cert_path, timeout=15)
-        console.print(
-            "[green]Success:[/green] Pre-check passed. The CA from Vault is trusted by the Kubernetes API server."
-        )
+        console.print("[green]Success:[/green] Pre-check passed. The CA from Vault is trusted by the Kubernetes API server.")
     except requests.exceptions.SSLError:
         console.print("[bold red]✖ Error: Pre-check FAILED.[/bold red]")
-        console.print(
-            "  The `kubernetes_ca_cert` stored in Vault does NOT trust the certificate presented by the Kubernetes API server."
-        )
+        console.print("  The `kubernetes_ca_cert` stored in Vault does NOT trust the certificate presented by the Kubernetes API server.")
         console.print("  [bold]Common Causes:[/bold]")
-        console.print(
-            "    - The Kubernetes cluster's certificates have been rotated, but Vault was not updated."
-        )
+        console.print("    - The Kubernetes cluster's certificates have been rotated, but Vault was not updated.")
         console.print("    - The `kubernetes_host` URL points to the wrong cluster.")
         console.print("    - The `kubernetes_ca_cert` in Vault is incorrect or malformed.")
         sys.exit(1)  # Exit immediately, as further steps will fail
@@ -109,9 +99,7 @@ def _fetch_vault_config(vault_client, auth_path, console):
     k8s_host = k8s_auth_config.get("kubernetes_host")
     ca_cert_pem = k8s_auth_config.get("kubernetes_ca_cert")
     if not k8s_host or not ca_cert_pem:
-        console.print(
-            "[red]Error:[/red] Vault config is missing 'kubernetes_host' or 'kubernetes_ca_cert'."
-        )
+        console.print("[red]Error:[/red] Vault config is missing 'kubernetes_host' or 'kubernetes_ca_cert'.")
         sys.exit(1)
     return k8s_host, ca_cert_pem
 
@@ -125,22 +113,14 @@ def _fetch_service_account_jwts(
     console,
 ):
     """Fetches JWTs for the target and reviewer service accounts."""
-    console.print(
-        f"--> Fetching JWT for target SA [cyan]{target_namespace}/{target_service_account}[/cyan]..."
-    )
-    target_jwt = get_service_account_jwt(
-        target_namespace, target_service_account, v1_client=core_v1_api
-    )
+    console.print(f"--> Fetching JWT for target SA [cyan]{target_namespace}/{target_service_account}[/cyan]...")
+    target_jwt = get_service_account_jwt(target_namespace, target_service_account, v1_client=core_v1_api)
     if not target_jwt:
         console.print("[red]Error:[/red] Could not retrieve JWT for target SA.")
         sys.exit(1)
 
-    console.print(
-        f"--> Fetching JWT for reviewer SA [cyan]{reviewer_namespace}/{reviewer_service_account}[/cyan]..."
-    )
-    reviewer_jwt = get_service_account_jwt(
-        reviewer_namespace, reviewer_service_account, v1_client=core_v1_api
-    )
+    console.print(f"--> Fetching JWT for reviewer SA [cyan]{reviewer_namespace}/{reviewer_service_account}[/cyan]...")
+    reviewer_jwt = get_service_account_jwt(reviewer_namespace, reviewer_service_account, v1_client=core_v1_api)
     if not reviewer_jwt:
         console.print("[red]Error:[/red] Could not retrieve JWT for reviewer SA.")
         sys.exit(1)
@@ -168,9 +148,7 @@ def _perform_token_review(custom_k8s_client, target_jwt, console) -> Dict[str, A
         status_dict = api_response.status.to_dict()
 
         if api_response.status.authenticated:
-            console.print(
-                "[bold green]---> Validation Successful: Token is authentic.[/bold green]"
-            )
+            console.print("[bold green]---> Validation Successful: Token is authentic.[/bold green]")
             return {"success": True, "status": "Authenticated", "details": status_dict}
         else:
             console.print("[bold red]---> Validation Failed: Token is not authentic.[/bold red]")
@@ -203,9 +181,7 @@ def _perform_token_review(custom_k8s_client, target_jwt, console) -> Dict[str, A
     required=True,
     help="The namespace of the target service account whose token will be validated.",
 )
-@click.option(
-    "--target-service-account", required=True, help="The name of the target service account."
-)
+@click.option("--target-service-account", required=True, help="The name of the target service account.")
 @click.option(
     "--reviewer-namespace",
     help="Namespace of the SA that will perform the TokenReview. Defaults to target-namespace.",
@@ -279,9 +255,7 @@ def main(
 
         # 5. Create the custom K8s client and perform TokenReview
         console.print(f"--> Performing TokenReview against [magenta]{k8s_host}[/magenta]...")
-        custom_k8s_client = create_custom_k8s_client(
-            k8s_host, temp_ca_file, reviewer_jwt, no_verify_ssl
-        )
+        custom_k8s_client = create_custom_k8s_client(k8s_host, temp_ca_file, reviewer_jwt, no_verify_ssl)
         review_result = _perform_token_review(custom_k8s_client, target_jwt, console)
 
         # Generate and save summary report

@@ -114,9 +114,7 @@ def setup_kubernetes_client(kubeconfig: Optional[str] = None) -> client.CoreV1Ap
         sys.exit(1)
 
 
-def find_portworx_pods(
-    v1_client: client.CoreV1Api, config: Dict, pod_name: Optional[str] = None
-) -> List[Dict]:
+def find_portworx_pods(v1_client: client.CoreV1Api, config: Dict, pod_name: Optional[str] = None) -> List[Dict]:
     """Search for Portworx pods across all namespaces.
 
     Args:
@@ -169,16 +167,10 @@ def display_pod_table(pods: List[Dict], config: Dict) -> None:
 
     # Add columns with their individual configurations
     table.add_column("Name", style=columns["name"]["style"], no_wrap=columns["name"]["no_wrap"])
-    table.add_column(
-        "Namespace", style=columns["namespace"]["style"], no_wrap=columns["namespace"]["no_wrap"]
-    )
+    table.add_column("Namespace", style=columns["namespace"]["style"], no_wrap=columns["namespace"]["no_wrap"])
     table.add_column("Node", style=columns["node"]["style"], no_wrap=columns["node"]["no_wrap"])
-    table.add_column(
-        "Status", style=columns["status"]["style"], no_wrap=columns["status"]["no_wrap"]
-    )
-    table.add_column(
-        "Pod IP", style=columns["pod_ip"]["style"], no_wrap=columns["pod_ip"]["no_wrap"]
-    )
+    table.add_column("Status", style=columns["status"]["style"], no_wrap=columns["status"]["no_wrap"])
+    table.add_column("Pod IP", style=columns["pod_ip"]["style"], no_wrap=columns["pod_ip"]["no_wrap"])
 
     for pod in pods:
         table.add_row(pod["name"], pod["namespace"], pod["node"], pod["status"], pod["pod_ip"])
@@ -218,9 +210,7 @@ def select_pod(pods: List[Dict], config: Dict) -> Optional[Dict]:
         console.print("[red]Invalid pod name. Please try again.[/red]")
 
 
-def get_selected_pod(
-    pods: List[Dict], pod_name: Optional[str], config_data: Dict
-) -> Optional[Dict]:
+def get_selected_pod(pods: List[Dict], pod_name: Optional[str], config_data: Dict) -> Optional[Dict]:
     """Get the selected pod based on pod_name or user selection.
 
     Args:
@@ -234,9 +224,7 @@ def get_selected_pod(
     if pod_name:
         selected_pod = next((pod for pod in pods if pod["name"] == pod_name), None)
         if not selected_pod:
-            logger.error(
-                f"Pod {pod_name} not found in namespace {config_data['defaults']['namespace']}"
-            )
+            logger.error(f"Pod {pod_name} not found in namespace {config_data['defaults']['namespace']}")
             sys.exit(1)
         return selected_pod
 

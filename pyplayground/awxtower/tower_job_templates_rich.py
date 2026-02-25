@@ -81,9 +81,7 @@ def export(  # noqa: C901
     include_workflows: bool = typer.Option(False, help="Include workflow job templates in export"),
     verify: bool = typer.Option(False, help="Verify the connection to Tower"),
     search: Optional[str] = typer.Option(None, help="Search term for filtering workflows"),
-    order_by: Optional[str] = typer.Option(
-        None, help="Sort workflows by field (e.g., 'name', '-name')"
-    ),
+    order_by: Optional[str] = typer.Option(None, help="Sort workflows by field (e.g., 'name', '-name')"),
 ) -> None:
     """Export Tower job templates and workflows to JSON or Rich table.
 
@@ -115,9 +113,7 @@ def export(  # noqa: C901
             if order_by:
                 params["order_by"] = order_by
 
-            workflows_result = export_all_resources(
-                tower_url, headers, "workflow_job_templates", verify, params
-            )
+            workflows_result = export_all_resources(tower_url, headers, "workflow_job_templates", verify, params)
             if workflows_result is None:
                 logger.error("Failed to fetch workflows from Tower")
                 console.print("[red]Failed to fetch workflows from Tower[/red]")
@@ -190,17 +186,11 @@ def export(  # noqa: C901
             else:
                 logger.warning(f"No project ID for job template {jt['id']} {jt['name']}")
                 project_name = "N/A"
-            create_by_name = get_username(
-                jt.get("summary_fields", {}).get("created_by"), tower_url, headers, verify
-            )
+            create_by_name = get_username(jt.get("summary_fields", {}).get("created_by"), tower_url, headers, verify)
             create_datetime = jt.get("created", "N/A")
-            modified_by_name = get_username(
-                jt.get("summary_fields", {}).get("modified_by"), tower_url, headers, verify
-            )
+            modified_by_name = get_username(jt.get("summary_fields", {}).get("modified_by"), tower_url, headers, verify)
             modify_datetime = jt.get("modified", "N/A")
-            count_job_runs = find_resource_by_attribute_name(
-                tower_url, headers, "jobs", "job_template", jt["id"], verify
-            )
+            count_job_runs = find_resource_by_attribute_name(tower_url, headers, "jobs", "job_template", jt["id"], verify)
             job_runs = count_job_runs.get("count", 0)
 
             job_table.add_row(

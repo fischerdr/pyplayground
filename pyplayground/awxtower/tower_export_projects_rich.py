@@ -54,9 +54,7 @@ def extract_project_row(
     created_by = get_username(summary_fields.get("created_by"), tower_url, headers, verify)
     modified_by = get_username(summary_fields.get("modified_by"), tower_url, headers, verify)
     # Job template count for this project
-    job_templates = export_all_resources(
-        tower_url, headers, "job_templates", verify, params={"project": project["id"]}
-    )
+    job_templates = export_all_resources(tower_url, headers, "job_templates", verify, params={"project": project["id"]})
     job_template_count = len(job_templates) if job_templates else 0
     return [
         str(project.get("id", "")),

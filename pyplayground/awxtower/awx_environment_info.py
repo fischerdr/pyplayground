@@ -44,9 +44,7 @@ def get_system_info() -> Dict:
         # Get RHEL specific information if available
         if os_info["system"] == "Linux":
             try:
-                rhel_version = subprocess.check_output(
-                    ["cat", "/etc/redhat-release"], universal_newlines=True
-                ).strip()
+                rhel_version = subprocess.check_output(["cat", "/etc/redhat-release"], universal_newlines=True).strip()
                 os_info["rhel_version"] = rhel_version
             except (subprocess.SubprocessError, FileNotFoundError):
                 pass
@@ -109,9 +107,7 @@ def get_environment_info(tower_url: str, token: str, verify_ssl: bool = True) ->
 
         # Get workflow job template stats
         workflow_job_templates_url = f"{tower_url}/api/v2/workflow_job_templates/"
-        response = requests.get(
-            workflow_job_templates_url, headers=headers, verify=verify_ssl, timeout=30
-        )
+        response = requests.get(workflow_job_templates_url, headers=headers, verify=verify_ssl, timeout=30)
         response.raise_for_status()
         workflow_job_templates_data = response.json()
 
@@ -145,17 +141,12 @@ def get_environment_info(tower_url: str, token: str, verify_ssl: bool = True) ->
             },
             "credential_stats": {"credentials": credentials_data.get("count", 0)},
             "database_info": {
-                "type": settings_data.get("DATABASES", {})
-                .get("default", {})
-                .get("ENGINE", "unknown"),
-                "name": settings_data.get("DATABASES", {})
-                .get("default", {})
-                .get("NAME", "unknown"),
+                "type": settings_data.get("DATABASES", {}).get("default", {}).get("ENGINE", "unknown"),
+                "name": settings_data.get("DATABASES", {}).get("default", {}).get("NAME", "unknown"),
             },
             "authentication_info": {
                 "auth_backends": settings_data.get("AUTHENTICATION_BACKENDS", []),
-                "ldap_enabled": "django_auth_ldap.backend.LDAPBackend"
-                in settings_data.get("AUTHENTICATION_BACKENDS", []),
+                "ldap_enabled": "django_auth_ldap.backend.LDAPBackend" in settings_data.get("AUTHENTICATION_BACKENDS", []),
             },
         }
 

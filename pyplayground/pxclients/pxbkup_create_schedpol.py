@@ -41,9 +41,7 @@ class REST_API:
         """Get a token for the REST API."""
         logger.info(self.pxbk_url)
         try:
-            response = requests.post(
-                self.pxbk_url, verify=self.ssl_verify, data=self.payload, headers=self.headers
-            )
+            response = requests.post(self.pxbk_url, verify=self.ssl_verify, data=self.payload, headers=self.headers)
             if response.ok:
                 access_token = json.loads(response.text)
                 token = access_token["access_token"]
@@ -71,9 +69,7 @@ class dotdict(dict):
 def _prompt_for_password(args):
     """If no password is specified on the command line, prompt for it."""
     if not args.password:
-        args.password = getpass.getpass(
-            prompt="Enter password for host %s and user %s: " % (args.host, args.user)
-        )
+        args.password = getpass.getpass(prompt="Enter password for host %s and user %s: " % (args.host, args.user))
     return args
 
 
@@ -118,19 +114,11 @@ if __name__ == "__main__":
     template = environment.get_template("createschedulepolicy.json.j2")
 
     parser = ArgumentParser(description="Create PX-Backup schedule policy")
-    parser.add_argument(
-        "-u", "--user", required=True, action="store", help="User to connecting to PX-Backup"
-    )
-    parser.add_argument(
-        "-p", "--password", required=False, action="store", help="User's Password to connect with"
-    )
-    parser.add_argument(
-        "-s", "--host", required=True, action="store", help="PX-Backup FQDN address to connect"
-    )
+    parser.add_argument("-u", "--user", required=True, action="store", help="User to connecting to PX-Backup")
+    parser.add_argument("-p", "--password", required=False, action="store", help="User's Password to connect with")
+    parser.add_argument("-s", "--host", required=True, action="store", help="PX-Backup FQDN address to connect")
     parser.add_argument("--debug", action="store_true", default=None, help="Enable debug")
-    parser.add_argument(
-        "--ownername", default=None, dest="ownerName", help="User name to own the resource"
-    )
+    parser.add_argument("--ownername", default=None, dest="ownerName", help="User name to own the resource")
     parser.add_argument("--schedName", default=None, help="Name of resource in PX-backup ")
     parser.add_argument(
         "--retain",

@@ -40,9 +40,7 @@ class Frame:
         self.data = np.zeros((width, height, depth, 3), dtype=np.uint8)
         self.depth_buffer = np.zeros((width, height, depth), dtype=np.float32)
 
-    def set_voxel(
-        self, x: int, y: int, z: int, color: Tuple[int, int, int], depth: float = 0.0
-    ) -> None:
+    def set_voxel(self, x: int, y: int, z: int, color: Tuple[int, int, int], depth: float = 0.0) -> None:
         """Set a voxel with depth information for better 3D rendering."""
         if 0 <= x < self.shape[0] and 0 <= y < self.shape[1] and 0 <= z < self.shape[2]:
             self.data[x, y, z] = color
@@ -56,11 +54,7 @@ class Frame:
                     color = other.data[x, y, z]
                     if np.any(color):
                         nx, ny, nz = x + ox, y + oy, z + oz
-                        if (
-                            0 <= nx < self.shape[0]
-                            and 0 <= ny < self.shape[1]
-                            and 0 <= nz < self.shape[2]
-                        ):
+                        if 0 <= nx < self.shape[0] and 0 <= ny < self.shape[1] and 0 <= nz < self.shape[2]:
                             self.set_voxel(nx, ny, nz, color, other.depth_buffer[x, y, z])
 
     def rasterize_triangle(
@@ -81,9 +75,7 @@ class Frame:
 
         # Clamp to frame boundaries
         min_coords = np.maximum(min_coords, [0, 0, 0])
-        max_coords = np.minimum(
-            max_coords, [self.shape[0] - 1, self.shape[1] - 1, self.shape[2] - 1]
-        )
+        max_coords = np.minimum(max_coords, [self.shape[0] - 1, self.shape[1] - 1, self.shape[2] - 1])
 
         # Rasterize triangle using barycentric coordinates
         for x in range(min_coords[0], max_coords[0] + 1):
@@ -101,9 +93,7 @@ class Frame:
                             dark_color = tuple(int(c * 0.3) for c in color)
                             self.set_voxel(x, y, z, dark_color, y / self.shape[1])
 
-    def _point_in_triangle_3d(
-        self, p: np.ndarray, a: np.ndarray, b: np.ndarray, c: np.ndarray
-    ) -> bool:
+    def _point_in_triangle_3d(self, p: np.ndarray, a: np.ndarray, b: np.ndarray, c: np.ndarray) -> bool:
         """Check if a 3D point is inside a triangle using barycentric coordinates."""
         # Project to 2D by finding the dominant axis
         normal = np.cross(b - a, c - a)
@@ -211,11 +201,7 @@ class Encoder:
             f.write(b"".join(self.audio_pcm))
 
         video_out = os.path.join(self.output_dir, "output.mp4")
-        os.system(
-            f"ffmpeg -framerate {self.fps} -i {self.output_dir}/frame_%04d.png "
-            f"-f s16le -ar 44100 -ac 1 -i {audio_path} "
-            f"-pix_fmt yuv420p -y {video_out}"
-        )
+        os.system(f"ffmpeg -framerate {self.fps} -i {self.output_dir}/frame_%04d.png " f"-f s16le -ar 44100 -ac 1 -i {audio_path} " f"-pix_fmt yuv420p -y {video_out}")
 
         if os.path.exists(video_out):
             print(f"Video saved to {video_out}. Attempting to open...")
@@ -239,17 +225,13 @@ class Encoder:
 class AudioProcessor:
     """Audio processing and analysis for reactive visualizations."""
 
-    def __init__(
-        self, path: str, bands: int, sr: int = 44100, hop: int = 512, thresh: float = 0.5
-    ) -> None:
+    def __init__(self, path: str, bands: int, sr: int = 44100, hop: int = 512, thresh: float = 0.5) -> None:
         """Initialize audio processor with audio file and analysis parameters."""
         self.sr, self.hop = sr, hop
         self.raw, _ = librosa.load(path, sr=sr)
         self.frames = 1 + len(self.raw) // hop
         mag = np.abs(librosa.stft(self.raw, hop_length=hop))
-        basis = librosa.filters.mel(
-            sr=sr, n_fft=mag.shape[0] * 2 - 2, n_mels=bands, fmin=50.0, fmax=20000.0
-        )
+        basis = librosa.filters.mel(sr=sr, n_fft=mag.shape[0] * 2 - 2, n_mels=bands, fmin=50.0, fmax=20000.0)
         db = librosa.power_to_db(basis @ mag, ref=np.max)
         self.spec = (db - db.min()) / (db.max() - db.min())
         self.thresh = thresh
@@ -308,9 +290,7 @@ class Visualizer:
                                 x,
                                 y,
                                 z,
-                                interpolate_color(
-                                    [(255, 94, 0), (255, 42, 100), (180, 0, 255)], y_norm
-                                ),
+                                interpolate_color([(255, 94, 0), (255, 42, 100), (180, 0, 255)], y_norm),
                                 y_norm,
                             )
         return sun
@@ -364,23 +344,12 @@ class Visualizer:
                 p3 = np.array([x + spacing, h11, int(z + spacing - z_base)], dtype=float)
 
                 # Skip if any point is outside frame bounds
-                if (
-                    p0[2] < 0
-                    or p0[2] >= d
-                    or p1[2] < 0
-                    or p1[2] >= d
-                    or p2[2] < 0
-                    or p2[2] >= d
-                    or p3[2] < 0
-                    or p3[2] >= d
-                ):
+                if p0[2] < 0 or p0[2] >= d or p1[2] < 0 or p1[2] >= d or p2[2] < 0 or p2[2] >= d or p3[2] < 0 or p3[2] >= d:
                     continue
 
                 # Calculate colors based on height
                 avg_height = (h00 + h10 + h01 + h11) / 4.0
-                color = interpolate_color(
-                    [(25, 214, 252), (255, 20, 147), (232, 103, 23), (232, 224, 16)], avg_height / h
-                )
+                color = interpolate_color([(25, 214, 252), (255, 20, 147), (232, 103, 23), (232, 224, 16)], avg_height / h)
 
                 # Determine if this is a grid line for wireframe effect
                 is_grid_x = int(z + z_base) % spacing == 0

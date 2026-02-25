@@ -77,15 +77,11 @@ class K8sStorageAnalyzer:
         try:
             self.logger.debug("Fetching all PersistentVolumeClaims.")
             pvcs = self.core_v1.list_persistent_volume_claim_for_all_namespaces()
-            self.logger.info(
-                f"Found {len(pvcs.items)} PersistentVolumeClaims across all namespaces."
-            )
+            self.logger.info(f"Found {len(pvcs.items)} PersistentVolumeClaims across all namespaces.")
             return [pvc.to_dict() for pvc in pvcs.items]
         except ApiException as e:
             self.logger.error(f"Failed to get PVCs: {e.status} - {e.reason}")
-            console.print(
-                f"[bold red]API Error:[/bold red] Could not list PVCs. Reason: {e.reason}"
-            )
+            console.print(f"[bold red]API Error:[/bold red] Could not list PVCs. Reason: {e.reason}")
             return []
         except Exception as e:
             self.logger.exception(f"Unexpected error getting PVCs: {e}")
@@ -105,9 +101,7 @@ class K8sStorageAnalyzer:
             return [ns.to_dict() for ns in namespaces.items]
         except ApiException as e:
             self.logger.error(f"Failed to get namespaces: {e.status} - {e.reason}")
-            console.print(
-                f"[bold red]API Error:[/bold red] Could not list Namespaces. Reason: {e.reason}"
-            )
+            console.print(f"[bold red]API Error:[/bold red] Could not list Namespaces. Reason: {e.reason}")
             return []
         except Exception as e:
             self.logger.exception(f"Unexpected error getting Namespaces: {e}")
@@ -136,17 +130,11 @@ class K8sStorageAnalyzer:
         Returns:
             Dictionary mapping PV name (str) to NFS status (bool).
         """
-        pv_type_map = {
-            pv["metadata"]["name"]: self._is_nfs_pv(pv)
-            for pv in pvs
-            if "metadata" in pv and "name" in pv["metadata"]
-        }
+        pv_type_map = {pv["metadata"]["name"]: self._is_nfs_pv(pv) for pv in pvs if "metadata" in pv and "name" in pv["metadata"]}
         self.logger.debug(f"Built PV type map for {len(pv_type_map)} PVs.")
         return pv_type_map
 
-    def _calculate_namespace_storage(
-        self, pvcs: List[Dict], pv_type_map: Dict[str, bool]
-    ) -> Dict[str, Dict[str, bool]]:
+    def _calculate_namespace_storage(self, pvcs: List[Dict], pv_type_map: Dict[str, bool]) -> Dict[str, Dict[str, bool]]:
         """Calculate storage types used per namespace based on PVCs.
 
         Args:
@@ -162,9 +150,7 @@ class K8sStorageAnalyzer:
             pv_name = pvc.get("spec", {}).get("volume_name")
 
             if not namespace:
-                self.logger.warning(
-                    f"Skipping PVC with missing namespace: {pvc.get('metadata', {}).get('name', 'N/A')}"
-                )
+                self.logger.warning(f"Skipping PVC with missing namespace: {pvc.get('metadata', {}).get('name', 'N/A')}")
                 continue
 
             if pv_name and pv_name in pv_type_map:
@@ -173,32 +159,22 @@ class K8sStorageAnalyzer:
 
                 if pv_type_map[pv_name]:  # If the PV is NFS
                     if not namespace_storage[namespace]["nfs"]:
-                        self.logger.debug(
-                            f"Namespace '{namespace}' uses NFS storage (via PVC '{pvc.get('metadata', {}).get('name')}' -> PV '{pv_name}')."
-                        )
+                        self.logger.debug(f"Namespace '{namespace}' uses NFS storage (via PVC '{pvc.get('metadata', {}).get('name')}' -> PV '{pv_name}').")
                         namespace_storage[namespace]["nfs"] = True
                 else:  # If the PV is non-NFS
                     if not namespace_storage[namespace]["non_nfs"]:
-                        self.logger.debug(
-                            f"Namespace '{namespace}' uses non-NFS storage (via PVC '{pvc.get('metadata', {}).get('name')}' -> PV '{pv_name}')."
-                        )
+                        self.logger.debug(f"Namespace '{namespace}' uses non-NFS storage (via PVC '{pvc.get('metadata', {}).get('name')}' -> PV '{pv_name}').")
                         namespace_storage[namespace]["non_nfs"] = True
             elif pv_name:
                 # PVC is bound but PV not found in our list (could be timing or error in get_pvs)
-                self.logger.warning(
-                    f"PVC '{namespace}/{pvc.get('metadata', {}).get('name')}' references PV '{pv_name}' which was not found."
-                )
+                self.logger.warning(f"PVC '{namespace}/{pvc.get('metadata', {}).get('name')}' references PV '{pv_name}' which was not found.")
             else:
                 # PVC is not bound or has no volumeName yet
                 pvc_status = pvc.get("status", {}).get("phase", "Unknown")
-                self.logger.debug(
-                    f"PVC '{namespace}/{pvc.get('metadata', {}).get('name')}' is in phase '{pvc_status}' and has no volumeName."
-                )
+                self.logger.debug(f"PVC '{namespace}/{pvc.get('metadata', {}).get('name')}' is in phase '{pvc_status}' and has no volumeName.")
         return namespace_storage
 
-    def _categorize_namespaces(
-        self, namespace_storage: Dict[str, Dict[str, bool]], all_namespaces: List[Dict]
-    ) -> Tuple[Set[str], Set[str], Set[str]]:
+    def _categorize_namespaces(self, namespace_storage: Dict[str, Dict[str, bool]], all_namespaces: List[Dict]) -> Tuple[Set[str], Set[str], Set[str]]:
         """Categorize namespaces into storage type groups.
 
         Args:
@@ -212,11 +188,7 @@ class K8sStorageAnalyzer:
         only_nfs = set()
         mixed = set()
 
-        all_namespace_names = {
-            ns.get("metadata", {}).get("name")
-            for ns in all_namespaces
-            if ns.get("metadata", {}).get("name")
-        }
+        all_namespace_names = {ns.get("metadata", {}).get("name") for ns in all_namespaces if ns.get("metadata", {}).get("name")}
 
         for ns_name in all_namespace_names:
             storage_types = namespace_storage.get(ns_name)
@@ -234,9 +206,7 @@ class K8sStorageAnalyzer:
                 # Namespaces without any bound PVCs using known PVs are ignored for categorization.
                 self.logger.debug(f"Namespace '{ns_name}' has no associated PVCs using known PVs.")
 
-        self.logger.info(
-            f"Storage type analysis complete. Non-NFS: {len(only_non_nfs)}, NFS: {len(only_nfs)}, Mixed: {len(mixed)}."
-        )
+        self.logger.info(f"Storage type analysis complete. Non-NFS: {len(only_non_nfs)}, NFS: {len(only_nfs)}, Mixed: {len(mixed)}.")
         return only_non_nfs, only_nfs, mixed
 
     def get_namespace_storage_types(self) -> Tuple[Set[str], Set[str], Set[str]]:
@@ -265,22 +235,16 @@ class K8sStorageAnalyzer:
 
         pv_type_map = self._build_pv_type_map(pvs)
         namespace_storage = self._calculate_namespace_storage(pvcs, pv_type_map)
-        only_non_nfs, only_nfs, mixed = self._categorize_namespaces(
-            namespace_storage, all_namespaces
-        )
+        only_non_nfs, only_nfs, mixed = self._categorize_namespaces(namespace_storage, all_namespaces)
 
         return only_non_nfs, only_nfs, mixed
 
-    def _display_console_output(
-        self, only_non_nfs: Set[str], only_nfs: Set[str], mixed: Set[str]
-    ) -> None:
+    def _display_console_output(self, only_non_nfs: Set[str], only_nfs: Set[str], mixed: Set[str]) -> None:
         """Display the analysis results in a formatted table to the console."""
         # Get terminal width and calculate column width
         terminal_width = console.width
         namespace_col_width = terminal_width // 3
-        self.logger.debug(
-            f"Terminal width: {terminal_width}, calculated namespace column width: {namespace_col_width}"
-        )
+        self.logger.debug(f"Terminal width: {terminal_width}, calculated namespace column width: {namespace_col_width}")
 
         # Create and display the table
         table = Table(
@@ -347,9 +311,7 @@ class K8sStorageAnalyzer:
             console.print(f"[green]JSON output saved to:[/green] {filepath}")
         except IOError as e:
             self.logger.error(f"Failed to write JSON output to {filepath}: {e}")
-            console.print(
-                f"[bold red]Error:[/bold red] Could not write JSON file to {filepath}. Reason: {e}"
-            )
+            console.print(f"[bold red]Error:[/bold red] Could not write JSON file to {filepath}. Reason: {e}")
         except Exception as e:
             self.logger.exception(f"Unexpected error writing JSON output: {e}")
             console.print(f"[bold red]Error:[/bold red] Unexpected error writing JSON file: {e}")
@@ -392,16 +354,12 @@ class K8sStorageAnalyzer:
             console.print(f"[green]CSV output saved to:[/green] {filepath}")
         except IOError as e:
             self.logger.error(f"Failed to write CSV output to {filepath}: {e}")
-            console.print(
-                f"[bold red]Error:[/bold red] Could not write CSV file to {filepath}. Reason: {e}"
-            )
+            console.print(f"[bold red]Error:[/bold red] Could not write CSV file to {filepath}. Reason: {e}")
         except Exception as e:
             self.logger.exception(f"Unexpected error writing CSV output: {e}")
             console.print(f"[bold red]Error:[/bold red] Unexpected error writing CSV file: {e}")
 
-    def process_and_output(
-        self, output_format: str, output_dir: str, script_base_name: str
-    ) -> None:
+    def process_and_output(self, output_format: str, output_dir: str, script_base_name: str) -> None:
         """Get storage types and output results based on the specified format."""
         try:
             only_non_nfs, only_nfs, mixed = self.get_namespace_storage_types()
@@ -453,9 +411,7 @@ def main(kubeconfig: str, output_format: str, output_dir: str, debug: bool):
     setup_logging(level=log_level, script_name=script_base_name)
     logger = get_logger(__name__)  # Get logger instance after setup
 
-    logger.info(
-        f"Starting Kubernetes Storage Analyzer script. Output format: {output_format}, Output dir: {output_dir}"
-    )
+    logger.info(f"Starting Kubernetes Storage Analyzer script. Output format: {output_format}, Output dir: {output_dir}")
 
     # Load Kubernetes configuration using util
     if not load_kube_config_auto(config_file=kubeconfig):

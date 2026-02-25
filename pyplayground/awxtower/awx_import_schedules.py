@@ -51,13 +51,9 @@ def import_schedules(
             schedule_name = schedule_data.get("name")
             try:
                 # Check if schedule already exists
-                existing_schedule = find_resource_by_name(
-                    tower_url, headers, "schedules", schedule_name, verify
-                )
+                existing_schedule = find_resource_by_name(tower_url, headers, "schedules", schedule_name, verify)
                 if not existing_schedule:
-                    created_schedule = create_resource(
-                        tower_url, headers, "schedules", schedule_data, verify
-                    )
+                    created_schedule = create_resource(tower_url, headers, "schedules", schedule_data, verify)
                     if created_schedule:
                         logger.info(f"Successfully imported schedule: {schedule_name}")
                     else:

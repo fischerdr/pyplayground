@@ -66,17 +66,13 @@ def _handle_authentication(
             ]
             if not v
         ]
-        raise click.ClickException(
-            f"Error: Token not provided, and missing required options for token generation: {', '.join(missing_auth)}"
-        )
+        raise click.ClickException(f"Error: Token not provided, and missing required options for token generation: {', '.join(missing_auth)}")
     try:
         generated_token = generate_token(auth_url, client_id, username, password, validate_certs)
         click.echo("Successfully generated authentication token.")
         return generated_token
     except (requests.exceptions.RequestException, ValueError) as auth_err:
-        raise click.ClickException(
-            f"[bold red]Authentication Error:[/bold red] Failed to generate token: {auth_err}"
-        )
+        raise click.ClickException(f"[bold red]Authentication Error:[/bold red] Failed to generate token: {auth_err}")
 
 
 def _run_list_operation(
@@ -98,9 +94,7 @@ def _run_list_operation(
     matched_clusters = filter_clusters(all_clusters_raw, cluster_name_filter, cluster_uid_filter)
 
     if not matched_clusters:
-        console.print(
-            f"[yellow]No clusters found matching the criteria (Name: '{cluster_name_filter}', UID: '{cluster_uid_filter}').[/yellow]"
-        )
+        console.print(f"[yellow]No clusters found matching the criteria (Name: '{cluster_name_filter}', UID: '{cluster_uid_filter}').[/yellow]")
         return
 
     console.print(f"Found {len(matched_clusters)} cluster(s) matching criteria:")
@@ -116,18 +110,14 @@ def _run_list_operation(
             cluster_backups = fetch_backups_for_cluster(client, org_id, cluster_info)
             all_backups.extend(cluster_backups)
         except requests.exceptions.RequestException:
-            console.print(
-                f"[red]Error fetching backups for cluster {cluster_info.get('name', 'N/A')}. Skipping.[/red]"
-            )
+            console.print(f"[red]Error fetching backups for cluster {cluster_info.get('name', 'N/A')}. Skipping.[/red]")
             fetch_errors += 1
             continue
 
     # 4. Display list results
     console.print(f"\nTotal Backups Found: {len(all_backups)}")
     if fetch_errors > 0:
-        console.print(
-            f"[yellow]Note: Failed to fetch backups for {fetch_errors} cluster(s).[/yellow]"
-        )
+        console.print(f"[yellow]Note: Failed to fetch backups for {fetch_errors} cluster(s).[/yellow]")
 
     if not all_backups:
         return
@@ -184,9 +174,7 @@ def _display_backup_list(backups: List[Dict[str, Any]]) -> None:
         backup_type_info = backup_info.get("backup_type", {})
         status_info = backup_info.get("status", {})
 
-        backup_type_str = (
-            backup_type_info.get("type", "N/A") if isinstance(backup_type_info, dict) else "N/A"
-        )
+        backup_type_str = backup_type_info.get("type", "N/A") if isinstance(backup_type_info, dict) else "N/A"
         status_str = status_info.get("status", "N/A") if isinstance(status_info, dict) else "N/A"
 
         table.add_row(
@@ -217,9 +205,7 @@ def _run_inspect_operation(
     """
     console = Console()  # Need console for output and potential errors
     if not backup_name or not backup_uid:
-        raise click.ClickException(
-            "Error: --backup-name and --backup-uid are required for the 'inspect' operation."
-        )
+        raise click.ClickException("Error: --backup-name and --backup-uid are required for the 'inspect' operation.")
 
     try:
         backup_details = inspect_backup(client, org_id, backup_name, backup_uid)
@@ -246,9 +232,7 @@ def _run_inspect_operation(
         namespaces = backup_info.get("namespaces", [])
         volumes = backup_info.get("volumes", [])
 
-        backup_type_str = (
-            backup_type_info.get("type", "N/A") if isinstance(backup_type_info, dict) else "N/A"
-        )
+        backup_type_str = backup_type_info.get("type", "N/A") if isinstance(backup_type_info, dict) else "N/A"
         status_str = status_info.get("status", "N/A") if isinstance(status_info, dict) else "N/A"
 
         # Populate main details table
@@ -270,9 +254,7 @@ def _run_inspect_operation(
         if volumes:
             from collections import Counter
 
-            volume_statuses = Counter(
-                vol.get("status", {}).get("status", "Unknown") for vol in volumes
-            )
+            volume_statuses = Counter(vol.get("status", {}).get("status", "Unknown") for vol in volumes)
             table.add_row("", "")
             table.add_row("[bold]Volume Status Summary:[/bold]", "")
             for status, count in sorted(volume_statuses.items()):
@@ -360,9 +342,7 @@ def fetch_clusters(client: PXBackupClient, org_id: str) -> List[Dict[str, Any]]:
         response = client.make_request("GET", endpoint)
         clusters = response.get("clusters", [])
         if not isinstance(clusters, list):
-            logger.warning(
-                f"API response for clusters was not a list: {type(clusters)}. Returning empty list."
-            )
+            logger.warning(f"API response for clusters was not a list: {type(clusters)}. Returning empty list.")
             return []
         logger.info(f"Successfully fetched {len(clusters)} clusters.")
         return clusters
@@ -371,9 +351,7 @@ def fetch_clusters(client: PXBackupClient, org_id: str) -> List[Dict[str, Any]]:
         raise  # Re-raise the exception for handling in main
 
 
-def _get_matching_cluster_info(
-    cluster: Dict[str, Any], name_pattern: Optional[str], uid: Optional[str]
-) -> Optional[Dict[str, str]]:
+def _get_matching_cluster_info(cluster: Dict[str, Any], name_pattern: Optional[str], uid: Optional[str]) -> Optional[Dict[str, str]]:
     """Checks if a single cluster matches the given filters.
 
     Args:
@@ -403,14 +381,10 @@ def _get_matching_cluster_info(
     if name_pattern:
         try:
             if re.match(name_pattern, cluster_name):
-                logger.debug(
-                    f"Matched cluster by name pattern '{name_pattern}': {cluster_name} ({cluster_uid})"
-                )
+                logger.debug(f"Matched cluster by name pattern '{name_pattern}': {cluster_name} ({cluster_uid})")
                 return match_info
         except re.error as e:
-            logger.error(
-                f"Invalid regex pattern '{name_pattern}': {e}. Skipping name pattern matching for this cluster."
-            )
+            logger.error(f"Invalid regex pattern '{name_pattern}': {e}. Skipping name pattern matching for this cluster.")
             # Don't attempt further matching with a bad pattern for this cluster
             return None
 
@@ -418,9 +392,7 @@ def _get_matching_cluster_info(
     return None
 
 
-def filter_clusters(
-    clusters: List[Dict[str, Any]], name_pattern: Optional[str], uid: Optional[str]
-) -> List[Dict[str, Any]]:
+def filter_clusters(clusters: List[Dict[str, Any]], name_pattern: Optional[str], uid: Optional[str]) -> List[Dict[str, Any]]:
     """Filters clusters based on name pattern or UID using a helper function.
 
     Args:
@@ -452,9 +424,7 @@ def filter_clusters(
     return matched
 
 
-def fetch_backups_for_cluster(
-    client: PXBackupClient, org_id: str, cluster_info: Dict[str, str]
-) -> List[Dict[str, Any]]:
+def fetch_backups_for_cluster(client: PXBackupClient, org_id: str, cluster_info: Dict[str, str]) -> List[Dict[str, Any]]:
     """Fetches backups for a specific cluster.
 
     Args:
@@ -491,9 +461,7 @@ def fetch_backups_for_cluster(
         response = client.make_request("GET", endpoint, params=params)
         backups = response.get("backups", [])
         if not isinstance(backups, list):
-            logger.warning(
-                f"API response for backups for cluster {cluster_name} was not a list: {type(backups)}. Returning empty list."
-            )
+            logger.warning(f"API response for backups for cluster {cluster_name} was not a list: {type(backups)}. Returning empty list.")
             return []
         logger.info(f"Fetched {len(backups)} backups for cluster {cluster_name}.")
         return backups
@@ -502,9 +470,7 @@ def fetch_backups_for_cluster(
         raise  # Re-raise exception
 
 
-def inspect_backup(
-    client: PXBackupClient, org_id: str, backup_name: str, backup_uid: str
-) -> Dict[str, Any]:
+def inspect_backup(client: PXBackupClient, org_id: str, backup_name: str, backup_uid: str) -> Dict[str, Any]:
     """Fetches details for a specific backup.
 
     Args:
@@ -531,15 +497,11 @@ def inspect_backup(
         # directly or nested under a key like 'backup'. Let's check common patterns.
         if "backup" in response:
             backup_details = response["backup"]
-        elif (
-            isinstance(response, dict) and response
-        ):  # Check if the response itself is the backup dict
+        elif isinstance(response, dict) and response:  # Check if the response itself is the backup dict
             backup_details = response
         else:
             logger.error(f"Unexpected response structure for inspect backup: {response}")
-            raise ValueError(
-                f"Could not find backup details in response for {backup_name}/{backup_uid}"
-            )
+            raise ValueError(f"Could not find backup details in response for {backup_name}/{backup_uid}")
 
         if not backup_details:
             raise ValueError(f"No backup found with name {backup_name} and uid {backup_uid}")
@@ -686,9 +648,7 @@ def main(
     except click.ClickException:
         raise  # Re-raise Click exceptions to let Click handle them
     except Exception as e:
-        logger.exception(
-            "An unexpected error occurred."
-        )  # Log the full traceback for unexpected errors
+        logger.exception("An unexpected error occurred.")  # Log the full traceback for unexpected errors
         # Use ClickException for error handling
         raise click.ClickException(f"[bold red]An unexpected error occurred:[/bold red] {e}")
 

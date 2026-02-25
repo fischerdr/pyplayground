@@ -365,9 +365,7 @@ class PlaybookParser:
                         # Remove common shell prefixes
                         executable = re.sub(r"^(sudo\s+|nohup\s+)", "", executable).strip()
                         if executable and not executable.startswith(("$", "{{", "[")):
-                            logger.debug(
-                                f"Found primary executable: '{executable}' from line {line_num}: {line[:50]}..."
-                            )
+                            logger.debug(f"Found primary executable: '{executable}' from line {line_num}: {line[:50]}...")
                             return executable
 
         # Fallback: try to extract from the first line
@@ -463,9 +461,7 @@ class AnsibleAnalyzer:
         logger.info(f"Analysis complete. Found {total_results} command/shell tasks.")
 
         if total_results == 0:
-            logger.warning(
-                "No target module tasks found. Check if the repository contains Ansible playbooks with shell/command/raw/script modules"
-            )
+            logger.warning("No target module tasks found. Check if the repository contains Ansible playbooks with shell/command/raw/script modules")
 
     def _log_repository_structure(self):
         """Log the basic structure of the repository to help with debugging."""
@@ -517,9 +513,7 @@ class AnsibleAnalyzer:
         yaml_files_root = []
         try:
             for ext in YAML_EXTENSIONS:
-                yaml_files_root.extend(
-                    [f.name for f in self.repo_path.glob(f"*{ext}") if f.is_file()]
-                )
+                yaml_files_root.extend([f.name for f in self.repo_path.glob(f"*{ext}") if f.is_file()])
             if yaml_files_root:
                 logger.info(f"YAML files in root directory: {', '.join(yaml_files_root)}")
             else:
@@ -601,9 +595,7 @@ class AnsibleAnalyzer:
             json.dump(self.results, f, indent=2)
         logger.info(f"JSON report saved to {output_path}")
 
-    def apply_filters(  # noqa: C901
-        self, include_executables: List[str], exclude_executables: List[str], pattern: str
-    ):
+    def apply_filters(self, include_executables: List[str], exclude_executables: List[str], pattern: str):  # noqa: C901
         """Apply filtering to the results based on executable names."""
         if not include_executables and not exclude_executables and not pattern:
             return
@@ -647,9 +639,7 @@ class AnsibleAnalyzer:
         # Update the results in the parser
         self.playbook_parser.results = filtered_results
         filtered_count = len(filtered_results)
-        logger.info(
-            f"Applied filters. Remaining results: {filtered_count} (filtered out: {original_count - filtered_count})"
-        )
+        logger.info(f"Applied filters. Remaining results: {filtered_count} (filtered out: {original_count - filtered_count})")
 
 
 @click.command()

@@ -43,15 +43,10 @@ class PortworxNodeManager:
         filtered_nodes = []
         for node in nodes.items:
             labels = node.metadata.labels
-            if (
-                "node-role.kubernetes.io/master" not in labels
-                and labels.get("px/enabled") != "false"
-            ):
+            if "node-role.kubernetes.io/master" not in labels and labels.get("px/enabled") != "false":
                 filtered_nodes.append(node)
 
-        print(
-            f"Found {len(filtered_nodes)} node(s) that are not master nodes and do not have px/enabled=false."
-        )
+        print(f"Found {len(filtered_nodes)} node(s) that are not master nodes and do not have px/enabled=false.")
         return filtered_nodes
 
     def label_node(self, node_name, labels):
@@ -82,9 +77,7 @@ class PortworxNodeManager:
 
                 for node_id, node_config in data.items():
                     if node_config["SchedulerNodeName"] == node_name:
-                        print(
-                            f"Found SchedulerNodeName {node_name} in ConfigMap {cm.metadata.name}."
-                        )
+                        print(f"Found SchedulerNodeName {node_name} in ConfigMap {cm.metadata.name}.")
                         print(f"Current zone for {node_name}: {node_config.get('Zone', 'not set')}")
                         print(f"Updating zone to: {self.zone}")
 
@@ -96,12 +89,8 @@ class PortworxNodeManager:
 
                     if self.dry_run:
                         if self.debug_cm:
-                            print(
-                                f"\nDry-run: New intended ConfigMap content for {cm.metadata.name}:\n{new_configmap}\n"
-                            )
-                        print(
-                            f"Dry-run: Would save a backup of the current ConfigMap to cm_backup_{cm.metadata.name}.json"
-                        )
+                            print(f"\nDry-run: New intended ConfigMap content for {cm.metadata.name}:\n{new_configmap}\n")
+                        print(f"Dry-run: Would save a backup of the current ConfigMap to cm_backup_{cm.metadata.name}.json")
                     else:
                         backup_filename = f"cm_backup_{cm.metadata.name}.json"
                         with open(backup_filename, "w") as backup_file:
@@ -110,9 +99,7 @@ class PortworxNodeManager:
 
                         body = {"data": {"cloud-drive": new_configmap}}
                         self.v1.patch_namespaced_config_map(cm.metadata.name, "kube-system", body)
-                        print(
-                            f"ConfigMap {cm.metadata.name} updated successfully with changes for {node_name}."
-                        )
+                        print(f"ConfigMap {cm.metadata.name} updated successfully with changes for {node_name}.")
                 else:
                     print(f"No changes made to ConfigMap {cm.metadata.name} for {node_name}.")
 
@@ -142,9 +129,7 @@ class PortworxNodeManager:
                 self.label_node(node_name, {"px/service": "stop"})
 
                 if not self.dry_run:
-                    print(
-                        f"Waiting for 1 minute after labeling {node_name} with px/service=stop..."
-                    )
+                    print(f"Waiting for 1 minute after labeling {node_name} with px/service=stop...")
                     time.sleep(60)
 
                 self.update_cm(node_name)
@@ -188,9 +173,7 @@ def load_nodes_from_file(file_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Label Portworx nodes and update ConfigMaps")
     parser.add_argument("--zone", required=True, help="Zone value to set for nodes")
-    parser.add_argument(
-        "--real-run", action="store_true", help="If set, run for real (not a dry-run)"
-    )
+    parser.add_argument("--real-run", action="store_true", help="If set, run for real (not a dry-run)")
     parser.add_argument("--kubeconfig", help="Path to the kubeconfig file")
     parser.add_argument("--node-file", help="Path to a file with node names, one per line")
     parser.add_argument("--debug-cm", action="store_true", help="Enable debug Config Map")
@@ -207,9 +190,7 @@ if __name__ == "__main__":
 
     v1_client = client.CoreV1Api()
 
-    manager = PortworxNodeManager(
-        zone=args.zone, dry_run=dry_run, v1_client=v1_client, debug_cm=debug_cm
-    )
+    manager = PortworxNodeManager(zone=args.zone, dry_run=dry_run, v1_client=v1_client, debug_cm=debug_cm)
 
     if args.node_file:
         node_names = load_nodes_from_file(args.node_file)

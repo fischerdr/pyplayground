@@ -86,9 +86,7 @@ def get_container_view(si, obj_type, container=None):
     if not container:
         container = si.content.rootFolder
 
-    view_ref = si.content.viewManager.CreateContainerView(
-        container=container, type=obj_type, recursive=True
-    )
+    view_ref = si.content.viewManager.CreateContainerView(container=container, type=obj_type, recursive=True)
     return view_ref
 
 

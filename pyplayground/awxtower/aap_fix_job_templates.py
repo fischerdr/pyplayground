@@ -210,9 +210,7 @@ def _merge_with_template(item: Dict[str, Any], template: Dict[str, Any]) -> Dict
     return merged_item
 
 
-def _merge_nested_dicts(
-    template_dict: Dict[str, Any], input_dict: Dict[str, Any]
-) -> Dict[str, Any]:
+def _merge_nested_dicts(template_dict: Dict[str, Any], input_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Recursively merge nested dictionaries.
 
     Args:
@@ -508,9 +506,7 @@ def fix_job_templates(
         if filepath:
             successful_files += 1
 
-    logger.info(
-        f"Successfully processed {successful_files} out of {len(job_templates)} job templates."
-    )
+    logger.info(f"Successfully processed {successful_files} out of {len(job_templates)} job templates.")
     return successful_files > 0
 
 

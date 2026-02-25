@@ -57,9 +57,7 @@ def get_prometheus_pod() -> Optional[str]:
         v1 = client.CoreV1Api()
 
         # Get pods with the prometheus label
-        pods = v1.list_namespaced_pod(
-            namespace=PROMETHEUS_NAMESPACE, label_selector=PROMETHEUS_SELECTOR
-        )
+        pods = v1.list_namespaced_pod(namespace=PROMETHEUS_NAMESPACE, label_selector=PROMETHEUS_SELECTOR)
 
         if pods.items:
             pod_name = pods.items[0].metadata.name
@@ -77,9 +75,7 @@ def get_prometheus_pod() -> Optional[str]:
         return None
 
 
-def build_prometheus_query(
-    namespace: str, target_pods: List[str], target_containers: List[str]
-) -> str:
+def build_prometheus_query(namespace: str, target_pods: List[str], target_containers: List[str]) -> str:
     """Build the Prometheus query for container memory usage.
 
     Args:
@@ -112,15 +108,11 @@ def get_time_range(days: int = 30) -> Tuple[int, int]:
     end_time = int(datetime.now().timestamp())
     start_time = end_time - (days * 24 * 60 * 60)  # days ago
 
-    logger.info(
-        f"Time range: {datetime.fromtimestamp(start_time)} to {datetime.fromtimestamp(end_time)}"
-    )
+    logger.info(f"Time range: {datetime.fromtimestamp(start_time)} to {datetime.fromtimestamp(end_time)}")
     return start_time, end_time
 
 
-def query_prometheus_via_k8s(
-    prometheus_pod: str, query: str, start_time: int, end_time: int, step: int = STEP_SECONDS
-) -> Optional[Dict[str, Any]]:
+def query_prometheus_via_k8s(prometheus_pod: str, query: str, start_time: int, end_time: int, step: int = STEP_SECONDS) -> Optional[Dict[str, Any]]:
     """Query Prometheus via Kubernetes library exec command.
 
     Args:
@@ -172,9 +164,7 @@ def query_prometheus_via_k8s(
         return None
 
 
-def filter_and_process_data(
-    response_data: Dict[str, Any], target_pods: List[str], target_containers: List[str]
-) -> List[Dict[str, Any]]:
+def filter_and_process_data(response_data: Dict[str, Any], target_pods: List[str], target_containers: List[str]) -> List[Dict[str, Any]]:
     """Filter and process the Prometheus response data.
 
     Args:
@@ -218,9 +208,7 @@ def filter_and_process_data(
                 if timestamp and value and value != "null" and timestamp != "null":
                     try:
                         # Convert timestamp to readable format
-                        readable_time = datetime.fromtimestamp(int(timestamp)).strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        )
+                        readable_time = datetime.fromtimestamp(int(timestamp)).strftime("%Y-%m-%d %H:%M:%S")
 
                         # Convert memory from bytes to MB
                         memory_bytes = float(value)
@@ -329,9 +317,7 @@ def cli(ctx, verbose, debug):
     default=DEFAULT_OUTPUT_FILE,
     help=f"Output CSV file path (default: {DEFAULT_OUTPUT_FILE})",
 )
-@click.option(
-    "--days", "-d", default=30, type=int, help="Number of days to look back (default: 30)"
-)
+@click.option("--days", "-d", default=30, type=int, help="Number of days to look back (default: 30)")
 @click.option(
     "--step",
     "-s",
@@ -376,9 +362,7 @@ def query(ctx, namespace, pods, containers, output, days, step):
 
             # Step 3: Query Prometheus
             click.echo("Step 3: Querying Prometheus...")
-            response_data = query_prometheus_via_k8s(
-                prometheus_pod, query_str, start_time, end_time, step
-            )
+            response_data = query_prometheus_via_k8s(prometheus_pod, query_str, start_time, end_time, step)
             if not response_data:
                 raise click.ClickException("Failed to query Prometheus")
             bar.update(1)
@@ -451,9 +435,7 @@ def test_connection(namespace):
         test_query = f'up{{namespace="{namespace}"}}'
         start_time, end_time = get_time_range(1)  # Last 1 day for test
 
-        response_data = query_prometheus_via_k8s(
-            prometheus_pod, test_query, start_time, end_time, 3600
-        )
+        response_data = query_prometheus_via_k8s(prometheus_pod, test_query, start_time, end_time, 3600)
         if response_data:
             click.echo("✅ Prometheus query successful")
         else:

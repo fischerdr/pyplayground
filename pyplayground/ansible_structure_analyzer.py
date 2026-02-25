@@ -255,9 +255,7 @@ class FileDiscovery:
         # Priority 1: playbooks/ directory
         playbooks_dir = repo_root / "playbooks"
         if playbooks_dir.exists() and not self._is_ignored(playbooks_dir, gitignore_patterns):
-            playbook_files.extend(
-                self._discover_from_directory_recursive(playbooks_dir, gitignore_patterns)
-            )
+            playbook_files.extend(self._discover_from_directory_recursive(playbooks_dir, gitignore_patterns))
 
         # Priority 2: Root-level files (but exclude known non-playbook dirs)
         exclude_dirs = {"roles", "collections", "group_vars", "host_vars", "vars", "tasks", ".git"}
@@ -276,16 +274,12 @@ class FileDiscovery:
                     playbook_files.append(item)
             elif item.is_dir():
                 # Recursively scan other directories (but not roles/, collections/, etc.)
-                playbook_files.extend(
-                    self._discover_from_directory_recursive(item, gitignore_patterns)
-                )
+                playbook_files.extend(self._discover_from_directory_recursive(item, gitignore_patterns))
 
         logger.info(f"Found {len(playbook_files)} playbook files in repository")
         return playbook_files
 
-    def _discover_from_directory_recursive(
-        self, directory: Path, gitignore_patterns: List[str]
-    ) -> List[Path]:
+    def _discover_from_directory_recursive(self, directory: Path, gitignore_patterns: List[str]) -> List[Path]:
         """Recursively discover playbook files from a directory.
 
         Args:
@@ -523,9 +517,7 @@ class ErrorCollector:
 class IncludeResolver:
     """Resolves Ansible includes and roles with path resolution."""
 
-    def __init__(
-        self, repo_root: Path, error_collector: ErrorCollector, max_depth: int = MAX_RECURSION_DEPTH
-    ):
+    def __init__(self, repo_root: Path, error_collector: ErrorCollector, max_depth: int = MAX_RECURSION_DEPTH):
         """Initialize the IncludeResolver.
 
         Args:
@@ -536,9 +528,7 @@ class IncludeResolver:
         self.repo_root = repo_root
         self.error_collector = error_collector
         self.max_depth = max_depth
-        logger.debug(
-            f"IncludeResolver initialized with repo_root: {repo_root}, max_depth: {max_depth}"
-        )
+        logger.debug(f"IncludeResolver initialized with repo_root: {repo_root}, max_depth: {max_depth}")
 
     def _get_include_key(self, task: Dict[str, Any], short_name: str) -> Optional[str]:
         """Get include key from task, checking both short and FQCN forms.
@@ -610,9 +600,7 @@ class IncludeResolver:
         if include_chain is None:
             include_chain = []
 
-        logger.debug(
-            f"resolve_includes: starting resolution from {file_path} (depth: {depth}/{self.max_depth})"
-        )
+        logger.debug(f"resolve_includes: starting resolution from {file_path} (depth: {depth}/{self.max_depth})")
         if loop_context:
             logger.debug(f"resolve_includes: Processing {file_path.name} [loop: {loop_context}]")
         if include_chain:
@@ -622,9 +610,7 @@ class IncludeResolver:
         try:
             # Check recursion depth
             if depth >= self.max_depth:
-                logger.warning(
-                    f"resolve_includes: MAX DEPTH EXCEEDED at depth {depth} for {file_path}"
-                )
+                logger.warning(f"resolve_includes: MAX DEPTH EXCEEDED at depth {depth} for {file_path}")
                 self.error_collector.add_error(
                     "MAX_DEPTH_EXCEEDED",
                     f"Maximum recursion depth ({self.max_depth}) exceeded",
@@ -645,16 +631,10 @@ class IncludeResolver:
                         first_visit_index = idx
                         break
 
-                logger.warning(
-                    f"resolve_includes: CIRCULAR DEPENDENCY detected: {' -> '.join(str(p) for p in circular_chain)}"
-                )
+                logger.warning(f"resolve_includes: CIRCULAR DEPENDENCY detected: {' -> '.join(str(p) for p in circular_chain)}")
                 if first_visit_index is not None:
-                    logger.debug(
-                        f"resolve_includes: File {file_path.name} was first visited at chain index {first_visit_index}"
-                    )
-                    logger.debug(
-                        f"resolve_includes: Circular loop: {' -> '.join(str(p.name) for p in circular_chain[first_visit_index:])}"
-                    )
+                    logger.debug(f"resolve_includes: File {file_path.name} was first visited at chain index {first_visit_index}")
+                    logger.debug(f"resolve_includes: Circular loop: {' -> '.join(str(p.name) for p in circular_chain[first_visit_index:])}")
 
                 # Try to parse the file to see what it includes (for debugging)
                 try:
@@ -668,9 +648,7 @@ class IncludeResolver:
                                     if isinstance(task, dict):
                                         include_key = self._get_include_key(task, "include_tasks")
                                         if include_key:
-                                            temp_includes.append(
-                                                f"include_tasks: {task[include_key]}"
-                                            )
+                                            temp_includes.append(f"include_tasks: {task[include_key]}")
                         elif isinstance(content, list):
                             for item in content[:3]:  # Check first 3 items
                                 if isinstance(item, dict):
@@ -678,9 +656,7 @@ class IncludeResolver:
                                     if include_key:
                                         temp_includes.append(f"include_tasks: {item[include_key]}")
                         if temp_includes:
-                            logger.debug(
-                                f"resolve_includes: File {file_path.name} includes: {', '.join(temp_includes[:5])}"
-                            )
+                            logger.debug(f"resolve_includes: File {file_path.name} includes: {', '.join(temp_includes[:5])}")
                 except Exception as e:
                     logger.debug(f"Error during debug logging (non-critical): {e}", exc_info=True)
                     pass  # Ignore errors during debug logging
@@ -694,9 +670,7 @@ class IncludeResolver:
                 return {"file": str(file_path), "includes": [], "error": "CIRCULAR_DEPENDENCY"}
             elif file_path in visited:
                 # File was visited from different branch - skip processing but don't flag as circular
-                logger.debug(
-                    f"resolve_includes: File {file_path.name} already visited from different branch, skipping"
-                )
+                logger.debug(f"resolve_includes: File {file_path.name} already visited from different branch, skipping")
                 return {
                     "file": str(file_path),
                     "includes": [],
@@ -707,25 +681,17 @@ class IncludeResolver:
             # Mark as visited
             visited.add(file_path)
             current_chain = include_chain + [file_path]
-            logger.debug(
-                f"resolve_includes: marked {file_path} as visited (total visited: {len(visited)})"
-            )
+            logger.debug(f"resolve_includes: marked {file_path} as visited (total visited: {len(visited)})")
 
             # Parse file
             content = self._parse_yaml_file(file_path)
             if content is None:
-                logger.debug(
-                    f"resolve_includes: content is None for {file_path}, returning empty includes"
-                )
+                logger.debug(f"resolve_includes: content is None for {file_path}, returning empty includes")
                 return {"file": str(file_path), "includes": []}
 
             # Find includes
-            includes = self._parse_includes(
-                content, file_path, visited, depth, current_chain, loop_context
-            )
-            logger.debug(
-                f"resolve_includes: found {len(includes)} includes in {file_path} at depth {depth}"
-            )
+            includes = self._parse_includes(content, file_path, visited, depth, current_chain, loop_context)
+            logger.debug(f"resolve_includes: found {len(includes)} includes in {file_path} at depth {depth}")
 
             result = {"file": str(file_path), "includes": includes}
             if loop_context:
@@ -754,17 +720,13 @@ class IncludeResolver:
             # Security check: ensure path is within repo root
             if not self._is_path_safe(file_path.resolve(), self.repo_root):
                 logger.warning(f"Path traversal attempt blocked: {file_path}")
-                self.error_collector.add_error(
-                    "SECURITY_ERROR", f"Path outside repository root: {file_path}", file_path
-                )
+                self.error_collector.add_error("SECURITY_ERROR", f"Path outside repository root: {file_path}", file_path)
                 return None
 
             # Security check: validate file size to prevent DoS
             file_size = file_path.stat().st_size
             if file_size > MAX_FILE_SIZE:
-                logger.warning(
-                    f"File too large ({file_size} bytes > {MAX_FILE_SIZE} bytes): {file_path}"
-                )
+                logger.warning(f"File too large ({file_size} bytes > {MAX_FILE_SIZE} bytes): {file_path}")
                 self.error_collector.add_error(
                     "FILE_TOO_LARGE",
                     f"File exceeds maximum size: {file_size} bytes",
@@ -784,9 +746,7 @@ class IncludeResolver:
             # Security: Verify loader is SafeLoader-based (create_custom_yaml_loader uses SafeLoader)
             custom_loader = create_custom_yaml_loader()
             if not issubclass(custom_loader, yaml.SafeLoader):
-                logger.error(
-                    f"Unsafe YAML loader detected: {custom_loader}. Expected SafeLoader-based loader."
-                )
+                logger.error(f"Unsafe YAML loader detected: {custom_loader}. Expected SafeLoader-based loader.")
                 self.error_collector.add_error(
                     "SECURITY_ERROR",
                     "Unsafe YAML loader detected",
@@ -837,20 +797,14 @@ class IncludeResolver:
 
         # Debug: Log content type and structure
         content_type = type(content).__name__
-        logger.debug(
-            f"_parse_includes: content type={content_type}, file={current_file}, depth={depth}"
-        )
+        logger.debug(f"_parse_includes: content type={content_type}, file={current_file}, depth={depth}")
 
         if isinstance(content, dict):
             content_keys = list(content.keys())[:10]  # First 10 keys for debugging
             logger.debug(f"_parse_includes: dict content keys (first 10): {content_keys}")
             # Check for include statements in tasks
             if "tasks" in content:
-                includes.extend(
-                    self._parse_task_includes(
-                        content["tasks"], current_file, visited, depth, include_chain, loop_context
-                    )
-                )
+                includes.extend(self._parse_task_includes(content["tasks"], current_file, visited, depth, include_chain, loop_context))
             if "pre_tasks" in content:
                 includes.extend(
                     self._parse_task_includes(
@@ -874,11 +828,7 @@ class IncludeResolver:
                     )
                 )
             if "roles" in content:
-                includes.extend(
-                    self._parse_role_includes(
-                        content["roles"], current_file, visited, depth, include_chain
-                    )
-                )
+                includes.extend(self._parse_role_includes(content["roles"], current_file, visited, depth, include_chain))
 
             # Check for include_tasks at play level (short or FQCN)
             include_tasks_key = self._get_include_key(content, "include_tasks")
@@ -1011,25 +961,17 @@ class IncludeResolver:
                 # If it has module/include keys or task indicators, it's a task
                 if is_in_tasks_dir and not has_hosts:
                     is_play = False
-                    logger.debug(
-                        "_parse_includes: file in tasks/ directory without hosts → treating as task list"
-                    )
+                    logger.debug("_parse_includes: file in tasks/ directory without hosts → treating as task list")
                 elif has_hosts or has_tasks_key:
                     is_play = True
-                    logger.debug(
-                        f"_parse_includes: item has hosts={has_hosts} or tasks_key={has_tasks_key} → treating as play"
-                    )
+                    logger.debug(f"_parse_includes: item has hosts={has_hosts} or tasks_key={has_tasks_key} → treating as play")
                 elif has_module_key or has_include_key or has_task_indicators:
                     is_play = False
-                    logger.debug(
-                        f"_parse_includes: item has module_key={has_module_key}, include_key={has_include_key}, task_indicators={has_task_indicators} → treating as task"
-                    )
+                    logger.debug(f"_parse_includes: item has module_key={has_module_key}, include_key={has_include_key}, task_indicators={has_task_indicators} → treating as task")
                 else:
                     # Default to task list if uncertain (safer for includes)
                     is_play = False
-                    logger.debug(
-                        "_parse_includes: no clear play indicators → treating as task list"
-                    )
+                    logger.debug("_parse_includes: no clear play indicators → treating as task list")
 
                 logger.debug(
                     f"_parse_includes: play detection - has_hosts={has_hosts}, has_tasks_key={has_tasks_key}, "
@@ -1039,37 +981,21 @@ class IncludeResolver:
 
                 if is_play:
                     # Process as list of plays
-                    logger.debug(
-                        f"_parse_includes: treating list as playbook with {len(content)} plays"
-                    )
+                    logger.debug(f"_parse_includes: treating list as playbook with {len(content)} plays")
                     for play_index, play in enumerate(content):
                         if isinstance(play, dict):
                             logger.debug(f"_parse_includes: processing play {play_index + 1}")
                             # Recursively process each play dict
-                            play_includes = self._parse_includes(
-                                play, current_file, visited, depth, include_chain, loop_context
-                            )
+                            play_includes = self._parse_includes(play, current_file, visited, depth, include_chain, loop_context)
                             includes.extend(play_includes)
                 else:
                     # Process as list of tasks
-                    logger.debug(
-                        f"_parse_includes: treating list as task list, length={len(content)}"
-                    )
-                    includes.extend(
-                        self._parse_task_includes(
-                            content, current_file, visited, depth, include_chain, loop_context
-                        )
-                    )
+                    logger.debug(f"_parse_includes: treating list as task list, length={len(content)}")
+                    includes.extend(self._parse_task_includes(content, current_file, visited, depth, include_chain, loop_context))
             else:
                 # Empty list or non-dict items - treat as task list
-                logger.debug(
-                    f"_parse_includes: treating list as task list (empty or non-dict items={len(content)})"
-                )
-                includes.extend(
-                    self._parse_task_includes(
-                        content, current_file, visited, depth, include_chain, loop_context
-                    )
-                )
+                logger.debug(f"_parse_includes: treating list as task list (empty or non-dict items={len(content)})")
+                includes.extend(self._parse_task_includes(content, current_file, visited, depth, include_chain, loop_context))
 
         logger.debug(f"_parse_includes: returning {len(includes)} total includes")
         return includes
@@ -1105,9 +1031,7 @@ class IncludeResolver:
                 continue
 
             task_keys = list(task.keys())[:10]  # First 10 keys for debugging
-            logger.debug(
-                f"_parse_task_includes: task {task_index} keys (first 10): {task_keys}, name={task.get('name', 'N/A')}"
-            )
+            logger.debug(f"_parse_task_includes: task {task_index} keys (first 10): {task_keys}, name={task.get('name', 'N/A')}")
 
             # Detect loop in this task
             task_loop_context = self._has_loop(task)
@@ -1117,9 +1041,7 @@ class IncludeResolver:
             # Check for include_tasks (short or FQCN)
             include_tasks_key = self._get_include_key(task, "include_tasks")
             if include_tasks_key:
-                logger.debug(
-                    f"_parse_task_includes: found include_tasks key={include_tasks_key} in task {task_index}"
-                )
+                logger.debug(f"_parse_task_includes: found include_tasks key={include_tasks_key} in task {task_index}")
                 includes.append(
                     self._resolve_include_task(
                         task[include_tasks_key],
@@ -1148,9 +1070,7 @@ class IncludeResolver:
             # Check for include_role (short or FQCN)
             include_role_key = self._get_include_key(task, "include_role")
             if include_role_key:
-                logger.debug(
-                    f"_parse_task_includes: found include_role key={include_role_key} in task {task_index}"
-                )
+                logger.debug(f"_parse_task_includes: found include_role key={include_role_key} in task {task_index}")
                 includes.append(
                     self._resolve_include_role(
                         task[include_role_key],
@@ -1189,9 +1109,7 @@ class IncludeResolver:
                     )
                 )
 
-        logger.debug(
-            f"_parse_task_includes: found {len(includes)} total includes from {len(tasks)} tasks"
-        )
+        logger.debug(f"_parse_task_includes: found {len(includes)} total includes from {len(tasks)} tasks")
         return includes
 
     def _parse_role_includes(
@@ -1219,17 +1137,11 @@ class IncludeResolver:
         if isinstance(roles, list):
             for role in roles:
                 if isinstance(role, str):
-                    includes.append(
-                        self._resolve_role(role, current_file, visited, depth, include_chain)
-                    )
+                    includes.append(self._resolve_role(role, current_file, visited, depth, include_chain))
                 elif isinstance(role, dict):
                     role_name = role.get("role", role.get("name"))
                     if role_name:
-                        includes.append(
-                            self._resolve_role(
-                                role_name, current_file, visited, depth, include_chain
-                            )
-                        )
+                        includes.append(self._resolve_role(role_name, current_file, visited, depth, include_chain))
 
         return includes
 
@@ -1255,9 +1167,7 @@ class IncludeResolver:
         Returns:
             Dictionary with resolved include information
         """
-        logger.debug(
-            f"_resolve_include_task: resolving include_ref={include_ref}, from={current_file}, depth={depth}"
-        )
+        logger.debug(f"_resolve_include_task: resolving include_ref={include_ref}, from={current_file}, depth={depth}")
         if loop_context:
             logger.debug(f"_resolve_include_task: loop context: {loop_context}")
 
@@ -1285,22 +1195,14 @@ class IncludeResolver:
 
         if resolved_path:
             result["path"] = str(resolved_path)
-            logger.debug(
-                f"_resolve_include_task: resolved path={resolved_path}, recursing with depth={depth + 1}"
-            )
+            logger.debug(f"_resolve_include_task: resolved path={resolved_path}, recursing with depth={depth + 1}")
             # Recursively resolve includes from this file
-            nested = self.resolve_includes(
-                resolved_path, visited, depth + 1, include_chain, loop_context
-            )
+            nested = self.resolve_includes(resolved_path, visited, depth + 1, include_chain, loop_context)
             nested_includes = nested.get("includes", [])
             result["includes"] = nested_includes
-            logger.debug(
-                f"_resolve_include_task: found {len(nested_includes)} nested includes in {resolved_path}"
-            )
+            logger.debug(f"_resolve_include_task: found {len(nested_includes)} nested includes in {resolved_path}")
         else:
-            logger.warning(
-                f"_resolve_include_task: could not resolve path for include_ref={include_ref} from {current_file}"
-            )
+            logger.warning(f"_resolve_include_task: could not resolve path for include_ref={include_ref} from {current_file}")
 
         # Cross-role detection: task in role A including task file from role B
         caller_role = _path_to_role_name(self.repo_root, current_file)
@@ -1355,9 +1257,7 @@ class IncludeResolver:
         if resolved_path:
             result["path"] = str(resolved_path)
             # Recursively resolve includes from this file
-            nested = self.resolve_includes(
-                resolved_path, visited, depth + 1, include_chain, loop_context
-            )
+            nested = self.resolve_includes(resolved_path, visited, depth + 1, include_chain, loop_context)
             result["includes"] = nested.get("includes", [])
 
         # Cross-role detection for import_tasks
@@ -1405,9 +1305,7 @@ class IncludeResolver:
                 "error": "Invalid reference",
             }
 
-        return self._resolve_role(
-            include_ref, current_file, visited, depth, include_chain, loop_context
-        )
+        return self._resolve_role(include_ref, current_file, visited, depth, include_chain, loop_context)
 
     def _resolve_import_role(
         self,
@@ -1442,9 +1340,7 @@ class IncludeResolver:
                 "error": "Invalid reference",
             }
 
-        return self._resolve_role(
-            import_ref, current_file, visited, depth, include_chain, loop_context
-        )
+        return self._resolve_role(import_ref, current_file, visited, depth, include_chain, loop_context)
 
     def _resolve_role(
         self,
@@ -1468,9 +1364,7 @@ class IncludeResolver:
         Returns:
             Dictionary with resolved role information
         """
-        logger.debug(
-            f"_resolve_role: resolving role={role_name}, from={current_file}, depth={depth}"
-        )
+        logger.debug(f"_resolve_role: resolving role={role_name}, from={current_file}, depth={depth}")
         if loop_context:
             logger.debug(f"_resolve_role: loop context: {loop_context}")
 
@@ -1498,18 +1392,12 @@ class IncludeResolver:
 
             if main_tasks.exists():
                 result["main_tasks"] = str(main_tasks)
-                logger.debug(
-                    f"_resolve_role: found main tasks file: {main_tasks}, recursing with depth={depth + 1}"
-                )
+                logger.debug(f"_resolve_role: found main tasks file: {main_tasks}, recursing with depth={depth + 1}")
                 # Recursively resolve includes from role tasks
-                nested = self.resolve_includes(
-                    main_tasks, visited, depth + 1, include_chain, loop_context
-                )
+                nested = self.resolve_includes(main_tasks, visited, depth + 1, include_chain, loop_context)
                 nested_includes = nested.get("includes", [])
                 result["includes"] = nested_includes
-                logger.debug(
-                    f"_resolve_role: found {len(nested_includes)} nested includes in role {role_name}"
-                )
+                logger.debug(f"_resolve_role: found {len(nested_includes)} nested includes in role {role_name}")
             else:
                 logger.debug(f"_resolve_role: no main tasks file found for role {role_name}")
 
@@ -1530,9 +1418,7 @@ class IncludeResolver:
             return True
         except ValueError:
             # Path is outside base_path
-            logger.warning(
-                f"Path traversal attempt detected: {resolved_path} is outside {base_path}"
-            )
+            logger.warning(f"Path traversal attempt detected: {resolved_path} is outside {base_path}")
             return False
 
     def _find_include_path(self, include_ref: str, current_file: Path) -> Optional[Path]:
@@ -1614,9 +1500,7 @@ class IncludeResolver:
                                 logger.warning(f"Path traversal attempt blocked: {path4}")
 
         # Not found
-        logger.warning(
-            f"Could not resolve include path: {include_ref} (attempted {len(attempted_paths)} paths)"
-        )
+        logger.warning(f"Could not resolve include path: {include_ref} (attempted {len(attempted_paths)} paths)")
         logger.debug(f"_find_include_path: attempted paths: {attempted_paths}")
         self.error_collector.add_error(
             "MISSING_FILE",
@@ -1674,18 +1558,11 @@ class IncludeResolver:
                 if "src" in role_entry:
                     src = role_entry["src"]
                     # If src is a simple name (no /, no :, no .git), treat as role name
-                    if (
-                        isinstance(src, str)
-                        and "/" not in src
-                        and ":" not in src
-                        and ".git" not in src
-                    ):
+                    if isinstance(src, str) and "/" not in src and ":" not in src and ".git" not in src:
                         excluded_roles.add(src)
                         logger.debug(f"Excluding external role (from src): {src}")
 
-            logger.info(
-                f"Loaded {len(excluded_roles)} external roles from roles/requirements.yml to exclude"
-            )
+            logger.info(f"Loaded {len(excluded_roles)} external roles from roles/requirements.yml to exclude")
             return excluded_roles
 
         except Exception as e:
@@ -1765,9 +1642,7 @@ class TemplateFinder:
             return True
         except ValueError:
             # Path is outside base_path
-            logger.warning(
-                f"Path traversal attempt detected: {resolved_path} is outside {base_path}"
-            )
+            logger.warning(f"Path traversal attempt detected: {resolved_path} is outside {base_path}")
             return False
 
     def _get_template_key(self, task: Dict[str, Any]) -> Optional[str]:
@@ -1833,9 +1708,7 @@ class TemplateFinder:
         logger.debug(f"Found {len(templates)} templates in tasks from: {file_path}")
         return templates
 
-    def _extract_template_usage(
-        self, template_data: Any, file_path: Path
-    ) -> Optional[Dict[str, Any]]:
+    def _extract_template_usage(self, template_data: Any, file_path: Path) -> Optional[Dict[str, Any]]:
         """Extract template usage information from a template task.
 
         Args:
@@ -1867,11 +1740,7 @@ class TemplateFinder:
         caller_role = _path_to_role_name(self.repo_root, file_path)
         if resolved_path is not None:
             template_role = _path_to_role_name(self.repo_root, resolved_path)
-            if (
-                caller_role is not None
-                and template_role is not None
-                and caller_role != template_role
-            ):
+            if caller_role is not None and template_role is not None and caller_role != template_role:
                 result["cross_role"] = True
                 result["caller_role"] = caller_role
                 result["template_role"] = template_role
@@ -1933,9 +1802,7 @@ class TemplateFinder:
                         if template_path.exists():
                             # Security check: ensure path is within repo root
                             if self._is_path_safe(template_path.resolve(), self.repo_root):
-                                logger.debug(
-                                    f"Found template path (role templates): {template_path}"
-                                )
+                                logger.debug(f"Found template path (role templates): {template_path}")
                                 return template_path
                             else:
                                 logger.warning(f"Path traversal attempt blocked: {template_path}")
@@ -1977,9 +1844,7 @@ class TemplateFinder:
 
         return templates
 
-    def find_templates_in_role_tasks(
-        self, role_path: Path, include_resolver: "IncludeResolver"
-    ) -> List[Dict[str, Any]]:
+    def find_templates_in_role_tasks(self, role_path: Path, include_resolver: "IncludeResolver") -> List[Dict[str, Any]]:
         """Find templates used in role task files.
 
         Scans all task files in a role and finds template module usage.
@@ -2031,9 +1896,7 @@ class TemplateFinder:
                     logger.debug(f"Found {len(file_templates)} templates in task file: {task_file}")
 
                 except Exception as e:
-                    logger.warning(
-                        f"Error scanning task file {task_file} for templates: {e}", exc_info=True
-                    )
+                    logger.warning(f"Error scanning task file {task_file} for templates: {e}", exc_info=True)
 
         logger.debug(f"Found {len(templates)} total templates in role tasks: {role_path}")
         return templates
@@ -2083,9 +1946,7 @@ class StructureBuilder:
             "statistics": self._calculate_statistics(playbooks, roles, templates, errors),
         }
 
-        logger.debug(
-            f"Structure built with {len(playbooks)} playbooks, {len(roles)} roles, {len(templates)} templates"
-        )
+        logger.debug(f"Structure built with {len(playbooks)} playbooks, {len(roles)} roles, {len(templates)} templates")
         return structure
 
     def _calculate_statistics(
@@ -2180,9 +2041,7 @@ class RoleDependencyGraph:
             self.reverse_graph[role_name] = []
 
         # Walk playbooks and roles to find cross-role dependencies
-        def walk_includes(
-            includes: List[Dict[str, Any]], caller_role: Optional[str] = None
-        ) -> None:
+        def walk_includes(includes: List[Dict[str, Any]], caller_role: Optional[str] = None) -> None:
             """Recursively walk includes to find cross-role dependencies."""
             for include in includes:
                 include_type = include.get("type")
@@ -2201,9 +2060,7 @@ class RoleDependencyGraph:
                         }
                         if edge_metadata not in self.graph[caller_role]:
                             self.graph[caller_role].append(edge_metadata)
-                            logger.debug(
-                                f"Added dependency edge: {caller_role} -> {target_role} ({include_type})"
-                            )
+                            logger.debug(f"Added dependency edge: {caller_role} -> {target_role} ({include_type})")
                         # Update reverse graph
                         if caller_role not in self.reverse_graph[target_role]:
                             self.reverse_graph[target_role].append(caller_role)
@@ -2232,11 +2089,7 @@ class RoleDependencyGraph:
 
         # Process cross-role template usage
         for template in self.structure.get("templates", []):
-            if (
-                template.get("cross_role")
-                and template.get("caller_role")
-                and template.get("template_role")
-            ):
+            if template.get("cross_role") and template.get("caller_role") and template.get("template_role"):
                 caller_role = template["caller_role"]
                 template_role = template["template_role"]
                 if caller_role != template_role:
@@ -2249,16 +2102,12 @@ class RoleDependencyGraph:
                     }
                     if edge_metadata not in self.graph[caller_role]:
                         self.graph[caller_role].append(edge_metadata)
-                        logger.debug(
-                            f"Added template dependency edge: {caller_role} -> {template_role}"
-                        )
+                        logger.debug(f"Added template dependency edge: {caller_role} -> {template_role}")
                     # Update reverse graph
                     if caller_role not in self.reverse_graph[template_role]:
                         self.reverse_graph[template_role].append(caller_role)
 
-        logger.info(
-            f"Dependency graph built: {len(self.graph)} roles, {sum(len(deps) for deps in self.graph.values())} edges"
-        )
+        logger.info(f"Dependency graph built: {len(self.graph)} roles, {sum(len(deps) for deps in self.graph.values())} edges")
         return self.graph
 
     def get_direct_dependencies(self, role_name: str) -> List[str]:
@@ -2552,9 +2401,7 @@ class ResourceAnalyzer:
         """
         self.structure = structure
         self.repo_root = repo_root
-        self.shared_resources: Dict[str, Dict[str, List[str]]] = (
-            {}
-        )  # (role_a, role_b) -> resource_type -> list
+        self.shared_resources: Dict[str, Dict[str, List[str]]] = {}  # (role_a, role_b) -> resource_type -> list
         logger.debug("ResourceAnalyzer initialized")
 
     def find_shared_templates(self, roles: List[str]) -> Dict[str, List[str]]:
@@ -2582,9 +2429,7 @@ class ResourceAnalyzer:
                     template_to_roles[template_path].append(role_name)
 
         # Filter to only shared templates (used by 2+ roles)
-        shared = {
-            tpl: roles_list for tpl, roles_list in template_to_roles.items() if len(roles_list) > 1
-        }
+        shared = {tpl: roles_list for tpl, roles_list in template_to_roles.items() if len(roles_list) > 1}
         return shared
 
     def find_shared_variables(self, roles: List[str]) -> Dict[str, List[str]]:
@@ -2615,9 +2460,7 @@ class ResourceAnalyzer:
                     # Security: Check file size to prevent DoS
                     file_size = template_file.stat().st_size
                     if file_size > MAX_TEMPLATE_SIZE:
-                        logger.debug(
-                            f"Template file too large ({file_size} bytes) for regex processing: {template_path}"
-                        )
+                        logger.debug(f"Template file too large ({file_size} bytes) for regex processing: {template_path}")
                         continue
 
                     with template_file.open("r", encoding="utf-8") as f:
@@ -2640,9 +2483,7 @@ class ResourceAnalyzer:
                 )
 
         # Filter to only shared variables (used by 2+ roles)
-        shared = {
-            var: roles_list for var, roles_list in var_to_roles.items() if len(roles_list) > 1
-        }
+        shared = {var: roles_list for var, roles_list in var_to_roles.items() if len(roles_list) > 1}
         return shared
 
     def calculate_resource_overlap(self, role_a: str, role_b: str) -> float:
@@ -2753,9 +2594,7 @@ class ResourceAnalyzer:
                     # Security: Check file size to prevent DoS
                     file_size = template_file.stat().st_size
                     if file_size > MAX_TEMPLATE_SIZE:
-                        logger.debug(
-                            f"Template file too large ({file_size} bytes) for regex processing: {template_path}"
-                        )
+                        logger.debug(f"Template file too large ({file_size} bytes) for regex processing: {template_path}")
                         continue
 
                     with template_file.open("r", encoding="utf-8") as f:
@@ -2841,14 +2680,10 @@ class UsagePatternAnalyzer:
             "playbook_roles": {pb: sorted(list(roles)) for pb, roles in playbook_roles.items()},
         }
 
-        logger.info(
-            f"Usage patterns analyzed: {len(all_roles)} roles, {len(self.role_clusters)} clusters"
-        )
+        logger.info(f"Usage patterns analyzed: {len(all_roles)} roles, {len(self.role_clusters)} clusters")
         return result
 
-    def _calculate_co_occurrence(
-        self, role_a: str, role_b: str, playbook_roles: Dict[str, Set[str]]
-    ) -> float:
+    def _calculate_co_occurrence(self, role_a: str, role_b: str, playbook_roles: Dict[str, Set[str]]) -> float:
         """Calculate co-occurrence score between two roles.
 
         Args:
@@ -3011,11 +2846,7 @@ class ComplexityAnalyzer:
         score += min(shared_resource_count * 3, 15)
 
         # Factor 5: Bidirectional coupling (0-10 points)
-        bidirectional_count = sum(
-            1
-            for dep in direct_deps
-            if self.coupling_analyzer.get_bidirectional_coupling(role_name, dep)
-        )
+        bidirectional_count = sum(1 for dep in direct_deps if self.coupling_analyzer.get_bidirectional_coupling(role_name, dep))
         score += min(bidirectional_count * 5, 10)
 
         return min(score, 100.0)
@@ -3237,22 +3068,16 @@ class MergeRecommendationEngine:
         candidates = []
 
         # Get strongly coupled pairs
-        strongly_coupled = self.coupling_analyzer.get_strongly_coupled_pairs(
-            threshold=coupling_threshold
-        )
+        strongly_coupled = self.coupling_analyzer.get_strongly_coupled_pairs(threshold=coupling_threshold)
 
         for role_a, role_b, coupling_score in strongly_coupled:
             # Calculate additional metrics
             co_occurrence = self.usage_analyzer.get_co_occurrence_score(role_a, role_b)
             merge_complexity = self.complexity_analyzer.calculate_merge_complexity(role_a, role_b)
-            refactoring_benefit = self.complexity_analyzer.calculate_refactoring_benefit(
-                role_a, role_b
-            )
+            refactoring_benefit = self.complexity_analyzer.calculate_refactoring_benefit(role_a, role_b)
 
             # Calculate confidence score
-            confidence = self._calculate_merge_confidence(
-                coupling_score, co_occurrence, merge_complexity, refactoring_benefit
-            )
+            confidence = self._calculate_merge_confidence(coupling_score, co_occurrence, merge_complexity, refactoring_benefit)
 
             if confidence >= 0.6:  # Minimum confidence threshold
                 candidates.append(
@@ -3264,9 +3089,7 @@ class MergeRecommendationEngine:
                         "co_occurrence": co_occurrence,
                         "merge_complexity": merge_complexity,
                         "refactoring_benefit": refactoring_benefit,
-                        "rationale": self._generate_merge_rationale(
-                            role_a, role_b, coupling_score, co_occurrence, merge_complexity
-                        ),
+                        "rationale": self._generate_merge_rationale(role_a, role_b, coupling_score, co_occurrence, merge_complexity),
                     }
                 )
 
@@ -3315,12 +3138,7 @@ class MergeRecommendationEngine:
         complexity_score = 1.0 - (merge_complexity / 100.0)
 
         # Weighted average
-        confidence = (
-            coupling_score * 0.4
-            + co_occurrence * 0.3
-            + complexity_score * 0.2
-            + (refactoring_benefit / 100.0) * 0.1
-        )
+        confidence = coupling_score * 0.4 + co_occurrence * 0.3 + complexity_score * 0.2 + (refactoring_benefit / 100.0) * 0.1
 
         return min(confidence, 1.0)
 
@@ -3412,9 +3230,7 @@ class ExtractionRecommendationEngine:
         self.complexity_analyzer = complexity_analyzer
         logger.debug("ExtractionRecommendationEngine initialized")
 
-    def find_extraction_candidates(
-        self, max_dependencies: int = 2, min_self_contained_score: float = 0.8
-    ) -> List[Dict[str, Any]]:
+    def find_extraction_candidates(self, max_dependencies: int = 2, min_self_contained_score: float = 0.8) -> List[Dict[str, Any]]:
         """Find roles that can be extracted.
 
         Args:
@@ -3436,18 +3252,14 @@ class ExtractionRecommendationEngine:
                 continue
 
             # Check extraction complexity
-            extraction_complexity = self.complexity_analyzer.calculate_extraction_complexity(
-                role_name
-            )
+            extraction_complexity = self.complexity_analyzer.calculate_extraction_complexity(role_name)
 
             # Calculate self-contained score (simplified)
             dependents = self.dependency_graph.get_dependents(role_name)
             self_contained_score = 1.0 - (len(dependents) * 0.1)  # Penalize if many dependents
 
             if extraction_complexity <= 30 and self_contained_score >= min_self_contained_score:
-                confidence = self._calculate_extraction_confidence(
-                    extraction_complexity, len(direct_deps), self_contained_score
-                )
+                confidence = self._calculate_extraction_confidence(extraction_complexity, len(direct_deps), self_contained_score)
 
                 candidates.append(
                     {
@@ -3457,9 +3269,7 @@ class ExtractionRecommendationEngine:
                         "dependency_count": len(direct_deps),
                         "dependent_count": len(dependents),
                         "self_contained_score": self_contained_score,
-                        "rationale": self._generate_extraction_rationale(
-                            role_name, extraction_complexity, len(direct_deps), len(dependents)
-                        ),
+                        "rationale": self._generate_extraction_rationale(role_name, extraction_complexity, len(direct_deps), len(dependents)),
                     }
                 )
 
@@ -3469,9 +3279,7 @@ class ExtractionRecommendationEngine:
         logger.info(f"Found {len(candidates)} extraction candidates")
         return candidates
 
-    def _calculate_extraction_confidence(
-        self, extraction_complexity: float, dependency_count: int, self_contained_score: float
-    ) -> float:
+    def _calculate_extraction_confidence(self, extraction_complexity: float, dependency_count: int, self_contained_score: float) -> float:
         """Calculate confidence score for extraction recommendation.
 
         Args:
@@ -3493,9 +3301,7 @@ class ExtractionRecommendationEngine:
 
         return min(confidence, 1.0)
 
-    def _generate_extraction_rationale(
-        self, role_name: str, complexity: float, dep_count: int, dependent_count: int
-    ) -> str:
+    def _generate_extraction_rationale(self, role_name: str, complexity: float, dep_count: int, dependent_count: int) -> str:
         """Generate rationale for extraction recommendation.
 
         Args:
@@ -3534,9 +3340,7 @@ class OutputGenerator:
         self.output_dir = output_dir
         logger.debug(f"OutputGenerator initialized with output_dir: {output_dir}")
 
-    def generate_json(
-        self, structure: Dict[str, Any], filename: str = "ansible_structure.json"
-    ) -> Path:
+    def generate_json(self, structure: Dict[str, Any], filename: str = "ansible_structure.json") -> Path:
         """Generate JSON output file.
 
         Args:
@@ -3619,9 +3423,7 @@ class OutputGenerator:
                         f.write(f"#### Includes ({len(includes)} items)\n\n")
                         self._write_includes_markdown(f, includes, indent=0)
                     if include_diagrams and diagram_scope in ("per_playbook", "both"):
-                        pb_diagram = self.generate_playbook_mermaid_diagram(
-                            pb, simplify_labels=True, layout="TD"
-                        )
+                        pb_diagram = self.generate_playbook_mermaid_diagram(pb, simplify_labels=True, layout="TD")
                         if pb_diagram:
                             logger.debug(f"Emitting per-playbook diagram for {pb.get('file')}")
                             f.write("\n#### Execution flow\n\n")
@@ -3629,9 +3431,7 @@ class OutputGenerator:
                             f.write(pb_diagram)
                             f.write("\n```\n\n")
                         else:
-                            logger.debug(
-                                f"Skipping per-playbook diagram for {pb.get('file')}: no includes"
-                            )
+                            logger.debug(f"Skipping per-playbook diagram for {pb.get('file')}: no includes")
                     f.write("\n")
 
                 # Roles
@@ -3653,11 +3453,7 @@ class OutputGenerator:
                     template_file = template.get("template", "N/A")
                     used_in = template.get("used_in", "N/A")
                     cross_role = ""
-                    if (
-                        template.get("cross_role")
-                        and template.get("caller_role")
-                        and template.get("template_role")
-                    ):
+                    if template.get("cross_role") and template.get("caller_role") and template.get("template_role"):
                         cross_role = f"{template['caller_role']} -> {template['template_role']}"
                     else:
                         cross_role = "-"
@@ -3675,9 +3471,7 @@ class OutputGenerator:
                     error_breakdown = stats.get("error_breakdown", {})
                     if error_breakdown:
                         f.write("### Error Breakdown by Type\n\n")
-                        for error_type, count in sorted(
-                            error_breakdown.items(), key=lambda x: x[1], reverse=True
-                        ):
+                        for error_type, count in sorted(error_breakdown.items(), key=lambda x: x[1], reverse=True):
                             f.write(f"- **{error_type}**: {count}\n")
                         f.write("\n")
 
@@ -3711,9 +3505,7 @@ class OutputGenerator:
                         f.write("\n")
 
                 # Cross-role summary
-                task_includes, role_includes, template_usage = self._collect_cross_role_summary(
-                    structure
-                )
+                task_includes, role_includes, template_usage = self._collect_cross_role_summary(structure)
                 if task_includes or role_includes or template_usage:
                     f.write("## Cross-role summary\n\n")
                     if task_includes:
@@ -3729,9 +3521,7 @@ class OutputGenerator:
                     if template_usage:
                         f.write("### Cross-role template usage\n\n")
                         for caller, t_role, t_path, used_in in template_usage:
-                            f.write(
-                                f"- {caller} -> {t_role}: template `{t_path}` (used in {used_in})\n"
-                            )
+                            f.write(f"- {caller} -> {t_role}: template `{t_path}` (used in {used_in})\n")
                         f.write("\n")
 
                 # Dependency Graph Visualization (Mermaid) - only when scope allows
@@ -3740,9 +3530,7 @@ class OutputGenerator:
                     if dependency_graph.get("nodes"):
                         logger.debug("Emitting global role dependency graph")
                         f.write("## Role Dependency Graph\n\n")
-                        f.write(
-                            "The following diagram shows the dependency relationships between roles:\n\n"
-                        )
+                        f.write("The following diagram shows the dependency relationships between roles:\n\n")
                         mermaid_diagram = self.generate_mermaid_diagram(
                             structure,
                             highlight_merge_candidates=True,
@@ -3796,9 +3584,7 @@ class OutputGenerator:
                 f.write("| Role A | Role B | Coupling Score |\n")
                 f.write("|--------|--------|----------------|\n")
                 for pair in strongly_coupled[:20]:  # Limit to top 20
-                    f.write(
-                        f"| {pair.get('role_a', '')} | {pair.get('role_b', '')} | {pair.get('score', 0.0):.2f} |\n"
-                    )
+                    f.write(f"| {pair.get('role_a', '')} | {pair.get('role_b', '')} | {pair.get('score', 0.0):.2f} |\n")
                 f.write("\n")
 
         # Shared Resources
@@ -3837,9 +3623,7 @@ class OutputGenerator:
                 f.write("### Role Usage Frequency\n\n")
                 f.write("| Role | Playbook Count |\n")
                 f.write("|------|----------------|\n")
-                sorted_roles = sorted(usage_frequency.items(), key=lambda x: x[1], reverse=True)[
-                    :20
-                ]  # Top 20
+                sorted_roles = sorted(usage_frequency.items(), key=lambda x: x[1], reverse=True)[:20]  # Top 20
                 for role_name, count in sorted_roles:
                     f.write(f"| {role_name} | {count} |\n")
                 f.write("\n")
@@ -3854,18 +3638,12 @@ class OutputGenerator:
                 f.write("### Extraction Complexity Scores\n\n")
                 f.write("| Role | Complexity Score |\n")
                 f.write("|------|------------------|\n")
-                sorted_extraction = sorted(
-                    extraction_complexity.items(), key=lambda x: x[1], reverse=True
-                )[
-                    :20
-                ]  # Top 20 hardest to extract
+                sorted_extraction = sorted(extraction_complexity.items(), key=lambda x: x[1], reverse=True)[:20]  # Top 20 hardest to extract
                 for role_name, score in sorted_extraction:
                     f.write(f"| {role_name} | {score:.1f} |\n")
                 f.write("\n")
 
-                f.write(
-                    "*Lower scores indicate roles that are easier to extract into separate repositories.*\n\n"
-                )
+                f.write("*Lower scores indicate roles that are easier to extract into separate repositories.*\n\n")
 
     def generate_csv(self, structure: Dict[str, Any]) -> List[Path]:
         """Generate CSV output files for analysis.
@@ -3950,9 +3728,7 @@ class OutputGenerator:
 
             roles = structure.get("roles", [])
             dependency_graph_data = structure.get("dependency_graph", {})
-            complexity_scores = structure.get("complexity_scores", {}).get(
-                "extraction_complexity", {}
-            )
+            complexity_scores = structure.get("complexity_scores", {}).get("extraction_complexity", {})
 
             # Build reverse dependency map
             reverse_deps: Dict[str, int] = {}
@@ -3963,9 +3739,7 @@ class OutputGenerator:
 
             for role in roles:
                 role_name = role.get("name", "")
-                role_deps = [
-                    e for e in dependency_graph_data.get("edges", []) if e.get("from") == role_name
-                ]
+                role_deps = [e for e in dependency_graph_data.get("edges", []) if e.get("from") == role_name]
                 writer.writerow(
                     [
                         role_name,
@@ -4261,9 +4035,7 @@ class OutputGenerator:
         if merge_candidates:
             lines.append("    classDef mergeCandidate fill:#90EE90,stroke:#006400,stroke-width:2px")
         if extraction_candidates:
-            lines.append(
-                "    classDef extractCandidate fill:#FFE4B5,stroke:#FF8C00,stroke-width:2px"
-            )
+            lines.append("    classDef extractCandidate fill:#FFE4B5,stroke:#FF8C00,stroke-width:2px")
 
         # Add nodes
         for node in nodes:
@@ -4343,25 +4115,17 @@ class OutputGenerator:
             merge_node_ids = [node_ids[n] for n in merge_candidates if n in node_ids]
             if merge_node_ids:
                 lines.append(f"    class {','.join(merge_node_ids)} mergeCandidate")
-                logger.debug(
-                    f"Applied mergeCandidate class to {len(merge_node_ids)} nodes: {list(merge_candidates)}"
-                )
+                logger.debug(f"Applied mergeCandidate class to {len(merge_node_ids)} nodes: {list(merge_candidates)}")
             else:
-                logger.debug(
-                    f"No merge candidates found in node list (candidates: {list(merge_candidates)})"
-                )
+                logger.debug(f"No merge candidates found in node list (candidates: {list(merge_candidates)})")
 
         if extraction_candidates:
             extract_node_ids = [node_ids[n] for n in extraction_candidates if n in node_ids]
             if extract_node_ids:
                 lines.append(f"    class {','.join(extract_node_ids)} extractCandidate")
-                logger.debug(
-                    f"Applied extractCandidate class to {len(extract_node_ids)} nodes: {list(extraction_candidates)}"
-                )
+                logger.debug(f"Applied extractCandidate class to {len(extract_node_ids)} nodes: {list(extraction_candidates)}")
             else:
-                logger.debug(
-                    f"No extraction candidates found in node list (candidates: {list(extraction_candidates)})"
-                )
+                logger.debug(f"No extraction candidates found in node list (candidates: {list(extraction_candidates)})")
 
         return "\n".join(lines)
 
@@ -4535,36 +4299,28 @@ class OutputGenerator:
                 role_name = include.get("name", "N/A")
                 resolved = include.get("resolved", False)
                 status = "✓" if resolved else "✗"
-                f.write(
-                    f"{indent_prefix}- {status} **Role**: `{role_name}`{loop_suffix}{cross_note}\n"
-                )
+                f.write(f"{indent_prefix}- {status} **Role**: `{role_name}`{loop_suffix}{cross_note}\n")
                 if include.get("path"):
                     f.write(f"{indent_prefix}  - Path: `{include.get('path')}`\n")
             elif include_type in ["include_tasks", "import_tasks"]:
                 ref = include.get("ref", "N/A")
                 resolved = include.get("resolved", False)
                 status = "✓" if resolved else "✗"
-                f.write(
-                    f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}{cross_note}\n"
-                )
+                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}{cross_note}\n")
                 if include.get("path"):
                     f.write(f"{indent_prefix}  - Path: `{include.get('path')}`\n")
             elif include_type in ["include_role", "import_role"]:
                 ref = include.get("ref", include.get("name", "N/A"))
                 resolved = include.get("resolved", False)
                 status = "✓" if resolved else "✗"
-                f.write(
-                    f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}{cross_note}\n"
-                )
+                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}{cross_note}\n")
                 if include.get("path"):
                     f.write(f"{indent_prefix}  - Path: `{include.get('path')}`\n")
             else:
                 ref = include.get("ref", str(include))
                 resolved = include.get("resolved", False)
                 status = "✓" if resolved else "✗"
-                f.write(
-                    f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}{cross_note}\n"
-                )
+                f.write(f"{indent_prefix}- {status} **{include_type}**: `{ref}`{loop_suffix}{cross_note}\n")
 
             # Write nested includes
             nested_includes = include.get("includes", [])
@@ -4646,9 +4402,7 @@ class AnsibleStructureAnalyzer:
         logger.info(f"Starting standard analysis of {len(playbook_files)} playbook file(s)")
         if not playbook_files:
             logger.warning("No playbook files found")
-            return self.structure_builder.build_structure(
-                [], [], [], self.error_collector.get_errors()
-            )
+            return self.structure_builder.build_structure([], [], [], self.error_collector.get_errors())
 
         # Analyze each playbook
         playbooks = []
@@ -4696,10 +4450,7 @@ class AnsibleStructureAnalyzer:
         coupling_analyzer = CouplingAnalyzer(dependency_graph, structure)
         coupling_matrix = coupling_analyzer.calculate_coupling_matrix()
         structure["coupling_matrix"] = coupling_matrix
-        structure["strongly_coupled_pairs"] = [
-            {"role_a": a, "role_b": b, "score": score}
-            for a, b, score in coupling_analyzer.get_strongly_coupled_pairs(threshold=0.7)
-        ]
+        structure["strongly_coupled_pairs"] = [{"role_a": a, "role_b": b, "score": score} for a, b, score in coupling_analyzer.get_strongly_coupled_pairs(threshold=0.7)]
 
         # Analyze shared resources
         resource_analyzer = ResourceAnalyzer(structure, self.repo_root)
@@ -4712,9 +4463,7 @@ class AnsibleStructureAnalyzer:
         structure["usage_patterns"] = usage_patterns
 
         # Calculate complexity scores
-        complexity_analyzer = ComplexityAnalyzer(
-            dependency_graph, coupling_analyzer, resource_analyzer
-        )
+        complexity_analyzer = ComplexityAnalyzer(dependency_graph, coupling_analyzer, resource_analyzer)
         complexity_scores = complexity_analyzer.analyze_all_complexities()
         structure["complexity_scores"] = complexity_scores
 
@@ -4730,9 +4479,7 @@ class AnsibleStructureAnalyzer:
         structure["merge_recommendations"] = merge_candidates
 
         # Generate extraction recommendations
-        extraction_engine = ExtractionRecommendationEngine(
-            dependency_graph, resource_analyzer, complexity_analyzer
-        )
+        extraction_engine = ExtractionRecommendationEngine(dependency_graph, resource_analyzer, complexity_analyzer)
         extraction_candidates = extraction_engine.find_extraction_candidates()
         structure["extraction_recommendations"] = extraction_candidates
 
@@ -4757,10 +4504,7 @@ class AnsibleStructureAnalyzer:
         Returns:
             Dictionary containing complete structure analysis
         """
-        logger.info(
-            f"Processing {len(playbook_files)} playbooks in batches of {batch_size} "
-            f"(parallel={parallel}, max_workers={max_workers})"
-        )
+        logger.info(f"Processing {len(playbook_files)} playbooks in batches of {batch_size} " f"(parallel={parallel}, max_workers={max_workers})")
 
         all_playbooks = []
         all_roles: Dict[str, Dict[str, Any]] = {}  # Dict[str, Dict] - role name -> role data
@@ -4771,9 +4515,7 @@ class AnsibleStructureAnalyzer:
         for i in range(0, total, batch_size):
             batch = playbook_files[i : i + batch_size]
             batch_num = i // batch_size + 1
-            logger.info(
-                f"Processing batch {batch_num} ({i + 1}-{min(i + batch_size, total)}/{total})"
-            )
+            logger.info(f"Processing batch {batch_num} ({i + 1}-{min(i + batch_size, total)}/{total})")
 
             batch_results = self._process_batch(batch, parallel, max_workers)
 
@@ -4814,10 +4556,7 @@ class AnsibleStructureAnalyzer:
         coupling_analyzer = CouplingAnalyzer(dependency_graph, structure)
         coupling_matrix = coupling_analyzer.calculate_coupling_matrix()
         structure["coupling_matrix"] = coupling_matrix
-        structure["strongly_coupled_pairs"] = [
-            {"role_a": a, "role_b": b, "score": score}
-            for a, b, score in coupling_analyzer.get_strongly_coupled_pairs(threshold=0.7)
-        ]
+        structure["strongly_coupled_pairs"] = [{"role_a": a, "role_b": b, "score": score} for a, b, score in coupling_analyzer.get_strongly_coupled_pairs(threshold=0.7)]
 
         # Analyze shared resources
         resource_analyzer = ResourceAnalyzer(structure, self.repo_root)
@@ -4830,9 +4569,7 @@ class AnsibleStructureAnalyzer:
         structure["usage_patterns"] = usage_patterns
 
         # Calculate complexity scores
-        complexity_analyzer = ComplexityAnalyzer(
-            dependency_graph, coupling_analyzer, resource_analyzer
-        )
+        complexity_analyzer = ComplexityAnalyzer(dependency_graph, coupling_analyzer, resource_analyzer)
         complexity_scores = complexity_analyzer.analyze_all_complexities()
         structure["complexity_scores"] = complexity_scores
 
@@ -4848,9 +4585,7 @@ class AnsibleStructureAnalyzer:
         structure["merge_recommendations"] = merge_candidates
 
         # Generate extraction recommendations
-        extraction_engine = ExtractionRecommendationEngine(
-            dependency_graph, resource_analyzer, complexity_analyzer
-        )
+        extraction_engine = ExtractionRecommendationEngine(dependency_graph, resource_analyzer, complexity_analyzer)
         extraction_candidates = extraction_engine.find_extraction_candidates()
         structure["extraction_recommendations"] = extraction_candidates
 
@@ -4858,9 +4593,7 @@ class AnsibleStructureAnalyzer:
         return structure
 
     @staticmethod
-    def get_merge_candidates(
-        structure: Dict[str, Any], min_confidence: float = 0.7
-    ) -> List[Dict[str, Any]]:
+    def get_merge_candidates(structure: Dict[str, Any], min_confidence: float = 0.7) -> List[Dict[str, Any]]:
         """Get merge candidate recommendations from analyzed structure.
 
         Args:
@@ -4871,16 +4604,10 @@ class AnsibleStructureAnalyzer:
             List of merge candidate dictionaries with role_a, role_b, score
         """
         strongly_coupled = structure.get("strongly_coupled_pairs", [])
-        return [
-            {"role_a": pair["role_a"], "role_b": pair["role_b"], "score": pair["score"]}
-            for pair in strongly_coupled
-            if pair.get("score", 0.0) >= min_confidence
-        ]
+        return [{"role_a": pair["role_a"], "role_b": pair["role_b"], "score": pair["score"]} for pair in strongly_coupled if pair.get("score", 0.0) >= min_confidence]
 
     @staticmethod
-    def get_extraction_candidates(
-        structure: Dict[str, Any], max_complexity: float = 30.0
-    ) -> List[Dict[str, Any]]:
+    def get_extraction_candidates(structure: Dict[str, Any], max_complexity: float = 30.0) -> List[Dict[str, Any]]:
         """Get extraction candidate recommendations from analyzed structure.
 
         Args:
@@ -4947,9 +4674,7 @@ class AnsibleStructureAnalyzer:
             "direct_dependencies": dep_graph.get_direct_dependencies(role_name),
             "indirect_dependencies": dep_graph.get_indirect_dependencies(role_name),
             "dependents": dep_graph.get_dependents(role_name),
-            "extraction_complexity": complexity_scores.get("extraction_complexity", {}).get(
-                role_name, 0.0
-            ),
+            "extraction_complexity": complexity_scores.get("extraction_complexity", {}).get(role_name, 0.0),
             "usage_frequency": usage_patterns.get("usage_frequency", {}).get(role_name, 0),
         }
 
@@ -4992,9 +4717,7 @@ class AnsibleStructureAnalyzer:
             "templates": templates,
         }
 
-    def _process_batch(
-        self, batch: List[Path], parallel: bool, max_workers: int
-    ) -> List[Dict[str, Any]]:
+    def _process_batch(self, batch: List[Path], parallel: bool, max_workers: int) -> List[Dict[str, Any]]:
         """Process a batch of playbooks, optionally in parallel.
 
         Args:
@@ -5062,24 +4785,16 @@ class AnsibleStructureAnalyzer:
                         role_path = self.include_resolver._find_role_path(role_name)
                         if role_path:
                             # Scan role templates directory for .j2 files
-                            role_template_files = self.template_finder.scan_role_templates(
-                                role_path
-                            )
+                            role_template_files = self.template_finder.scan_role_templates(role_path)
                             # Find templates used in role task files
-                            role_task_templates = self.template_finder.find_templates_in_role_tasks(
-                                role_path, self.include_resolver
-                            )
+                            role_task_templates = self.template_finder.find_templates_in_role_tasks(role_path, self.include_resolver)
                             # Collect templates from role tasks
                             all_templates.extend(role_task_templates)
-                            logger.debug(
-                                f"Found {len(role_task_templates)} templates in role {role_name} tasks"
-                            )
+                            logger.debug(f"Found {len(role_task_templates)} templates in role {role_name} tasks")
                             all_roles[role_name] = {
                                 "name": role_name,
                                 "path": str(role_path.relative_to(self.repo_root)),
-                                "templates": [
-                                    str(t.relative_to(self.repo_root)) for t in role_template_files
-                                ],
+                                "templates": [str(t.relative_to(self.repo_root)) for t in role_template_files],
                                 "includes": include.get("includes", []),
                             }
                             # Process nested includes
@@ -5208,9 +4923,7 @@ def main(
     if log_dir.exists():
         # Use st_ctime (creation time) for cross-platform compatibility
         # st_mtime can have timezone issues on Windows
-        log_files = sorted(
-            log_dir.glob(f"{script_name}_*.log"), key=lambda p: p.stat().st_ctime, reverse=True
-        )
+        log_files = sorted(log_dir.glob(f"{script_name}_*.log"), key=lambda p: p.stat().st_ctime, reverse=True)
         if log_files:
             console.print(f"[dim]Log file: {log_files[0]}[/dim]")
 
@@ -5231,12 +4944,8 @@ def main(
 
     # Validate resolved path
     if not resolved_input_path.exists():
-        logger.error(
-            f"Input path not found: {input_path} (tried: {Path.cwd() / input_path}, {Path(repo_root) / input_path})"
-        )
-        raise FileNotFoundError(
-            f"Input path '{input_path}' not found. Tried relative to current directory and repo-root."
-        )
+        logger.error(f"Input path not found: {input_path} (tried: {Path.cwd() / input_path}, {Path(repo_root) / input_path})")
+        raise FileNotFoundError(f"Input path '{input_path}' not found. Tried relative to current directory and repo-root.")
 
     # Security: Validate that input path is within repo root (for whole-repo mode)
     try:
@@ -5289,9 +4998,7 @@ def main(
 
             if output_format in ["markdown", "both", "all"]:
                 md_filename = f"{base_name}_structure.md"
-                scope_value: Literal["per_playbook", "global", "both"] = (
-                    "per_playbook" if diagram_scope == "per-playbook" else diagram_scope
-                )
+                scope_value: Literal["per_playbook", "global", "both"] = "per_playbook" if diagram_scope == "per-playbook" else diagram_scope
                 md_path = output_gen.generate_markdown(
                     structure,
                     filename=md_filename,
@@ -5302,9 +5009,7 @@ def main(
 
             if output_format in ["csv", "all"]:
                 csv_files = output_gen.generate_csv(structure)
-                console.print(
-                    f"[bold green]CSV output saved ({len(csv_files)} files):[/bold green]"
-                )
+                console.print(f"[bold green]CSV output saved ({len(csv_files)} files):[/bold green]")
                 for csv_file in csv_files:
                     console.print(f"  - {csv_file}")
 
@@ -5332,9 +5037,7 @@ def main(
                 error_breakdown = stats.get("error_breakdown", {})
                 if error_breakdown:
                     console.print("\n[bold yellow]Error Breakdown:[/bold yellow]")
-                    for error_type, count in sorted(
-                        error_breakdown.items(), key=lambda x: x[1], reverse=True
-                    ):
+                    for error_type, count in sorted(error_breakdown.items(), key=lambda x: x[1], reverse=True):
                         console.print(f"  {error_type}: {count}")
 
                 # Show top errors
@@ -5347,16 +5050,12 @@ def main(
                 # Show missing roles summary
                 missing_roles = stats.get("missing_roles", [])
                 if missing_roles:
-                    console.print(
-                        f"\n[bold yellow]Missing Roles ({len(missing_roles)} unique):[/bold yellow]"
-                    )
+                    console.print(f"\n[bold yellow]Missing Roles ({len(missing_roles)} unique):[/bold yellow]")
                     # Show first 10 missing roles
                     for role in missing_roles[:10]:
                         console.print(f"  - {role}")
                     if len(missing_roles) > 10:
-                        console.print(
-                            f"  ... and {len(missing_roles) - 10} more (see JSON/Markdown output for full list)"
-                        )
+                        console.print(f"  ... and {len(missing_roles) - 10} more (see JSON/Markdown output for full list)")
 
     except Exception as e:
         logger.error(f"An error occurred during analysis: {e}", exc_info=True)

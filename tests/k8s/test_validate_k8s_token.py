@@ -100,9 +100,7 @@ class TestValidateK8sToken(unittest.TestCase):
 
         mock_auth_v1 = MagicMock()
         mock_auth_v1.create_token_review.side_effect = ApiException(status=403, reason="Forbidden")
-        with patch(
-            "pyplayground.k8s.validate_k8s_token.get_service_account_jwt", return_value="fake-jwt"
-        ):
+        with patch("pyplayground.k8s.validate_k8s_token.get_service_account_jwt", return_value="fake-jwt"):
             mock_k8s_client.AuthenticationV1Api.return_value = mock_auth_v1
             runner = CliRunner()
 

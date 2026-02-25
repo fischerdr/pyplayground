@@ -71,14 +71,10 @@ def check_vault_secret_status(
     vault_namespace: Optional[str] = None,
 ) -> tuple[str, Optional[Dict[str, Any]]]:
     """Checks for a secret in Vault and returns its status and data."""
-    logger.debug(
-        f"Checking Vault for secret at path '{secret_path}' in mount '{mount_point}' (namespace: {vault_namespace or 'root'})."
-    )
+    logger.debug(f"Checking Vault for secret at path '{secret_path}' in mount '{mount_point}' (namespace: {vault_namespace or 'root'}).")
 
     try:
-        vault_client = create_vault_client(
-            url=vault_addr, token=vault_token, namespace=vault_namespace
-        )
+        vault_client = create_vault_client(url=vault_addr, token=vault_token, namespace=vault_namespace)
         secret_data = get_secret(vault_client, secret_path, mount_point=mount_point)
 
         if secret_data is None:
@@ -122,9 +118,7 @@ def _process_single_pvc(
     if not pvc_info["vault_namespace"]:
         pvc_info["status"] = "[red]No Vault Namespace Annotation[/red]"
     else:
-        vault_token = get_token_for_namespace(
-            pvc_info["vault_namespace"], vault_tokens, vault_conn_info, sa_jwt
-        )
+        vault_token = get_token_for_namespace(pvc_info["vault_namespace"], vault_tokens, vault_conn_info, sa_jwt)
         if vault_token:
             pvc_info["status"], pvc_info["secret_data"] = check_vault_secret_status(
                 vault_conn_info["addr"],
@@ -157,9 +151,7 @@ def process_pvc_vault_checks(core_v1, storage_v1, px_namespace):
     """Gathers PVCs, checks vault secrets, fetches labels, and returns results."""
     init_result = _initialize_check_environment(core_v1, px_namespace)
     if not init_result:
-        console.print(
-            "[bold red]Failed to initialize check environment. Check logs for details.[/bold red]"
-        )
+        console.print("[bold red]Failed to initialize check environment. Check logs for details.[/bold red]")
         sys.exit(1)
     vault_conn_info, sa_jwt, px_pod, effective_env_vars = init_result
 

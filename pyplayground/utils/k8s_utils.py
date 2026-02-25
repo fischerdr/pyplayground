@@ -86,9 +86,7 @@ def load_kube_config_auto(
     try:
         # Try loading from file first
         config.load_kube_config(config_file=config_file, context=context)
-        logger.info(
-            f"Loaded kubeconfig from file/context (file='{config_file}', context='{context}')."
-        )
+        logger.info(f"Loaded kubeconfig from file/context (file='{config_file}', context='{context}').")
         loaded = True
     except config.ConfigException:
         logger.debug("Could not load kubeconfig from file, attempting in-cluster config.")
@@ -98,9 +96,7 @@ def load_kube_config_auto(
             logger.info("Loaded in-cluster kubeconfig.")
             loaded = True
         except config.ConfigException:
-            logger.error(
-                "Could not load Kubernetes configuration (neither from file/context nor in-cluster)."
-            )
+            logger.error("Could not load Kubernetes configuration (neither from file/context nor in-cluster).")
             loaded = False
     except Exception as e:
         logger.error(f"An unexpected error occurred during kubeconfig loading: {e}")
@@ -114,16 +110,11 @@ def load_kube_config_auto(
         configuration.verify_ssl = verify_ssl
         if not verify_ssl:
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            logger.warning(
-                "SSL verification is disabled for Kubernetes client. "
-                "This is not recommended for production."
-            )
+            logger.warning("SSL verification is disabled for Kubernetes client. " "This is not recommended for production.")
 
         if ssl_ca_cert:
             if not verify_ssl:
-                logger.warning(
-                    "`ssl_ca_cert` is provided but `verify_ssl` is False. The CA will not be used."
-                )
+                logger.warning("`ssl_ca_cert` is provided but `verify_ssl` is False. The CA will not be used.")
             else:
                 configuration.ssl_ca_cert = ssl_ca_cert
                 logger.info(f"Using custom CA for Kubernetes client from: {ssl_ca_cert}")
@@ -169,9 +160,7 @@ def get_custom_objects_api() -> client.CustomObjectsApi:
         raise
 
 
-def get_machine_for_node(
-    node_name: str, crd_client: Optional[client.CustomObjectsApi] = None
-) -> Optional[Dict[str, Any]]:
+def get_machine_for_node(node_name: str, crd_client: Optional[client.CustomObjectsApi] = None) -> Optional[Dict[str, Any]]:
     """Query Kubernetes for the Machine object associated with a Node.
 
     Args:
@@ -185,17 +174,13 @@ def get_machine_for_node(
         crd_client = client.CustomObjectsApi()
 
     try:
-        machines = crd_client.list_cluster_custom_object(
-            group="machine.openshift.io", version="v1beta1", plural="machines"
-        )
+        machines = crd_client.list_cluster_custom_object(group="machine.openshift.io", version="v1beta1", plural="machines")
 
         for machine in machines["items"]:
             # Type cast: machines["items"] is Any due to incomplete kubernetes type stubs
             machine_dict = cast(Dict[str, Any], machine)
             if machine_dict["status"]["nodeRef"]["name"] == node_name:
-                logger.info(
-                    f"Found Machine {machine_dict['metadata']['name']} for Node {node_name}"
-                )
+                logger.info(f"Found Machine {machine_dict['metadata']['name']} for Node {node_name}")
                 return machine_dict
         logger.warning(f"No Machine found for Node {node_name}. This might be UPI.")
         return None
@@ -204,9 +189,7 @@ def get_machine_for_node(
         return None
 
 
-def get_machineset_for_machine(
-    machine: Dict[str, Any], crd_client: Optional[client.CustomObjectsApi] = None
-) -> Optional[Dict[str, Any]]:
+def get_machineset_for_machine(machine: Dict[str, Any], crd_client: Optional[client.CustomObjectsApi] = None) -> Optional[Dict[str, Any]]:
     """Query Kubernetes for the MachineSet associated with a Machine.
 
     Args:
@@ -220,25 +203,19 @@ def get_machineset_for_machine(
         crd_client = client.CustomObjectsApi()
 
     try:
-        machinesets = crd_client.list_cluster_custom_object(
-            group="machine.openshift.io", version="v1beta1", plural="machinesets"
-        )
+        machinesets = crd_client.list_cluster_custom_object(group="machine.openshift.io", version="v1beta1", plural="machinesets")
 
         machine_name = machine["metadata"]["name"]
         for ms in machinesets["items"]:
             # Type cast: machinesets["items"] is Any due to incomplete kubernetes type stubs
             ms_dict = cast(Dict[str, Any], ms)
             if ms_dict["metadata"]["name"] in machine_name:
-                logger.info(
-                    f"Found MachineSet {ms_dict['metadata']['name']} for Machine {machine_name}"
-                )
+                logger.info(f"Found MachineSet {ms_dict['metadata']['name']} for Machine {machine_name}")
                 return ms_dict
         logger.warning(f"No MachineSet found for Machine {machine_name}.")
         return None
     except Exception as e:
-        logger.error(
-            f"Error fetching MachineSet for Machine {machine['metadata'].get('name', 'unknown')}: {e}"
-        )
+        logger.error(f"Error fetching MachineSet for Machine {machine['metadata'].get('name', 'unknown')}: {e}")
         return None
 
 
@@ -321,16 +298,12 @@ def exec_pod_command(
             exit_code = resp.returncode if resp.returncode is not None else -1
 
     if exit_code != 0:
-        logger.error(
-            f"Command in pod '{pod_name}' failed with exit code {exit_code}. Stderr: {stderr_data.strip()}"
-        )
+        logger.error(f"Command in pod '{pod_name}' failed with exit code {exit_code}. Stderr: {stderr_data.strip()}")
 
     return exit_code, stdout_data, stderr_data
 
 
-def wait_for_pod_readiness(
-    pod_name: str, namespace: str, timeout: int = 420, v1_client: Optional[client.CoreV1Api] = None
-) -> bool:
+def wait_for_pod_readiness(pod_name: str, namespace: str, timeout: int = 420, v1_client: Optional[client.CoreV1Api] = None) -> bool:
     """Wait for a pod to be ready (1/1) with a timeout.
 
     Args:
@@ -360,9 +333,7 @@ def wait_for_pod_readiness(
             return False
 
         elapsed_time += interval
-        logger.debug(
-            f"Waiting for pod {pod_name} to be ready... ({elapsed_time}/{timeout} seconds elapsed)"
-        )
+        logger.debug(f"Waiting for pod {pod_name} to be ready... ({elapsed_time}/{timeout} seconds elapsed)")
         time.sleep(interval)
 
     logger.warning(f"Timeout reached: Pod {pod_name} is not ready after {timeout} seconds.")
@@ -398,9 +369,7 @@ def extract_cluster_name_from_api_url(api_url: str) -> str:
         return "unknown-cluster"
 
 
-def _extract_node_info_from_machine(
-    machine: Dict[str, Any], machineset_name: str, machineset_labels: Dict[str, str]
-) -> Optional[Tuple[str, Dict[str, str]]]:
+def _extract_node_info_from_machine(machine: Dict[str, Any], machineset_name: str, machineset_labels: Dict[str, str]) -> Optional[Tuple[str, Dict[str, str]]]:
     """Process a single machine object to extract node info if it matches the machineset.
 
     Helper function for get_nodes_from_machineset_specific that processes a Machine
@@ -425,9 +394,7 @@ def _extract_node_info_from_machine(
     if machineset_name in machine_name and machine_status:
         node_name = machine_status.get("nodeRef", {}).get("name")
         if node_name:
-            logger.info(
-                f"Associated node {node_name} with MachineSet {machineset_name} via Machine {machine_name}"
-            )
+            logger.info(f"Associated node {node_name} with MachineSet {machineset_name} via Machine {machine_name}")
             # Return node name and a copy of the machineset labels
             return node_name, machineset_labels.copy()
     return None
@@ -514,9 +481,7 @@ def get_kubeconfig_from_vault(  # noqa: C901
 
     # Extract Vault path from inventory data
     try:
-        vault_config = inventory_data["kubernetes_platform"]["secrets_management"][
-            "platform_vault"
-        ][0]
+        vault_config = inventory_data["kubernetes_platform"]["secrets_management"]["platform_vault"][0]
         vault_url = vault_config["address"]
         vault_namespace = vault_config["namespace"]
         raw_path = vault_config["default_path"]
@@ -535,9 +500,7 @@ def get_kubeconfig_from_vault(  # noqa: C901
 
     # Create Vault client and get kubeconfig
     logger.debug("Creating Vault client")
-    vault_client = create_vault_client(
-        url=vault_url if vault_url else None, token=vault_token, namespace=vault_namespace
-    )
+    vault_client = create_vault_client(url=vault_url if vault_url else None, token=vault_token, namespace=vault_namespace)
     try:
         secret = get_secret(vault_client, vault_path, mount_point=vault_mount)
         if not secret:
@@ -597,11 +560,7 @@ def get_nodes_from_machineset_specific(  # noqa: C901
 
         # Find the specific MachineSet object by name
         machineset = next(
-            (
-                ms
-                for ms in machinesets.get("items", [])
-                if ms.get("metadata", {}).get("name") == machineset_name
-            ),
+            (ms for ms in machinesets.get("items", []) if ms.get("metadata", {}).get("name") == machineset_name),
             None,
         )
 
@@ -615,16 +574,12 @@ def get_nodes_from_machineset_specific(  # noqa: C901
         ms_labels = machineset.get("metadata", {}).get("labels", {})
         if label_key:
             if label_key in ms_labels:
-                logger.info(
-                    f"Found label {label_key}={ms_labels[label_key]} in MachineSet {machineset_name}"
-                )
+                logger.info(f"Found label {label_key}={ms_labels[label_key]} in MachineSet {machineset_name}")
             else:
                 logger.warning(f"Label '{label_key}' not found in MachineSet {machineset_name}")
 
         # Find associated machines for the MachineSet
-        machines = crd_client.list_namespaced_custom_object(
-            group="machine.openshift.io", version="v1beta1", namespace=namespace, plural="machines"
-        )
+        machines = crd_client.list_namespaced_custom_object(group="machine.openshift.io", version="v1beta1", namespace=namespace, plural="machines")
 
         for machine in machines.get("items", []):
             # Use helper function to process each machine
@@ -634,20 +589,14 @@ def get_nodes_from_machineset_specific(  # noqa: C901
                 node_info[node_name] = labels
 
         if node_info:
-            logger.info(
-                f"Found {len(node_info)} node(s) associated with MachineSet {machineset_name} in namespace {namespace}."
-            )
+            logger.info(f"Found {len(node_info)} node(s) associated with MachineSet {machineset_name} in namespace {namespace}.")
         else:
-            logger.warning(
-                f"No nodes found associated with MachineSet {machineset_name} in namespace {namespace}."
-            )
+            logger.warning(f"No nodes found associated with MachineSet {machineset_name} in namespace {namespace}.")
 
         return node_info
 
     except ApiException as e:
-        logger.error(
-            f"Kubernetes API error retrieving nodes for MachineSet '{machineset_name}': {e}"
-        )
+        logger.error(f"Kubernetes API error retrieving nodes for MachineSet '{machineset_name}': {e}")
         return {}
     except Exception as e:
         logger.error(
@@ -677,9 +626,7 @@ def get_nodes_from_machinesets(  # noqa: C901
         crd_client = client.CustomObjectsApi()
 
     try:
-        machinesets = crd_client.list_cluster_custom_object(
-            group="machine.openshift.io", version="v1beta1", plural="machinesets"
-        )
+        machinesets = crd_client.list_cluster_custom_object(group="machine.openshift.io", version="v1beta1", plural="machinesets")
 
         node_info: Dict[str, Dict[str, str]] = {}
 
@@ -690,17 +637,13 @@ def get_nodes_from_machinesets(  # noqa: C901
             # Extract labels from the MachineSet
             ms_labels = ms.get("metadata", {}).get("labels", {})
             if label_key and label_key in ms_labels:
-                logger.info(
-                    f"Found label {label_key}={ms_labels[label_key]} in MachineSet {ms_name}"
-                )
+                logger.info(f"Found label {label_key}={ms_labels[label_key]} in MachineSet {ms_name}")
             else:
                 if label_key:
                     logger.warning(f"Label {label_key} not found in MachineSet {ms_name}")
 
             # Find associated machines for the MachineSet
-            machines = crd_client.list_cluster_custom_object(
-                group="machine.openshift.io", version="v1beta1", plural="machines"
-            )
+            machines = crd_client.list_cluster_custom_object(group="machine.openshift.io", version="v1beta1", plural="machines")
 
             for machine in machines["items"]:
                 # Check if the machine is part of the current MachineSet
@@ -916,9 +859,7 @@ def format_duration(seconds: float) -> str:
             sec_str = f"{seconds:.2f}"
         else:
             sec_str = str(secs)
-        parts.append(
-            f"{sec_str} second{'s' if secs != 1 or (seconds < 60 and seconds != 1.0) else ''}"
-        )
+        parts.append(f"{sec_str} second{'s' if secs != 1 or (seconds < 60 and seconds != 1.0) else ''}")
 
     return ", ".join(parts)
 
@@ -952,32 +893,20 @@ def determine_target_container(pod: V1Pod, specified_container_name: Optional[st
         # Type cast: containers[0].name is Any due to incomplete kubernetes type stubs
         actual_container_name = cast(str, containers[0].name)
         if specified_container_name and specified_container_name != actual_container_name:
-            logger_local.warning(
-                f"Specified container '{specified_container_name}' ignored; pod '{pod_name}' has only one container: '{actual_container_name}'."
-            )
-        logger_local.debug(
-            f"Pod '{pod_name}' has one container: '{actual_container_name}'. Using it."
-        )
+            logger_local.warning(f"Specified container '{specified_container_name}' ignored; pod '{pod_name}' has only one container: '{actual_container_name}'.")
+        logger_local.debug(f"Pod '{pod_name}' has one container: '{actual_container_name}'. Using it.")
         return actual_container_name
     elif specified_container_name:
         if specified_container_name in container_names:
-            logger_local.debug(
-                f"Using specified container: '{specified_container_name}' for pod '{pod_name}'."
-            )
+            logger_local.debug(f"Using specified container: '{specified_container_name}' for pod '{pod_name}'.")
             return specified_container_name
         else:
-            error_msg = (
-                f"Specified container '{specified_container_name}' not found in pod '{pod_name}'. "
-                f"Available containers: {', '.join(container_names)}"
-            )
+            error_msg = f"Specified container '{specified_container_name}' not found in pod '{pod_name}'. " f"Available containers: {', '.join(container_names)}"
             logger_local.error(error_msg)
             raise ValueError(error_msg)
     else:
         # Multiple containers, but none specified
-        error_msg = (
-            f"Pod '{pod_name}' has multiple containers ({', '.join(container_names)}). "
-            f"Please specify the target container."
-        )
+        error_msg = f"Pod '{pod_name}' has multiple containers ({', '.join(container_names)}). " f"Please specify the target container."
         logger_local.error(error_msg)
         raise ValueError(error_msg)
 
@@ -1007,15 +936,11 @@ def find_running_pod_by_label(
     if not v1_client:
         v1_client = client.CoreV1Api()
 
-    logger.debug(
-        f"Searching for running pod with labels '{label_selector}' in namespace '{namespace}'..."
-    )
+    logger.debug(f"Searching for running pod with labels '{label_selector}' in namespace '{namespace}'...")
     try:
         pods = v1_client.list_namespaced_pod(namespace=namespace, label_selector=label_selector)
         if not pods.items:
-            logger.warning(
-                f"No pods found with labels '{label_selector}' in namespace '{namespace}'."
-            )
+            logger.warning(f"No pods found with labels '{label_selector}' in namespace '{namespace}'.")
             return None
 
         for pod in pods.items:
@@ -1071,11 +996,7 @@ def get_secret_data(
             return {}
 
         # Decode all values from base64
-        decoded_data = {
-            key: base64.b64decode(value).decode("utf-8")
-            for key, value in secret.data.items()
-            if value
-        }
+        decoded_data = {key: base64.b64decode(value).decode("utf-8") for key, value in secret.data.items() if value}
         return decoded_data
     except ApiException as e:
         if e.status == 404:
@@ -1114,9 +1035,7 @@ def get_service_account_jwt(
     if not v1_client:
         v1_client = client.CoreV1Api()
 
-    logger.info(
-        f"Searching for an existing token secret for SA '{service_account_name}' in namespace '{namespace}'."
-    )
+    logger.info(f"Searching for an existing token secret for SA '{service_account_name}' in namespace '{namespace}'.")
     try:
         secrets = v1_client.list_namespaced_secret(namespace)
         for secret in secrets.items:
@@ -1131,19 +1050,13 @@ def get_service_account_jwt(
                 if "token" in secret.data and secret.data["token"]:
                     token_b64 = secret.data["token"]
                     token = base64.b64decode(token_b64).decode("utf-8").strip()
-                    logger.info(
-                        f"Found and decoded service account JWT from secret '{secret_name}'."
-                    )
+                    logger.info(f"Found and decoded service account JWT from secret '{secret_name}'.")
                     return token
                 else:
-                    logger.warning(
-                        f"Secret '{secret_name}' is a SA token but missing 'token' data."
-                    )
+                    logger.warning(f"Secret '{secret_name}' is a SA token but missing 'token' data.")
 
     except ApiException as e:
-        logger.error(
-            f"API error listing secrets in namespace '{namespace}': {e.reason}", exc_info=True
-        )
+        logger.error(f"API error listing secrets in namespace '{namespace}': {e.reason}", exc_info=True)
 
     logger.error(f"Could not retrieve a token for ServiceAccount '{service_account_name}'.")
     return None

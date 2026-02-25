@@ -26,9 +26,7 @@ def get_tower_config():
         client_config = get_awx_or_tower_client("AWX")
         return client_config["url"], client_config["headers"], client_config["verify"]
     except SystemExit:
-        logger.error(
-            "Failed to get Tower client configuration. Please check your environment variables."
-        )
+        logger.error("Failed to get Tower client configuration. Please check your environment variables.")
         return None, None, None
 
 
@@ -63,9 +61,7 @@ def demonstrate_cache_invalidation(tower_url: str, verify: bool) -> None:
     """Demonstrate cache invalidation methods."""
     # Demonstrate cache invalidation
     logger.info("\n3. Invalidating specific cache entry:")
-    invalidated = invalidate_cache_entry(
-        tower_url, "job_templates", "name", "example_template", verify
-    )
+    invalidated = invalidate_cache_entry(tower_url, "job_templates", "name", "example_template", verify)
     logger.info(f"Cache entry invalidated: {invalidated}")
 
     # Demonstrate endpoint cache invalidation

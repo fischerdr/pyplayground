@@ -44,9 +44,7 @@ def build_full_traversal():
     rp_to_vm = traversal_spec(name="rpToVm", type=vim.ResourcePool, path="vm", skip=False)
 
     # Traversal through resourcepool branch
-    cr_to_rp = traversal_spec(
-        name="crToRp", type=vim.ComputeResource, path="resourcePool", skip=False
-    )
+    cr_to_rp = traversal_spec(name="crToRp", type=vim.ComputeResource, path="resourcePool", skip=False)
     cr_to_rp.selectSet.extend(
         (
             selection_spec(name="rpToRp"),
@@ -66,9 +64,7 @@ def build_full_traversal():
     dc_to_vmf.selectSet.extend((selection_spec(name="visitFolders"),))
 
     # Traversal through network folder branch
-    dc_to_net = traversal_spec(
-        name="dcToNet", type=vim.Datacenter, path="networkFolder", skip=False
-    )
+    dc_to_net = traversal_spec(name="dcToNet", type=vim.Datacenter, path="networkFolder", skip=False)
     dc_to_net.selectSet.extend((selection_spec(name="visitFolders"),))
 
     # Traversal through datastore branch
@@ -80,9 +76,7 @@ def build_full_traversal():
     h_to_vm.selectSet.extend((selection_spec(name="visitFolders"),))
 
     # Recurse through the folders
-    visit_folders = traversal_spec(
-        name="visitFolders", type=vim.Folder, path="childEntity", skip=False
-    )
+    visit_folders = traversal_spec(name="visitFolders", type=vim.Folder, path="childEntity", skip=False)
     visit_folders.selectSet.extend(
         (
             selection_spec(name="visitFolders"),

@@ -30,10 +30,7 @@ class BaseEnvironment(abc.ABC):
 
     def _create_empty_grid(self) -> List[List[Tile]]:
         """Creates a grid filled with default floor tiles."""
-        return [
-            [Tile(terrain_type=TerrainType.FLOOR, x=x, y=y) for x in range(self.width)]
-            for y in range(self.height)
-        ]
+        return [[Tile(terrain_type=TerrainType.FLOOR, x=x, y=y) for x in range(self.width)] for y in range(self.height)]
 
     def is_valid_coordinate(self, x: int, y: int) -> bool:
         """Checks if the given coordinates are within the grid bounds."""
@@ -60,9 +57,7 @@ class BaseEnvironment(abc.ABC):
         if tile is None:
             raise ValueError(f"Invalid coordinates: ({x},{y})")
         if tile.blocks_movement:
-            raise ValueError(
-                f"Cannot place character on blocked terrain: {tile.terrain_type.name} at ({x},{y})"
-            )
+            raise ValueError(f"Cannot place character on blocked terrain: {tile.terrain_type.name} at ({x},{y})")
         if tile.character is not None:
             raise ValueError(f"Tile ({x},{y}) is already occupied by {tile.character.name}")
 
@@ -143,12 +138,7 @@ class BaseEnvironment(abc.ABC):
     def __str__(self) -> str:
         """Returns a string representation of the grid, showing tile contents."""
         # Iterate through each tile and get its display character
-        return "\n".join(
-            [
-                "".join([tile.display_char for tile in row])  # Use display_char attribute
-                for row in self.grid
-            ]
-        )
+        return "\n".join(["".join([tile.display_char for tile in row]) for row in self.grid])  # Use display_char attribute
 
 
 # --- BattleGrid Implementation (inherits from BaseEnvironment) ---
@@ -252,9 +242,7 @@ class BattleGrid(BaseEnvironment):
 
         tile = self.get_tile(x, y)
         if tile and tile.hazard:
-            logs.append(
-                f"Hazard ({tile.hazard.hazard_type}) at ({x},{y}) affects {character.name}!"
-            )
+            logs.append(f"Hazard ({tile.hazard.hazard_type}) at ({x},{y}) affects {character.name}!")
             # Import Character locally if needed, or ensure it's available
             # from .characters.base import Character # Avoid top-level circular import
             if character.take_damage(tile.hazard.damage):
@@ -325,9 +313,7 @@ class BattleGrid(BaseEnvironment):
         targeting_points: Set[Coordinate] = set()
         if self.targeting_line:
             start_coord, end_coord = self.targeting_line
-            targeting_points = self._calculate_line_points(
-                start_coord[0], start_coord[1], end_coord[0], end_coord[1]
-            )
+            targeting_points = self._calculate_line_points(start_coord[0], start_coord[1], end_coord[0], end_coord[1])
             # Exclude the start and end points themselves from the line highlight? Optional.
             # targeting_points.discard(start_coord)
             # targeting_points.discard(end_coord)
@@ -350,9 +336,7 @@ class BattleGrid(BaseEnvironment):
                     display_char = tile.character.get_display_char()  # Get first letter
                     # Assign a color if not already seen
                     if tile.character.name not in self._character_style_map:
-                        self._character_style_map[tile.character.name] = char_colors[
-                            char_color_idx % len(char_colors)
-                        ]
+                        self._character_style_map[tile.character.name] = char_colors[char_color_idx % len(char_colors)]
                         char_color_idx += 1
                     # char_style = f"{styles['character_default']} on {style.split(' on ')[-1]}"  # Base char style on tile bg - UNUSED
                     char_color = self._character_style_map[tile.character.name]

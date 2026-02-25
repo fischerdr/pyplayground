@@ -96,9 +96,7 @@ class Mage(Character):
                 self.defense_spell_duration = spell.get("duration", 0)
                 ac_bonus = spell.get("ac_bonus", 0)
                 self.ac += ac_bonus
-                print(
-                    f"{self.name} casts {spell_name}, gaining +{ac_bonus} AC for {self.defense_spell_duration} turns."
-                )
+                print(f"{self.name} casts {spell_name}, gaining +{ac_bonus} AC for {self.defense_spell_duration} turns.")
                 return ac_bonus
             elif "heal" in spell:
                 heal_range: Tuple[int, int] = spell.get("heal", (0, 0))

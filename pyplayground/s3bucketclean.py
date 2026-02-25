@@ -63,9 +63,7 @@ def setup_s3_client(endpoint_url: str, access_key_id: str, secret_access_key: st
         raise typer.Exit(1)
 
 
-def list_objects_to_delete(
-    s3_client: client, bucket: str, prefix: str, retention_days: int
-) -> tuple[List[Dict], int, int]:
+def list_objects_to_delete(s3_client: client, bucket: str, prefix: str, retention_days: int) -> tuple[List[Dict], int, int]:
     """List objects that should be deleted based on retention policy.
 
     Args:
@@ -109,9 +107,7 @@ def list_objects_to_delete(
         raise typer.Exit(1)
 
 
-def delete_objects(
-    s3_client: client, bucket: str, objects: List[Dict], dry_run: bool = False
-) -> None:
+def delete_objects(s3_client: client, bucket: str, objects: List[Dict], dry_run: bool = False) -> None:
     """Delete objects from the bucket in batches.
 
     Args:
@@ -136,9 +132,7 @@ def delete_objects(
     try:
         for i in range(0, len(objects), batch_size):
             batch = objects[i : i + batch_size]
-            response = s3_client.delete_objects(
-                Bucket=bucket, Delete={"Objects": batch, "Quiet": True}
-            )
+            response = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": batch, "Quiet": True})
 
             if "Errors" in response and response["Errors"]:
                 for error in response["Errors"]:
@@ -156,12 +150,8 @@ def main(
     endpoint: str = typer.Option(..., "--endpoint", help="S3 endpoint URL"),
     bucket: str = typer.Option(..., "--bucket", help="Bucket name"),
     prefix: str = typer.Option("", "--prefix", help="Object prefix filter"),
-    delete_after_retention_days: int = typer.Option(
-        15, "--delete-after-retention-days", help="Delete objects older than this many days"
-    ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", "-n", help="Show what would be deleted without performing deletions"
-    ),
+    delete_after_retention_days: int = typer.Option(15, "--delete-after-retention-days", help="Delete objects older than this many days"),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Show what would be deleted without performing deletions"),
 ) -> None:
     """Clean up old objects in an S3-compatible bucket based on retention period.
 
@@ -171,9 +161,7 @@ def main(
     s3_client = setup_s3_client(endpoint, access_key_id, secret_access_key)
 
     # List objects to delete and get counts
-    delete_list, count_current, count_non_current = list_objects_to_delete(
-        s3_client, bucket, prefix, delete_after_retention_days
-    )
+    delete_list, count_current, count_non_current = list_objects_to_delete(s3_client, bucket, prefix, delete_after_retention_days)
 
     # Log initial object counts
     logger.info("-" * 50)
@@ -188,9 +176,7 @@ def main(
 
     if not dry_run:
         # Get updated counts
-        final_list, final_current, final_noncurrent = list_objects_to_delete(
-            s3_client, bucket, prefix, delete_after_retention_days
-        )
+        final_list, final_current, final_noncurrent = list_objects_to_delete(s3_client, bucket, prefix, delete_after_retention_days)
 
         # Log final object counts
         logger.info("-" * 50)

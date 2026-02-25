@@ -120,9 +120,7 @@ class PXBackupClient:
         except json.JSONDecodeError:
             logger.debug(f"Raw Response Body (Non-JSON):\n{response.text}")
 
-    def _handle_http_error(
-        self, http_err: requests.exceptions.HTTPError
-    ) -> requests.exceptions.RequestException:
+    def _handle_http_error(self, http_err: requests.exceptions.HTTPError) -> requests.exceptions.RequestException:
         """Formats and logs HTTPError, returning a RequestException."""
         error_msg = f"HTTP error occurred: {http_err}"
         try:
@@ -154,12 +152,8 @@ class PXBackupClient:
             try:
                 return response.json()
             except json.JSONDecodeError as json_err:
-                logger.error(
-                    f"Successful status code ({response.status_code}) but failed to decode JSON response from {url}: {json_err}"
-                )
-                raise ValueError(
-                    f"Invalid JSON received from API despite success status: {response.text}"
-                ) from json_err
+                logger.error(f"Successful status code ({response.status_code}) but failed to decode JSON response from {url}: {json_err}")
+                raise ValueError(f"Invalid JSON received from API despite success status: {response.text}") from json_err
 
         except requests.exceptions.HTTPError as http_err:
             # Handle formatted HTTP error from helper
@@ -174,9 +168,7 @@ class PXBackupClient:
             raise
 
 
-def _request_token_data(
-    url: str, headers: Dict[str, str], data: Dict[str, str], validate_certs: bool
-) -> Dict[str, Any]:
+def _request_token_data(url: str, headers: Dict[str, str], data: Dict[str, str], validate_certs: bool) -> Dict[str, Any]:
     """Helper function to make the token request and handle immediate errors."""
     try:
         response = requests.post(url, headers=headers, data=data, verify=validate_certs)
@@ -198,28 +190,18 @@ def _request_token_data(
             error_msg = f"{error_msg} - Body: {http_err.response.text[:200]}..."
         logger.error(error_msg)
         # Re-raise as RequestException for consistent handling by caller
-        raise requests.exceptions.RequestException(
-            error_msg, response=http_err.response
-        ) from http_err
+        raise requests.exceptions.RequestException(error_msg, response=http_err.response) from http_err
     except requests.exceptions.RequestException as req_err:
         # Log connection/timeout errors
-        logger.error(
-            f"Token request failed: {req_err}", exc_info=logger.isEnabledFor(logging.DEBUG)
-        )
+        logger.error(f"Token request failed: {req_err}", exc_info=logger.isEnabledFor(logging.DEBUG))
         raise  # Re-raise original RequestException
     except json.JSONDecodeError as json_err:  # Catch error if successful status but invalid JSON
-        logger.error(
-            f"Failed to decode JSON response from token endpoint {url}: {json_err}", exc_info=True
-        )
+        logger.error(f"Failed to decode JSON response from token endpoint {url}: {json_err}", exc_info=True)
         # Raise ValueError as the structure is unexpected
-        raise ValueError(
-            f"Invalid JSON received from token endpoint: {response.text}"
-        ) from json_err
+        raise ValueError(f"Invalid JSON received from token endpoint: {response.text}") from json_err
 
 
-def generate_token(
-    auth_url: str, client_id: str, username: str, password: str, validate_certs: bool
-) -> str:
+def generate_token(auth_url: str, client_id: str, username: str, password: str, validate_certs: bool) -> str:
     """Requests a bearer token from the authentication endpoint."""
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
@@ -266,9 +248,7 @@ def generate_token(
         raise
 
 
-def get_cloud_drive_config(
-    namespace: str, configmap_name: str, v1_client: Optional[client.CoreV1Api] = None
-) -> Dict[str, Any]:
+def get_cloud_drive_config(namespace: str, configmap_name: str, v1_client: Optional[client.CoreV1Api] = None) -> Dict[str, Any]:
     """Get cloud-drive configuration from Kubernetes ConfigMap.
 
     Args:
@@ -287,9 +267,7 @@ def get_cloud_drive_config(
         raise
 
 
-def get_pxctl_auth_env(
-    px_namespace: str, v1_client: Optional[client.CoreV1Api] = None
-) -> Optional[str]:
+def get_pxctl_auth_env(px_namespace: str, v1_client: Optional[client.CoreV1Api] = None) -> Optional[str]:
     """Return PXCTL_AUTH_TOKEN env var if Portworx security is enabled in StorageCluster."""
     if not v1_client:
         v1_client = client.CoreV1Api()
@@ -309,9 +287,7 @@ def get_pxctl_auth_env(
                 token_b64 = secret.data.get("auth-token")
                 if token_b64:
                     token = base64.b64decode(token_b64).decode("utf-8")
-                    logger.info(
-                        "Portworx security enabled; using PXCTL_AUTH_TOKEN from px-admin-token secret."
-                    )
+                    logger.info("Portworx security enabled; using PXCTL_AUTH_TOKEN from px-admin-token secret.")
                     return f"PXCTL_AUTH_TOKEN={token}"
                 else:
                     logger.warning("px-admin-token secret found but 'auth-token' key missing.")
@@ -324,9 +300,7 @@ def get_pxctl_auth_env(
     return None
 
 
-def _parse_pxctl_output(
-    stdout_data: str, stderr_data: str, volume_name: str
-) -> tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
+def _parse_pxctl_output(stdout_data: str, stderr_data: str, volume_name: str) -> tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
     """Parses the JSON output from a successful pxctl command."""
     if not stdout_data:
         return None, None, stderr_data
@@ -338,9 +312,7 @@ def _parse_pxctl_output(
         if isinstance(parsed_json, dict):
             return parsed_json, None, None
 
-        logger.warning(
-            f"pxctl output for '{volume_name}' was valid JSON but not a dict or non-empty list."
-        )
+        logger.warning(f"pxctl output for '{volume_name}' was valid JSON but not a dict or non-empty list.")
         return None, stdout_data, stderr_data
     except json.JSONDecodeError:
         logger.error(f"Failed to parse pxctl JSON for volume '{volume_name}'.")
@@ -379,15 +351,11 @@ def execute_pxctl_command(
         env_vars = []
 
     # Prepare command with environment variables
-    env_exports = " && ".join(
-        [f'export {key}="{value}"' for var in env_vars for key, value in [var.split("=", 1)]]
-    )
+    env_exports = " && ".join([f'export {key}="{value}"' for var in env_vars for key, value in [var.split("=", 1)]])
     full_command_str = f"{env_exports} && {command}" if env_vars else command
     command_to_run = ["/bin/sh", "-c", full_command_str]
 
-    logger.debug(
-        f"Executing in pod '{px_pod_name}/{px_container_name}': {' '.join(command_to_run)}"
-    )
+    logger.debug(f"Executing in pod '{px_pod_name}/{px_container_name}': {' '.join(command_to_run)}")
 
     try:
         exit_code, stdout_data, stderr_data = exec_pod_command(
@@ -441,9 +409,7 @@ def get_portworx_storage_classes(
         for sc in storage_classes.items:
             if sc.provisioner == "pxd.portworx.com":
                 portworx_sc_names.append(sc.metadata.name)
-        logger.info(
-            f"Found {len(portworx_sc_names)} Portworx StorageClasses: {', '.join(portworx_sc_names)}"
-        )
+        logger.info(f"Found {len(portworx_sc_names)} Portworx StorageClasses: {', '.join(portworx_sc_names)}")
         return portworx_sc_names
     except Exception as e:
         logger.error(f"API error listing StorageClasses: {e}", exc_info=True)
@@ -481,11 +447,7 @@ def get_annotated_portworx_pvcs(
             sc_name = pvc.spec.storage_class_name
             if sc_name in portworx_sc_names:
                 annotations = pvc.metadata.annotations
-                if (
-                    annotations
-                    and "px/secret-name" in annotations
-                    and "px/vault-namespace" in annotations
-                ):
+                if annotations and "px/secret-name" in annotations and "px/vault-namespace" in annotations:
                     annotated_pvcs.append(pvc)
         logger.info(f"Found {len(annotated_pvcs)} Portworx PVCs with Vault annotations.")
         return annotated_pvcs
@@ -506,16 +468,10 @@ def filter_volume_labels(labels: Optional[Dict[str, str]]) -> Dict[str, str]:
     if not labels:
         return {}
 
-    return {
-        key: value
-        for key, value in labels.items()
-        if key.startswith("SECRET_") or key.startswith("px/")
-    }
+    return {key: value for key, value in labels.items() if key.startswith("SECRET_") or key.startswith("px/")}
 
 
-def initialize_pvc_vault_environment(
-    core_v1_client: client.CoreV1Api, px_namespace: str
-) -> Optional[Tuple[Dict[str, str], str, client.V1Pod, List[str]]]:
+def initialize_pvc_vault_environment(core_v1_client: client.CoreV1Api, px_namespace: str) -> Optional[Tuple[Dict[str, str], str, client.V1Pod, List[str]]]:
     """Initialize environment for PVC vault operations.
 
     This function consolidates the common initialization logic used by both
@@ -537,9 +493,7 @@ def initialize_pvc_vault_environment(
     # Get Vault connection info from K8s secret
     vault_conn_info = get_secret_data(px_namespace, VAULT_ADDR_SECRET_NAME, core_v1_client)
     if not vault_conn_info:
-        logger.error(
-            f"Failed to retrieve Vault connection info from secret '{VAULT_ADDR_SECRET_NAME}'."
-        )
+        logger.error(f"Failed to retrieve Vault connection info from secret '{VAULT_ADDR_SECRET_NAME}'.")
         return None
 
     # Map secret keys to expected keys used by the application

@@ -91,17 +91,11 @@ def find_portworx_pod(v1_client: client.CoreV1Api, namespace: str) -> Optional[T
         A tuple (pod_name, container_name) if found and running, None otherwise.
     """
     logger = get_logger(__name__)
-    logger.info(
-        f"Searching for Portworx pod with labels '{PORTWORX_POD_LABEL_SELECTOR}' in namespace '{namespace}'..."
-    )
+    logger.info(f"Searching for Portworx pod with labels '{PORTWORX_POD_LABEL_SELECTOR}' in namespace '{namespace}'...")
     try:
-        pods = v1_client.list_namespaced_pod(
-            namespace=namespace, label_selector=PORTWORX_POD_LABEL_SELECTOR
-        )
+        pods = v1_client.list_namespaced_pod(namespace=namespace, label_selector=PORTWORX_POD_LABEL_SELECTOR)
         if not pods.items:
-            logger.warning(
-                f"No pods found with labels '{PORTWORX_POD_LABEL_SELECTOR}' in namespace '{namespace}'."
-            )
+            logger.warning(f"No pods found with labels '{PORTWORX_POD_LABEL_SELECTOR}' in namespace '{namespace}'.")
             return None
 
         for pod in pods.items:
@@ -111,14 +105,10 @@ def find_portworx_pod(v1_client: client.CoreV1Api, namespace: str) -> Optional[T
                 # If multiple containers exist, might need refinement
                 if pod.spec.containers:
                     container_name = pod.spec.containers[0].name  # Assume first container
-                    logger.info(
-                        f"Found running Portworx pod: '{pod_name}', container: '{container_name}'"
-                    )
+                    logger.info(f"Found running Portworx pod: '{pod_name}', container: '{container_name}'")
                     return pod_name, container_name
                 else:
-                    logger.warning(
-                        f"Portworx pod '{pod_name}' found but has no containers defined."
-                    )
+                    logger.warning(f"Portworx pod '{pod_name}' found but has no containers defined.")
 
         logger.warning(f"No *running* Portworx pods found in namespace '{namespace}'.")
         return None
@@ -150,9 +140,7 @@ def get_portworx_storage_classes(storage_v1_client: client.StorageV1Api) -> List
         for sc in storage_classes.items:
             if sc.provisioner == PORTWORX_PROVISIONER:
                 portworx_sc_names.append(sc.metadata.name)
-        logger.info(
-            f"Found {len(portworx_sc_names)} Portworx StorageClasses: {', '.join(portworx_sc_names)}"
-        )
+        logger.info(f"Found {len(portworx_sc_names)} Portworx StorageClasses: {', '.join(portworx_sc_names)}")
         return portworx_sc_names
     except ApiException as e:
         logger.error(f"API error listing StorageClasses: {e.status} - {e.reason}", exc_info=True)
@@ -238,9 +226,7 @@ def filter_portworx_pvs(  # noqa: C901
             pv_name = pv.metadata.name
 
             # Check if it's a Portworx PV based on SC or CSI driver
-            if pv.spec.storage_class_name in portworx_sc_names or (
-                pv.spec.csi and pv.spec.csi.driver == PORTWORX_PROVISIONER
-            ):
+            if pv.spec.storage_class_name in portworx_sc_names or (pv.spec.csi and pv.spec.csi.driver == PORTWORX_PROVISIONER):
                 is_portworx_pv = True
                 # logger.debug(f"Identified PV {pv.metadata.name} via CSI driver.") # Debug logged later if added
 
@@ -250,16 +236,12 @@ def filter_portworx_pvs(  # noqa: C901
                 if pv.spec.claim_ref:
                     claim_namespace = pv.spec.claim_ref.namespace
                     if any(claim_namespace.startswith(prefix) for prefix in skip_prefixes):
-                        logger.debug(
-                            f"Skipping PV '{pv_name}' because it is bound to skipped namespace '{claim_namespace}'."
-                        )
+                        logger.debug(f"Skipping PV '{pv_name}' because it is bound to skipped namespace '{claim_namespace}'.")
                         skipped_count += 1
                         continue  # Skip this PV
 
                 # If it is a Portworx PV and not bound to a skipped namespace, add it
-                if (
-                    pv not in portworx_pvs
-                ):  # Avoid potential duplicates if matched by both SC and CSI
+                if pv not in portworx_pvs:  # Avoid potential duplicates if matched by both SC and CSI
                     portworx_pvs.append(pv)
                     if claim_namespace:  # Log reason if CSI driver was the match
                         if pv.spec.storage_class_name not in portworx_sc_names and pv.spec.csi:
@@ -281,9 +263,7 @@ def filter_portworx_pvs(  # noqa: C901
 
 
 # Add helper function to prepare command string with env vars
-def _prepare_execution_command(
-    env_var_list: List[str], base_command: str
-) -> Tuple[str, Dict[str, str]]:
+def _prepare_execution_command(env_var_list: List[str], base_command: str) -> Tuple[str, Dict[str, str]]:
     """Parses environment variables and constructs the full command string.
 
     Args:
@@ -373,9 +353,7 @@ def _run_command_in_pod(
     finally:
         if resp:
             resp.close()
-            exit_code = (
-                resp.returncode if resp.returncode is not None else -1
-            )  # Ensure exit_code has a value
+            exit_code = resp.returncode if resp.returncode is not None else -1  # Ensure exit_code has a value
 
     return exit_code, stdout_data, stderr_data
 
@@ -412,26 +390,18 @@ def execute_pxctl_inspect(  # noqa: C901
     try:
         full_command_str, parsed_env_vars = _prepare_execution_command(env_vars, base_command)
         if parsed_env_vars:
-            logger.debug(
-                f"Executing with environment variables: {parsed_env_vars}"
-            )  # Corrected indentation
+            logger.debug(f"Executing with environment variables: {parsed_env_vars}")  # Corrected indentation
     except ValueError as e:
         # Propagate error if env var format is invalid
-        logger.error(
-            f"Cannot execute command due to invalid environment variable: {e}"
-        )  # Corrected indentation
+        logger.error(f"Cannot execute command due to invalid environment variable: {e}")  # Corrected indentation
         return None, None, f"Invalid Environment Variable: {e}"  # Corrected indentation
 
     command_to_run = ["/bin/sh", "-c", full_command_str]
-    logger.debug(
-        f"Executing in pod '{px_pod_name}/{px_container_name}': {' '.join(command_to_run)}"
-    )
+    logger.debug(f"Executing in pod '{px_pod_name}/{px_container_name}': {' '.join(command_to_run)}")
 
     try:
         # Use the helper to run the command
-        exit_code, stdout_data, stderr_data = _run_command_in_pod(
-            v1_client, px_namespace, px_pod_name, px_container_name, command_to_run
-        )
+        exit_code, stdout_data, stderr_data = _run_command_in_pod(v1_client, px_namespace, px_pod_name, px_container_name, command_to_run)
 
         logger.debug(f"pxctl command for PV '{pv_name}' finished with exit code {exit_code}.")
         # Log truncated output
@@ -449,9 +419,7 @@ def execute_pxctl_inspect(  # noqa: C901
                 elif isinstance(parsed_json, dict):
                     return parsed_json, None, None
                 else:
-                    logger.warning(
-                        f"pxctl output for PV '{pv_name}' was JSON but not the expected format (list of one dict or single dict): {type(parsed_json)}"
-                    )
+                    logger.warning(f"pxctl output for PV '{pv_name}' was JSON but not the expected format (list of one dict or single dict): {type(parsed_json)}")
                     return None, stdout_data, stderr_data
             except json.JSONDecodeError as json_err:
                 logger.error(
@@ -460,17 +428,13 @@ def execute_pxctl_inspect(  # noqa: C901
                 )
                 return None, stdout_data, stderr_data
         else:
-            logger.warning(
-                f"pxctl command for PV '{pv_name}' failed (code: {exit_code}) or produced no stdout."
-            )
+            logger.warning(f"pxctl command for PV '{pv_name}' failed (code: {exit_code}) or produced no stdout.")
             return None, stdout_data, stderr_data
 
     except ApiException as e:
         # Check specifically for the connection timeout error
         if e.status == 0 and "[Errno 60] Operation timed out" in str(e.reason):
-            logger.warning(
-                f"Connection timed out while trying to execute command for PV '{pv_name}'. Skipping."
-            )
+            logger.warning(f"Connection timed out while trying to execute command for PV '{pv_name}'. Skipping.")
             return None, None, "Connection Timeout"
         else:
             # Handle other API errors
@@ -485,18 +449,14 @@ def execute_pxctl_inspect(  # noqa: C901
         return None, None, f"Unexpected Error: {e}"
 
 
-def combine_data(
-    pvs: List[client.V1PersistentVolume], pvcs: List[client.V1PersistentVolumeClaim]
-) -> Dict[str, Dict[str, Any]]:
+def combine_data(pvs: List[client.V1PersistentVolume], pvcs: List[client.V1PersistentVolumeClaim]) -> Dict[str, Dict[str, Any]]:
     """Combines PV and PVC information into a dictionary keyed by PV name.
 
     Extracts only the necessary fields.
     """
     logger = get_logger(__name__)
     combined_info = {}
-    pvc_map = {
-        (pvc.metadata.namespace, pvc.metadata.name): pvc for pvc in pvcs
-    }  # Map for quick PVC lookup by claimRef
+    pvc_map = {(pvc.metadata.namespace, pvc.metadata.name): pvc for pvc in pvcs}  # Map for quick PVC lookup by claimRef
 
     for pv in pvs:
         pv_name = pv.metadata.name
@@ -523,9 +483,7 @@ def combine_data(
                     }
                 )
             else:
-                logger.warning(
-                    f"PV '{pv_name}' references PVC '{claim_ns}/{claim_name}', but PVC not found in provided list."
-                )
+                logger.warning(f"PV '{pv_name}' references PVC '{claim_ns}/{claim_name}', but PVC not found in provided list.")
         else:
             logger.debug(f"PV '{pv_name}' has no claimRef.")
 
@@ -585,9 +543,7 @@ def output_results_json(data: List[Dict[str, Any]], filename: Optional[str]):
             print("--- End Filtered JSON Output ---")
         except Exception as e:
             logger.exception(f"Unexpected error writing JSON file '{full_path}': {e}")
-            console.print(
-                f"[bold red]Unexpected error writing JSON file '{full_path}': {e}[/bold red]"
-            )
+            console.print(f"[bold red]Unexpected error writing JSON file '{full_path}': {e}[/bold red]")
             # Fallback to stdout?
             print("--- Filtered JSON Output (Fallback to STDOUT) ---")
             print(output_json)
@@ -724,9 +680,7 @@ def get_pxctl_auth_env(core_v1: client.CoreV1Api, px_namespace: str) -> Optional
                 token_b64 = secret.data.get("auth-token")
                 if token_b64:
                     token = base64.b64decode(token_b64).decode("utf-8")
-                    logger.info(
-                        "Portworx security enabled; using PXCTL_AUTH_TOKEN from px-admin-token secret."
-                    )
+                    logger.info("Portworx security enabled; using PXCTL_AUTH_TOKEN from px-admin-token secret.")
                     return f"PXCTL_AUTH_TOKEN={token}"
                 else:
                     logger.warning("px-admin-token secret found but 'auth-token' key missing.")
@@ -776,12 +730,8 @@ def _gather_volume_details(
     # 2. Get Portworx Storage Classes
     px_sc_names = get_portworx_storage_classes(storage_v1)
     if not px_sc_names:
-        logger.warning(
-            f"No StorageClasses found with provisioner '{PORTWORX_PROVISIONER}'. Cannot identify Portworx volumes."
-        )
-        console.print(
-            f"[yellow]Warning: No StorageClasses found with provisioner '{PORTWORX_PROVISIONER}'. Cannot identify Portworx volumes.[/yellow]"
-        )
+        logger.warning(f"No StorageClasses found with provisioner '{PORTWORX_PROVISIONER}'. Cannot identify Portworx volumes.")
+        console.print(f"[yellow]Warning: No StorageClasses found with provisioner '{PORTWORX_PROVISIONER}'. Cannot identify Portworx volumes.[/yellow]")
         return []
 
     # 3. Filter Portworx PVs and PVCs, passing skip_prefixes
@@ -789,12 +739,8 @@ def _gather_volume_details(
     portworx_pvcs = filter_portworx_pvcs(core_v1, px_sc_names, skip_prefixes)
 
     if not portworx_pvs:
-        logger.warning(
-            "No Portworx PVs found matching the criteria (StorageClass, allowed namespaces)."
-        )
-        console.print(
-            "[yellow]No Portworx PVs found matching the criteria (StorageClass, allowed namespaces).[/yellow]"
-        )
+        logger.warning("No Portworx PVs found matching the criteria (StorageClass, allowed namespaces).")
+        console.print("[yellow]No Portworx PVs found matching the criteria (StorageClass, allowed namespaces).[/yellow]")
         return []
 
     # 4. Combine PV/PVC Data (uses the already filtered lists)
@@ -816,24 +762,18 @@ def _gather_volume_details(
         processed_pv_count += 1  # Increment counter first
         logger.info(f"Processing PV {processed_pv_count}/{total_pvs}: {pv_name}")
 
-        pxctl_json, pxctl_raw, pxctl_err = execute_pxctl_inspect(
-            core_v1, px_namespace, px_pod_name, px_container_name, pv_name, effective_env_vars
-        )
+        pxctl_json, pxctl_raw, pxctl_err = execute_pxctl_inspect(core_v1, px_namespace, px_pod_name, px_container_name, pv_name, effective_env_vars)
 
         # Add pxctl results to the combined data
         pv_data["pxctl_details"] = pxctl_json  # Will be None if error or not JSON
         pv_data["pxctl_raw_output"] = pxctl_raw if pxctl_raw else None
         pv_data["pxctl_stderr"] = pxctl_err if pxctl_err else None
-        pv_data["pxctl_error"] = pxctl_json is None and (
-            pxctl_raw is not None or pxctl_err is not None
-        )
+        pv_data["pxctl_error"] = pxctl_json is None and (pxctl_raw is not None or pxctl_err is not None)
 
         final_results.append(pv_data)
 
     # logger.info(f"Finished processing {processed_pv_count} Portworx PVs.") # Can keep or remove this line as the loop provides counts
-    logger.info(
-        f"Finished processing all {total_pvs} identified Portworx PVs."
-    )  # More explicit final message
+    logger.info(f"Finished processing all {total_pvs} identified Portworx PVs.")  # More explicit final message
     return final_results
 
 
@@ -869,13 +809,9 @@ def get_k8s_clients() -> tuple:
         sys.exit(1)
 
 
-def gather_and_enrich_volume_details(
-    core_v1, storage_v1, px_namespace, env_var, skip_namespace_prefix
-):
+def gather_and_enrich_volume_details(core_v1, storage_v1, px_namespace, env_var, skip_namespace_prefix):
     """Gather and enrich Portworx volume details using K8s and pxctl."""
-    return _gather_volume_details(
-        core_v1, storage_v1, px_namespace, list(env_var), list(skip_namespace_prefix)
-    )
+    return _gather_volume_details(core_v1, storage_v1, px_namespace, list(env_var), list(skip_namespace_prefix))
 
 
 def handle_main_errors(e, logger, console):
@@ -886,9 +822,7 @@ def handle_main_errors(e, logger, console):
         console.print(f"[bold red]Error: {e}[/bold red]")
         sys.exit(1)
     elif isinstance(e, ApiException):
-        logger.error(
-            f"Kubernetes API Error: {e.status} {e.reason} - {getattr(e, 'body', '')}", exc_info=True
-        )
+        logger.error(f"Kubernetes API Error: {e.status} {e.reason} - {getattr(e, 'body', '')}", exc_info=True)
         console.print(f"[bold red]Kubernetes API Error: {e.reason}[/bold red]")
         sys.exit(1)
     elif isinstance(e, SystemExit):
@@ -922,16 +856,10 @@ def process_clusters(
             console.print(f"[bold blue]Processing cluster: {cluster_name}[/bold blue]")
             load_kubeconfig_or_exit(kubeconfig_path, console)
             core_v1, storage_v1 = get_k8s_clients()
-            final_results = gather_and_enrich_volume_details(
-                core_v1, storage_v1, px_namespace, env_var, skip_namespace_prefix
-            )
+            final_results = gather_and_enrich_volume_details(core_v1, storage_v1, px_namespace, env_var, skip_namespace_prefix)
             if not final_results:
-                logger.info(
-                    f"No Portworx PVs or PVCs found for cluster: {cluster_name}. Skipping output."
-                )
-                console.print(
-                    f"[yellow]No Portworx PVs or PVCs found for cluster: {cluster_name}.[/yellow]"
-                )
+                logger.info(f"No Portworx PVs or PVCs found for cluster: {cluster_name}. Skipping output.")
+                console.print(f"[yellow]No Portworx PVs or PVCs found for cluster: {cluster_name}.[/yellow]")
                 continue  # Move to next cluster
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_base = f"{cluster_name}_pxvoldetails_{timestamp}"
@@ -957,9 +885,7 @@ def process_clusters(
             continue
     if failed_clusters:
         logger.warning(f"The following clusters failed to process: {', '.join(failed_clusters)}")
-        console.print(
-            f"[yellow]The following clusters failed to process: {', '.join(failed_clusters)}[/yellow]"
-        )
+        console.print(f"[yellow]The following clusters failed to process: {', '.join(failed_clusters)}[/yellow]")
 
 
 # --- Main Execution ---
@@ -1028,9 +954,7 @@ def main(
     elif kubeconfig:
         kubeconfig_files = [kubeconfig]
     else:
-        console.print(
-            "[bold red]Error: Must provide either --kubeconfig or --clusterlist.[/bold red]"
-        )
+        console.print("[bold red]Error: Must provide either --kubeconfig or --clusterlist.[/bold red]")
         sys.exit(1)
     process_clusters(
         kubeconfig_files,

@@ -90,13 +90,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # --- Helper Functions ---
 
 
-def get_vault_connection_info(
-    core_v1_client: client.CoreV1Api, namespace: str
-) -> Optional[VaultConnectionInfo]:
+def get_vault_connection_info(core_v1_client: client.CoreV1Api, namespace: str) -> Optional[VaultConnectionInfo]:
     """Retrieves Vault connection and auth info from the 'px-vault' secret."""
-    logger.debug(
-        f"Attempting to read secret '{VAULT_ADDR_SECRET_NAME}' in namespace '{namespace}'."
-    )
+    logger.debug(f"Attempting to read secret '{VAULT_ADDR_SECRET_NAME}' in namespace '{namespace}'.")
     try:
         secret = core_v1_client.read_namespaced_secret(VAULT_ADDR_SECRET_NAME, namespace)
         secret_data = secret.data
@@ -112,9 +108,7 @@ def get_vault_connection_info(
         for key, secret_key in required_keys.items():
             value_b64 = secret_data.get(secret_key)
             if not value_b64:
-                logger.error(
-                    f"Secret '{VAULT_ADDR_SECRET_NAME}' is missing the key '{secret_key}'."
-                )
+                logger.error(f"Secret '{VAULT_ADDR_SECRET_NAME}' is missing the key '{secret_key}'.")
                 return None
             conn_info[key] = base64.b64decode(value_b64).decode("utf-8").strip()
 
@@ -164,13 +158,8 @@ def test_vault_secret_access(
 ) -> Tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
     """Test access to a specific Vault secret and return success status, data, and error message."""
     try:
-        logger.debug(
-            f"Testing access to secret '{secret_path}' in mount '{vault_conn_info.backend_path}' "
-            f"(namespace: {vault_namespace or 'root'})."
-        )
-        vault_client = create_vault_client(
-            url=vault_conn_info.addr, token=vault_token, namespace=vault_namespace
-        )
+        logger.debug(f"Testing access to secret '{secret_path}' in mount '{vault_conn_info.backend_path}' " f"(namespace: {vault_namespace or 'root'}).")
+        vault_client = create_vault_client(url=vault_conn_info.addr, token=vault_token, namespace=vault_namespace)
 
         # Use utility function to get secret
         secret_data = get_secret(vault_client, secret_path, vault_conn_info.backend_path)
@@ -200,9 +189,7 @@ def run_single_test(
     px_namespace: str,
 ) -> TestResult:
     """Run a single test for a specific namespace and secret path."""
-    logger.info(
-        f"Running test for namespace '{namespace}', secret '{secret_path}', vault namespace '{vault_namespace}'"
-    )
+    logger.info(f"Running test for namespace '{namespace}', secret '{secret_path}', vault namespace '{vault_namespace}'")
 
     # Initialize result
     result = TestResult(
@@ -218,9 +205,7 @@ def run_single_test(
         vault_conn_info = get_vault_connection_info(core_v1_client, px_namespace)
         if not vault_conn_info:
             result.status = "[red]Failed to get Vault connection info[/red]"
-            result.error_message = (
-                "Could not retrieve Vault connection information from Kubernetes secret"
-            )
+            result.error_message = "Could not retrieve Vault connection information from Kubernetes secret"
             return result
 
         # Get service account JWT
@@ -231,9 +216,7 @@ def run_single_test(
             return result
 
         # Test authentication
-        auth_success, vault_token, auth_error = test_vault_authentication(
-            vault_conn_info, sa_jwt, vault_namespace
-        )
+        auth_success, vault_token, auth_error = test_vault_authentication(vault_conn_info, sa_jwt, vault_namespace)
         result.auth_success = auth_success
 
         if not auth_success:
@@ -242,9 +225,7 @@ def run_single_test(
             return result
 
         # Test secret access
-        secret_success, secret_data, secret_error = test_vault_secret_access(
-            vault_conn_info, vault_token, secret_path, vault_namespace
-        )
+        secret_success, secret_data, secret_error = test_vault_secret_access(vault_conn_info, vault_token, secret_path, vault_namespace)
         result.secret_access_success = secret_success
 
         if secret_success:
@@ -266,9 +247,7 @@ def run_single_test(
 def display_results(results: List[TestResult], mask_values: bool = False) -> None:
     """Display test results in a formatted table and detailed panels."""
     # Create summary table
-    table = Table(
-        title="Vault Multi-Namespace Test Results", show_header=True, header_style="bold magenta"
-    )
+    table = Table(title="Vault Multi-Namespace Test Results", show_header=True, header_style="bold magenta")
     table.add_column("Namespace", style="cyan", no_wrap=True)
     table.add_column("Secret Path", style="green")
     table.add_column("Vault Namespace", style="blue")
@@ -400,18 +379,12 @@ def main(
 
     # Validate input lengths
     if len(secret_path_list) != len(vault_namespace_list):
-        console.print(
-            "[bold red]Error: Secret paths and Vault namespaces must have the same number of elements.[/bold red]"
-        )
+        console.print("[bold red]Error: Secret paths and Vault namespaces must have the same number of elements.[/bold red]")
         sys.exit(1)
 
-    console.print(
-        f"[bold blue]Testing Kubernetes namespace '{namespace}' with {len(vault_namespace_list)} Vault namespace(s)...[/bold blue]"
-    )
+    console.print(f"[bold blue]Testing Kubernetes namespace '{namespace}' with {len(vault_namespace_list)} Vault namespace(s)...[/bold blue]")
 
-    if not load_kube_config_auto(
-        config_file=kubeconfig, verify_ssl=k8s_verify_ssl, ssl_ca_cert=k8s_ssl_ca_cert
-    ):
+    if not load_kube_config_auto(config_file=kubeconfig, verify_ssl=k8s_verify_ssl, ssl_ca_cert=k8s_ssl_ca_cert):
         console.print("[bold red]Error: Failed to load Kubernetes configuration.[/bold red]")
         sys.exit(1)
 
@@ -431,9 +404,7 @@ def main(
     ) as progress:
         task = progress.add_task("Running Vault tests...", total=len(vault_namespace_list))
 
-        for i, (secret_path, vault_namespace) in enumerate(
-            zip(secret_path_list, vault_namespace_list)
-        ):
+        for i, (secret_path, vault_namespace) in enumerate(zip(secret_path_list, vault_namespace_list)):
             progress.update(task, description=f"Testing Vault namespace {vault_namespace}...")
             result = run_single_test(namespace, secret_path, vault_namespace, core_v1, px_namespace)
             results.append(result)

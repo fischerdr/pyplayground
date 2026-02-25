@@ -73,9 +73,7 @@ def _run_command_in_container(  # noqa: C901
     exit_code = -1
     resp = None
     try:
-        logger.debug(
-            f"Executing in pod '{pod_name}/{container_name}' (ns: {namespace}): {' '.join(command)}"
-        )
+        logger.debug(f"Executing in pod '{pod_name}/{container_name}' (ns: {namespace}): {' '.join(command)}")
         resp = stream.stream(
             v1_client.connect_get_namespaced_pod_exec,
             name=pod_name,
@@ -111,9 +109,7 @@ def _run_command_in_container(  # noqa: C901
             stderr_data = f"API Error: {e.reason}"  # Keep full reason for other API errors
         # exit_code remains -1 or its previous value
     except Exception as e:
-        logger.error(
-            f"Exception during command execution in {pod_name}/{container_name}: {e}", exc_info=True
-        )
+        logger.error(f"Exception during command execution in {pod_name}/{container_name}: {e}", exc_info=True)
         stderr_data = str(e)
     finally:
         if resp:
@@ -140,13 +136,9 @@ def command_exists_in_container(
     """Checks if a command exists in the specified container."""
     logger = get_logger(__name__)
     check_command = [shell, "-c", f"command -v {command_to_check}"]
-    exit_code, _, stderr_data = _run_command_in_container(
-        v1_client, namespace, pod_name, container_name, check_command
-    )
+    exit_code, _, stderr_data = _run_command_in_container(v1_client, namespace, pod_name, container_name, check_command)
     if exit_code != 0:
-        logger.warning(
-            f"Command '{command_to_check}' not found in {pod_name}/{container_name}. Stderr: {stderr_data}"
-        )
+        logger.warning(f"Command '{command_to_check}' not found in {pod_name}/{container_name}. Stderr: {stderr_data}")
         return False
     return True
 
@@ -163,9 +155,7 @@ def _try_count_with_find(
     logger = get_logger(__name__)
     command_template_find_wc = 'find "$1" -type f | wc -l'
     find_wc_command = [shell, "-c", command_template_find_wc, "inline_script", mount_path]
-    exit_code, stdout, stderr = _run_command_in_container(
-        v1_client, namespace, pod_name, container_name, find_wc_command
-    )
+    exit_code, stdout, stderr = _run_command_in_container(v1_client, namespace, pod_name, container_name, find_wc_command)
     if exit_code == 0 and stdout.isdigit():
         return int(stdout), None
     elif exit_code == 0 and not stdout:  # No files found
@@ -188,9 +178,7 @@ def _try_count_with_ls(
     logger = get_logger(__name__)
     command_template_ls_wc = "ls -ARp \"$1\" | grep -v '/$' | wc -l"
     ls_wc_command = [shell, "-c", command_template_ls_wc, "inline_script", mount_path]
-    exit_code, stdout, stderr = _run_command_in_container(
-        v1_client, namespace, pod_name, container_name, ls_wc_command
-    )
+    exit_code, stdout, stderr = _run_command_in_container(v1_client, namespace, pod_name, container_name, ls_wc_command)
     if exit_code == 0 and stdout.isdigit():
         return int(stdout), None
     elif exit_code == 0 and not stdout:  # No files found
@@ -212,36 +200,20 @@ def _determine_file_count(
     """Determines file count in a container, trying 'find' then 'ls | grep | wc'."""
     logger = get_logger(__name__)
 
-    find_available = command_exists_in_container(
-        v1_client, namespace, pod_name, container_name, "find", shell
-    )
-    wc_available = command_exists_in_container(
-        v1_client, namespace, pod_name, container_name, "wc", shell
-    )
+    find_available = command_exists_in_container(v1_client, namespace, pod_name, container_name, "find", shell)
+    wc_available = command_exists_in_container(v1_client, namespace, pod_name, container_name, "wc", shell)
 
     if find_available and wc_available:
         logger.debug(f"Using 'find' method for file counting in {pod_name}/{container_name}.")
-        return _try_count_with_find(
-            v1_client, namespace, pod_name, container_name, mount_path, shell
-        )
+        return _try_count_with_find(v1_client, namespace, pod_name, container_name, mount_path, shell)
     elif not find_available:
-        logger.info(
-            f"'find' command not found in {pod_name}/{container_name}. Attempting fallback with 'ls | grep | wc'."
-        )
-        ls_available = command_exists_in_container(
-            v1_client, namespace, pod_name, container_name, "ls", shell
-        )
-        grep_available = command_exists_in_container(
-            v1_client, namespace, pod_name, container_name, "grep", shell
-        )
+        logger.info(f"'find' command not found in {pod_name}/{container_name}. Attempting fallback with 'ls | grep | wc'.")
+        ls_available = command_exists_in_container(v1_client, namespace, pod_name, container_name, "ls", shell)
+        grep_available = command_exists_in_container(v1_client, namespace, pod_name, container_name, "grep", shell)
 
         if ls_available and grep_available and wc_available:
-            logger.debug(
-                f"Using 'ls | grep | wc' method for file counting in {pod_name}/{container_name}."
-            )
-            return _try_count_with_ls(
-                v1_client, namespace, pod_name, container_name, mount_path, shell
-            )
+            logger.debug(f"Using 'ls | grep | wc' method for file counting in {pod_name}/{container_name}.")
+            return _try_count_with_ls(v1_client, namespace, pod_name, container_name, mount_path, shell)
         else:
             missing_cmds_fallback = []
             if not ls_available:
@@ -283,24 +255,18 @@ def get_pvc_usage_in_container(
     accumulated_error_message: Optional[str] = None
 
     # --- File Counting --- #
-    num_files, file_count_error = _determine_file_count(
-        v1_client, namespace, pod_name, container_name, mount_path, shell
-    )
+    num_files, file_count_error = _determine_file_count(v1_client, namespace, pod_name, container_name, mount_path, shell)
     if file_count_error:
         accumulated_error_message = file_count_error
     # --- End File Counting ---
 
     # --- Size Calculation (du) ---
-    du_available = command_exists_in_container(
-        v1_client, namespace, pod_name, container_name, "du", shell
-    )
+    du_available = command_exists_in_container(v1_client, namespace, pod_name, container_name, "du", shell)
     if du_available:
         logger.debug(f"Using 'du' method for size calculation in {pod_name}/{container_name}.")
         command_template_du = 'du -sh "$1"'
         du_command = [shell, "-c", command_template_du, "inline_script", mount_path]
-        du_exit_code, du_stdout, du_stderr = _run_command_in_container(
-            v1_client, namespace, pod_name, container_name, du_command
-        )
+        du_exit_code, du_stdout, du_stderr = _run_command_in_container(v1_client, namespace, pod_name, container_name, du_command)
 
         if du_exit_code == 0 and du_stdout:
             parts = du_stdout.split()
@@ -308,9 +274,7 @@ def get_pvc_usage_in_container(
                 total_size_str = parts[0]
             else:
                 total_size_str = "N/A (du output parse error)"
-                logger.warning(
-                    f"Could not parse 'du -sh' output: '{du_stdout}' for {pod_name}/{container_name}:{mount_path}"
-                )
+                logger.warning(f"Could not parse 'du -sh' output: '{du_stdout}' for {pod_name}/{container_name}:{mount_path}")
         else:
             du_error_msg = f"Error running 'du -sh' (code {du_exit_code}): {du_stderr or du_stdout}"
             logger.warning(du_error_msg)
@@ -330,9 +294,7 @@ def get_pvc_usage_in_container(
     return num_files, total_size_str, accumulated_error_message
 
 
-def find_pvc_mount_info_in_pod(  # noqa: C901
-    pod_object: client.V1Pod, target_pvc_name: str
-) -> List[Tuple[str, str, bool]]:
+def find_pvc_mount_info_in_pod(pod_object: client.V1Pod, target_pvc_name: str) -> List[Tuple[str, str, bool]]:  # noqa: C901
     """Finds all container names and mount paths for a specific PVC within a given pod.
 
     Args:
@@ -362,14 +324,9 @@ def find_pvc_mount_info_in_pod(  # noqa: C901
     volume_name_for_pvc: Optional[str] = None
     if pod_object.spec.volumes:
         for vol in pod_object.spec.volumes:
-            if (
-                vol.persistent_volume_claim
-                and vol.persistent_volume_claim.claim_name == target_pvc_name
-            ):
+            if vol.persistent_volume_claim and vol.persistent_volume_claim.claim_name == target_pvc_name:
                 volume_name_for_pvc = vol.name
-                logger.debug(
-                    f"In pod '{pod_name}', PVC '{target_pvc_name}' corresponds to volume '{volume_name_for_pvc}'."
-                )
+                logger.debug(f"In pod '{pod_name}', PVC '{target_pvc_name}' corresponds to volume '{volume_name_for_pvc}'.")
                 break
 
     if not volume_name_for_pvc:
@@ -398,9 +355,7 @@ def find_pvc_mount_info_in_pod(  # noqa: C901
                     if vm.name == volume_name_for_pvc:
                         # Check init container status
                         ics = init_container_statuses.get(init_container.name)
-                        is_running = (
-                            ics and ics.state and ics.state.running is not None
-                        )  # Init containers complete, so look for terminated with exit 0 if that's the goal
+                        is_running = ics and ics.state and ics.state.running is not None  # Init containers complete, so look for terminated with exit 0 if that's the goal
                         # For exec, it generally needs to be in a running-like state or have recently finished.
                         # Let's assume 'running' is the primary state for exec for now, or if it has terminated successfully (exit code 0)
                         # For simplicity, we only check if init container *was* running or *is* running.
@@ -421,19 +376,13 @@ def find_pvc_mount_info_in_pod(  # noqa: C901
                         # Only add if actually exec-able for `du`/`find`.
                         # Init containers are usually short-lived. If they are not running, we usually can't exec.
                         # The exception might be a debug init container left running.
-                        if (
-                            is_running
-                        ):  # Simplified: only add if init container is currently marked as running
+                        if is_running:  # Simplified: only add if init container is currently marked as running
                             mount_infos.append((init_container.name, vm.mount_path, is_running))
                         else:
-                            logger.debug(
-                                f"Init container '{init_container.name}' is not in a running state for PVC checks."
-                            )
+                            logger.debug(f"Init container '{init_container.name}' is not in a running state for PVC checks.")
 
     if not mount_infos:
-        logger.debug(
-            f"No mount paths found for PVC '{target_pvc_name}' (volume '{volume_name_for_pvc}') in any container of pod '{pod_name}'."
-        )
+        logger.debug(f"No mount paths found for PVC '{target_pvc_name}' (volume '{volume_name_for_pvc}') in any container of pod '{pod_name}'.")
 
     return mount_infos
 
@@ -637,17 +586,11 @@ def main(  # noqa: C901
         pvs_list = core_v1.list_persistent_volume()
 
         # First, count total Portworx PVs for progress logging
-        total_portworx_pvs = sum(
-            1
-            for pv_item in pvs_list.items
-            if pv_item.spec and pv_item.spec.csi and pv_item.spec.csi.driver == PORTWORX_PROVISIONER
-        )
+        total_portworx_pvs = sum(1 for pv_item in pvs_list.items if pv_item.spec and pv_item.spec.csi and pv_item.spec.csi.driver == PORTWORX_PROVISIONER)
 
         if total_portworx_pvs == 0:
             logger.info(f"No Portworx PVs (driver: {PORTWORX_PROVISIONER}) found in the cluster.")
-            console.print(
-                f"[yellow]No Portworx PVs (driver: {PORTWORX_PROVISIONER}) found.[/yellow]"
-            )
+            console.print(f"[yellow]No Portworx PVs (driver: {PORTWORX_PROVISIONER}) found.[/yellow]")
             if output_format == "console":  # Ensure empty results are handled by output functions
                 output_results_console(all_results)
             elif output_format == "json":
@@ -666,26 +609,18 @@ def main(  # noqa: C901
                 try:
                     compiled_regexes.append(re.compile(pattern))
                 except re.error as e:
-                    logger.error(
-                        f"Invalid regex pattern '{pattern}': {e} - This pattern will be ignored."
-                    )
+                    logger.error(f"Invalid regex pattern '{pattern}': {e} - This pattern will be ignored.")
                     # Optionally, exit or raise an error:
                     # console.print(f"[bold red]Error: Invalid regex pattern '{pattern}': {e}[/bold red]")
                     # sys.exit(1)
 
         for pv_item in pvs_list.items:
-            if not (
-                pv_item.spec
-                and pv_item.spec.csi
-                and pv_item.spec.csi.driver == PORTWORX_PROVISIONER
-            ):
+            if not (pv_item.spec and pv_item.spec.csi and pv_item.spec.csi.driver == PORTWORX_PROVISIONER):
                 continue
 
             pv_name = pv_item.metadata.name
             processed_pv_count += 1
-            progress_log_msg = (
-                f"Processing Portworx PV {processed_pv_count}/{total_portworx_pvs}: {pv_name}"
-            )
+            progress_log_msg = f"Processing Portworx PV {processed_pv_count}/{total_portworx_pvs}: {pv_name}"
 
             if not pv_item.spec.claim_ref:
                 logger.warning(f"{progress_log_msg} - has no claimRef, skipping.")
@@ -709,9 +644,7 @@ def main(  # noqa: C901
             logger.info(f"{progress_log_msg} -> PVC '{pvc_namespace}/{pvc_name}'")
 
             # Combine skip logic
-            skipped_by_prefix = any(
-                pvc_namespace.startswith(prefix) for prefix in skip_namespace_prefix
-            )
+            skipped_by_prefix = any(pvc_namespace.startswith(prefix) for prefix in skip_namespace_prefix)
             skipped_by_regex = False
             if compiled_regexes:
                 if any(regex.fullmatch(pvc_namespace) for regex in compiled_regexes):
@@ -766,28 +699,20 @@ def main(  # noqa: C901
             for pod_obj in pods_in_namespace.items:
                 pod_name_iter = pod_obj.metadata.name
                 if pod_obj.status.phase != "Running":
-                    logger.debug(
-                        f"Skipping pod '{pod_name_iter}' in namespace '{pvc_namespace}' (status: {pod_obj.status.phase})."
-                    )
+                    logger.debug(f"Skipping pod '{pod_name_iter}' in namespace '{pvc_namespace}' (status: {pod_obj.status.phase}).")
                     continue
 
                 mount_infos = find_pvc_mount_info_in_pod(pod_obj, pvc_name)
                 if not mount_infos:
-                    logger.debug(
-                        f"Pod '{pod_name_iter}' (ns: {pvc_namespace}) does not appear to mount PVC '{pvc_name}'."
-                    )
+                    logger.debug(f"Pod '{pod_name_iter}' (ns: {pvc_namespace}) does not appear to mount PVC '{pvc_name}'.")
                     continue
 
                 found_pod_using_pvc = True
-                logger.info(
-                    f"Pod '{pod_name_iter}' (ns: {pvc_namespace}) uses PVC '{pvc_name}'. Found mounts: {mount_infos}"
-                )
+                logger.info(f"Pod '{pod_name_iter}' (ns: {pvc_namespace}) uses PVC '{pvc_name}'. Found mounts: {mount_infos}")
 
                 for container_name, mount_path, container_is_running in mount_infos:
                     if not container_is_running:
-                        logger.warning(
-                            f"Container '{container_name}' in pod '{pod_name_iter}' is not in a running state. Skipping PVC usage check for mount '{mount_path}'."
-                        )
+                        logger.warning(f"Container '{container_name}' in pod '{pod_name_iter}' is not in a running state. Skipping PVC usage check for mount '{mount_path}'.")
                         all_results.append(
                             {
                                 "pv_name": pv_name,
@@ -826,9 +751,7 @@ def main(  # noqa: C901
                     )
 
             if not found_pod_using_pvc:
-                logger.info(
-                    f"No running pods found actively using PVC '{pvc_namespace}/{pvc_name}'."
-                )
+                logger.info(f"No running pods found actively using PVC '{pvc_namespace}/{pvc_name}'.")
                 all_results.append(
                     {
                         "pv_name": pv_name,
@@ -908,19 +831,13 @@ def main(  # noqa: C901
 
     # --- Output Results ---
     # Filter results to only include those from running pods with actual usage data or exec errors
-    final_output_results = [
-        item
-        for item in all_results
-        if item.get("pod_name") and not item.get("pod_name", "").startswith("N/A (")
-    ]
+    final_output_results = [item for item in all_results if item.get("pod_name") and not item.get("pod_name", "").startswith("N/A (")]
 
     if not final_output_results:
         logger.info("No data from running pods to output after filtering.")
         # For console, print a message. For file outputs, an empty file will be created by the output functions.
         if output_format == "console":
-            console.print(
-                "[yellow]No data from PVs/PVCs actively used by running pods to display.[/yellow]"
-            )
+            console.print("[yellow]No data from PVs/PVCs actively used by running pods to display.[/yellow]")
         # Fall through to output functions which will handle empty lists (e.g., write empty JSON array or CSV with headers)
 
     if output_format == "console":
@@ -932,9 +849,7 @@ def main(  # noqa: C901
 
     logger.info("Pod PV Usage script finished.")
     if any(item.get("error_message") for item in final_output_results if item.get("error_message")):
-        console.print(
-            "[yellow]Some errors occurred during processing. Please check logs and output for details.[/yellow]"
-        )
+        console.print("[yellow]Some errors occurred during processing. Please check logs and output for details.[/yellow]")
 
 
 if __name__ == "__main__":

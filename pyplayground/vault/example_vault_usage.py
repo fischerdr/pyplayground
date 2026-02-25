@@ -116,9 +116,7 @@ def example_role_binding_analysis(results: Dict[str, Any]):
     """
     role_bindings = results.get("role_bindings", {}).get("role_bindings", [])
     total_roles = results.get("summary", {}).get("total_roles", 0)
-    logger.info(
-        f"Analyzing role bindings for {len(role_bindings)} auth methods ({total_roles} total roles)..."
-    )
+    logger.info(f"Analyzing role bindings for {len(role_bindings)} auth methods ({total_roles} total roles)...")
 
     for auth_method_binding in role_bindings:
         auth_path = auth_method_binding.get("auth_method", "Unknown")

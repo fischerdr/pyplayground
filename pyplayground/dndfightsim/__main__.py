@@ -10,9 +10,7 @@ except ImportError as e:
     print("This might happen if the package structure is incorrect or dependencies are missing.")
     # Attempt to give a more helpful message if run from the wrong directory
     if "attempted relative import with no known parent package" in str(e):
-        print(
-            "Hint: Try running this from the project root directory using 'python -m src.dndfightsim'"
-        )
+        print("Hint: Try running this from the project root directory using 'python -m src.dndfightsim'")
     sys.exit(1)
 
 

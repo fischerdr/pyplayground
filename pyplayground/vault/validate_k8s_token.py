@@ -45,18 +45,14 @@ logger = logging.getLogger(__name__)
 
 def _check_service_account_exists(core_v1_api, namespace, sa_name, console):
     """Checks if the specified ServiceAccount exists."""
-    console.print(
-        f"  Verifying ServiceAccount '[cyan]{sa_name}[/cyan]' in namespace '[cyan]{namespace}[/cyan]'..."
-    )
+    console.print(f"  Verifying ServiceAccount '[cyan]{sa_name}[/cyan]' in namespace '[cyan]{namespace}[/cyan]'...")
     try:
         core_v1_api.read_namespaced_service_account(name=sa_name, namespace=namespace)
         console.print("  [green]✔ OK:[/green] ServiceAccount exists.")
         return True
     except ApiException as e:
         if e.status == 404:
-            console.print(
-                f"  [red]✖ FAIL:[/red] ServiceAccount '[bold]{sa_name}[/bold]' not found in namespace '[bold]{namespace}[/bold]'."
-            )
+            console.print(f"  [red]✖ FAIL:[/red] ServiceAccount '[bold]{sa_name}[/bold]' not found in namespace '[bold]{namespace}[/bold]'.")
         else:
             console.print(f"  [red]✖ FAIL:[/red] API error checking ServiceAccount: {e.reason}")
         return False
@@ -72,33 +68,21 @@ def _check_auth_delegator_binding(rbac_v1_api, namespace, sa_name, console):
         for binding in bindings.items:
             if binding.subjects:
                 for subject in binding.subjects:
-                    if (
-                        subject.kind == "ServiceAccount"
-                        and subject.name == sa_name
-                        and subject.namespace == namespace
-                    ):
+                    if subject.kind == "ServiceAccount" and subject.name == sa_name and subject.namespace == namespace:
                         role_name = binding.role_ref.name
-                        console.print(
-                            f"    [green]Found binding:[/green] '{binding.metadata.name}' -> grants ClusterRole -> '[bold]{role_name}[/bold]'"
-                        )
+                        console.print(f"    [green]Found binding:[/green] '{binding.metadata.name}' -> grants ClusterRole -> '[bold]{role_name}[/bold]'")
                         found_binding = True
                         if role_name == "system:auth-delegator":
                             is_delegator = True
 
         if not found_binding:
-            console.print(
-                "  [red]✖ FAIL:[/red] No ClusterRoleBinding found for this ServiceAccount."
-            )
+            console.print("  [red]✖ FAIL:[/red] No ClusterRoleBinding found for this ServiceAccount.")
             return False
 
         if is_delegator:
-            console.print(
-                "  [green]✔ OK:[/green] ServiceAccount is correctly bound to 'system:auth-delegator'."
-            )
+            console.print("  [green]✔ OK:[/green] ServiceAccount is correctly bound to 'system:auth-delegator'.")
         else:
-            console.print(
-                "  [red]✖ FAIL:[/red] ServiceAccount is NOT bound to 'system:auth-delegator'. This is required for TokenReview."
-            )
+            console.print("  [red]✖ FAIL:[/red] ServiceAccount is NOT bound to 'system:auth-delegator'. This is required for TokenReview.")
         return is_delegator
 
     except ApiException as e:
@@ -120,41 +104,25 @@ def _run_pre_flight_checks(
     sa_to_check_ns = reviewer_namespace or namespace
     sa_to_check_name = reviewer_sa_name or sa_name
 
-    console.print(
-        f"Checking permissions for reviewer: [bold cyan]{sa_to_check_ns}/{sa_to_check_name}[/bold cyan]"
-    )
+    console.print(f"Checking permissions for reviewer: [bold cyan]{sa_to_check_ns}/{sa_to_check_name}[/bold cyan]")
 
-    sa_exists = _check_service_account_exists(
-        core_v1_api, sa_to_check_ns, sa_to_check_name, console
-    )
+    sa_exists = _check_service_account_exists(core_v1_api, sa_to_check_ns, sa_to_check_name, console)
     if not sa_exists:
         sys.exit(1)
 
-    binding_ok = _check_auth_delegator_binding(
-        rbac_v1_api, sa_to_check_ns, sa_to_check_name, console
-    )
+    binding_ok = _check_auth_delegator_binding(rbac_v1_api, sa_to_check_ns, sa_to_check_name, console)
     if not binding_ok:
         sys.exit(1)
 
     console.print("[bold]--- Pre-flight Checks Complete ---[/bold]")
 
 
-def _setup_reviewer_client(
-    console: Console, core_v1_api, reviewer_namespace: str, reviewer_sa_name: str
-):
+def _setup_reviewer_client(console: Console, core_v1_api, reviewer_namespace: str, reviewer_sa_name: str):
     """Configures and returns a Kubernetes client authenticated as the reviewer."""
-    console.print(
-        f"\n[bold magenta]Reviewer Mode:[/bold magenta] Authenticating as reviewer "
-        f"[cyan]{reviewer_sa_name}[/cyan] in namespace [cyan]{reviewer_namespace}[/cyan]."
-    )
-    reviewer_jwt = get_service_account_jwt(
-        reviewer_namespace, reviewer_sa_name, v1_client=core_v1_api
-    )
+    console.print(f"\n[bold magenta]Reviewer Mode:[/bold magenta] Authenticating as reviewer " f"[cyan]{reviewer_sa_name}[/cyan] in namespace [cyan]{reviewer_namespace}[/cyan].")
+    reviewer_jwt = get_service_account_jwt(reviewer_namespace, reviewer_sa_name, v1_client=core_v1_api)
     if not reviewer_jwt:
-        console.print(
-            "[red]Error: Could not retrieve JWT for reviewer service account. "
-            "Cannot proceed.[/red]"
-        )
+        console.print("[red]Error: Could not retrieve JWT for reviewer service account. " "Cannot proceed.[/red]")
         sys.exit(1)
 
     logger.debug("Successfully retrieved JWT for reviewer.")
@@ -174,13 +142,9 @@ def _handle_api_exception(e: ApiException, console: Console, debug: bool):
     """Handles Kubernetes API exceptions with detailed, user-friendly messages."""
     console.print("[red]Error: A Kubernetes API call failed.[/red]")
     if e.status == 404:
-        console.print(
-            "  [bold]Reason:[/bold] Not Found. The namespace or service account may not exist."
-        )
+        console.print("  [bold]Reason:[/bold] Not Found. The namespace or service account may not exist.")
     elif e.status == 403:
-        console.print(
-            "  [bold]Reason:[/bold] Forbidden. The current user/service account lacks permissions."
-        )
+        console.print("  [bold]Reason:[/bold] Forbidden. The current user/service account lacks permissions.")
         console.print("  Check RBAC rules for 'secrets' (list) and 'tokenreviews' (create).")
     else:
         console.print(f"  [bold]Status:[/bold] {e.status}")
@@ -189,9 +153,7 @@ def _handle_api_exception(e: ApiException, console: Console, debug: bool):
     sys.exit(1)
 
 
-def _display_token_review_status(
-    status, console: Console, review_response=None, debug: bool = False
-):
+def _display_token_review_status(status, console: Console, review_response=None, debug: bool = False):
     """Displays the results of the token review."""
     if debug and review_response:
         console.print("\n[bold yellow]--- TokenReview API Response ---[/bold yellow]")
@@ -309,25 +271,13 @@ def validate_k8s_token(
             )
 
         # 1. Retrieve the JWT for the TARGET service account using the initial client
-        console.print(
-            f"\nAttempting to retrieve token for target service account "
-            f"[cyan]{service_account_name}[/cyan] in namespace [cyan]{namespace}[/cyan]..."
-        )
+        console.print(f"\nAttempting to retrieve token for target service account " f"[cyan]{service_account_name}[/cyan] in namespace [cyan]{namespace}[/cyan]...")
 
-        jwt = get_service_account_jwt(
-            namespace, service_account_name, v1_client=initial_core_v1_client
-        )
+        jwt = get_service_account_jwt(namespace, service_account_name, v1_client=initial_core_v1_client)
         if not jwt:
-            console.print(
-                f"[red]Error: Failed to retrieve a JWT for '{service_account_name}'.[/red]"
-            )
-            console.print(
-                "  [yellow]Note:[/yellow] Kubernetes v1.24+ no longer creates secrets for "
-                "service accounts automatically."
-            )
-            console.print(
-                "  Check if a token secret exists and is correctly annotated for this service account."
-            )
+            console.print(f"[red]Error: Failed to retrieve a JWT for '{service_account_name}'.[/red]")
+            console.print("  [yellow]Note:[/yellow] Kubernetes v1.24+ no longer creates secrets for " "service accounts automatically.")
+            console.print("  Check if a token secret exists and is correctly annotated for this service account.")
             sys.exit(1)
 
         logger.debug("Successfully retrieved JWT from a service account secret.")

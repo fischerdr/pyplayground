@@ -48,13 +48,9 @@ def create_layout() -> Layout:
 
     # Assign default content placeholders within the app layout reference
     app_layout_ref["top_row"]["map_pane"].update(Panel("[Map Placeholder]", title="Battle Map"))
-    app_layout_ref["top_row"]["combatant1_pane"].update(
-        Panel("[Combatant 1 Info]", title="Combatant 1")
-    )
+    app_layout_ref["top_row"]["combatant1_pane"].update(Panel("[Combatant 1 Info]", title="Combatant 1"))
     app_layout_ref["middle_row"]["log_pane"].update(Panel("[Combat Log]", title="Log"))
-    app_layout_ref["middle_row"]["combatant2_pane"].update(
-        Panel("[Combatant 2 Info]", title="Combatant 2")
-    )
+    app_layout_ref["middle_row"]["combatant2_pane"].update(Panel("[Combatant 2 Info]", title="Combatant 2"))
     app_layout_ref["status_pane"].update(Text("Status: Initializing...", justify="center"))
 
     return main_wrapper  # Return the wrapper
@@ -114,13 +110,9 @@ def update_layout(
 
     other_chars = [c for c in grid.get_characters() if c != combatant1]
     if other_chars:
-        layout["app"]["middle_row"]["combatant2_pane"].update(
-            generate_combatant_renderable(other_chars[0])
-        )
+        layout["app"]["middle_row"]["combatant2_pane"].update(generate_combatant_renderable(other_chars[0]))
     else:  # Only one character left?
-        layout["app"]["middle_row"]["combatant2_pane"].update(
-            Panel("--- Empty ---", title="Combatant 2")
-        )  # Improved placeholder
+        layout["app"]["middle_row"]["combatant2_pane"].update(Panel("--- Empty ---", title="Combatant 2"))  # Improved placeholder
 
     layout["app"]["middle_row"]["log_pane"].update(generate_log_renderable(log_messages))
     layout["app"]["status_pane"].update(Text(f"Status: {status}", justify="center"))

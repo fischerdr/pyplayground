@@ -101,9 +101,7 @@ def setup_logging(  # noqa: C901
         level_int = getattr(logging, level_name, logging.INFO)
     else:  # Assumed int
         level_int = level
-        level_name = logging.getLevelName(
-            level_int
-        )  # Getting name from int is okay here for init msg
+        level_name = logging.getLevelName(level_int)  # Getting name from int is okay here for init msg
         # Alternatively, handle only expected int levels:
         # level_name = 'DEBUG' if level_int == logging.DEBUG else 'INFO' # etc.
 

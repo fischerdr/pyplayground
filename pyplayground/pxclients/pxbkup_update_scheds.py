@@ -51,16 +51,12 @@ def fetch_clusters(client: PXBackupClient, org_id: str) -> List[Dict[str, Any]]:
         requests.exceptions.RequestException: If the API call fails.
     """
     logger.info(f"Fetching clusters for organization ID: {org_id}")
-    endpoint = (
-        f"v1/cluster/{org_id}"  # Use relative path convention if applicable for PXBackupClient
-    )
+    endpoint = f"v1/cluster/{org_id}"  # Use relative path convention if applicable for PXBackupClient
     try:
         response = client.make_request("GET", endpoint)
         clusters = response.get("clusters", [])
         if not isinstance(clusters, list):
-            logger.warning(
-                f"API response for clusters was not a list: {type(clusters)}. Returning empty list."
-            )
+            logger.warning(f"API response for clusters was not a list: {type(clusters)}. Returning empty list.")
             return []
         logger.info(f"Successfully fetched {len(clusters)} clusters.")
         return clusters
@@ -69,9 +65,7 @@ def fetch_clusters(client: PXBackupClient, org_id: str) -> List[Dict[str, Any]]:
         raise
 
 
-def _get_matching_cluster_info(
-    cluster: Dict[str, Any], name_pattern: Optional[str], uid: Optional[str]
-) -> Optional[Dict[str, str]]:
+def _get_matching_cluster_info(cluster: Dict[str, Any], name_pattern: Optional[str], uid: Optional[str]) -> Optional[Dict[str, str]]:
     """Checks if a single cluster matches the given filters.
 
     Args:
@@ -101,22 +95,16 @@ def _get_matching_cluster_info(
     if name_pattern:
         try:
             if re.match(name_pattern, cluster_name):
-                logger.debug(
-                    f"Matched cluster by name pattern '{name_pattern}': {cluster_name} ({cluster_uid})"
-                )
+                logger.debug(f"Matched cluster by name pattern '{name_pattern}': {cluster_name} ({cluster_uid})")
                 return match_info
         except re.error as e:
-            logger.error(
-                f"Invalid regex pattern '{name_pattern}': {e}. Skipping name pattern matching for this cluster."
-            )
+            logger.error(f"Invalid regex pattern '{name_pattern}': {e}. Skipping name pattern matching for this cluster.")
             return None
 
     return None
 
 
-def filter_clusters(
-    clusters: List[Dict[str, Any]], name_pattern: Optional[str], uid: Optional[str]
-) -> List[Dict[str, Any]]:
+def filter_clusters(clusters: List[Dict[str, Any]], name_pattern: Optional[str], uid: Optional[str]) -> List[Dict[str, Any]]:
     """Filters clusters based on name pattern or UID.
 
     Args:
@@ -183,22 +171,14 @@ def _get_target_cluster(
         matched_clusters = filter_clusters(all_clusters, cluster_name, cluster_uid)
 
         if not matched_clusters:
-            filter_criteria = (
-                f"name pattern '{cluster_name}'" if cluster_name else f"UID '{cluster_uid}'"
-            )
-            raise click.ClickException(
-                f"[bold yellow]No cluster found matching criteria: {filter_criteria}[/bold yellow]"
-            )
+            filter_criteria = f"name pattern '{cluster_name}'" if cluster_name else f"UID '{cluster_uid}'"
+            raise click.ClickException(f"[bold yellow]No cluster found matching criteria: {filter_criteria}[/bold yellow]")
         elif len(matched_clusters) > 1:
             cluster_list = ", ".join([c["name"] for c in matched_clusters])
-            raise click.ClickException(
-                f"[bold yellow]Multiple clusters matched name pattern '{cluster_name}': {cluster_list}. Use --cluster-uid.[/bold yellow]"
-            )
+            raise click.ClickException(f"[bold yellow]Multiple clusters matched name pattern '{cluster_name}': {cluster_list}. Use --cluster-uid.[/bold yellow]")
         else:
             target_cluster_uid = matched_clusters[0]["uid"]
-            target_cluster_display_name = (
-                f"cluster '{matched_clusters[0]['name']}' (UID: {target_cluster_uid})"
-            )
+            target_cluster_display_name = f"cluster '{matched_clusters[0]['name']}' (UID: {target_cluster_uid})"
             logger.info(f"Targeting schedules for {target_cluster_display_name}.")
     else:
         logger.info("No cluster filter specified. Processing schedules for all clusters.")
@@ -240,9 +220,7 @@ def _handle_authentication(
             ]
             if not v
         ]
-        raise click.ClickException(
-            f"Error: Token not provided, and missing required options for token generation: {', '.join(missing_auth)}"
-        )
+        raise click.ClickException(f"Error: Token not provided, and missing required options for token generation: {', '.join(missing_auth)}")
     try:
         # Ensure no warnings if validate_certs is False for the token generation call
         if not validate_certs:
@@ -251,9 +229,7 @@ def _handle_authentication(
         click.echo("Successfully generated authentication token.")
         return generated_token
     except (requests.exceptions.RequestException, ValueError) as auth_err:
-        raise click.ClickException(
-            f"[bold red]Authentication Error:[/bold red] Failed to generate token: {auth_err}"
-        )
+        raise click.ClickException(f"[bold red]Authentication Error:[/bold red] Failed to generate token: {auth_err}")
 
 
 def _parse_schedules_response(response: Any, endpoint: str) -> List[Dict[str, Any]]:
@@ -274,17 +250,13 @@ def _parse_schedules_response(response: Any, endpoint: str) -> List[Dict[str, An
         schedules = response
 
     if not schedules and response:  # Check if response wasn't empty but parsing failed
-        logger.error(
-            f"Unexpected response format from {endpoint}. Expected list under 'backup_schedules' or 'schedules', or a direct list. Got type {type(response)}."
-        )
+        logger.error(f"Unexpected response format from {endpoint}. Expected list under 'backup_schedules' or 'schedules', or a direct list. Got type {type(response)}.")
         raise ValueError(f"Unexpected API response format for schedules from {endpoint}.")
 
     return schedules
 
 
-def get_schedules(
-    client: PXBackupClient, org_id: str, cluster_uid: Optional[str] = None
-) -> List[Dict[str, Any]]:
+def get_schedules(client: PXBackupClient, org_id: str, cluster_uid: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retrieve backup schedules, optionally filtered by cluster UID via API."""
     target_info = f"cluster UID {cluster_uid}" if cluster_uid else "all clusters"
     logger.info(f"Fetching schedules for organization ID: {org_id} ({target_info}).")
@@ -298,9 +270,7 @@ def get_schedules(
     try:
         # Pass params to make_request
         response = client.make_request("GET", endpoint, params=params)
-        logger.debug(
-            f"Raw API response for schedules ({endpoint}): {json.dumps(response, indent=2)}"
-        )
+        logger.debug(f"Raw API response for schedules ({endpoint}): {json.dumps(response, indent=2)}")
 
         # Use the parsing helper which expects backup_schedules key
         schedules = _parse_schedules_response(response, endpoint)
@@ -316,9 +286,7 @@ def get_schedules(
         raise
 
 
-def update_schedule_suspend_status(
-    client: PXBackupClient, schedule: Dict[str, Any], suspend: bool
-) -> bool:
+def update_schedule_suspend_status(client: PXBackupClient, schedule: Dict[str, Any], suspend: bool) -> bool:
     """Update the suspend status of a specific schedule using the v1 PUT endpoint.
 
     Args:
@@ -350,9 +318,7 @@ def update_schedule_suspend_status(
             schedule["backup_schedule_info"]["suspended"] = suspend
             logger.warning("Added 'suspended' key to backup_schedule_info.")
         else:
-            logger.error(
-                f"Could not set suspended status for schedule {schedule_name}: Neither top-level key nor backup_schedule_info dict found."
-            )
+            logger.error(f"Could not set suspended status for schedule {schedule_name}: Neither top-level key nor backup_schedule_info dict found.")
             return False
 
     # Use the v1 general update endpoint
@@ -368,9 +334,7 @@ def update_schedule_suspend_status(
         return False
 
 
-def manage_schedules(
-    client: PXBackupClient, org_id: str, suspend: bool, schedules: List[Dict[str, Any]]
-) -> Tuple[int, int, int, int]:
+def manage_schedules(client: PXBackupClient, org_id: str, suspend: bool, schedules: List[Dict[str, Any]]) -> Tuple[int, int, int, int]:
     """Manage backup schedules by updating their suspend status using the v1 API."""
     total_schedules = len(schedules)
     successful_updates = 0
@@ -385,22 +349,14 @@ def manage_schedules(
 
         # Check current state - check top-level first, then backup_schedule_info
         current_state = schedule.get("suspended")  # Check top level
-        if (
-            current_state is None
-            and "backup_schedule_info" in schedule
-            and isinstance(schedule.get("backup_schedule_info"), dict)
-        ):
+        if current_state is None and "backup_schedule_info" in schedule and isinstance(schedule.get("backup_schedule_info"), dict):
             current_state = schedule["backup_schedule_info"].get("suspended", False)  # Check nested
         else:
-            current_state = (
-                current_state if current_state is not None else False
-            )  # Default to False if not found anywhere
+            current_state = current_state if current_state is not None else False  # Default to False if not found anywhere
 
         if current_state == suspend:
             already_in_state += 1
-            logger.debug(
-                f"Schedule {schedule_name} ({schedule_uid}) already in desired state (suspended={suspend})."
-            )
+            logger.debug(f"Schedule {schedule_name} ({schedule_uid}) already in desired state (suspended={suspend}).")
             continue
 
         # Attempt update by passing the full schedule object
@@ -434,54 +390,33 @@ def _filter_schedules_locally(
     # --- Filter by Cluster UID (Optional local check/redundant if API filter works) ---
     if target_cluster_uid:
         cluster_filter_applied = True
-        schedules_to_process_cluster = [
-            s
-            for s in schedules_to_process
-            if s.get("backup_schedule_info", {}).get("cluster_ref", {}).get("uid")
-            == target_cluster_uid
-        ]
+        schedules_to_process_cluster = [s for s in schedules_to_process if s.get("backup_schedule_info", {}).get("cluster_ref", {}).get("uid") == target_cluster_uid]
         if len(schedules_to_process_cluster) < len(schedules_to_process):
-            logger.warning(
-                "Local cluster filter removed schedules missed by API filter. This might indicate an issue."
-            )
+            logger.warning("Local cluster filter removed schedules missed by API filter. This might indicate an issue.")
         schedules_to_process = schedules_to_process_cluster
 
         filtered_count = len(schedules_to_process)
         # Only log if local filter actually changed the list size from original API fetch
         if filtered_count < original_count:
-            logger.info(
-                f"Locally filtered {original_count} schedules down to {filtered_count} for {target_cluster_display_name}."
-            )
+            logger.info(f"Locally filtered {original_count} schedules down to {filtered_count} for {target_cluster_display_name}.")
         if not schedules_to_process:
-            console.print(
-                f"[yellow]No schedules found specifically for {target_cluster_display_name} after local filter.[/yellow]"
-            )
+            console.print(f"[yellow]No schedules found specifically for {target_cluster_display_name} after local filter.[/yellow]")
             sys.exit(0)
         original_count = filtered_count  # Reset count for potential name filtering log
 
     # --- Filter by Name Pattern ---
     if backup_schedule_name_pattern:
         try:
-            filtered_schedules = [
-                s
-                for s in schedules_to_process
-                if re.match(backup_schedule_name_pattern, s.get("metadata", {}).get("name", ""))
-            ]
+            filtered_schedules = [s for s in schedules_to_process if re.match(backup_schedule_name_pattern, s.get("metadata", {}).get("name", ""))]
             filtered_count = len(filtered_schedules)
             log_suffix = " (after cluster filtering)" if cluster_filter_applied else ""
-            logger.info(
-                f"Filtered {original_count} schedules down to {filtered_count} matching name pattern '{backup_schedule_name_pattern}'{log_suffix}."
-            )
+            logger.info(f"Filtered {original_count} schedules down to {filtered_count} matching name pattern '{backup_schedule_name_pattern}'{log_suffix}.")
             if not filtered_schedules:
-                console.print(
-                    f"[yellow]No schedules found matching name pattern '{backup_schedule_name_pattern}'{log_suffix}.[/yellow]"
-                )
+                console.print(f"[yellow]No schedules found matching name pattern '{backup_schedule_name_pattern}'{log_suffix}.[/yellow]")
                 sys.exit(0)
             schedules_to_process = filtered_schedules
         except re.error as e:
-            logger.error(
-                f"Invalid regex pattern for schedule name '{backup_schedule_name_pattern}': {e}. Skipping name filtering."
-            )
+            logger.error(f"Invalid regex pattern for schedule name '{backup_schedule_name_pattern}': {e}. Skipping name filtering.")
             # Proceed without name filtering if regex is invalid
 
     return schedules_to_process
@@ -542,9 +477,7 @@ def _filter_schedules_locally(
     hide_input=True,
 )
 # Operation Arguments
-@click.option(
-    "--suspend", is_flag=True, default=False, help="Suspend all schedules (default is to resume)."
-)
+@click.option("--suspend", is_flag=True, default=False, help="Suspend all schedules (default is to resume).")
 # Cluster Filtering Options
 @click.option(
     "--cluster-name",
@@ -608,14 +541,10 @@ def main(
         client = PXBackupClient(api_url, current_token, validate_certs)
 
         # --- Cluster Filtering Logic (Resolve target UID) ---
-        target_cluster_uid, target_cluster_display_name = _get_target_cluster(
-            client, org_id, cluster_name, cluster_uid
-        )
+        target_cluster_uid, target_cluster_display_name = _get_target_cluster(client, org_id, cluster_name, cluster_uid)
 
         # --- Fetch Schedules (using API filter if target_cluster_uid is set) ---
-        logger.info(
-            f"Fetching schedules for organization ID: {org_id} (API filter: {target_cluster_display_name})..."
-        )
+        logger.info(f"Fetching schedules for organization ID: {org_id} (API filter: {target_cluster_display_name})...")
         all_schedules = get_schedules(client, org_id, target_cluster_uid)
         if not all_schedules:
             console.print(f"[yellow]No schedules found for {target_cluster_display_name}.[/yellow]")
@@ -631,9 +560,7 @@ def main(
         )
 
         # --- Perform Operation on filtered schedules ---
-        logger.info(
-            f"Starting schedule management for {len(schedules_to_process)} schedules. Target state: suspended={suspend}"
-        )
+        logger.info(f"Starting schedule management for {len(schedules_to_process)} schedules. Target state: suspended={suspend}")
         total, successful, already_done, failed = manage_schedules(
             client,
             org_id,
@@ -642,9 +569,7 @@ def main(
         )
 
         # --- Output Summary ---
-        console.print(
-            f"\n[bold green]Operation Summary ({target_cluster_display_name} / Name Filter: '{backup_schedule_name if backup_schedule_name else 'None'}'):[/bold green]"
-        )
+        console.print(f"\n[bold green]Operation Summary ({target_cluster_display_name} / Name Filter: '{backup_schedule_name if backup_schedule_name else 'None'}'):[/bold green]")
         console.print(f"  Schedules considered: {total}")
         console.print(f"  Successfully {'suspended' if suspend else 'resumed'}: {successful}")
         console.print(f"  Already {'suspended' if suspend else 'resumed'}: {already_done}")

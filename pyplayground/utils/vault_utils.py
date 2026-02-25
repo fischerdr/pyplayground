@@ -101,10 +101,7 @@ def create_vault_client(
     if not vault_url:
         raise ValueError("Vault URL not provided and VAULT_ADDR env var not set")
     if not vault_token:
-        raise ValueError(
-            "Vault token not provided. Set VAULT_TOKEN env var, create ~/.vault-token file, "
-            "or use 'vault login' command"
-        )
+        raise ValueError("Vault token not provided. Set VAULT_TOKEN env var, create ~/.vault-token file, " "or use 'vault login' command")
 
     logger.debug(
         "Creating hvac.Client with resolved params: url=%s, token=%s, namespace=%s, verify=%s",
@@ -248,9 +245,7 @@ def login_with_kubernetes(
         raise
 
 
-def list_secrets(
-    client: hvac.Client, path: str, mount_point: str = "secret"
-) -> Dict[str, List[str]]:
+def list_secrets(client: hvac.Client, path: str, mount_point: str = "secret") -> Dict[str, List[str]]:
     """List secrets at a specified path in Vault.
 
     Lists all secrets and subdirectories at the given path in the Vault KV2 secrets engine.
@@ -282,9 +277,7 @@ def list_secrets(
         raise
 
 
-def get_secret(
-    client: hvac.Client, path: str, mount_point: str = "secret", version: Optional[int] = None
-) -> Optional[Dict[str, Any]]:
+def get_secret(client: hvac.Client, path: str, mount_point: str = "secret", version: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """Retrieve a secret from Vault.
 
     Gets the secret data at the specified path from the Vault KV2 secrets engine.
@@ -310,9 +303,7 @@ def get_secret(
         'abc123'
     """
     try:
-        result = client.secrets.kv.v2.read_secret_version(
-            path=path, mount_point=mount_point, version=version
-        )
+        result = client.secrets.kv.v2.read_secret_version(path=path, mount_point=mount_point, version=version)
         if not result or "data" not in result or "data" not in result["data"]:
             logger.warning(f"Secret at path '{path}' contains no data.")
             return {}  # Return empty dict for existing but empty secret
@@ -459,9 +450,7 @@ def get_token_info(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
         ['default', 'app-policy']
     """
     logger.debug("Starting token information retrieval...")
-    logger.debug(
-        f"Current token (redacted): {debug_token(client.token) if client.token else 'None'}"
-    )
+    logger.debug(f"Current token (redacted): {debug_token(client.token) if client.token else 'None'}")
 
     try:
         logger.debug("Calling client.lookup_token() to get self token info...")
@@ -483,9 +472,7 @@ def get_token_info(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
         logger.debug(f"  - Entity ID: {token_data.get('entity_id', 'N/A')}")
         logger.debug(f"  - Expire time: {token_data.get('expire_time', 'N/A')}")
         logger.debug(f"  - Explicit max TTL: {token_data.get('explicit_max_ttl', 'N/A')}")
-        logger.debug(
-            f"  - ID: {debug_token(token_data.get('id', '')) if token_data.get('id') else 'N/A'}"
-        )
+        logger.debug(f"  - ID: {debug_token(token_data.get('id', '')) if token_data.get('id') else 'N/A'}")
         logger.debug(f"  - Issue time: {token_data.get('issue_time', 'N/A')}")
         logger.debug(f"  - Num uses: {token_data.get('num_uses', 'N/A')}")
         logger.debug(f"  - Orphan: {token_data.get('orphan', 'N/A')}")
@@ -536,9 +523,7 @@ def get_token_info(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
         return {}
 
 
-def collect_secrets(
-    client: hvac.Client, path: str, mount_point: str, secrets_list: List[str]
-) -> None:
+def collect_secrets(client: hvac.Client, path: str, mount_point: str, secrets_list: List[str]) -> None:
     """Recursively collect all secret paths under a given path in Vault.
 
     Traverses the Vault path hierarchy starting at the specified path and collects
@@ -721,17 +706,11 @@ def get_policies(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
 
                         # Log specific security-relevant patterns
                         if deny_refs > 0:
-                            logger.debug(
-                                f"    * WARNING: Policy '{policy_name}' contains DENY rules"
-                            )
+                            logger.debug(f"    * WARNING: Policy '{policy_name}' contains DENY rules")
                         if "admin" in rules_lower or "sudo" in rules_lower:
-                            logger.debug(
-                                f"    * NOTICE: Policy '{policy_name}' may have admin privileges"
-                            )
+                            logger.debug(f"    * NOTICE: Policy '{policy_name}' may have admin privileges")
                         if "*" in rules:
-                            logger.debug(
-                                f"    * NOTICE: Policy '{policy_name}' contains wildcard permissions"
-                            )
+                            logger.debug(f"    * NOTICE: Policy '{policy_name}' contains wildcard permissions")
 
                     policies_data["policies"].append(policy_info)
                     logger.debug(f"Successfully processed policy '{policy_name}'")
@@ -741,9 +720,7 @@ def get_policies(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
                     policies_data["errors"].append(f"Failed to retrieve policy: {policy_name}")
             except Exception as e:
                 logger.error(f"Error retrieving policy '{policy_name}': {e}")
-                logger.debug(
-                    f"Exception details for policy '{policy_name}': {type(e).__name__}: {str(e)}"
-                )
+                logger.debug(f"Exception details for policy '{policy_name}': {type(e).__name__}: {str(e)}")
                 policies_data["errors"].append(f"Error retrieving policy '{policy_name}': {str(e)}")
 
     except Exception as e:
@@ -751,9 +728,7 @@ def get_policies(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
         logger.debug(f"Exception details for listing policies: {type(e).__name__}: {str(e)}")
         policies_data["errors"].append(f"Error listing policies: {str(e)}")
 
-    logger.debug(
-        f"Policy retrieval completed. Total policies: {len(policies_data['policies'])}, Errors: {len(policies_data['errors'])}"
-    )
+    logger.debug(f"Policy retrieval completed. Total policies: {len(policies_data['policies'])}, Errors: {len(policies_data['errors'])}")
     return policies_data
 
 
@@ -835,15 +810,11 @@ def get_groups(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
                     if not policies:
                         logger.debug(f"    * NOTICE: Group '{group_name}' has no policies assigned")
                     elif len(policies) > 5:
-                        logger.debug(
-                            f"    * NOTICE: Group '{group_name}' has many policies ({len(policies)})"
-                        )
+                        logger.debug(f"    * NOTICE: Group '{group_name}' has many policies ({len(policies)})")
 
                     # Check for nested group relationships
                     if member_groups:
-                        logger.debug(
-                            f"    * NOTICE: Group '{group_name}' contains nested groups: {member_groups}"
-                        )
+                        logger.debug(f"    * NOTICE: Group '{group_name}' contains nested groups: {member_groups}")
 
                     groups_data["groups"].append(group_info)
                     logger.debug(f"Successfully processed group '{group_name}' (ID: {group_id})")
@@ -853,9 +824,7 @@ def get_groups(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
                     groups_data["errors"].append(f"Failed to retrieve group: {group_id}")
             except Exception as e:
                 logger.error(f"Error retrieving group '{group_id}': {e}")
-                logger.debug(
-                    f"Exception details for group '{group_id}': {type(e).__name__}: {str(e)}"
-                )
+                logger.debug(f"Exception details for group '{group_id}': {type(e).__name__}: {str(e)}")
                 groups_data["errors"].append(f"Error retrieving group '{group_id}': {str(e)}")
 
     except Exception as e:
@@ -869,9 +838,7 @@ def get_groups(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
             logger.debug(f"Exception details for listing groups: {type(e).__name__}: {str(e)}")
             groups_data["errors"].append(f"Error listing groups: {str(e)}")
 
-    logger.debug(
-        f"Groups retrieval completed. Total groups: {len(groups_data['groups'])}, Errors: {len(groups_data['errors'])}"
-    )
+    logger.debug(f"Groups retrieval completed. Total groups: {len(groups_data['groups'])}, Errors: {len(groups_data['errors'])}")
     return groups_data
 
 
@@ -934,10 +901,7 @@ def get_auth_methods(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
                     logger.debug("  - Configuration details:")
                     for config_key, config_value in config.items():
                         # Mask sensitive configuration values
-                        if any(
-                            sensitive in config_key.lower()
-                            for sensitive in ["password", "secret", "key", "token"]
-                        ):
+                        if any(sensitive in config_key.lower() for sensitive in ["password", "secret", "key", "token"]):
                             logger.debug(f"    * {config_key}: [REDACTED]")
                         else:
                             logger.debug(f"    * {config_key}: {config_value}")
@@ -957,13 +921,9 @@ def get_auth_methods(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
                 elif auth_type == "azure":
                     logger.debug("    * Azure auth method - verify managed identity configuration")
                 elif auth_type == "oidc" or auth_type == "jwt":
-                    logger.debug(
-                        "    * OIDC/JWT auth method - verify issuer and audience configuration"
-                    )
+                    logger.debug("    * OIDC/JWT auth method - verify issuer and audience configuration")
                 else:
-                    logger.debug(
-                        f"    * Unknown auth type '{auth_type}' - manual review recommended"
-                    )
+                    logger.debug(f"    * Unknown auth type '{auth_type}' - manual review recommended")
 
                 # Check for default mount paths that might indicate security concerns
                 if path in ["token/", "userpass/", "ldap/"]:
@@ -973,27 +933,19 @@ def get_auth_methods(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
                 logger.debug(f"Successfully processed auth method '{path}' (Type: {auth_type})")
             except Exception as e:
                 logger.error(f"Error processing auth method '{path}': {e}")
-                logger.debug(
-                    f"Exception details for auth method '{path}': {type(e).__name__}: {str(e)}"
-                )
-                auth_methods_data["errors"].append(
-                    f"Error processing auth method '{path}': {str(e)}"
-                )
+                logger.debug(f"Exception details for auth method '{path}': {type(e).__name__}: {str(e)}")
+                auth_methods_data["errors"].append(f"Error processing auth method '{path}': {str(e)}")
 
     except Exception as e:
         logger.error(f"Error listing auth methods: {e}")
         logger.debug(f"Exception details for listing auth methods: {type(e).__name__}: {str(e)}")
         auth_methods_data["errors"].append(f"Error listing auth methods: {str(e)}")
 
-    logger.debug(
-        f"Auth methods retrieval completed. Total auth methods: {len(auth_methods_data['auth_methods'])}, Errors: {len(auth_methods_data['errors'])}"
-    )
+    logger.debug(f"Auth methods retrieval completed. Total auth methods: {len(auth_methods_data['auth_methods'])}, Errors: {len(auth_methods_data['errors'])}")
     return auth_methods_data
 
 
-def get_auth_role_bindings(  # noqa: C901
-    client: hvac.Client, auth_methods: List[Dict[str, Any]]
-) -> Dict[str, Any]:
+def get_auth_role_bindings(client: hvac.Client, auth_methods: List[Dict[str, Any]]) -> Dict[str, Any]:  # noqa: C901
     """Retrieve role bindings for all authentication methods.
 
     Args:
@@ -1038,46 +990,30 @@ def get_auth_role_bindings(  # noqa: C901
             elif auth_type == "approle":
                 roles_data.update(_get_approle_role_bindings(client, auth_path))
             elif auth_type == "token":
-                logger.debug(
-                    f"Token auth method '{auth_path}' - roles managed through policies, not role bindings"
-                )
+                logger.debug(f"Token auth method '{auth_path}' - roles managed through policies, not role bindings")
                 roles_data["roles"] = []  # Token auth doesn't have traditional roles
             elif auth_type == "ns_token":
-                logger.debug(
-                    f"Namespace token auth method '{auth_path}' - roles managed through policies, not role bindings"
-                )
+                logger.debug(f"Namespace token auth method '{auth_path}' - roles managed through policies, not role bindings")
                 roles_data["roles"] = []  # NS token auth doesn't have traditional roles
             else:
-                logger.debug(
-                    f"Unknown auth method type '{auth_type}' - skipping role binding retrieval"
-                )
+                logger.debug(f"Unknown auth method type '{auth_type}' - skipping role binding retrieval")
                 roles_data["roles"] = []
                 roles_data["errors"].append(f"Unknown auth method type: {auth_type}")
 
             role_bindings_data["role_bindings"].append(roles_data)
-            logger.debug(
-                f"Role binding retrieval completed for auth method '{auth_path}': {len(roles_data.get('roles', []))} roles found"
-            )
+            logger.debug(f"Role binding retrieval completed for auth method '{auth_path}': {len(roles_data.get('roles', []))} roles found")
 
         except Exception as e:
             logger.error(f"Error retrieving role bindings for auth method '{auth_path}': {e}")
-            logger.debug(
-                f"Exception details for auth method '{auth_path}': {type(e).__name__}: {str(e)}"
-            )
-            role_bindings_data["errors"].append(
-                f"Error retrieving role bindings for '{auth_path}': {str(e)}"
-            )
+            logger.debug(f"Exception details for auth method '{auth_path}': {type(e).__name__}: {str(e)}")
+            role_bindings_data["errors"].append(f"Error retrieving role bindings for '{auth_path}': {str(e)}")
 
     total_roles = sum(len(rb.get("roles", [])) for rb in role_bindings_data["role_bindings"])
-    logger.debug(
-        f"Role bindings retrieval completed. Total roles across all auth methods: {total_roles}, Errors: {len(role_bindings_data['errors'])}"
-    )
+    logger.debug(f"Role bindings retrieval completed. Total roles across all auth methods: {total_roles}, Errors: {len(role_bindings_data['errors'])}")
     return role_bindings_data
 
 
-def _get_kubernetes_role_bindings(  # noqa: C901
-    client: hvac.Client, auth_path: str
-) -> Dict[str, Any]:
+def _get_kubernetes_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, Any]:  # noqa: C901
     """Retrieve Kubernetes auth method role bindings."""
     roles_data = {"roles": [], "errors": []}
 
@@ -1104,12 +1040,8 @@ def _get_kubernetes_role_bindings(  # noqa: C901
 
                         role_info = {
                             "name": role_name,
-                            "bound_service_account_names": role_data.get(
-                                "bound_service_account_names", []
-                            ),
-                            "bound_service_account_namespaces": role_data.get(
-                                "bound_service_account_namespaces", []
-                            ),
+                            "bound_service_account_names": role_data.get("bound_service_account_names", []),
+                            "bound_service_account_namespaces": role_data.get("bound_service_account_namespaces", []),
                             "token_policies": role_data.get("token_policies", []),
                             "token_ttl": role_data.get("token_ttl", 0),
                             "token_max_ttl": role_data.get("token_max_ttl", 0),
@@ -1118,12 +1050,8 @@ def _get_kubernetes_role_bindings(  # noqa: C901
 
                         # Enhanced debug logging for Kubernetes role
                         logger.debug(f"Kubernetes role '{role_name}' details:")
-                        logger.debug(
-                            f"  - Bound service accounts: {role_info['bound_service_account_names']}"
-                        )
-                        logger.debug(
-                            f"  - Bound namespaces: {role_info['bound_service_account_namespaces']}"
-                        )
+                        logger.debug(f"  - Bound service accounts: {role_info['bound_service_account_names']}")
+                        logger.debug(f"  - Bound namespaces: {role_info['bound_service_account_namespaces']}")
                         logger.debug(f"  - Token policies: {role_info['token_policies']}")
                         logger.debug(f"  - Token TTL: {role_info['token_ttl']}")
                         logger.debug(f"  - Token Max TTL: {role_info['token_max_ttl']}")
@@ -1131,9 +1059,7 @@ def _get_kubernetes_role_bindings(  # noqa: C901
 
                         # Security analysis
                         if "*" in role_info["bound_service_account_names"]:
-                            logger.debug(
-                                f"    * WARNING: Role '{role_name}' allows any service account"
-                            )
+                            logger.debug(f"    * WARNING: Role '{role_name}' allows any service account")
                         if "*" in role_info["bound_service_account_namespaces"]:
                             logger.debug(f"    * WARNING: Role '{role_name}' allows any namespace")
                         if not role_info["token_policies"]:
@@ -1143,26 +1069,20 @@ def _get_kubernetes_role_bindings(  # noqa: C901
 
                 except Exception as e:
                     logger.error(f"Error retrieving Kubernetes role '{role_name}': {e}")
-                    roles_data["errors"].append(
-                        f"Error retrieving Kubernetes role '{role_name}': {str(e)}"
-                    )
+                    roles_data["errors"].append(f"Error retrieving Kubernetes role '{role_name}': {str(e)}")
         else:
             logger.debug("No Kubernetes roles found or unable to list roles")
 
     except Exception as e:
         error_msg = str(e)
         if "unsupported operation" in error_msg.lower():
-            logger.warning(
-                f"Kubernetes auth method at '{auth_path}' doesn't support role listing: {e}"
-            )
+            logger.warning(f"Kubernetes auth method at '{auth_path}' doesn't support role listing: {e}")
             logger.info("This may be normal for certain Kubernetes auth configurations")
             roles_data["errors"].append(f"Role listing not supported for {auth_path}: {str(e)}")
         elif "permission denied" in error_msg.lower():
             logger.warning(f"Permission denied listing Kubernetes roles at '{auth_path}': {e}")
             logger.info("This may be normal if your token doesn't have auth method permissions")
-            roles_data["errors"].append(
-                f"Permission denied listing roles for {auth_path}: {str(e)}"
-            )
+            roles_data["errors"].append(f"Permission denied listing roles for {auth_path}: {str(e)}")
         else:
             logger.error(f"Error listing Kubernetes roles: {e}")
             roles_data["errors"].append(f"Error listing Kubernetes roles: {str(e)}")
@@ -1190,9 +1110,7 @@ def _get_ldap_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, An
 
             for group_name in group_names:
                 try:
-                    group_response = client.read(
-                        f"auth/{auth_path.rstrip('/')}/groups/{group_name}"
-                    )
+                    group_response = client.read(f"auth/{auth_path.rstrip('/')}/groups/{group_name}")
                     if group_response and "data" in group_response:
                         group_data = group_response["data"]
 
@@ -1209,9 +1127,7 @@ def _get_ldap_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, An
 
                 except Exception as e:
                     logger.error(f"Error retrieving LDAP group '{group_name}': {e}")
-                    roles_data["errors"].append(
-                        f"Error retrieving LDAP group '{group_name}': {str(e)}"
-                    )
+                    roles_data["errors"].append(f"Error retrieving LDAP group '{group_name}': {str(e)}")
 
         # Try to get LDAP users using LIST operation
         users_list_path = f"auth/{auth_path.rstrip('/')}/users"
@@ -1244,28 +1160,18 @@ def _get_ldap_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, An
 
                 except Exception as e:
                     logger.error(f"Error retrieving LDAP user '{user_name}': {e}")
-                    roles_data["errors"].append(
-                        f"Error retrieving LDAP user '{user_name}': {str(e)}"
-                    )
+                    roles_data["errors"].append(f"Error retrieving LDAP user '{user_name}': {str(e)}")
 
     except Exception as e:
         error_msg = str(e)
         if "unsupported operation" in error_msg.lower():
-            logger.warning(
-                f"LDAP auth method at '{auth_path}' doesn't support groups/users listing: {e}"
-            )
+            logger.warning(f"LDAP auth method at '{auth_path}' doesn't support groups/users listing: {e}")
             logger.info("This may be normal for certain LDAP auth configurations or permissions")
-            roles_data["errors"].append(
-                f"Groups/users listing not supported for {auth_path}: {str(e)}"
-            )
+            roles_data["errors"].append(f"Groups/users listing not supported for {auth_path}: {str(e)}")
         elif "permission denied" in error_msg.lower():
             logger.warning(f"Permission denied listing LDAP groups/users at '{auth_path}': {e}")
-            logger.info(
-                "This may be normal if your token doesn't have LDAP auth method permissions"
-            )
-            roles_data["errors"].append(
-                f"Permission denied listing LDAP groups/users for {auth_path}: {str(e)}"
-            )
+            logger.info("This may be normal if your token doesn't have LDAP auth method permissions")
+            roles_data["errors"].append(f"Permission denied listing LDAP groups/users for {auth_path}: {str(e)}")
         else:
             logger.error(f"Error listing LDAP groups/users: {e}")
             roles_data["errors"].append(f"Error listing LDAP groups/users: {str(e)}")
@@ -1308,17 +1214,13 @@ def _get_userpass_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str
                         logger.debug(f"  - Token Max TTL: {role_info['token_max_ttl']}")
 
                         if not role_info["policies"]:
-                            logger.debug(
-                                f"    * WARNING: User '{user_name}' has no policies assigned"
-                            )
+                            logger.debug(f"    * WARNING: User '{user_name}' has no policies assigned")
 
                         roles_data["roles"].append(role_info)
 
                 except Exception as e:
                     logger.error(f"Error retrieving userpass user '{user_name}': {e}")
-                    roles_data["errors"].append(
-                        f"Error retrieving userpass user '{user_name}': {str(e)}"
-                    )
+                    roles_data["errors"].append(f"Error retrieving userpass user '{user_name}': {str(e)}")
         else:
             logger.debug("No userpass users found or unable to list users")
 
@@ -1356,9 +1258,7 @@ def _get_aws_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, Any
                             "auth_type": role_data.get("auth_type", ""),
                             "bound_account_id": role_data.get("bound_account_id", []),
                             "bound_arn": role_data.get("bound_arn", []),
-                            "bound_iam_instance_profile_arn": role_data.get(
-                                "bound_iam_instance_profile_arn", []
-                            ),
+                            "bound_iam_instance_profile_arn": role_data.get("bound_iam_instance_profile_arn", []),
                             "bound_iam_role_arn": role_data.get("bound_iam_role_arn", []),
                             "bound_vpc_id": role_data.get("bound_vpc_id", []),
                             "token_policies": role_data.get("token_policies", []),
@@ -1375,9 +1275,7 @@ def _get_aws_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, Any
 
                         # Security analysis
                         if "*" in str(role_info["bound_account_id"]):
-                            logger.debug(
-                                f"    * WARNING: Role '{role_name}' allows any AWS account"
-                            )
+                            logger.debug(f"    * WARNING: Role '{role_name}' allows any AWS account")
                         if not role_info["token_policies"]:
                             logger.debug(f"    * WARNING: Role '{role_name}' has no token policies")
 
@@ -1385,9 +1283,7 @@ def _get_aws_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, Any
 
                 except Exception as e:
                     logger.error(f"Error retrieving AWS role '{role_name}': {e}")
-                    roles_data["errors"].append(
-                        f"Error retrieving AWS role '{role_name}': {str(e)}"
-                    )
+                    roles_data["errors"].append(f"Error retrieving AWS role '{role_name}': {str(e)}")
         else:
             logger.debug("No AWS roles found or unable to list roles")
 
@@ -1431,12 +1327,8 @@ def _get_azure_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, A
                         }
 
                         logger.debug(f"Azure role '{role_name}' details:")
-                        logger.debug(
-                            f"  - Bound subscriptions: {role_info['bound_subscription_id']}"
-                        )
-                        logger.debug(
-                            f"  - Bound resource groups: {role_info['bound_resource_groups']}"
-                        )
+                        logger.debug(f"  - Bound subscriptions: {role_info['bound_subscription_id']}")
+                        logger.debug(f"  - Bound resource groups: {role_info['bound_resource_groups']}")
                         logger.debug(f"  - Bound locations: {role_info['bound_locations']}")
                         logger.debug(f"  - Token policies: {role_info['token_policies']}")
 
@@ -1444,9 +1336,7 @@ def _get_azure_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, A
 
                 except Exception as e:
                     logger.error(f"Error retrieving Azure role '{role_name}': {e}")
-                    roles_data["errors"].append(
-                        f"Error retrieving Azure role '{role_name}': {str(e)}"
-                    )
+                    roles_data["errors"].append(f"Error retrieving Azure role '{role_name}': {str(e)}")
         else:
             logger.debug("No Azure roles found or unable to list roles")
 
@@ -1505,9 +1395,7 @@ def _get_oidc_jwt_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str
 
                 except Exception as e:
                     logger.error(f"Error retrieving OIDC/JWT role '{role_name}': {e}")
-                    roles_data["errors"].append(
-                        f"Error retrieving OIDC/JWT role '{role_name}': {str(e)}"
-                    )
+                    roles_data["errors"].append(f"Error retrieving OIDC/JWT role '{role_name}': {str(e)}")
         else:
             logger.debug("No OIDC/JWT roles found or unable to list roles")
 
@@ -1560,21 +1448,15 @@ def _get_approle_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str,
 
                         # Security analysis
                         if not role_info["bind_secret_id"]:
-                            logger.debug(
-                                f"    * WARNING: Role '{role_name}' does not require secret ID"
-                            )
+                            logger.debug(f"    * WARNING: Role '{role_name}' does not require secret ID")
                         if not role_info["bound_cidr_list"]:
-                            logger.debug(
-                                f"    * NOTICE: Role '{role_name}' has no CIDR restrictions"
-                            )
+                            logger.debug(f"    * NOTICE: Role '{role_name}' has no CIDR restrictions")
 
                         roles_data["roles"].append(role_info)
 
                 except Exception as e:
                     logger.error(f"Error retrieving AppRole role '{role_name}': {e}")
-                    roles_data["errors"].append(
-                        f"Error retrieving AppRole role '{role_name}': {str(e)}"
-                    )
+                    roles_data["errors"].append(f"Error retrieving AppRole role '{role_name}': {str(e)}")
         else:
             logger.debug("No AppRole roles found or unable to list roles")
 
@@ -1673,9 +1555,7 @@ def perform_namespace_review(namespace: str, debug: bool = False) -> Dict[str, A
         policies_data = get_policies(client)
         review_results["policies"] = policies_data
         review_results["summary"]["total_policies"] = len(policies_data.get("policies", []))
-        logger.debug(
-            f"=== POLICY RETRIEVAL PHASE COMPLETED: {review_results['summary']['total_policies']} policies found ==="
-        )
+        logger.debug(f"=== POLICY RETRIEVAL PHASE COMPLETED: {review_results['summary']['total_policies']} policies found ===")
 
         # Get groups
         logger.info("Retrieving groups...")
@@ -1683,38 +1563,26 @@ def perform_namespace_review(namespace: str, debug: bool = False) -> Dict[str, A
         groups_data = get_groups(client)
         review_results["groups"] = groups_data
         review_results["summary"]["total_groups"] = len(groups_data.get("groups", []))
-        logger.debug(
-            f"=== GROUPS RETRIEVAL PHASE COMPLETED: {review_results['summary']['total_groups']} groups found ==="
-        )
+        logger.debug(f"=== GROUPS RETRIEVAL PHASE COMPLETED: {review_results['summary']['total_groups']} groups found ===")
 
         # Get auth methods
         logger.info("Retrieving authentication methods...")
         logger.debug("=== STARTING AUTH METHODS RETRIEVAL PHASE ===")
         auth_methods_data = get_auth_methods(client)
         review_results["auth_methods"] = auth_methods_data
-        review_results["summary"]["total_auth_methods"] = len(
-            auth_methods_data.get("auth_methods", [])
-        )
-        logger.debug(
-            f"=== AUTH METHODS RETRIEVAL PHASE COMPLETED: {review_results['summary']['total_auth_methods']} auth methods found ==="
-        )
+        review_results["summary"]["total_auth_methods"] = len(auth_methods_data.get("auth_methods", []))
+        logger.debug(f"=== AUTH METHODS RETRIEVAL PHASE COMPLETED: {review_results['summary']['total_auth_methods']} auth methods found ===")
 
         # Get role bindings for auth methods
         logger.info("Retrieving authentication role bindings...")
         logger.debug("=== STARTING ROLE BINDINGS RETRIEVAL PHASE ===")
-        role_bindings_data = get_auth_role_bindings(
-            client, auth_methods_data.get("auth_methods", [])
-        )
+        role_bindings_data = get_auth_role_bindings(client, auth_methods_data.get("auth_methods", []))
         review_results["role_bindings"] = role_bindings_data
 
         # Calculate total roles across all auth methods
-        total_roles = sum(
-            len(rb.get("roles", [])) for rb in role_bindings_data.get("role_bindings", [])
-        )
+        total_roles = sum(len(rb.get("roles", [])) for rb in role_bindings_data.get("role_bindings", []))
         review_results["summary"]["total_roles"] = total_roles
-        logger.debug(
-            f"=== ROLE BINDINGS RETRIEVAL PHASE COMPLETED: {total_roles} roles found across all auth methods ==="
-        )
+        logger.debug(f"=== ROLE BINDINGS RETRIEVAL PHASE COMPLETED: {total_roles} roles found across all auth methods ===")
 
         # Collect all errors
         all_errors = []

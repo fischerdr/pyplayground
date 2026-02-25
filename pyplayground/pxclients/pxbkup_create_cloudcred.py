@@ -14,9 +14,7 @@ import requests
 def _prompt_for_password(args):
     """If no password is specified on the command line, prompt for it."""
     if not args.password:
-        args.password = getpass.getpass(
-            prompt='"Please enter password for host %s and user %s: ' % (args.host, args.user)
-        )
+        args.password = getpass.getpass(prompt='"Please enter password for host %s and user %s: ' % (args.host, args.user))
     return args
 
 
@@ -129,9 +127,7 @@ if __name__ == "__main__":
     cmdlinegroup.add_argument("--secretKey", help="S3 secret key")
     cmdlinegroup.add_argument("--owner-name", help="User name to own the resource")
     cmdlinegroup.add_argument("--accessID", help="S3 access key")
-    cmdlinegroup.add_argument(
-        "--orgID", default="default", action="store", help="Portworx org - should be -> default"
-    )
+    cmdlinegroup.add_argument("--orgID", default="default", action="store", help="Portworx org - should be -> default")
     exclusive_group = parser.add_mutually_exclusive_group(required=True)
     exclusive_group.add_argument(
         "--s3cred-file",
@@ -147,9 +143,7 @@ if __name__ == "__main__":
     args = _prompt_for_password(parser.parse_args())
 
     if args.add:
-        req_args = (
-            bool(args.credname) + bool(args.secretKey) + bool(args.owner_name) + bool(args.accessID)
-        )
+        req_args = bool(args.credname) + bool(args.secretKey) + bool(args.owner_name) + bool(args.accessID)
         if req_args != 4:
             parser.print_help()
             sys.exit(1)
@@ -185,9 +179,7 @@ if __name__ == "__main__":
                 for rec in csvFile:
                     print(rec)
                     owner_id = findownerID(pxbkui_url, pxbk_accesstoken, rec[1])
-                    createAWSCldCred(
-                        pxbkapi_url, pxbk_accesstoken, rec[0], args.orgID, rec[1], rec[2], rec[3]
-                    )
+                    createAWSCldCred(pxbkapi_url, pxbk_accesstoken, rec[0], args.orgID, rec[1], rec[2], rec[3])
 
         except FileNotFoundError:
             print(f"Error: The file {args.s3cred_file} was not found.")

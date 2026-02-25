@@ -80,29 +80,19 @@ def patch_namespace_label(
     console.print(f":gear: Attempting: {action}")
     try:
         v1_api.patch_namespace(name=namespace_name, body=patch_body)
-        console.print(
-            f":white_check_mark: Successfully applied label to namespace [cyan]{namespace_name}[/cyan]"
-        )
+        console.print(f":white_check_mark: Successfully applied label to namespace [cyan]{namespace_name}[/cyan]")
         logger.info(f"Successfully applied label to namespace '{namespace_name}'")
         return True
     except ApiException as e:
         if e.status == 404:
-            console.print(
-                f":x: Namespace [cyan]{namespace_name}[/cyan] not found. Cannot apply label."
-            )
+            console.print(f":x: Namespace [cyan]{namespace_name}[/cyan] not found. Cannot apply label.")
             logger.error(f"Namespace '{namespace_name}' not found. Cannot apply label.")
         else:
-            console.print(
-                f":x: Failed to patch namespace [cyan]{namespace_name}[/cyan]: [red]{e.status} - {e.reason}[/red]"
-            )
-            logger.error(
-                f"Failed to patch namespace '{namespace_name}': {e.status} - {e.reason} - {e.body}"
-            )
+            console.print(f":x: Failed to patch namespace [cyan]{namespace_name}[/cyan]: [red]{e.status} - {e.reason}[/red]")
+            logger.error(f"Failed to patch namespace '{namespace_name}': {e.status} - {e.reason} - {e.body}")
         return False
     except Exception as e:
-        console.print(
-            f":x: Unexpected error patching namespace [cyan]{namespace_name}[/cyan]: [red]{e}[/red]"
-        )
+        console.print(f":x: Unexpected error patching namespace [cyan]{namespace_name}[/cyan]: [red]{e}[/red]")
         logger.exception(f"Unexpected error patching namespace '{namespace_name}': {e}")
         return False
 
@@ -148,31 +138,23 @@ def _process_groups_and_label(
 
         if label_value is None:
             if group_id not in unmapped_groups:
-                logger.warning(
-                    f"No label mapping found for group '{group_id}'. Skipping namespaces in this group."
-                )
+                logger.warning(f"No label mapping found for group '{group_id}'. Skipping namespaces in this group.")
                 unmapped_groups.add(group_id)
             skipped_count += len(namespaces)
             continue
 
         if not isinstance(label_value, str):
-            logger.warning(
-                f"Invalid label value '{label_value}' defined for group '{group_id}' in YAML (must be a string). Skipping."
-            )
+            logger.warning(f"Invalid label value '{label_value}' defined for group '{group_id}' in YAML (must be a string). Skipping.")
             unmapped_groups.add(group_id)
             skipped_count += len(namespaces)
             continue
 
         # logger.info(f"Processing group '{group_id}' with label '{label_key}={label_value}'...") # Keep in log only
-        console.print(
-            f"\nProcessing group [bold magenta]{group_id}[/bold magenta] with label [yellow]{label_key}[/yellow]=[green]{label_value}[/green]..."
-        )
+        console.print(f"\nProcessing group [bold magenta]{group_id}[/bold magenta] with label [yellow]{label_key}[/yellow]=[green]{label_value}[/green]...")
 
         for ns_name in namespaces:
             if not isinstance(ns_name, str) or not ns_name:
-                logger.warning(
-                    f"Skipping invalid namespace name '{ns_name}' in group '{group_id}'."
-                )
+                logger.warning(f"Skipping invalid namespace name '{ns_name}' in group '{group_id}'.")
                 skipped_count += 1
                 continue
 
@@ -195,17 +177,11 @@ def _log_summary(
     """Logs the summary of the labeling process."""
     summary_lines = []
     if dry_run:
-        summary_lines.append(
-            f"DRY RUN: Would have attempted to label [bold yellow]{labeled_count}[/bold yellow] namespaces."
-        )
+        summary_lines.append(f"DRY RUN: Would have attempted to label [bold yellow]{labeled_count}[/bold yellow] namespaces.")
     else:
-        summary_lines.append(
-            f"Successfully labeled: [bold green]{labeled_count}[/bold green] namespaces."
-        )
+        summary_lines.append(f"Successfully labeled: [bold green]{labeled_count}[/bold green] namespaces.")
 
-    summary_lines.append(
-        f"Skipped (invalid/unmapped/bad value): [bold cyan]{skipped_count}[/bold cyan] namespaces."
-    )
+    summary_lines.append(f"Skipped (invalid/unmapped/bad value): [bold cyan]{skipped_count}[/bold cyan] namespaces.")
     summary_lines.append(f"Errors during patching: [bold red]{error_count}[/bold red] namespaces.")
 
     panel_title = "Dry Run Summary" if dry_run else "Labeling Summary"
@@ -222,15 +198,11 @@ def _log_summary(
         logger.info(f"DRY RUN: Would have attempted to label {labeled_count} namespaces.")
     else:
         logger.info(f"Successfully labeled: {labeled_count} namespaces.")
-    logger.info(
-        f"Skipped (invalid name/group not mapped/invalid mapping): {skipped_count} namespaces."
-    )
+    logger.info(f"Skipped (invalid name/group not mapped/invalid mapping): {skipped_count} namespaces.")
     logger.info(f"Errors during patching: {error_count} namespaces.")
     if unmapped_groups:
         unmapped_str = ", ".join(sorted(list(unmapped_groups)))
-        console.print(
-            f"[bold yellow]Warning:[/bold yellow] Groups found in JSON but not in YAML mapping: {unmapped_str}"
-        )
+        console.print(f"[bold yellow]Warning:[/bold yellow] Groups found in JSON but not in YAML mapping: {unmapped_str}")
         logger.warning(f"Groups found in JSON but not in YAML mapping: {unmapped_str}")
 
 
@@ -297,16 +269,12 @@ def main(
     # logger.info("Namespace Labeling Script Started.") # Keep in log only
     console.print("[bold blue]Namespace Labeling Script Started.[/bold blue]")
     if dry_run:
-        console.print(
-            ":warning: [bold yellow]*** DRY RUN MODE ENABLED ***[/bold yellow] No changes will be applied to the cluster."
-        )
+        console.print(":warning: [bold yellow]*** DRY RUN MODE ENABLED ***[/bold yellow] No changes will be applied to the cluster.")
         # logger.info("*** DRY RUN MODE ENABLED *** No changes will be applied to the cluster.") # Keep in log
     console.print(f"  [dim]Input JSON:[/dim] [italic]{input_json}[/italic]")
     console.print(f"  [dim]Config YAML:[/dim] [italic]{config_yaml}[/italic]")
     console.print(f"  [dim]Label Key:[/dim] [yellow]{label_key}[/yellow]")
-    console.print(
-        f"  [dim]Kubeconfig:[/dim] [italic]{kubeconfig if kubeconfig else 'Default locations'}[/italic]"
-    )
+    console.print(f"  [dim]Kubeconfig:[/dim] [italic]{kubeconfig if kubeconfig else 'Default locations'}[/italic]")
     # Keep detailed logs
     logger.info(f"Input JSON: {input_json}")
     logger.info(f"Config YAML: {config_yaml}")
@@ -330,24 +298,18 @@ def main(
         sys.exit(1)
 
     # --- Process Groups and Apply Labels ---
-    labeled_count, skipped_count, error_count, unmapped_groups = _process_groups_and_label(
-        v1_api, groups_data, label_mapping, label_key, dry_run
-    )
+    labeled_count, skipped_count, error_count, unmapped_groups = _process_groups_and_label(v1_api, groups_data, label_mapping, label_key, dry_run)
 
     # --- Summary ---
     _log_summary(labeled_count, skipped_count, error_count, unmapped_groups, dry_run)
 
     # --- Exit Status ---
     if error_count > 0 and not dry_run:
-        console.print(
-            "[bold red]:x: Completed with errors.[/bold red] Please check the logs for details."
-        )
+        console.print("[bold red]:x: Completed with errors.[/bold red] Please check the logs for details.")
         # logger.error("Completed with errors. Please check the logs above for details.") # Keep in log
         sys.exit(1)
     elif dry_run:
-        console.print(
-            "[bold yellow]:information: Dry run complete. No changes were made.[/bold yellow]"
-        )
+        console.print("[bold yellow]:information: Dry run complete. No changes were made.[/bold yellow]")
         # logger.info("Dry run complete. No changes were made.") # Keep in log
     else:
         console.print("[bold green]:white_check_mark: Labeling complete.[/bold green]")

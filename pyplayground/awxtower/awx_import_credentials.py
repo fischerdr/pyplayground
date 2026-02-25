@@ -55,13 +55,9 @@ def import_creds(
             cred_name = cred_data.get("name")
             try:
                 # Check if credential already exists
-                existing_cred = find_resource_by_name(
-                    tower_url, headers, "credentials", cred_name, verify
-                )
+                existing_cred = find_resource_by_name(tower_url, headers, "credentials", cred_name, verify)
                 if not existing_cred:
-                    created_cred = create_resource(
-                        tower_url, headers, "credentials", cred_data, verify
-                    )
+                    created_cred = create_resource(tower_url, headers, "credentials", cred_data, verify)
                     if created_cred:
                         logger.info(f"Successfully imported credential: {cred_name}")
                     else:

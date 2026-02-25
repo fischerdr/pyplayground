@@ -203,15 +203,11 @@ def run_verification(
                 validated_entry = validate_pvc_entry(pvc_entry)
 
                 if not validated_entry:
-                    result.add_check(
-                        "Initial Validation", False, "Skipped due to invalid data in export file."
-                    )
+                    result.add_check("Initial Validation", False, "Skipped due to invalid data in export file.")
                     all_results.append(result)
                     continue
 
-                normalized_secret_name, _ = normalize_secret_name(
-                    validated_entry["secret_key"], validated_entry["pvc_name"]
-                )
+                normalized_secret_name, _ = normalize_secret_name(validated_entry["secret_key"], validated_entry["pvc_name"])
 
                 # 1. Verify K8s Secret
                 success, msg = verify_kubernetes_secret(

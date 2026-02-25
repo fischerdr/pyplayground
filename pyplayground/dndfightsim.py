@@ -11,9 +11,7 @@ try:
     from .dndfightsim.simulation import run_example_grid_fight, run_leveling_simulation
 except ImportError:
     # Fallback for running script directly (less ideal)
-    print(
-        "Import Warning: Attempting fallback import. Run using 'python -m src.dndfightsim' for reliability."
-    )
+    print("Import Warning: Attempting fallback import. Run using 'python -m src.dndfightsim' for reliability.")
     try:
         from dndfightsim.simulation import run_example_grid_fight, run_leveling_simulation
     except ImportError as e:

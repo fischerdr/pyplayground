@@ -21,9 +21,7 @@ from .environment import BaseEnvironment, BattleGrid  # Ensure BattleGrid is imp
 # --- End Rich Display Imports ---
 
 
-def _handle_character_turn(
-    character: Character, opponent: Character, environment: BaseEnvironment, log_messages: List[str]
-) -> bool:
+def _handle_character_turn(character: Character, opponent: Character, environment: BaseEnvironment, log_messages: List[str]) -> bool:
     """Handles a single character's turn in the fight.
 
     Processes status effects, applies hazards, chooses and performs an action,
@@ -48,9 +46,7 @@ def _handle_character_turn(
     # Check if conscious AFTER processing effects
     if not character.is_conscious():  # Check if conscious after status effects
         # log_messages might already contain stun message from process_status_effects
-        return (
-            False  # Character is stunned or otherwise incapacitated, opponent not defeated by this
-        )
+        return False  # Character is stunned or otherwise incapacitated, opponent not defeated by this
 
     # Check if character survived status effects
     if character.hp <= 0:
@@ -72,9 +68,7 @@ def _handle_character_turn(
         # Opponent is the winner, but not defeated *this turn* by the current char's actions
         return False
 
-    log_messages.append(
-        f"{character.name}'s turn ({character.class_name.value}): HP={character.hp}/{character.max_hp}"
-    )
+    log_messages.append(f"{character.name}'s turn ({character.class_name.value}): HP={character.hp}/{character.max_hp}")
     # Pass environment to AI
     action: Action = character.ai.choose_action(opponent, environment)
     # Pass log_messages list to _perform_action
@@ -132,9 +126,7 @@ def _perform_action(
     return opponent_defeated  # Return the defeat status
 
 
-def has_line_of_sight(
-    start_x: int, start_y: int, end_x: int, end_y: int, environment: BaseEnvironment
-) -> bool:
+def has_line_of_sight(start_x: int, start_y: int, end_x: int, end_y: int, environment: BaseEnvironment) -> bool:
     """Checks if there is a clear line of sight between two points using Bresenham's algorithm.
 
     Args:
@@ -211,9 +203,7 @@ def _handle_attack_action(
     opp_loc = environment.get_character_location(opponent)
 
     if not char_loc or not opp_loc:
-        log_messages.append(
-            f"  Error: Cannot find location for {character.name} or {opponent.name}. Attack fails."
-        )
+        log_messages.append(f"  Error: Cannot find location for {character.name} or {opponent.name}. Attack fails.")
         return False
 
     char_x, char_y = char_loc
@@ -229,9 +219,7 @@ def _handle_attack_action(
 
     # --- Range Check ---
     if distance > weapon_range:
-        log_messages.append(
-            f"  {character.name} is out of range! (Distance: {distance:.1f}, Range: {weapon_range:.1f})"
-        )
+        log_messages.append(f"  {character.name} is out of range! (Distance: {distance:.1f}, Range: {weapon_range:.1f})")
         if isinstance(environment, BattleGrid):
             environment.targeting_line = None  # Clear targeting line
         return False
@@ -286,35 +274,22 @@ def _handle_attack_action(
         # Revert to using the damage tuple from constants.py
         weapon_damage_range: Tuple[int, int] = character.weapon.get("damage", (1, 4))  # Default 1d4
         # Ensure it's a tuple of two integers
-        if not (
-            isinstance(weapon_damage_range, tuple)
-            and len(weapon_damage_range) == 2
-            and isinstance(weapon_damage_range[0], int)
-            and isinstance(weapon_damage_range[1], int)
-        ):
-            log_messages.append(
-                f"  Warning: Invalid weapon damage format {weapon_damage_range} for {character.name}. Using (1, 4)."
-            )
+        if not (isinstance(weapon_damage_range, tuple) and len(weapon_damage_range) == 2 and isinstance(weapon_damage_range[0], int) and isinstance(weapon_damage_range[1], int)):
+            log_messages.append(f"  Warning: Invalid weapon damage format {weapon_damage_range} for {character.name}. Using (1, 4).")
             weapon_damage_range = (1, 4)
 
         # Ensure min <= max
         min_dmg, max_dmg = weapon_damage_range
         if min_dmg > max_dmg:
-            log_messages.append(
-                f"  Warning: Weapon min damage > max damage {weapon_damage_range}. Swapping."
-            )
+            log_messages.append(f"  Warning: Weapon min damage > max damage {weapon_damage_range}. Swapping.")
             min_dmg, max_dmg = max_dmg, min_dmg
 
         base_damage = random.randint(min_dmg, max_dmg)
         damage = max(0, base_damage + damage_bonus)  # Ensure non-negative damage
 
         # More detailed hit log
-        log_messages.append(
-            f"  {character.name} hits {opponent.name}! (Roll {attack_roll:.0f} vs AC {target_ac})"
-        )
-        log_messages.append(
-            f"    Deals {damage} damage ({base_damage} base + {damage_bonus} bonus)."
-        )
+        log_messages.append(f"  {character.name} hits {opponent.name}! (Roll {attack_roll:.0f} vs AC {target_ac})")
+        log_messages.append(f"    Deals {damage} damage ({base_damage} base + {damage_bonus} bonus).")
         if opponent.take_damage(damage):
             log_messages.append(f"    {opponent.name} has been defeated!")
             if isinstance(environment, BattleGrid):
@@ -322,9 +297,7 @@ def _handle_attack_action(
             return True  # Opponent defeated
     else:
         # Miss!
-        log_messages.append(
-            f"  {character.name} misses {opponent.name}. (Roll {attack_roll:.0f} vs AC {target_ac})"
-        )
+        log_messages.append(f"  {character.name} misses {opponent.name}. (Roll {attack_roll:.0f} vs AC {target_ac})")
         if isinstance(environment, BattleGrid):
             environment.targeting_line = None  # Clear after miss
 
@@ -335,9 +308,7 @@ def _handle_attack_action(
     return False  # Opponent not defeated by this attack
 
 
-def _handle_move_action(
-    character: Character, opponent: Character, environment: BaseEnvironment, log_messages: List[str]
-) -> None:
+def _handle_move_action(character: Character, opponent: Character, environment: BaseEnvironment, log_messages: List[str]) -> None:
     """Handles the move action, attempting to move the character on the grid.
 
     Uses the AI's direction choice and attempts movement one step at a time.
@@ -405,18 +376,12 @@ def _handle_move_action(
         # Simple check for difficult terrain, more complex tracking needed for exact cost per step
         if end_tile and end_tile.movement_cost > 1:
             cost_detail = f" (Entered difficult terrain)"
-        log_messages.append(
-            f"  {character.name} moves from {start_loc} to {end_loc} ({steps_taken} steps). {character.movement_points} MP left.{cost_detail}"
-        )
+        log_messages.append(f"  {character.name} moves from {start_loc} to {end_loc} ({steps_taken} steps). {character.movement_points} MP left.{cost_detail}")
     elif steps_taken > 0:
-        log_messages.append(
-            f"  {character.name} moved {steps_taken} steps. {character.movement_points} MP left."
-        )
+        log_messages.append(f"  {character.name} moved {steps_taken} steps. {character.movement_points} MP left.")
 
 
-def _handle_item_action(
-    character: Character, opponent: Character, log_messages: List[str]
-) -> bool:  # Changed return type to bool (opponent_defeated)
+def _handle_item_action(character: Character, opponent: Character, log_messages: List[str]) -> bool:  # Changed return type to bool (opponent_defeated)
     """Handles the Use Item action, allowing the character to use an item.
 
     Args:
@@ -440,9 +405,7 @@ def _handle_item_action(
         if use_result:
             # use_item should ideally return log messages itself
             # For now, assume it prints; add a placeholder log here
-            log_messages.append(
-                f"  {character.name} uses {item_to_use['name']}. Effect applied."
-            )  # Adjusted log
+            log_messages.append(f"  {character.name} uses {item_to_use['name']}. Effect applied.")  # Adjusted log
             # Check if opponent defeated indirectly (e.g., reflected damage item - future?)
             # Check opponent HP directly after item use, as use_item doesn't know about opponent
             if opponent.hp <= 0:
@@ -457,9 +420,7 @@ def _handle_item_action(
     return False  # Assume item did not directly defeat opponent
 
 
-def _handle_mage_spellcasting(
-    mage: Mage, opponent: Character, log_messages: List[str]
-) -> bool:  # Changed return type to bool (opponent_defeated)
+def _handle_mage_spellcasting(mage: Mage, opponent: Character, log_messages: List[str]) -> bool:  # Changed return type to bool (opponent_defeated)
     """Handles Mage spellcasting actions using the Mage.cast_spell method.
 
     Args:
@@ -485,9 +446,7 @@ def _handle_mage_spellcasting(
 
     if spell_result:
         # Added spell slot info to log
-        log_messages.append(
-            f"  {mage.name} casts {chosen_spell_name} (Slots: {mage.spell_slots}). {spell_result}"
-        )
+        log_messages.append(f"  {mage.name} casts {chosen_spell_name} (Slots: {mage.spell_slots}). {spell_result}")
         # Check if the opponent was defeated by the spell's effect
         if opponent.hp <= 0:
             # Log message for defeat should be part of spell_result if it happened
@@ -496,16 +455,12 @@ def _handle_mage_spellcasting(
         # cast_spell should return a reason if it failed (e.g., no slots, already active)
         # If it returns None, it means something unexpected happened.
         # Added spell slot info to log
-        log_messages.append(
-            f"  {mage.name} failed to cast {chosen_spell_name} (Slots: {mage.spell_slots}). Reason unknown or invalid spell."
-        )  # Adjusted log
+        log_messages.append(f"  {mage.name} failed to cast {chosen_spell_name} (Slots: {mage.spell_slots}). Reason unknown or invalid spell.")  # Adjusted log
 
     return False  # Opponent not defeated by this spell
 
 
-def _determine_winner_post_loop(
-    character1: Character, character2: Character, turn_count: int, max_turns: int
-) -> str:
+def _determine_winner_post_loop(character1: Character, character2: Character, turn_count: int, max_turns: int) -> str:
     """Determines the winner after the main fight loop concludes.
 
     Args:
@@ -531,9 +486,7 @@ def _determine_winner_post_loop(
 
 
 # flake8: noqa: C901
-def fight(
-    character1: Character, character2: Character, environment: BaseEnvironment
-) -> str:  # Renamed parameter
+def fight(character1: Character, character2: Character, environment: BaseEnvironment) -> str:  # Renamed parameter
     """Simulates a fight between two characters within a given environment.
 
     Uses rich.live for dynamic terminal display with log pane.
@@ -570,9 +523,7 @@ def fight(
         # Add initial log message AFTER Live starts
         log_messages.append(f"--- Fight: {character1.name} vs {character2.name} ---")
         # First update inside Live context
-        update_layout(
-            layout, environment, character1, character2, log_messages, f"Turn {turn_count+1}"
-        )
+        update_layout(layout, environment, character1, character2, log_messages, f"Turn {turn_count+1}")
 
         # --- Main Fight Loop --- #
         # Loop continues as long as both are alive and max turns not reached
@@ -584,9 +535,7 @@ def fight(
 
             # Character 1's turn
             if character1.hp > 0:  # Check HP again in case of multi-hit hazards?
-                _ = _handle_character_turn(  # We don't need the return value here anymore
-                    character1, character2, environment, current_turn_logs
-                )
+                _ = _handle_character_turn(character1, character2, environment, current_turn_logs)  # We don't need the return value here anymore
                 log_messages.extend(current_turn_logs)
                 # Update display after char 1 turn
                 update_layout(
@@ -604,9 +553,7 @@ def fight(
             # Character 2's turn
             if character2.hp > 0:  # Check HP again
                 current_turn_logs = []  # Reset for char 2
-                _ = _handle_character_turn(  # Don't need return value
-                    character2, character1, environment, current_turn_logs
-                )
+                _ = _handle_character_turn(character2, character1, environment, current_turn_logs)  # Don't need return value
                 log_messages.extend(current_turn_logs)
                 # Update display after char 2 turn
                 update_layout(
@@ -630,11 +577,7 @@ def fight(
 
         # Award XP and add log messages
         xp_messages = []
-        if (
-            winner_name != "Draw"
-            and winner_name != "Draw (Mutual Destruction)"
-            and not winner_name.startswith("Draw")
-        ):
+        if winner_name != "Draw" and winner_name != "Draw (Mutual Destruction)" and not winner_name.startswith("Draw"):
             winner_char = character1 if winner_name == character1.name else character2
             loser = character2 if winner_name == character1.name else character1
             # Use a default XP gain or calculate based on loser level etc.

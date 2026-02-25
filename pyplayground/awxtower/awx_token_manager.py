@@ -45,9 +45,7 @@ def update_env_file(env_path: str, key: str, value: str) -> None:
     env_path.write_text(new_content)
 
 
-def get_token(
-    tower_url: str, username: str, password: str, verify_ssl: bool = True
-) -> Optional[str]:
+def get_token(tower_url: str, username: str, password: str, verify_ssl: bool = True) -> Optional[str]:
     """Get authentication token from AWX/Tower.
 
     Args:

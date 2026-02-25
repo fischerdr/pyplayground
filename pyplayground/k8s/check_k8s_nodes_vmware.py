@@ -32,9 +32,7 @@ file_handler.setFormatter(file_format)
 logger.addHandler(file_handler)
 
 
-def connect_to_vcenter(
-    vcenter_host: str, username: str, password: str, disable_ssl: bool
-) -> Optional[vim.ServiceInstance]:
+def connect_to_vcenter(vcenter_host: str, username: str, password: str, disable_ssl: bool) -> Optional[vim.ServiceInstance]:
     """Connect to VMware vCenter.
 
     Establishes a connection to a VMware vCenter server using the pyVim library.
@@ -105,9 +103,7 @@ def get_vm_details(vm: vim.VirtualMachine, info_type: str = "all") -> Dict[str, 
     return details
 
 
-def find_vm_by_name(
-    content: vim.ServiceInstanceContent, vm_name: str
-) -> Optional[vim.VirtualMachine]:
+def find_vm_by_name(content: vim.ServiceInstanceContent, vm_name: str) -> Optional[vim.VirtualMachine]:
     """Find a VM by name.
 
     Searches for a virtual machine in a VMware vSphere environment by its name.
@@ -121,9 +117,7 @@ def find_vm_by_name(
         Optional[vim.VirtualMachine]: The VM object if found, None if not found.
     """
     # Type ignore: pyVmomi type stubs don't fully define ViewManager.CreateContainerView
-    container = content.viewManager.CreateContainerView(  # type: ignore[attr-defined]
-        content.rootFolder, [vim.VirtualMachine], True
-    )
+    container = content.viewManager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True)  # type: ignore[attr-defined]
     for vm in container.view:
         if vm.name == vm_name:
             return cast(vim.VirtualMachine, vm)
@@ -141,18 +135,10 @@ def find_vm_by_name(
     default=None,
 )
 @click.option("--kubeconfig", default=None, help="Path to the kubeconfig file.")
-@click.option(
-    "--node_search", default="", help="Optional substring to filter Kubernetes nodes by name."
-)
-@click.option(
-    "--label_selector", default="", help="Optional label selector to filter Kubernetes nodes."
-)
-@click.option(
-    "--disable_k8s_ssl", is_flag=True, help="Disable SSL verification for Kubernetes API."
-)
-@click.option(
-    "--disable_vcenter_ssl", is_flag=True, help="Disable SSL verification for vCenter connection."
-)
+@click.option("--node_search", default="", help="Optional substring to filter Kubernetes nodes by name.")
+@click.option("--label_selector", default="", help="Optional label selector to filter Kubernetes nodes.")
+@click.option("--disable_k8s_ssl", is_flag=True, help="Disable SSL verification for Kubernetes API.")
+@click.option("--disable_vcenter_ssl", is_flag=True, help="Disable SSL verification for vCenter connection.")
 def check_k8s_nodes(  # noqa: C901
     vcenter_host: str,
     username: str,
@@ -218,9 +204,7 @@ def check_k8s_nodes(  # noqa: C901
         nodes = k8s_api.list_node(label_selector=label_selector).items
         if node_search:
             nodes = [node for node in nodes if node_search in node.metadata.name]
-        logger.info(
-            f"Found {len(nodes)} nodes matching search '{node_search}' and label selector '{label_selector}'."
-        )
+        logger.info(f"Found {len(nodes)} nodes matching search '{node_search}' and label selector '{label_selector}'.")
     except Exception as e:
         logger.error(f"Failed to retrieve nodes from Kubernetes: {e}")
         Disconnect(si)

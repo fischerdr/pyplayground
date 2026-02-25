@@ -44,19 +44,13 @@ def import_hosts_to_inventory(
             host_exists = any(host.get("name") == host_name for host in existing_hosts or [])
 
             if not host_exists:
-                created_host = add_host_to_inventory(
-                    tower_url, headers, inventory_id, host_data, verify
-                )
+                created_host = add_host_to_inventory(tower_url, headers, inventory_id, host_data, verify)
                 if created_host:
-                    logger.info(
-                        f"Successfully imported host '{host_name}' to inventory '{inv_name}'"
-                    )
+                    logger.info(f"Successfully imported host '{host_name}' to inventory '{inv_name}'")
                 else:
                     logger.error(f"Failed to create host '{host_name}' in inventory '{inv_name}'")
             else:
-                logger.warning(
-                    f"Host '{host_name}' already exists in inventory '{inv_name}'. Skipping."
-                )
+                logger.warning(f"Host '{host_name}' already exists in inventory '{inv_name}'. Skipping.")
         except Exception as e:
             logger.error(
                 f"Failed to import host '{host_name}' to inventory '{inv_name}': {e}",
@@ -91,24 +85,18 @@ def import_inventory(
             inv_name = inv_data.get("name")
             try:
                 # Check if inventory already exists
-                existing_inv = find_resource_by_name(
-                    tower_url, headers, "inventories", inv_name, verify
-                )
+                existing_inv = find_resource_by_name(tower_url, headers, "inventories", inv_name, verify)
 
                 if not existing_inv:
                     # Remove hosts from inventory data before creating inventory
                     hosts = inv_data.pop("hosts", [])
-                    created_inv = create_resource(
-                        tower_url, headers, "inventories", inv_data, verify
-                    )
+                    created_inv = create_resource(tower_url, headers, "inventories", inv_data, verify)
                     if created_inv:
                         inventory_id = created_inv.get("id")
                         logger.info(f"Successfully created inventory: {inv_name}")
                         # Import hosts to the newly created inventory
                         if hosts:
-                            import_hosts_to_inventory(
-                                tower_url, headers, inventory_id, hosts, inv_name, verify
-                            )
+                            import_hosts_to_inventory(tower_url, headers, inventory_id, hosts, inv_name, verify)
                     else:
                         logger.error(f"Failed to create inventory: {inv_name}")
                 else:
@@ -117,9 +105,7 @@ def import_inventory(
                     logger.warning(f"Inventory '{inv_name}' already exists. Skipping creation.")
                     # Still import hosts to existing inventory
                     if hosts:
-                        import_hosts_to_inventory(
-                            tower_url, headers, inventory_id, hosts, inv_name, verify
-                        )
+                        import_hosts_to_inventory(tower_url, headers, inventory_id, hosts, inv_name, verify)
 
             except Exception as e:
                 logger.error(f"Failed to process inventory {inv_name}: {e}", exc_info=True)

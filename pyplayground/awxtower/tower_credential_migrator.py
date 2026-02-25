@@ -301,9 +301,7 @@ class TowerCredentialExtractor:
                 except psycopg2.errors.UndefinedColumn as e:
                     if error_keyword and error_keyword in str(e):
                         if warning_message:
-                            logger.warning(
-                                f"{warning_message} This is common on older Tower versions."
-                            )
+                            logger.warning(f"{warning_message} This is common on older Tower versions.")
                         if self._db_connection:
                             self._db_connection.rollback()
                         continue
@@ -314,9 +312,7 @@ class TowerCredentialExtractor:
         finally:
             cursor.close()
 
-    def _process_credential_type_rows(
-        self, rows: List[psycopg2.extras.DictRow]
-    ) -> List[CredentialTypeData]:
+    def _process_credential_type_rows(self, rows: List[psycopg2.extras.DictRow]) -> List[CredentialTypeData]:
         """Processes a list of database rows into CredentialTypeData objects."""
         credential_types = []
         with Progress(console=console) as progress:
@@ -328,9 +324,7 @@ class TowerCredentialExtractor:
                     progress.update(task, advance=1)
                 except Exception as e:
                     logger.error(f"Failed to process credential type '{row['name']}': {e}")
-                    console.print(
-                        f"[red]Error processing credential type '{row['name']}': {e}[/red]"
-                    )
+                    console.print(f"[red]Error processing credential type '{row['name']}': {e}[/red]")
                     continue
         return credential_types
 
@@ -534,17 +528,13 @@ def discover_tower_secret_key(  # noqa: C901
                     elif match.group("key_file"):
                         secret_file_path = match.group("key_file")
                         if not os.path.isabs(secret_file_path):
-                            secret_file_path = os.path.join(
-                                os.path.dirname(file_path), secret_file_path
-                            )
+                            secret_file_path = os.path.join(os.path.dirname(file_path), secret_file_path)
 
                         logger.debug(f"Found SECRET_KEY defined as a file: {secret_file_path}")
                         if os.path.exists(secret_file_path):
                             with open(secret_file_path, "rb") as kf:
                                 key = kf.read().strip().decode("utf-8")
-                                logger.info(
-                                    f"Successfully read SECRET_KEY from: {secret_file_path}"
-                                )
+                                logger.info(f"Successfully read SECRET_KEY from: {secret_file_path}")
                                 return key
                         else:
                             logger.warning(f"SECRET_KEY file not found at path: {secret_file_path}")
@@ -582,10 +572,7 @@ def discover_tower_database_config(
                     username=db_config.get("USER"),
                     password=db_config.get("PASSWORD", ""),
                 )
-                logger.info(
-                    f"Found database config via dynamic import: {connection.host}:{connection.port}/"
-                    f"{connection.database}"
-                )
+                logger.info(f"Found database config via dynamic import: {connection.host}:{connection.port}/" f"{connection.database}")
                 return connection
     except Exception as e:
         logger.warning(f"Could not load database config from {postgres_file}: {e}")
@@ -807,17 +794,14 @@ def main(  # noqa: C901
     # Display banner
     console.print(
         Panel.fit(
-            "[bold blue]Tower Credential Migration Tool[/bold blue]\n"
-            "Extracts encrypted credentials from Ansible Tower for AAP migration",
+            "[bold blue]Tower Credential Migration Tool[/bold blue]\n" "Extracts encrypted credentials from Ansible Tower for AAP migration",
             border_style="blue",
         )
     )
 
     # Check if running as root
     if os.geteuid() != 0:
-        console.print(
-            "[red]Warning: Not running as root. May not be able to access SECRET_KEY.[/red]"
-        )
+        console.print("[red]Warning: Not running as root. May not be able to access SECRET_KEY.[/red]")
         if not Confirm.ask("Continue anyway?"):
             raise click.Abort()
 
@@ -829,9 +813,7 @@ def main(  # noqa: C901
 
         if not secret_key:
             console.print("[red]Could not auto-discover SECRET_KEY.[/red]")
-            secret_key = Prompt.ask(
-                "Please enter Tower SECRET_KEY", password=True, show_default=False
-            )
+            secret_key = Prompt.ask("Please enter Tower SECRET_KEY", password=True, show_default=False)
 
         if not secret_key:
             raise click.ClickException("SECRET_KEY is required for credential decryption")
@@ -892,9 +874,7 @@ def main(  # noqa: C901
             display_credentials_summary(credentials)
 
             if dry_run:
-                console.print(
-                    f"[yellow]Dry run complete. Found {len(credentials)} credentials.[/yellow]"
-                )
+                console.print(f"[yellow]Dry run complete. Found {len(credentials)} credentials.[/yellow]")
                 return
 
             # Confirm export

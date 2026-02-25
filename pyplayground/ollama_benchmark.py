@@ -78,10 +78,7 @@ Students Failing: 1
 
 **Include error handling for missing files and invalid data. Write clean, commented code.**
 """
-THINKING_PROMPT_ADDITION = (
-    "\nPlease provide a verbose, step-by-step thought process on how you would "
-    "approach creating the solution before writing the code."
-)
+THINKING_PROMPT_ADDITION = "\nPlease provide a verbose, step-by-step thought process on how you would " "approach creating the solution before writing the code."
 
 # --- Functions ---
 
@@ -168,9 +165,7 @@ def load_model(session: requests.Session, model: str) -> bool:
     logging.info(f"Loading model: {model}...")
     payload = {"model": model, "messages": []}
     try:
-        response = session.post(
-            f"{OLLAMA_HOST_URL}/api/chat", json=payload, headers=HEADERS, timeout=300
-        )
+        response = session.post(f"{OLLAMA_HOST_URL}/api/chat", json=payload, headers=HEADERS, timeout=300)
         response.raise_for_status()
         data = response.json()
         if data.get("done_reason") == "load" and data.get("done"):
@@ -189,9 +184,7 @@ def unload_model(session: requests.Session, model: str) -> bool:
     logging.info(f"Unloading model: {model}...")
     payload = {"model": model, "messages": [], "keep_alive": 0}
     try:
-        response = session.post(
-            f"{OLLAMA_HOST_URL}/api/chat", json=payload, headers=HEADERS, timeout=60
-        )
+        response = session.post(f"{OLLAMA_HOST_URL}/api/chat", json=payload, headers=HEADERS, timeout=60)
         response.raise_for_status()
         data = response.json()
         if data.get("done_reason") == "unload" and data.get("done"):
@@ -210,9 +203,7 @@ def pull_model(session: requests.Session, model_name: str) -> bool:
     logging.info(f"Attempting to pull model: {model_name}...")
     payload = {"name": model_name, "stream": True}
     try:
-        with session.post(
-            f"{OLLAMA_HOST_URL}/api/pull", json=payload, stream=True, headers=HEADERS, timeout=1800
-        ) as response:
+        with session.post(f"{OLLAMA_HOST_URL}/api/pull", json=payload, stream=True, headers=HEADERS, timeout=1800) as response:
             response.raise_for_status()
             for line in response.iter_lines():
                 if not line:
@@ -295,9 +286,7 @@ def run_inference(session: requests.Session, model: str, prompt: str, is_thinkin
     payload = {"model": model, "messages": [{"role": "user", "content": prompt}], "stream": True}
 
     try:
-        with session.post(
-            f"{OLLAMA_HOST_URL}/api/chat", json=payload, stream=True, headers=HEADERS, timeout=600
-        ) as response:
+        with session.post(f"{OLLAMA_HOST_URL}/api/chat", json=payload, stream=True, headers=HEADERS, timeout=600) as response:
             response.raise_for_status()
             api_error, final_chunk = _process_inference_stream(response)
     except requests.exceptions.RequestException as e:
@@ -322,9 +311,7 @@ def run_benchmark(session: requests.Session, models_to_test: list, no_unload: bo
             result_error = "Model failed to load"
         else:
             try:
-                error, duration, throughput, tokens = run_inference(
-                    session, model, get_prompt(is_thinking), is_thinking
-                )
+                error, duration, throughput, tokens = run_inference(session, model, get_prompt(is_thinking), is_thinking)
                 result_duration, result_throughput, result_tokens, result_error = (
                     duration,
                     throughput,
@@ -404,12 +391,8 @@ def parse_args():
         help="Specific models to benchmark. If not provided, all local models are used.",
     )
     parser.add_argument("--prompt-file", help="Path to a file containing a custom prompt.")
-    parser.add_argument(
-        "--no-unload", action="store_true", help="Do not unload models after each test."
-    )
-    parser.add_argument(
-        "--list-models", action="store_true", help="List locally available models and exit."
-    )
+    parser.add_argument("--no-unload", action="store_true", help="Do not unload models after each test.")
+    parser.add_argument("--list-models", action="store_true", help="List locally available models and exit.")
     parser.add_argument(
         "--pull-models",
         nargs="+",

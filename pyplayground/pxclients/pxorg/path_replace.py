@@ -92,9 +92,7 @@ def main(csv_file_path, json_file_path):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Replace paths in a JSON file based on a CSV mapping file."
-    )
+    parser = argparse.ArgumentParser(description="Replace paths in a JSON file based on a CSV mapping file.")
     parser.add_argument("--mapping", required=True, help="Path to the CSV mapping file.")
     parser.add_argument("--cd_config", required=True, help="Path to the JSON configuration file.")
 

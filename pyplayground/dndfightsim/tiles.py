@@ -117,13 +117,9 @@ class Tile:
         """Updates the display character based on the tile's current state."""
         if self.character:
             self.display_char = self.character.name[0]
-        elif (
-            self.hazard and self.terrain_type != TerrainType.CHASM
-        ):  # Chasm handles its own display
+        elif self.hazard and self.terrain_type != TerrainType.CHASM:  # Chasm handles its own display
             # Simple hazard display - could be more specific later
-            self.display_char = (
-                "^" if self.terrain_type == TerrainType.FLOOR else self.display_char
-            )  # Show hazard on floor
+            self.display_char = "^" if self.terrain_type == TerrainType.FLOOR else self.display_char  # Show hazard on floor
         # Add more conditions for items, cover markers etc. if needed
         else:
             # Revert to terrain default if no character/hazard overrides

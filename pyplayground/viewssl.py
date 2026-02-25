@@ -37,12 +37,8 @@ def get_pem_info(pem_content: str) -> Optional[Table]:
     """
     try:
         cert = crypto.load_certificate(crypto.FILETYPE_PEM, pem_content)
-        issuer = ", ".join(
-            [f"{k.decode()}={v.decode()}" for k, v in cert.get_issuer().get_components()]
-        )
-        subject = ", ".join(
-            [f"{k.decode()}={v.decode()}" for k, v in cert.get_subject().get_components()]
-        )
+        issuer = ", ".join([f"{k.decode()}={v.decode()}" for k, v in cert.get_issuer().get_components()])
+        subject = ", ".join([f"{k.decode()}={v.decode()}" for k, v in cert.get_subject().get_components()])
         valid_from = cert.get_notBefore().decode("utf-8")
         valid_to = cert.get_notAfter().decode("utf-8")
 
@@ -102,9 +98,7 @@ def display_requests_certs(console: Console):
             content = f.read()
         display_cert_panel(console, "Requests Library CA Bundle", ca_path, content)
     except FileNotFoundError:
-        logger.error(
-            f"Requests CA bundle not found at expected path: {requests.utils.DEFAULT_CA_BUNDLE_PATH}"
-        )
+        logger.error(f"Requests CA bundle not found at expected path: {requests.utils.DEFAULT_CA_BUNDLE_PATH}")
     except IOError as e:
         logger.error(f"Error reading Requests CA bundle: {e}")
 

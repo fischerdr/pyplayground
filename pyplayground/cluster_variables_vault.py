@@ -39,33 +39,17 @@ class ClusterConfig:
         """
         # Cluster variables
         self.cluster_name: Optional[str] = cluster_name or os.getenv("CLUSTER_NAME")
-        self.inventory_url: Optional[str] = inventory_url or os.getenv(
-            "INVENTORY_URL", "https://inventory.example.com"
-        )
-        self.validate_certs: bool = (
-            validate_certs or os.getenv("VALIDATE_CERTS", "true").lower() == "false"
-        )
+        self.inventory_url: Optional[str] = inventory_url or os.getenv("INVENTORY_URL", "https://inventory.example.com")
+        self.validate_certs: bool = validate_certs or os.getenv("VALIDATE_CERTS", "true").lower() == "false"
         self.ca_cert_path: Optional[str] = ca_cert_path or os.getenv("CA_CERT_PATH", "")
 
         # Vault defaults
-        self.vault_automation_prod_address: Optional[str] = os.getenv(
-            "VAULT_AUTOMATION_PROD_ADDRESS", "https://vaultprod.example.com"
-        )
-        self.vault_automation_eng_address: Optional[str] = os.getenv(
-            "VAULT_AUTOMATION_ENG_ADDRESS", "https://vaulteng.example.com"
-        )
-        self.vault_automation_stage_address: Optional[str] = os.getenv(
-            "VAULT_AUTOMATION_STAGE_ADDRESS", "https://vaultstage.example.com"
-        )
-        self.vault_automation_dev_address: Optional[str] = os.getenv(
-            "VAULT_AUTOMATION_DEV_ADDRESS", "https://vaultdev.example.com"
-        )
-        self.vault_automation_default_namespace: Optional[str] = os.getenv(
-            "VAULT_AUTOMATION_DEFAULT_NAMESPACE", "automation"
-        )
-        self.vault_automation_config_mount_point: Optional[str] = os.getenv(
-            "VAULT_AUTOMATION_CONFIG_MOUNT_POINT", "kv"
-        )
+        self.vault_automation_prod_address: Optional[str] = os.getenv("VAULT_AUTOMATION_PROD_ADDRESS", "https://vaultprod.example.com")
+        self.vault_automation_eng_address: Optional[str] = os.getenv("VAULT_AUTOMATION_ENG_ADDRESS", "https://vaulteng.example.com")
+        self.vault_automation_stage_address: Optional[str] = os.getenv("VAULT_AUTOMATION_STAGE_ADDRESS", "https://vaultstage.example.com")
+        self.vault_automation_dev_address: Optional[str] = os.getenv("VAULT_AUTOMATION_DEV_ADDRESS", "https://vaultdev.example.com")
+        self.vault_automation_default_namespace: Optional[str] = os.getenv("VAULT_AUTOMATION_DEFAULT_NAMESPACE", "automation")
+        self.vault_automation_config_mount_point: Optional[str] = os.getenv("VAULT_AUTOMATION_CONFIG_MOUNT_POINT", "kv")
         # Parsed cluster components (will be set after parsing)
         self.cluster_user: Optional[str] = None
         self.platform: Optional[str] = None
@@ -95,9 +79,7 @@ def validate_cluster_name(cluster_name: Optional[str]) -> None:
 
     pattern = r"^[a-zA-Z0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9]+[abc]-[0-9]+$"
     if not re.match(pattern, cluster_name):
-        raise ValueError(
-            "Invalid cluster name format. Expected format: <cluster_user>-<platform>-<env>-<region><zone>-<id>"
-        )
+        raise ValueError("Invalid cluster name format. Expected format: <cluster_user>-<platform>-<env>-<region><zone>-<id>")
     logger.info("Valid cluster name format")
 
 
@@ -148,9 +130,7 @@ def get_inventory(config: ClusterConfig) -> Dict[str, Any]:
 
     url = f"{config.inventory_url}/{config.cluster_name}"
     headers = {"Accept": "application/json"}
-    response = requests.get(
-        url, headers=headers, verify=config.validate_certs, cert=config.ca_cert_path
-    )
+    response = requests.get(url, headers=headers, verify=config.validate_certs, cert=config.ca_cert_path)
     response.raise_for_status()
     return response.json()
 
@@ -165,11 +145,7 @@ def set_vault_info_from_inventory(response: Dict[str, Any]) -> Optional[Tuple[st
         Tuple containing vault address, namespace, mount point, and default path,
         or None if vault information is not found
     """
-    vault_info = (
-        response.get("kubernetes_platform", {})
-        .get("secrets_management", {})
-        .get("platform_vault", [{}])[0]
-    )
+    vault_info = response.get("kubernetes_platform", {}).get("secrets_management", {}).get("platform_vault", [{}])[0]
     if vault_info:
         vault_address = vault_info.get("address")
         vault_namespace = vault_info.get("namespace")

@@ -31,9 +31,7 @@ def count_resources_by_namespace():
             "services": api_core.list_namespaced_service(namespace).items,
             "config_maps": api_core.list_namespaced_config_map(namespace).items,
             "secrets": api_core.list_namespaced_secret(namespace).items,
-            "persistent_volume_claims": api_core.list_namespaced_persistent_volume_claim(
-                namespace
-            ).items,
+            "persistent_volume_claims": api_core.list_namespaced_persistent_volume_claim(namespace).items,
             "deployments": api_apps.list_namespaced_deployment(namespace).items,
             "stateful_sets": api_apps.list_namespaced_stateful_set(namespace).items,
             "daemon_sets": api_apps.list_namespaced_daemon_set(namespace).items,
@@ -45,9 +43,7 @@ def count_resources_by_namespace():
         crds = {}
         try:
             # List all CRD definitions in the cluster
-            crd_definitions = api_custom.list_cluster_custom_object(
-                group="apiextensions.k8s.io", version="v1", plural="customresourcedefinitions"
-            )
+            crd_definitions = api_custom.list_cluster_custom_object(group="apiextensions.k8s.io", version="v1", plural="customresourcedefinitions")
 
             # Query for instances of each CRD in the specified namespace
             for crd in crd_definitions.get("items", []):
@@ -55,9 +51,7 @@ def count_resources_by_namespace():
                 version = crd["spec"]["versions"][0]["name"]
                 plural = crd["spec"]["names"]["plural"]
                 try:
-                    crd_instances = api_custom.list_namespaced_custom_object(
-                        group=group, version=version, namespace=namespace, plural=plural
-                    )
+                    crd_instances = api_custom.list_namespaced_custom_object(group=group, version=version, namespace=namespace, plural=plural)
                     crds[crd["spec"]["names"]["kind"]] = crd_instances.get("items", [])
                 except client.exceptions.ApiException:
                     crds[crd["spec"]["names"]["kind"]] = []  # Handle inaccessible or empty CRDs

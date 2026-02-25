@@ -67,9 +67,7 @@ def count_crd_instances(crds, namespace):
         return len(instances.get("items", []))
     except ApiException as e:
         if e.status != 404:  # Log only non-404 errors
-            print(
-                f"Failed to count CRD instances for {crds.spec.names.plural} in namespace {namespace}: {e}"
-            )
+            print(f"Failed to count CRD instances for {crds.spec.names.plural} in namespace {namespace}: {e}")
         return 0
 
 
@@ -90,11 +88,7 @@ def process_namespaces(namespaces, exclude_regex=None):
 
         # Check for relevant labels
         for label, value in labels.items():
-            if (
-                label.startswith("storage/pxbackup.kubernetes.io")
-                or label.startswith("resources/pxbackup.kubernetes.io")
-                or label.startswith("all/pxbackup.kubernetes.io")
-            ):
+            if label.startswith("storage/pxbackup.kubernetes.io") or label.startswith("resources/pxbackup.kubernetes.io") or label.startswith("all/pxbackup.kubernetes.io"):
                 if value in label_values:
                     if label not in grouped_data:
                         grouped_data[label] = {value: {"count": 0, "namespaces": []}}
@@ -145,9 +139,7 @@ def distribute_input_keys(input_dict):
     # Ensure all keys in the input dictionary have a 'count' key
     for key, value in input_dict.items():
         if not isinstance(value, dict) or "count" not in value:
-            raise ValueError(
-                f"Each key in the input dictionary must contain a nested 'count' key. Problem with key: {key}"
-            )
+            raise ValueError(f"Each key in the input dictionary must contain a nested 'count' key. Problem with key: {key}")
 
     # Calculate the total count across all input counts
     total_count = sum(value["count"] for value in input_dict.values())
@@ -171,17 +163,12 @@ def distribute_input_keys(input_dict):
                 break
 
     # Prepare the output dictionary
-    output_dict = {
-        label: {"keys": data["keys"], "total_count": data["total_count"]}
-        for label, data in groups.items()
-    }
+    output_dict = {label: {"keys": data["keys"], "total_count": data["total_count"]} for label, data in groups.items()}
     return output_dict, total_count
 
 
 # Function to split namespaces evenly across the values of 'all/pxbackup.kubernetes.io'
-def split_namespaces_evenly_by_value(
-    namespaces, label="all/pxbackup.kubernetes.io", label_values=None
-):
+def split_namespaces_evenly_by_value(namespaces, label="all/pxbackup.kubernetes.io", label_values=None):
     """Split namespaces evenly across the values of 'all/pxbackup.kubernetes.io' label."""
     label_values = label_values or ["4am", "8am", "12pm", "4pm", "8pm", "12am"]
 
@@ -247,9 +234,7 @@ def split_unassigned_namespaces_evenly(namespaces, label_values=None):
     evenly_distributed = {value: [] for value in label_values}
 
     # Split unassigned namespaces evenly into groups
-    unassigned_chunked = [
-        unassigned_namespaces[i :: len(label_values)] for i in range(len(label_values))
-    ]
+    unassigned_chunked = [unassigned_namespaces[i :: len(label_values)] for i in range(len(label_values))]
 
     for idx, value in enumerate(label_values):
         evenly_distributed[value].extend(unassigned_chunked[idx])

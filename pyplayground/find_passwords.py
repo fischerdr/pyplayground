@@ -144,9 +144,7 @@ def main(
         dir_okay=True,
         resolve_path=True,
     ),
-    log_level: str = typer.Option(
-        "INFO", "--log-level", "-l", help="Logging level (DEBUG, INFO, WARNING, ERROR)"
-    ),
+    log_level: str = typer.Option("INFO", "--log-level", "-l", help="Logging level (DEBUG, INFO, WARNING, ERROR)"),
     ignore_tests: bool = typer.Option(
         True,
         "--ignore-tests/--include-tests",

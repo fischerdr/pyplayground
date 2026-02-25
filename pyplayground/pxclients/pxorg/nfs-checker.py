@@ -121,9 +121,7 @@ def get_nfs_mounts(node_ip):
         str: Output from mount command showing NFS mounts.
     """
     try:
-        mount_output = run_command(
-            f"ssh -i {SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {SSH_USER}@{node_ip} 'sudo mount | grep nfs | grep px'"
-        )
+        mount_output = run_command(f"ssh -i {SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {SSH_USER}@{node_ip} 'sudo mount | grep nfs | grep px'")
         nfs_mounts = [line.split()[2] for line in mount_output.strip().split("\n") if line]
         return nfs_mounts
     except Exception as e:
@@ -164,9 +162,7 @@ def check_nfs_on_node(node_ip):
                 print(f"Stat command succeeded for mount point {mount_point} on node {node_ip}.\n")
 
         except subprocess.CalledProcessError as e:
-            print(
-                f"Error: Unable to stat {mount_point} on node {node_ip} (timeout after 30s or stat command failed)"
-            )
+            print(f"Error: Unable to stat {mount_point} on node {node_ip} (timeout after 30s or stat command failed)")
             print(f"stdout: {e.stdout}")
             print(f"stderr: {e.stderr}")
             return False
@@ -208,9 +204,7 @@ def cordon_drain_reboot_node(node, perform_reboot):
 
     if perform_reboot:
         try:
-            run_command(
-                f"ssh -t -i {SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {SSH_USER}@{node_ip} 'sudo systemctl reboot'"
-            )
+            run_command(f"ssh -t -i {SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {SSH_USER}@{node_ip} 'sudo systemctl reboot'")
             print(f"Node {node} rebooted successfully.")
         except Exception as e:
             print(f"Error rebooting node {node}: {e}")
@@ -238,9 +232,7 @@ def wait_for_node_ready_and_uncordon(node):
     while time.time() - start_time < max_wait_time:
         try:
             print(f"Checking status for node {node}...")
-            node_status = run_command(
-                f"{KUBE_CLI} get node {node} -o jsonpath='{{.status.conditions[?(@.type==\"Ready\")].status}}'"
-            )
+            node_status = run_command(f"{KUBE_CLI} get node {node} -o jsonpath='{{.status.conditions[?(@.type==\"Ready\")].status}}'")
             if node_status == "True":
                 print(f"Node {node} is ready")
                 run_command(f"{KUBE_CLI} adm uncordon {node}")
@@ -278,9 +270,7 @@ def main(perform_reboot, nodes_file):
             stale_nodes.append((node_name, node_ip))
 
     if perform_reboot:
-        print(
-            "\nPerforming Cordon-Drain-Reboot operation on nodes with stale PX Sharedv4 entries...\n"
-        )
+        print("\nPerforming Cordon-Drain-Reboot operation on nodes with stale PX Sharedv4 entries...\n")
         for node_name, node_ip in stale_nodes:
             cordon_drain_reboot_node(node_name, perform_reboot)
 

@@ -48,9 +48,7 @@ def parse_pem_bundle(pem_data: bytes) -> list[x509.Certificate]:
     return x509.load_pem_x509_certificates(pem_data)
 
 
-def _get_certificate_info(
-    ca_cert_pem_str: Optional[str], namespace: str, path: str, output_dir: str
-) -> list[dict]:
+def _get_certificate_info(ca_cert_pem_str: Optional[str], namespace: str, path: str, output_dir: str) -> list[dict]:
     """Extracts, parses, and saves a CA certificate bundle."""
     if not ca_cert_pem_str:
         logger.debug("No certificate data found for auth path '%s'", path)
@@ -71,9 +69,7 @@ def _get_certificate_info(
         # Format details for each certificate
         return [format_cert_details(cert) for cert in certs]
     except Exception as e:
-        logger.warning(
-            "Could not process certificate for auth path '%s'. Error: %s", path, e, exc_info=True
-        )
+        logger.warning("Could not process certificate for auth path '%s'. Error: %s", path, e, exc_info=True)
         return []
 
 
@@ -90,9 +86,7 @@ def _get_role_count(client: hvac.Client, path: str) -> str:
         return "N/A"
 
 
-def _process_auth_method(
-    client: hvac.Client, method: dict, namespace: str, output_dir: str
-) -> list:
+def _process_auth_method(client: hvac.Client, method: dict, namespace: str, output_dir: str) -> list:
     """Processes a single K8s auth method and returns data for the table row."""
     path = method["path"].strip("/")
     try:
@@ -182,9 +176,7 @@ def _process_auth_method(
         return [path, "Error", str(e), "N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]
 
 
-def inspect_single_auth_path(
-    client: hvac.Client, namespace: str, auth_path: str, output_dir: str, console: Console
-) -> None:
+def inspect_single_auth_path(client: hvac.Client, namespace: str, auth_path: str, output_dir: str, console: Console) -> None:
     """Inspects a single Kubernetes auth method in detail."""
     console.print(f"Inspecting details for auth path: [bold cyan]{auth_path}[/bold cyan]")
     path = auth_path.strip("/")
@@ -196,9 +188,7 @@ def inspect_single_auth_path(
             return
 
         config = config_response["data"]
-        console.print(
-            Panel(Pretty(config), title="[bold]General Configuration[/bold]", expand=False)
-        )
+        console.print(Panel(Pretty(config), title="[bold]General Configuration[/bold]", expand=False))
 
         # Certificate Details
         ca_cert_pem_str = config.get("kubernetes_ca_cert")
@@ -219,11 +209,7 @@ def inspect_single_auth_path(
         # Associated Roles
         try:
             roles_response = client.list(f"auth/{path}/role")
-            roles = (
-                roles_response["data"]["keys"]
-                if roles_response and "keys" in roles_response.get("data", {})
-                else []
-            )
+            roles = roles_response["data"]["keys"] if roles_response and "keys" in roles_response.get("data", {}) else []
             if roles:
                 console.print(
                     Panel(
@@ -248,19 +234,13 @@ def inspect_single_auth_path(
             )
 
     except hvac.exceptions.Forbidden:
-        console.print(
-            f"[bold red]Permission denied when reading config for auth path '{path}'[/bold red]"
-        )
+        console.print(f"[bold red]Permission denied when reading config for auth path '{path}'[/bold red]")
     except Exception as e:
         logger.error("Could not process auth path '%s': %s", path, e, exc_info=True)
-        console.print(
-            f"[bold red]An error occurred while processing auth path '{path}': {e}[/bold red]"
-        )
+        console.print(f"[bold red]An error occurred while processing auth path '{path}': {e}[/bold red]")
 
 
-def inspect_k8s_auth_methods(
-    client: hvac.Client, namespace: str, output_dir: str, console: Console
-) -> None:
+def inspect_k8s_auth_methods(client: hvac.Client, namespace: str, output_dir: str, console: Console) -> None:
     """Inspects Kubernetes auth methods, extracts certs, and prints a summary table."""
     auth_methods_result = get_auth_methods(client)
     if auth_methods_result.get("errors"):
@@ -269,17 +249,10 @@ def inspect_k8s_auth_methods(
             console.print(f"[bold red]Error retrieving auth methods: {error}[/bold red]")
 
     auth_methods = auth_methods_result.get("auth_methods", [])
-    k8s_auth_methods = [
-        method
-        for method in auth_methods
-        if method.get("type") == "kubernetes"
-        and re.match(r"k8s-[a-z]-[0-9]+/?$", method.get("path", ""))
-    ]
+    k8s_auth_methods = [method for method in auth_methods if method.get("type") == "kubernetes" and re.match(r"k8s-[a-z]-[0-9]+/?$", method.get("path", ""))]
 
     if not k8s_auth_methods:
-        console.print(
-            "[yellow]No Kubernetes auth methods found matching the pattern 'k8s-<zone>-<num>'[/yellow]"
-        )
+        console.print("[yellow]No Kubernetes auth methods found matching the pattern 'k8s-<zone>-<num>'[/yellow]")
         return
 
     table = Table(title=f"Kubernetes Auth Methods in Namespace: {namespace}")
@@ -330,9 +303,7 @@ def main(
     logger.debug("Starting script.")
 
     console = Console()
-    console.print(
-        f"Inspecting Kubernetes auth methods in Vault namespace: [bold cyan]{vault_namespace}[/bold cyan]"
-    )
+    console.print(f"Inspecting Kubernetes auth methods in Vault namespace: [bold cyan]{vault_namespace}[/bold cyan]")
 
     # Determine output directory
     if output_dir is None:
@@ -351,9 +322,7 @@ def main(
         load_dotenv()
         client = create_vault_client(namespace=vault_namespace)
         if not client.is_authenticated():
-            console.print(
-                "[bold red]Error: Vault authentication failed. Check VAULT_ADDR and VAULT_TOKEN.[/bold red]"
-            )
+            console.print("[bold red]Error: Vault authentication failed. Check VAULT_ADDR and VAULT_TOKEN.[/bold red]")
             return
 
         if auth_path:

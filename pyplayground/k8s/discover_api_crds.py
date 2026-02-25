@@ -34,12 +34,8 @@ def get_all_api_resources_and_crds():
                 group_version = version["groupVersion"]
                 try:
                     # Fetch resources for each API group/version
-                    resources = api_client.call_api(
-                        f"/apis/{group_version}", "GET", response_type="object"
-                    )
-                    api_resources.append(
-                        {"group_version": group_version, "resources": resources[0]["resources"]}
-                    )
+                    resources = api_client.call_api(f"/apis/{group_version}", "GET", response_type="object")
+                    api_resources.append({"group_version": group_version, "resources": resources[0]["resources"]})
                 except ApiException as e:
                     print(f"Could not fetch resources for {group_version}: {e}")
 

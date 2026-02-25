@@ -43,9 +43,7 @@ logger = get_logger(__name__)
 console = Console()  # Create a Rich Console instance
 
 
-def _prepare_execution_command(
-    env_var_list: List[str], base_command: str
-) -> Tuple[str, Dict[str, str]]:
+def _prepare_execution_command(env_var_list: List[str], base_command: str) -> Tuple[str, Dict[str, str]]:
     """Parses environment variables and constructs the full command string.
 
     Args:
@@ -199,9 +197,7 @@ def exec_in_pod(pod_name, namespace, env_var, command, kubeconfig, container, de
         actual_container_name = determine_target_container(pod, container)
 
         # Execute command and stream output
-        exit_code = _execute_and_stream_output(
-            v1, namespace, pod_name, actual_container_name, full_command_str
-        )
+        exit_code = _execute_and_stream_output(v1, namespace, pod_name, actual_container_name, full_command_str)
 
         # Handle exit code
         if exit_code != 0:

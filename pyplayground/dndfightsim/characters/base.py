@@ -140,9 +140,7 @@ class Character:
         """
         parry_bonus: int = (self.dexterity - 10) // 2
         # TODO: Implement parry effect properly (e.g., via status effect/temp attribute)
-        print(
-            f"{self.name} prepares to parry. Next attack against them has a -{parry_bonus} penalty."
-        )
+        print(f"{self.name} prepares to parry. Next attack against them has a -{parry_bonus} penalty.")
         return parry_bonus  # Returning bonus, but combat logic doesn't use it yet
 
     def use_item(self) -> Optional[ItemDict]:
@@ -179,9 +177,7 @@ class Character:
             print(f"{self.name} prepares to use {item_name}...")
             return item
         else:  # Unknown type
-            print(
-                f"{self.name} tries to use {item_name}, but it has an unknown type ({item_type_str})."
-            )
+            print(f"{self.name} tries to use {item_name}, but it has an unknown type ({item_type_str}).")
             return None
 
     def apply_status_effect(self, effect: StatusEffectDict) -> None:

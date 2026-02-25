@@ -58,9 +58,7 @@ def _display_token_info(client: hvac.Client) -> None:
         click.echo("Could not retrieve token information.")
 
 
-def _get_vaults_to_traverse(
-    client: hvac.Client, path: Optional[str], mount_point: str
-) -> List[tuple[str, str]]:
+def _get_vaults_to_traverse(client: hvac.Client, path: Optional[str], mount_point: str) -> List[tuple[str, str]]:
     """Determine the list of (mount_point, base_path) tuples to traverse."""
     vaults_to_traverse: List[tuple[str, str]] = []
     if path:
@@ -85,15 +83,11 @@ def _get_vaults_to_traverse(
 
             if not vaults_to_traverse:
                 click.echo("No accessible KV v2 secret mounts found.")
-                click.echo(
-                    "Please verify your token has the required permissions to list mounts and access KV v2 engines."
-                )
+                click.echo("Please verify your token has the required permissions to list mounts and access KV v2 engines.")
                 return []  # Return empty list
         except Exception as e:
             if "permission denied" in str(e).lower():
-                logger.error(
-                    "Permission denied when listing secret engines. Please check your token permissions."
-                )
+                logger.error("Permission denied when listing secret engines. Please check your token permissions.")
             else:
                 logger.error(f"Error listing secret engines: {str(e)}")
             return []  # Return empty list
@@ -132,9 +126,7 @@ def _traverse_and_display_secrets(client: hvac.Client, vaults: List[tuple[str, s
 @click.option("--namespace", default=None, help="Vault namespace")
 @click.option("--cert", default=None, help="Path to SSL certificate (PEM) file for verification")
 @click.option("--debug", is_flag=True, default=False, help="Enable debug logging")
-@click.option(
-    "--show-token-info", is_flag=True, help="Show detailed token information and permissions"
-)
+@click.option("--show-token-info", is_flag=True, help="Show detailed token information and permissions")
 def main(
     url: Optional[str],
     token: Optional[str],

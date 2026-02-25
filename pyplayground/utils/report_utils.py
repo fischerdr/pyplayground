@@ -40,9 +40,7 @@ def save_summary_report(
                 os.makedirs(log_dir)
                 logger.debug(f"Created log directory: {log_dir}")
             except OSError as e:
-                logger.error(
-                    f"Could not create log directory '{log_dir}': {e}. Cannot save summary."
-                )
+                logger.error(f"Could not create log directory '{log_dir}': {e}. Cannot save summary.")
                 return  # Cannot proceed without log directory
 
         formatted_text = f"--- {report_title} ---\
@@ -92,9 +90,7 @@ def save_volume_issue_report(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     # Sanitize backup name for filename
     sanitized_backup_name = "".join(c if c.isalnum() else "_" for c in backup_name)
-    report_filename = (
-        f"{script_name}_non_successful_volumes_{sanitized_backup_name}_{timestamp}.txt"
-    )
+    report_filename = f"{script_name}_non_successful_volumes_{sanitized_backup_name}_{timestamp}.txt"
     report_filepath = os.path.join(log_dir, report_filename)
 
     try:
@@ -104,9 +100,7 @@ def save_volume_issue_report(
                 os.makedirs(log_dir)
                 logger.debug(f"Created log directory: {log_dir}")
             except OSError as e:
-                logger.error(
-                    f"Could not create log directory '{log_dir}': {e}. Cannot save volume issue report."
-                )
+                logger.error(f"Could not create log directory '{log_dir}': {e}. Cannot save volume issue report.")
                 return  # Cannot proceed without log directory
 
         # Format the report text
@@ -167,9 +161,7 @@ def save_inspect_backup_report(  # noqa: C901
                 os.makedirs(log_dir)
                 logger.debug(f"Created log directory: {log_dir}")
             except OSError as e:
-                logger.error(
-                    f"Could not create log directory '{log_dir}': {e}. Cannot save inspect report."
-                )
+                logger.error(f"Could not create log directory '{log_dir}': {e}. Cannot save inspect report.")
                 return
 
         # --- Format the report text ---
@@ -187,9 +179,7 @@ def save_inspect_backup_report(  # noqa: C901
         namespaces = backup_info.get("namespaces", [])
         volumes = backup_info.get("volumes", [])
 
-        backup_type_str = (
-            backup_type_info.get("type", "N/A") if isinstance(backup_type_info, dict) else "N/A"
-        )
+        backup_type_str = backup_type_info.get("type", "N/A") if isinstance(backup_type_info, dict) else "N/A"
         status_str = status_info.get("status", "N/A") if isinstance(status_info, dict) else "N/A"
 
         # Main Details
@@ -219,9 +209,7 @@ def save_inspect_backup_report(  # noqa: C901
         if volumes:
             from collections import Counter
 
-            volume_statuses = Counter(
-                vol.get("status", {}).get("status", "Unknown") for vol in volumes
-            )
+            volume_statuses = Counter(vol.get("status", {}).get("status", "Unknown") for vol in volumes)
             if volume_statuses:
                 for status, count in sorted(volume_statuses.items()):
                     formatted_text += f"  {status}: {count}\n"
@@ -261,9 +249,7 @@ def save_inspect_backup_report(  # noqa: C901
         else:
             # Optionally add a note if all volumes were successful
             if volumes:  # Only add this note if there were volumes to check
-                formatted_text += (
-                    "\nAll volumes included in the backup reported a status of Success.\n"
-                )
+                formatted_text += "\nAll volumes included in the backup reported a status of Success.\n"
 
         # --- Write to file ---
         with open(report_filepath, "w", encoding="utf-8") as f:

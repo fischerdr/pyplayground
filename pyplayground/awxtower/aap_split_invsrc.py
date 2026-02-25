@@ -236,9 +236,7 @@ def _merge_with_template(item: Dict[str, Any], template: Dict[str, Any]) -> Dict
     return merged_item
 
 
-def _merge_nested_dicts(
-    template_dict: Dict[str, Any], input_dict: Dict[str, Any]
-) -> Dict[str, Any]:
+def _merge_nested_dicts(template_dict: Dict[str, Any], input_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Recursively merge nested dictionaries.
 
     Args:
@@ -363,9 +361,7 @@ def split_json_file(
         if filepath:
             successful_files += 1
 
-    logger.info(
-        f"Successfully processed {successful_files} out of {len(inventory_sources)} inventory sources."
-    )
+    logger.info(f"Successfully processed {successful_files} out of {len(inventory_sources)} inventory sources.")
     return successful_files > 0
 
 
@@ -395,9 +391,7 @@ def split_json_file(
     is_flag=True,
     help="Enable debug logging",
 )
-def main(
-    input_file: str, output_dir: str, target_org: str, template: Optional[str], debug: bool
-) -> None:
+def main(input_file: str, output_dir: str, target_org: str, template: Optional[str], debug: bool) -> None:
     """Split AAP inventory sources JSON file into individual files.
 
     This script processes a JSON file containing multiple inventory sources and splits

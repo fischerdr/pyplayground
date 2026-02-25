@@ -52,9 +52,7 @@ def fetch_clusters(client: PXBackupClient, org_id: str) -> List[Dict[str, Any]]:
         response = client.make_request("GET", endpoint)
         clusters = response.get("clusters", [])
         if not isinstance(clusters, list):
-            logger.warning(
-                f"API response for clusters was not a list: {type(clusters)}. Returning empty list."
-            )
+            logger.warning(f"API response for clusters was not a list: {type(clusters)}. Returning empty list.")
             return []
         logger.info(f"Successfully fetched {len(clusters)} clusters.")
         return clusters
@@ -63,9 +61,7 @@ def fetch_clusters(client: PXBackupClient, org_id: str) -> List[Dict[str, Any]]:
         raise
 
 
-def _get_matching_cluster_info(
-    cluster: Dict[str, Any], name_pattern: Optional[str], uid: Optional[str]
-) -> Optional[Dict[str, str]]:
+def _get_matching_cluster_info(cluster: Dict[str, Any], name_pattern: Optional[str], uid: Optional[str]) -> Optional[Dict[str, str]]:
     """Checks if a single cluster matches the given filters."""
     metadata = cluster.get("metadata", {})
     cluster_name = metadata.get("name")
@@ -84,22 +80,16 @@ def _get_matching_cluster_info(
     if name_pattern:
         try:
             if re.match(name_pattern, cluster_name):
-                logger.debug(
-                    f"Matched cluster by name pattern '{name_pattern}': {cluster_name} ({cluster_uid})"
-                )
+                logger.debug(f"Matched cluster by name pattern '{name_pattern}': {cluster_name} ({cluster_uid})")
                 return match_info
         except re.error as e:
-            logger.error(
-                f"Invalid regex pattern '{name_pattern}': {e}. Skipping name pattern matching."
-            )
+            logger.error(f"Invalid regex pattern '{name_pattern}': {e}. Skipping name pattern matching.")
             return None
 
     return None
 
 
-def filter_clusters(
-    clusters: List[Dict[str, Any]], name_pattern: Optional[str], uid: Optional[str]
-) -> List[Dict[str, Any]]:
+def filter_clusters(clusters: List[Dict[str, Any]], name_pattern: Optional[str], uid: Optional[str]) -> List[Dict[str, Any]]:
     """Filters clusters based on name pattern or UID."""
     if not name_pattern and not uid:
         logger.info("No cluster filter provided, using all found clusters.")
@@ -137,14 +127,8 @@ def _handle_authentication(
 
     logger.info("Token not provided, attempting to generate one using credentials.")
     if not all([auth_url, username, password]):
-        missing_auth = [
-            p
-            for p, v in [("auth-url", auth_url), ("username", username), ("password", password)]
-            if not v
-        ]
-        raise click.ClickException(
-            f"Error: Token not provided, missing options: {', '.join(missing_auth)}"
-        )
+        missing_auth = [p for p, v in [("auth-url", auth_url), ("username", username), ("password", password)] if not v]
+        raise click.ClickException(f"Error: Token not provided, missing options: {', '.join(missing_auth)}")
     try:
         if not validate_certs:
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -152,17 +136,13 @@ def _handle_authentication(
         click.echo("Successfully generated authentication token.")
         return generated_token
     except (requests.exceptions.RequestException, ValueError) as auth_err:
-        raise click.ClickException(
-            f"[bold red]Authentication Error:[/bold red] Failed to generate token: {auth_err}"
-        )
+        raise click.ClickException(f"[bold red]Authentication Error:[/bold red] Failed to generate token: {auth_err}")
 
 
 # --- Schedule Fetching (Optimized) ---
 
 
-def get_schedules(
-    client: PXBackupClient, org_id: str, cluster_uid: Optional[str] = None
-) -> List[Dict[str, Any]]:
+def get_schedules(client: PXBackupClient, org_id: str, cluster_uid: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retrieve backup schedules, optionally filtered by cluster UID via API.
 
     Args:
@@ -199,9 +179,7 @@ def get_schedules(
         # Corrected key based on user feedback
         schedules = response.get("backup_schedules", [])
         if not isinstance(schedules, list):
-            logger.error(
-                f"Unexpected response format when fetching schedules. Expected list under 'backup_schedules' key, got {type(schedules)}. Response: {response}"
-            )
+            logger.error(f"Unexpected response format when fetching schedules. Expected list under 'backup_schedules' key, got {type(schedules)}. Response: {response}")
             raise ValueError("Unexpected API response format for schedules.")
         logger.info(f"Successfully fetched {len(schedules)} schedules for {target_info}.")
         return schedules
@@ -217,9 +195,7 @@ def get_schedules(
 
 
 # --- Helper for Policy Parsing ---
-def _parse_policy_info(
-    policy_info: Dict[str, Any], schedule_policy_ref: Dict[str, Any]
-) -> Tuple[str, str, str]:
+def _parse_policy_info(policy_info: Dict[str, Any], schedule_policy_ref: Dict[str, Any]) -> Tuple[str, str, str]:
     """Parses policy info to determine schedule type, frequency, and retention."""
     schedule_type = "N/A"
     frequency = "N/A"
@@ -238,9 +214,7 @@ def _parse_policy_info(
     elif policy_info.get("monthly"):
         schedule_type = "Monthly"
         monthly_policy = policy_info["monthly"]
-        frequency = (
-            f"Monthly on day {monthly_policy.get('day', '?')} at {monthly_policy.get('time', '?')}"
-        )
+        frequency = f"Monthly on day {monthly_policy.get('day', '?')} at {monthly_policy.get('time', '?')}"
         retention = f"{monthly_policy.get('retain', '?')} months"
     elif policy_info.get("interval"):
         schedule_type = "Interval"
@@ -267,35 +241,19 @@ def _format_resource_selectors(
 
     namespaces_str = ", ".join(namespaces) if namespaces else "All"
     resource_types_str = ", ".join(resource_types) if resource_types else "All"
-    exclude_resource_types_str = (
-        ", ".join(exclude_resource_types) if exclude_resource_types else "None"
-    )
+    exclude_resource_types_str = ", ".join(exclude_resource_types) if exclude_resource_types else "None"
 
     if isinstance(label_selectors, dict):
-        label_selectors_str = (
-            ", ".join([f"{k}={v}" for k, v in label_selectors.items()])
-            if label_selectors
-            else "None"
-        )
+        label_selectors_str = ", ".join([f"{k}={v}" for k, v in label_selectors.items()]) if label_selectors else "None"
     else:
         label_selectors_str = str(label_selectors) if label_selectors else "Invalid Type/Empty"
-        logger.debug(
-            f"label_selectors was not a dict: {label_selectors_str}"
-        )  # Assuming logger is accessible
+        logger.debug(f"label_selectors was not a dict: {label_selectors_str}")  # Assuming logger is accessible
 
     if isinstance(ns_label_selectors, dict):
-        ns_label_selectors_str = (
-            ", ".join([f"{k}={v}" for k, v in ns_label_selectors.items()])
-            if ns_label_selectors
-            else "None"
-        )
+        ns_label_selectors_str = ", ".join([f"{k}={v}" for k, v in ns_label_selectors.items()]) if ns_label_selectors else "None"
     else:
-        ns_label_selectors_str = (
-            str(ns_label_selectors) if ns_label_selectors else "Invalid Type/Empty"
-        )
-        logger.debug(
-            f"ns_label_selectors was not a dict: {ns_label_selectors_str}"
-        )  # Assuming logger is accessible
+        ns_label_selectors_str = str(ns_label_selectors) if ns_label_selectors else "Invalid Type/Empty"
+        logger.debug(f"ns_label_selectors was not a dict: {ns_label_selectors_str}")  # Assuming logger is accessible
 
     include_resources_count = str(len(include_resources)) if include_resources else "0"
 
@@ -418,22 +376,14 @@ def _get_target_cluster(
         matched_clusters = filter_clusters(all_clusters, cluster_name, cluster_uid)
 
         if not matched_clusters:
-            filter_criteria = (
-                f"name pattern '{cluster_name}'" if cluster_name else f"UID '{cluster_uid}'"
-            )
-            raise click.ClickException(
-                f"[bold yellow]No cluster found matching criteria: {filter_criteria}[/bold yellow]"
-            )
+            filter_criteria = f"name pattern '{cluster_name}'" if cluster_name else f"UID '{cluster_uid}'"
+            raise click.ClickException(f"[bold yellow]No cluster found matching criteria: {filter_criteria}[/bold yellow]")
         elif len(matched_clusters) > 1:
             cluster_list = ", ".join([c["name"] for c in matched_clusters])
-            raise click.ClickException(
-                f"[bold yellow]Multiple clusters matched name pattern '{cluster_name}': {cluster_list}. Use --cluster-uid.[/bold yellow]"
-            )
+            raise click.ClickException(f"[bold yellow]Multiple clusters matched name pattern '{cluster_name}': {cluster_list}. Use --cluster-uid.[/bold yellow]")
         else:
             target_cluster_uid = matched_clusters[0]["uid"]
-            target_cluster_display_name = (
-                f"cluster '{matched_clusters[0]['name']}' (UID: {target_cluster_uid})"
-            )
+            target_cluster_display_name = f"cluster '{matched_clusters[0]['name']}' (UID: {target_cluster_uid})"
             logger.info(f"Targeting schedules for {target_cluster_display_name}.")
     else:
         logger.info("No cluster filter specified. Listing schedules for all clusters.")
@@ -554,12 +504,8 @@ def main(
 
         # --- Cluster Filtering Logic ---
         logger.debug("Checking for cluster filters...")
-        target_cluster_uid, target_cluster_display_name = _get_target_cluster(
-            client, org_id, cluster_name, cluster_uid
-        )
-        logger.debug(
-            f"Target cluster identified as: {target_cluster_display_name} (UID: {target_cluster_uid})"
-        )
+        target_cluster_uid, target_cluster_display_name = _get_target_cluster(client, org_id, cluster_name, cluster_uid)
+        logger.debug(f"Target cluster identified as: {target_cluster_display_name} (UID: {target_cluster_uid})")
 
         # --- Fetch Schedules (using API filter if target_cluster_uid is set) ---
         logger.debug(f"Attempting to fetch schedules for {target_cluster_display_name}...")

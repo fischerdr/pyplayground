@@ -72,11 +72,7 @@ def sdf_triangle(p: np.ndarray, a: np.ndarray, b: np.ndarray, c: np.ndarray) -> 
     def dot2(v):
         return np.sum(v * v, axis=-1)
 
-    sign = (
-        np.sign(np.sum(np.cross(ba, nor)[None] * pa, 1))
-        + np.sign(np.sum(np.cross(cb, nor)[None] * pb, 1))
-        + np.sign(np.sum(np.cross(ac, nor)[None] * pc, 1))
-    )
+    sign = np.sign(np.sum(np.cross(ba, nor)[None] * pa, 1)) + np.sign(np.sum(np.cross(cb, nor)[None] * pb, 1)) + np.sign(np.sum(np.cross(ac, nor)[None] * pc, 1))
     outside = sign < 2
     ba_proj = np.clip(np.dot(pa, ba) / np.sum(ba * ba), 0.0, 1.0)
     cb_proj = np.clip(np.dot(pb, cb) / np.sum(cb * cb), 0.0, 1.0)
@@ -132,9 +128,7 @@ def rasterize_triangle(
 class AudioProcessor:
     """Audio processing and analysis for reactive visualizations."""
 
-    def __init__(
-        self, path: str, bands: int, sr: int = 44_100, hop: int = 512, thresh: float = 0.5
-    ):
+    def __init__(self, path: str, bands: int, sr: int = 44_100, hop: int = 512, thresh: float = 0.5):
         """Initialize the audio processor.
 
         Args:
@@ -148,9 +142,7 @@ class AudioProcessor:
         self.raw, _ = librosa.load(path, sr=sr)
         self.frames = 1 + len(self.raw) // hop
         mag = np.abs(librosa.stft(self.raw, hop_length=hop))
-        basis = librosa.filters.mel(
-            sr=sr, n_fft=mag.shape[0] * 2 - 2, n_mels=bands, fmin=50.0, fmax=20_000.0
-        )
+        basis = librosa.filters.mel(sr=sr, n_fft=mag.shape[0] * 2 - 2, n_mels=bands, fmin=50.0, fmax=20_000.0)
         db = librosa.power_to_db(basis @ mag, ref=np.max)
         self.spec = (db - db.min()) / (db.max() - db.min())
         self.thresh = thresh
@@ -227,9 +219,7 @@ class Visualizer:
                                 x,
                                 y,
                                 z,
-                                interpolate_color(
-                                    [(255, 94, 0), (255, 42, 100), (180, 0, 255)], y_norm
-                                ),
+                                interpolate_color([(255, 94, 0), (255, 42, 100), (180, 0, 255)], y_norm),
                             )
         return sun
 
@@ -255,9 +245,7 @@ class Visualizer:
         return c
 
     # height‑field → voxel indices
-    def render(
-        self, dims: Tuple[int, int, int]
-    ) -> Tuple[Tuple[int, int, int], np.ndarray, int, float]:
+    def render(self, dims: Tuple[int, int, int]) -> Tuple[Tuple[int, int, int], np.ndarray, int, float]:
         """Render a height-field to voxel indices.
 
         Args:
@@ -318,9 +306,7 @@ class Visualizer:
         frame = splv.Frame(*dims)
         for x, y, z in vox:
             if int(z + z_base) % spacing == 0 or x % spacing == 0:
-                col = interpolate_color(
-                    [(25, 214, 252), (255, 20, 147), (232, 103, 23), (232, 224, 16)], y / dims[1]
-                )
+                col = interpolate_color([(25, 214, 252), (255, 20, 147), (232, 103, 23), (232, 224, 16)], y / dims[1])
             else:
                 col = (0, 0, 0)
             frame.set_voxel(x, y, z, col)

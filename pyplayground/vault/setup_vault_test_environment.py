@@ -70,9 +70,7 @@ def create_kubernetes_namespace(core_v1_client: client.CoreV1Api, namespace: str
         return False
 
 
-def create_service_account(
-    core_v1_client: client.CoreV1Api, namespace: str, sa_name: str = "vault-auth"
-) -> bool:
+def create_service_account(core_v1_client: client.CoreV1Api, namespace: str, sa_name: str = "vault-auth") -> bool:
     """Create a service account for Vault authentication."""
     try:
         # Check if service account already exists
@@ -85,9 +83,7 @@ def create_service_account(
                 raise
 
         # Create service account
-        sa_body = client.V1ServiceAccount(
-            metadata=client.V1ObjectMeta(name=sa_name, namespace=namespace)
-        )
+        sa_body = client.V1ServiceAccount(metadata=client.V1ObjectMeta(name=sa_name, namespace=namespace))
         core_v1_client.create_namespaced_service_account(namespace, sa_body)
         logger.info(f"Successfully created service account '{sa_name}' in namespace '{namespace}'.")
         return True
@@ -99,9 +95,7 @@ def create_service_account(
         return False
 
 
-def create_vault_policy(
-    vault_client: hvac.Client, policy_name: str, secret_path: str, kv_mount_path: str
-) -> bool:
+def create_vault_policy(vault_client: hvac.Client, policy_name: str, secret_path: str, kv_mount_path: str) -> bool:
     """Create a Vault policy for accessing specific secrets."""
     try:
         # Define policy rules
@@ -141,9 +135,7 @@ def create_vault_role(
             "ttl": "1h",
         }
 
-        vault_client.auth.kubernetes.create_role(
-            name=role_name, mount_point=mount_path, **role_config
-        )
+        vault_client.auth.kubernetes.create_role(name=role_name, mount_point=mount_path, **role_config)
         logger.info(f"Successfully created Vault role '{role_name}' for namespace '{namespace}'.")
         return True
     except Exception as e:
@@ -159,9 +151,7 @@ def create_test_secret(
 ) -> bool:
     """Create a test secret in Vault."""
     try:
-        vault_client.secrets.kv.v2.create_or_update_secret(
-            path=secret_path, mount_point=kv_mount_path, secret=secret_data
-        )
+        vault_client.secrets.kv.v2.create_or_update_secret(path=secret_path, mount_point=kv_mount_path, secret=secret_data)
         logger.info(f"Successfully created test secret '{secret_path}'.")
         return True
     except Exception as e:
@@ -204,9 +194,7 @@ def create_vault_connection_secret(
         except ApiException as e:
             if e.status == 409:  # Secret already exists
                 core_v1_client.replace_namespaced_secret("px-vault", namespace, secret_body)
-                logger.info(
-                    f"Successfully updated Vault connection secret in namespace '{namespace}'."
-                )
+                logger.info(f"Successfully updated Vault connection secret in namespace '{namespace}'.")
             else:
                 raise
 
@@ -255,16 +243,12 @@ def setup_single_namespace(
         return results
 
     # Create Vault policy
-    results["policy_created"] = create_vault_policy(
-        vault_client, policy_name, secret_path, kv_mount_path
-    )
+    results["policy_created"] = create_vault_policy(vault_client, policy_name, secret_path, kv_mount_path)
     if not results["policy_created"]:
         return results
 
     # Create Vault role
-    results["role_created"] = create_vault_role(
-        vault_client, role_name, policy_name, namespace, "vault-auth", auth_mount_path
-    )
+    results["role_created"] = create_vault_role(vault_client, role_name, policy_name, namespace, "vault-auth", auth_mount_path)
     if not results["role_created"]:
         return results
 
@@ -275,9 +259,7 @@ def setup_single_namespace(
         "database": f"test-db-{namespace}",
         "api_key": f"api-key-{namespace}-{hash(namespace) % 10000:04d}",
     }
-    results["secret_created"] = create_test_secret(
-        vault_client, secret_path, test_data, kv_mount_path
-    )
+    results["secret_created"] = create_test_secret(vault_client, secret_path, test_data, kv_mount_path)
     if not results["secret_created"]:
         return results
 
@@ -303,9 +285,7 @@ def display_setup_results(
     # Create summary table
     from rich.table import Table
 
-    table = Table(
-        title="Vault Test Environment Setup Results", show_header=True, header_style="bold magenta"
-    )
+    table = Table(title="Vault Test Environment Setup Results", show_header=True, header_style="bold magenta")
     table.add_column("Vault Namespace", style="cyan", no_wrap=True)
     table.add_column("K8s Namespace", style="green")
     table.add_column("Service Account", style="green")
@@ -452,19 +432,13 @@ def main(
 
     # Validate input lengths
     if len(vault_namespace_list) != len(secret_path_list):
-        console.print(
-            "[bold red]Error: Vault namespaces and secret paths must have the same number of elements.[/bold red]"
-        )
+        console.print("[bold red]Error: Vault namespaces and secret paths must have the same number of elements.[/bold red]")
         sys.exit(1)
 
-    console.print(
-        f"[bold blue]Setting up Kubernetes namespace '{namespace}' with {len(vault_namespace_list)} Vault namespace(s)...[/bold blue]"
-    )
+    console.print(f"[bold blue]Setting up Kubernetes namespace '{namespace}' with {len(vault_namespace_list)} Vault namespace(s)...[/bold blue]")
 
     # Load Kubernetes configuration
-    if not load_kube_config_auto(
-        config_file=kubeconfig, verify_ssl=k8s_verify_ssl, ssl_ca_cert=k8s_ssl_ca_cert
-    ):
+    if not load_kube_config_auto(config_file=kubeconfig, verify_ssl=k8s_verify_ssl, ssl_ca_cert=k8s_ssl_ca_cert):
         console.print("[bold red]Error: Failed to load Kubernetes configuration.[/bold red]")
         sys.exit(1)
 
@@ -499,9 +473,7 @@ def main(
     ) as progress:
         task = progress.add_task("Setting up Vault namespaces...", total=len(vault_namespace_list))
 
-        for i, (vault_namespace, secret_path) in enumerate(
-            zip(vault_namespace_list, secret_path_list)
-        ):
+        for i, (vault_namespace, secret_path) in enumerate(zip(vault_namespace_list, secret_path_list)):
             progress.update(task, description=f"Setting up Vault namespace {vault_namespace}...")
 
             results = setup_single_namespace(
@@ -525,24 +497,18 @@ def main(
     successful_setups = sum(1 for results in namespace_results.values() if all(results.values()))
     total_setups = len(namespace_results)
 
-    console.print(
-        f"\n[bold]Summary:[/bold] {successful_setups}/{total_setups} Vault namespace(s) setup successfully"
-    )
+    console.print(f"\n[bold]Summary:[/bold] {successful_setups}/{total_setups} Vault namespace(s) setup successfully")
 
     if successful_setups == total_setups:
         console.print("[bold green]All Vault namespaces setup successfully![/bold green]")
-        console.print(
-            "\n[bold blue]You can now run the multi-namespace Vault monitor script:[/bold blue]"
-        )
+        console.print("\n[bold blue]You can now run the multi-namespace Vault monitor script:[/bold blue]")
         console.print("python pyplayground/vault/multi_namespace_vault_monitor.py \\")
         console.print(f'    --namespaces "{namespace}" \\')
         console.print(f'    --secret-paths "{secret_paths}" \\')
         console.print(f'    --vault-namespaces "{vault_namespaces}"')
         sys.exit(0)
     else:
-        console.print(
-            f"[bold red]{total_setups - successful_setups} Vault namespace(s) setup failed.[/bold red]"
-        )
+        console.print(f"[bold red]{total_setups - successful_setups} Vault namespace(s) setup failed.[/bold red]")
         sys.exit(1)
 
 

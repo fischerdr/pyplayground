@@ -205,9 +205,7 @@ def get_vm_info(vsphere_config: VSphereConfig, vm_uuid: str) -> Optional[Dict[st
 
         # Check if connection was successful
         if not si:
-            logger.error(
-                "Failed to connect to vSphere host: %s. Cannot get VM info.", vsphere_config.host
-            )
+            logger.error("Failed to connect to vSphere host: %s. Cannot get VM info.", vsphere_config.host)
             return None
 
         # Test the service instance connection by getting current time
@@ -262,9 +260,7 @@ def get_vm_info(vsphere_config: VSphereConfig, vm_uuid: str) -> Optional[Dict[st
         return None
 
 
-def _initialize_resources(
-    portworx_namespace: str, verify_vsphere_ssl: bool
-) -> Optional[VSphereConfig]:
+def _initialize_resources(portworx_namespace: str, verify_vsphere_ssl: bool) -> Optional[VSphereConfig]:
     """Load kubeconfig and get vSphere configuration."""
     logger.debug("Initializing Kubernetes and vSphere resources...")
     try:
@@ -382,9 +378,7 @@ def _process_expected_configs(
             expected_details.append(detail_entry)
             # Track expected sizes only for mismatched entries needed for potential mapping
             if size_gb in exp_size_map:
-                if (
-                    exp_size_map[size_gb] != config_key
-                ):  # Check if it's a different key with same size
+                if exp_size_map[size_gb] != config_key:  # Check if it's a different key with same size
                     expected_sizes_good = False
                     logger.warning(
                         "Duplicate expected size %.2f GB in config for node %s (%s): %s and %s. Cannot map reliably.",
@@ -523,9 +517,7 @@ def _compare_drives(
     """
     logger.debug("Comparing drives for node %s (%s)", node_scheduler_name, node_instance_id)
     # 1. Build map of actual drives and check for unique sizes
-    actual_size_map, actual_sizes_good = _build_actual_drive_map(
-        actual_drives, node_scheduler_name, node_instance_id
-    )
+    actual_size_map, actual_sizes_good = _build_actual_drive_map(actual_drives, node_scheduler_name, node_instance_id)
     logger.debug("Actual size map: %s (Unique: %s)", actual_size_map, actual_sizes_good)
     if not actual_sizes_good:
         logger.warning("Cannot proceed with comparison due to duplicate actual drive sizes.")
@@ -537,15 +529,11 @@ def _compare_drives(
         expected_details,
         mismatch_found,
         expected_sizes_good,
-    ) = _process_expected_configs(
-        expected_configs, actual_drives, node_scheduler_name, node_instance_id
-    )
+    ) = _process_expected_configs(expected_configs, actual_drives, node_scheduler_name, node_instance_id)
 
     # 3. Handle based on mismatch status
     if not mismatch_found:
-        logger.info(
-            "Configuration matches for node: %s (%s)", node_scheduler_name, node_instance_id
-        )
+        logger.info("Configuration matches for node: %s (%s)", node_scheduler_name, node_instance_id)
         return {}
     else:
         # Attempt mapping only if both actual and expected sizes are unique
@@ -649,13 +637,9 @@ def _find_cloud_drive_configmap(namespace: str, v1_client: client.CoreV1Api) -> 
     """Find a unique configmap starting with 'px-cloud-drive-' in the namespace."""
     prefix = "px-cloud-drive-"
     try:
-        logger.debug(
-            "Searching for ConfigMaps with prefix '%s' in namespace '%s'...", prefix, namespace
-        )
+        logger.debug("Searching for ConfigMaps with prefix '%s' in namespace '%s'...", prefix, namespace)
         configmaps = v1_client.list_namespaced_config_map(namespace)
-        matching_cms = [
-            cm.metadata.name for cm in configmaps.items if cm.metadata.name.startswith(prefix)
-        ]
+        matching_cms = [cm.metadata.name for cm in configmaps.items if cm.metadata.name.startswith(prefix)]
 
         if len(matching_cms) == 1:
             found_name = matching_cms[0]
@@ -680,9 +664,7 @@ def _find_cloud_drive_configmap(namespace: str, v1_client: client.CoreV1Api) -> 
         logger.error("API error listing ConfigMaps in namespace '%s': %s", namespace, str(e))
         return None
     except Exception as e:
-        logger.error(
-            "Unexpected error searching for ConfigMaps in namespace '%s': %s", namespace, str(e)
-        )
+        logger.error("Unexpected error searching for ConfigMaps in namespace '%s': %s", namespace, str(e))
         return None
 
 
@@ -784,9 +766,7 @@ def main(
         # Process each node
         for node_name, node_data in cloud_drive_data.items():
             instance_id = node_data.get("InstanceID")
-            scheduler_name = node_data.get(
-                "SchedulerNodeName", f"UnknownNode_{node_name}"
-            )  # Use node_name as fallback
+            scheduler_name = node_data.get("SchedulerNodeName", f"UnknownNode_{node_name}")  # Use node_name as fallback
 
             if not instance_id:
                 logger.warning("Skipping node entry '%s' due to missing InstanceID.", node_name)

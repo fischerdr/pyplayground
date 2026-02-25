@@ -60,9 +60,7 @@ def fetch_clusters(client: PXBackupClient, org_id: str) -> List[Dict[str, Any]]:
         response = client.make_request("GET", endpoint)
         clusters = response.get("clusters", [])
         if not isinstance(clusters, list):
-            logger.warning(
-                f"API response for clusters was not a list: {type(clusters)}. Returning empty list."
-            )
+            logger.warning(f"API response for clusters was not a list: {type(clusters)}. Returning empty list.")
             return []
         logger.info(f"Successfully fetched {len(clusters)} clusters.")
         return clusters
@@ -71,9 +69,7 @@ def fetch_clusters(client: PXBackupClient, org_id: str) -> List[Dict[str, Any]]:
         raise  # Re-raise the exception for handling in main
 
 
-def inspect_cluster(
-    client: PXBackupClient, org_id: str, cluster_name: str, cluster_uid: str, include_secrets: bool
-) -> Dict[str, Any]:
+def inspect_cluster(client: PXBackupClient, org_id: str, cluster_name: str, cluster_uid: str, include_secrets: bool) -> Dict[str, Any]:
     """Fetches details for a specific cluster.
 
     Args:
@@ -103,18 +99,14 @@ def inspect_cluster(
             cluster_details = response
         else:
             logger.error(f"Unexpected response structure for inspect cluster: {response}")
-            raise ValueError(
-                f"Could not find cluster details in response for {cluster_name}/{cluster_uid}"
-            )
+            raise ValueError(f"Could not find cluster details in response for {cluster_name}/{cluster_uid}")
 
         logger.info(f"Successfully fetched details for cluster {cluster_name}.")
         return cluster_details
     except requests.exceptions.RequestException as e:
         # Check for 404 explicitly
         if hasattr(e, "response") and e.response is not None and e.response.status_code == 404:
-            logger.error(
-                f"Cluster not found: {cluster_name} (UID: {cluster_uid}) - API returned 404"
-            )
+            logger.error(f"Cluster not found: {cluster_name} (UID: {cluster_uid}) - API returned 404")
             raise ValueError(f"Cluster not found: {cluster_name} (UID: {cluster_uid})") from e
         logger.error(f"Failed to inspect cluster {cluster_name}: {e}")
         raise  # Re-raise other request exceptions
@@ -143,16 +135,12 @@ def _handle_authentication(
                 ]
                 if not v
             ]
-            raise click.ClickException(
-                f"Error: Token not provided, and missing required options for token generation: {', '.join(missing_auth)}"
-            )
+            raise click.ClickException(f"Error: Token not provided, and missing required options for token generation: {', '.join(missing_auth)}")
         try:
             current_token = generate_token(auth_url, client_id, username, password, validate_certs)
             click.echo("Successfully generated authentication token.")
         except (requests.exceptions.RequestException, ValueError) as auth_err:
-            raise click.ClickException(
-                f"[bold red]Authentication Error:[/bold red] Failed to generate token: {auth_err}"
-            )
+            raise click.ClickException(f"[bold red]Authentication Error:[/bold red] Failed to generate token: {auth_err}")
     if not current_token:  # Should be caught by exceptions above, but as a safeguard
         raise click.ClickException("Failed to obtain authentication token.")
     return current_token
@@ -219,33 +207,25 @@ def _handle_inspect_operation(
     if not actual_cluster_uid:
         logger.info(f"Cluster UID not provided for '{cluster_name}', attempting to look it up.")
         all_clusters = fetch_clusters(client, org_id)
-        found_clusters = [
-            c for c in all_clusters if c.get("metadata", {}).get("name") == cluster_name
-        ]
+        found_clusters = [c for c in all_clusters if c.get("metadata", {}).get("name") == cluster_name]
 
         if not found_clusters:
             raise click.ClickException(f"Error: Cluster with name '{cluster_name}' not found.")
         if len(found_clusters) > 1:
             uids = [fc.get("metadata", {}).get("uid", "N/A") for fc in found_clusters]
-            raise click.ClickException(
-                f"Error: Multiple clusters found with name '{cluster_name}'. Please specify by --cluster-uid. Found UIDs: {', '.join(uids)}"
-            )
+            raise click.ClickException(f"Error: Multiple clusters found with name '{cluster_name}'. Please specify by --cluster-uid. Found UIDs: {', '.join(uids)}")
 
         actual_cluster_uid = found_clusters[0].get("metadata", {}).get("uid")
         if not actual_cluster_uid:
             # This case should ideally not happen if a cluster is found and has a name
-            raise click.ClickException(
-                f"Error: Cluster '{cluster_name}' found, but it does not have a UID."
-            )
+            raise click.ClickException(f"Error: Cluster '{cluster_name}' found, but it does not have a UID.")
         logger.info(f"Found UID '{actual_cluster_uid}' for cluster name '{cluster_name}'.")
 
     # At this point, actual_cluster_uid must be a string
     assert actual_cluster_uid is not None, "Cluster UID could not be resolved."
 
     try:
-        cluster_details = inspect_cluster(
-            client, org_id, cluster_name, actual_cluster_uid, include_secrets
-        )
+        cluster_details = inspect_cluster(client, org_id, cluster_name, actual_cluster_uid, include_secrets)
         console.print(f"Details for Cluster: {cluster_name} (UID: {actual_cluster_uid})")
         # Use console.print for consistency
         console.print(cluster_details)
@@ -274,9 +254,7 @@ def _handle_inspect_operation(
     envvar="PX_BACKUP_TOKEN",
     help="Authentication token (recommended). Env: PX_BACKUP_TOKEN",
 )
-@click.option(
-    "--no-validate-certs", is_flag=True, default=False, help="Disable SSL certificate validation."
-)
+@click.option("--no-validate-certs", is_flag=True, default=False, help="Disable SSL certificate validation.")
 # Token Generation Options (if --token is not used)
 @click.option(
     "--auth-url",
@@ -381,9 +359,7 @@ def main(
 
     try:
         # --- Authentication ---
-        actual_token = _handle_authentication(
-            token, auth_url, client_id, username, password, validate_certs
-        )
+        actual_token = _handle_authentication(token, auth_url, client_id, username, password, validate_certs)
 
         # --- Initialize Client ---
         client = PXBackupClient(api_url, actual_token, validate_certs)
@@ -412,9 +388,7 @@ def main(
     except click.ClickException:
         raise  # Re-raise Click exceptions to let Click handle them
     except Exception as e:
-        logger.exception(
-            "An unexpected error occurred."
-        )  # Log the full traceback for unexpected errors
+        logger.exception("An unexpected error occurred.")  # Log the full traceback for unexpected errors
         # Use ClickException for error handling
         raise click.ClickException(f"[bold red]An unexpected error occurred:[/bold red] {e}")
 

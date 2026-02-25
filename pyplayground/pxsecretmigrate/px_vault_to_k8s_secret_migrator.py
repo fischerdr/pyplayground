@@ -66,18 +66,14 @@ def create_kubernetes_secret(
     logger.debug(f"Handling secret '{secret_name}' in namespace '{namespace}' (dry-run: {dry_run})")
 
     if dry_run:
-        console.print(
-            f"[bright_blue]DRY-RUN: Would check for and create secret '{secret_name}' in namespace '{namespace}' with key '{secret_key}' if not present.[/bright_blue]"
-        )
+        console.print(f"[bright_blue]DRY-RUN: Would check for and create secret '{secret_name}' in namespace '{namespace}' with key '{secret_key}' if not present.[/bright_blue]")
         logger.info(f"DRY-RUN: Would create secret '{secret_name}' in namespace '{namespace}'")
         return True
 
     # Check if secret already exists
     try:
         core_v1.read_namespaced_secret(name=secret_name, namespace=namespace)
-        console.print(
-            f"[yellow]Secret '{secret_name}' already exists in namespace '{namespace}', skipping[/yellow]"
-        )
+        console.print(f"[yellow]Secret '{secret_name}' already exists in namespace '{namespace}', skipping[/yellow]")
         logger.info(f"Secret '{secret_name}' already exists in namespace '{namespace}'")
         return True
     except ApiException as e:
@@ -131,9 +127,7 @@ def update_portworx_labels(
     command = f"pxctl volume update --label {','.join(labels_to_update)} {pv_name}"
 
     if dry_run:
-        console.print(
-            f"[bright_blue]DRY-RUN: Would check labels and potentially run command: {command}[/bright_blue]"
-        )
+        console.print(f"[bright_blue]DRY-RUN: Would check labels and potentially run command: {command}[/bright_blue]")
         logger.info(f"DRY-RUN: Would run pxctl command: {command}")
         return True
 
@@ -166,9 +160,7 @@ def update_portworx_labels(
 
         if error_msg:
             logger.error(f"pxctl command failed for volume '{pv_name}': {error_msg}")
-            console.print(
-                f"[red]✗[/red] Failed to update labels for volume '{pv_name}': {error_msg}"
-            )
+            console.print(f"[red]✗[/red] Failed to update labels for volume '{pv_name}': {error_msg}")
             return False
         else:
             console.print(f"[green]✓[/green] Updated labels for volume '{pv_name}'")
@@ -190,17 +182,11 @@ def remove_pvc_vault_annotation(
     dry_run: bool = False,
 ) -> bool:
     """Remove the 'px/vault-namespace' annotation from a PVC if it exists."""
-    logger.debug(
-        f"Handling 'px/vault-namespace' annotation for PVC '{pvc_name}' in namespace '{namespace}' (dry-run: {dry_run})"
-    )
+    logger.debug(f"Handling 'px/vault-namespace' annotation for PVC '{pvc_name}' in namespace '{namespace}' (dry-run: {dry_run})")
 
     if dry_run:
-        console.print(
-            f"[bright_blue]DRY-RUN: Would check and remove 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}' if it exists.[/bright_blue]"
-        )
-        logger.info(
-            f"DRY-RUN: Would remove 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}'"
-        )
+        console.print(f"[bright_blue]DRY-RUN: Would check and remove 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}' if it exists.[/bright_blue]")
+        logger.info(f"DRY-RUN: Would remove 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}'")
         return True
 
     try:
@@ -208,24 +194,16 @@ def remove_pvc_vault_annotation(
         annotations = pvc.metadata.annotations or {}
 
         if "px/vault-namespace" not in annotations:
-            logger.debug(
-                f"Annotation 'px/vault-namespace' not found on PVC '{pvc_name}', skipping."
-            )
+            logger.debug(f"Annotation 'px/vault-namespace' not found on PVC '{pvc_name}', skipping.")
             return True
 
         # JSON Patch to remove the annotation. Note the escaping for the '/' in the key.
         patch_body = [{"op": "remove", "path": "/metadata/annotations/px~1vault-namespace"}]
 
-        core_v1.patch_namespaced_persistent_volume_claim(
-            name=pvc_name, namespace=namespace, body=patch_body
-        )
+        core_v1.patch_namespaced_persistent_volume_claim(name=pvc_name, namespace=namespace, body=patch_body)
 
-        console.print(
-            f"[green]✓[/green] Removed vault annotation from PVC '{namespace}/{pvc_name}'"
-        )
-        logger.info(
-            f"Successfully removed 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}'"
-        )
+        console.print(f"[green]✓[/green] Removed vault annotation from PVC '{namespace}/{pvc_name}'")
+        logger.info(f"Successfully removed 'px/vault-namespace' annotation from PVC '{namespace}/{pvc_name}'")
         return True
 
     except ApiException as e:
@@ -252,9 +230,7 @@ def update_pvc_annotations(
     dry_run: bool = False,
 ) -> bool:
     """Update the Kubernetes PVC with Portworx secret annotations."""
-    logger.debug(
-        f"Handling secret annotations for PVC '{pvc_name}' in namespace '{namespace}' (dry-run: {dry_run})"
-    )
+    logger.debug(f"Handling secret annotations for PVC '{pvc_name}' in namespace '{namespace}' (dry-run: {dry_run})")
 
     annotations_to_set = {
         "px/secret-key": secret_key,
@@ -263,12 +239,8 @@ def update_pvc_annotations(
     }
 
     if dry_run:
-        console.print(
-            f"[bright_blue]DRY-RUN: Would check and update annotations on PVC '{namespace}/{pvc_name}' with: {annotations_to_set}[/bright_blue]"
-        )
-        logger.info(
-            f"DRY-RUN: Would update annotations on PVC '{namespace}/{pvc_name}' with {annotations_to_set}"
-        )
+        console.print(f"[bright_blue]DRY-RUN: Would check and update annotations on PVC '{namespace}/{pvc_name}' with: {annotations_to_set}[/bright_blue]")
+        logger.info(f"DRY-RUN: Would update annotations on PVC '{namespace}/{pvc_name}' with {annotations_to_set}")
         return True
 
     try:
@@ -286,21 +258,15 @@ def update_pvc_annotations(
 
         patch_body = {"metadata": {"annotations": updated_annotations}}
 
-        core_v1.patch_namespaced_persistent_volume_claim(
-            name=pvc_name, namespace=namespace, body=patch_body
-        )
+        core_v1.patch_namespaced_persistent_volume_claim(name=pvc_name, namespace=namespace, body=patch_body)
 
-        console.print(
-            f"[green]✓[/green] Updated secret annotations on PVC '{namespace}/{pvc_name}'"
-        )
+        console.print(f"[green]✓[/green] Updated secret annotations on PVC '{namespace}/{pvc_name}'")
         logger.info(f"Successfully updated secret annotations on PVC '{namespace}/{pvc_name}'")
         return True
 
     except ApiException as e:
         if e.status == 404:
-            logger.error(
-                f"PVC '{pvc_name}' not found in namespace '{namespace}' for annotation update"
-            )
+            logger.error(f"PVC '{pvc_name}' not found in namespace '{namespace}' for annotation update")
             console.print(f"[red]✗[/red] PVC '{pvc_name}' not found in '{namespace}'")
         else:
             logger.error(f"Failed to patch PVC '{pvc_name}' for annotation update: {e}")
@@ -342,15 +308,9 @@ def process_pvc_entry(
     normalized_secret_name, name_changed = normalize_secret_name(secret_key, pvc_name)
 
     if name_changed:
-        pvc_suffix_info = (
-            " (-pvc suffix preserved)" if normalized_secret_name.endswith("-pvc") else ""
-        )
-        console.print(
-            f"[yellow]Secret name normalized: '{secret_key}' → '{normalized_secret_name}'{pvc_suffix_info}[/yellow]"
-        )
-        logger.info(
-            f"Secret name normalized for PVC '{pvc_name}': '{secret_key}' → '{normalized_secret_name}'{pvc_suffix_info}"
-        )
+        pvc_suffix_info = " (-pvc suffix preserved)" if normalized_secret_name.endswith("-pvc") else ""
+        console.print(f"[yellow]Secret name normalized: '{secret_key}' → '{normalized_secret_name}'{pvc_suffix_info}[/yellow]")
+        logger.info(f"Secret name normalized for PVC '{pvc_name}': '{secret_key}' → '{normalized_secret_name}'{pvc_suffix_info}")
 
     # Create Kubernetes secret
     secret_success = create_kubernetes_secret(
@@ -416,17 +376,13 @@ def migrate_vault_to_k8s_secrets(
     # Initialize Portworx environment for pxctl commands
     init_result = initialize_pvc_vault_environment(core_v1, px_namespace)
     if not init_result:
-        console.print(
-            "[bold red]Failed to initialize Portworx environment. Check logs for details.[/bold red]"
-        )
+        console.print("[bold red]Failed to initialize Portworx environment. Check logs for details.[/bold red]")
         sys.exit(1)
     _, _, px_pod, effective_env_vars = init_result
 
     with console.status("[bold green]Migrating encryption keys...") as status:
         for namespace, pvc_list in export_data.items():
-            console.print(
-                f"\n[bold cyan]==> Processing Namespace: {namespace} ({len(pvc_list)} PVCs)[/bold cyan]"
-            )
+            console.print(f"\n[bold cyan]==> Processing Namespace: {namespace} ({len(pvc_list)} PVCs)[/bold cyan]")
             logger.info(f"--- Starting processing for namespace: {namespace} ---")
             for pvc_entry in pvc_list:
                 results["total"] += 1
@@ -451,9 +407,7 @@ def migrate_vault_to_k8s_secrets(
                         results["failed"] += 1
 
                 except Exception as e:
-                    logger.error(
-                        f"Unexpected error processing PVC '{pvc_name}': {e}", exc_info=True
-                    )
+                    logger.error(f"Unexpected error processing PVC '{pvc_name}': {e}", exc_info=True)
                     console.print(f"[red]✗[/red] Unexpected error processing PVC '{pvc_name}': {e}")
                     results["failed"] += 1
 
@@ -520,9 +474,7 @@ def main(input: str, dry_run: bool, px_namespace: str, debug: bool):
         sys.exit(1)
 
     # Perform migration
-    results = migrate_vault_to_k8s_secrets(
-        export_data=export_data, core_v1=core_v1, px_namespace=px_namespace, dry_run=dry_run
-    )
+    results = migrate_vault_to_k8s_secrets(export_data=export_data, core_v1=core_v1, px_namespace=px_namespace, dry_run=dry_run)
 
     # Display results
     console.print("\n[bold]Migration Results:[/bold]")
@@ -532,9 +484,7 @@ def main(input: str, dry_run: bool, px_namespace: str, debug: bool):
 
     if results["failed"] > 0:
         console.print("\n[yellow]Some entries failed to migrate. Check logs for details.[/yellow]")
-        logger.warning(
-            f"Migration completed with {results['failed']} failures out of {results['total']} total entries"
-        )
+        logger.warning(f"Migration completed with {results['failed']} failures out of {results['total']} total entries")
     else:
         console.print("\n[bold green]All entries processed successfully![/bold green]")
         logger.info("Migration completed successfully")

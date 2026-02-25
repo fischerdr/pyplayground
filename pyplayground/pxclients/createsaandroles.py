@@ -42,14 +42,10 @@ def load_kube_config(initial_kubeconfig):
         else:
             kubeconfig_env = os.environ.get("KUBECONFIG")
             if kubeconfig_env:
-                logger.info(
-                    f"Loading kubeconfig from KUBECONFIG environment variable: {kubeconfig_env}"
-                )
+                logger.info(f"Loading kubeconfig from KUBECONFIG environment variable: {kubeconfig_env}")
                 config.load_kube_config(config_file=kubeconfig_env)
             else:
-                raise ValueError(
-                    "No kubeconfig file provided and KUBECONFIG environment variable is not set."
-                )
+                raise ValueError("No kubeconfig file provided and KUBECONFIG environment variable is not set.")
     except Exception as e:
         logger.error(f"Failed to load kubeconfig: {e}")
         raise
@@ -84,9 +80,7 @@ def ensure_service_account(namespace, service_account_name):
     v1 = client.CoreV1Api()
     try:
         v1.read_namespaced_service_account(name=service_account_name, namespace=namespace)
-        logger.info(
-            f"Service account '{service_account_name}' already exists in namespace '{namespace}'."
-        )
+        logger.info(f"Service account '{service_account_name}' already exists in namespace '{namespace}'.")
     except ApiException as e:
         if e.status == 404:
             logger.info(f"Service account '{service_account_name}' not found. Creating it.")
@@ -116,9 +110,7 @@ def create_cluster_role(
 
     if cli_api_groups or cli_verbs or cli_resources:
         current_api_groups = list(cli_api_groups) if cli_api_groups else ["*"]
-        current_verbs = (
-            list(cli_verbs) if cli_verbs else ["get", "list", "create", "update", "delete"]
-        )
+        current_verbs = list(cli_verbs) if cli_verbs else ["get", "list", "create", "update", "delete"]
         current_resources = list(cli_resources) if cli_resources else ["*"]
     else:  # None of the CLI options for this role were provided, use the standard default
         current_api_groups = ["*"]
@@ -169,9 +161,7 @@ def create_role(
 
     if cli_api_groups or cli_verbs or cli_resources:
         current_api_groups = list(cli_api_groups) if cli_api_groups else ["*"]
-        current_verbs = (
-            list(cli_verbs) if cli_verbs else ["get", "list", "create", "update", "delete"]
-        )
+        current_verbs = list(cli_verbs) if cli_verbs else ["get", "list", "create", "update", "delete"]
         current_resources = list(cli_resources) if cli_resources else ["*"]
     else:  # None of the CLI options for this role were provided, use the standard default
         current_api_groups = ["*"]
@@ -200,9 +190,7 @@ def create_role(
             raise
 
 
-def create_cluster_role_binding(
-    rbac: client.RbacAuthorizationV1Api, namespace: str, service_account_name: str
-):
+def create_cluster_role_binding(rbac: client.RbacAuthorizationV1Api, namespace: str, service_account_name: str):
     """Create a ClusterRoleBinding for the specified service account.
 
     Args:
@@ -220,11 +208,7 @@ def create_cluster_role_binding(
             logger.info(f"Creating ClusterRoleBinding '{cluster_role_binding_name}'.")
             cluster_role_binding_obj = client.V1ClusterRoleBinding(
                 metadata=client.V1ObjectMeta(name=cluster_role_binding_name),
-                subjects=[
-                    client.V1Subject(
-                        kind="ServiceAccount", name=service_account_name, namespace=namespace
-                    )
-                ],
+                subjects=[client.V1Subject(kind="ServiceAccount", name=service_account_name, namespace=namespace)],
                 role_ref=client.V1RoleRef(
                     kind="ClusterRole",
                     name=cluster_role_name,
@@ -236,9 +220,7 @@ def create_cluster_role_binding(
             raise
 
 
-def create_role_binding(
-    namespace: str, rbac: client.RbacAuthorizationV1Api, service_account_name: str
-):
+def create_role_binding(namespace: str, rbac: client.RbacAuthorizationV1Api, service_account_name: str):
     """Create a RoleBinding for the specified service account.
 
     Args:
@@ -256,11 +238,7 @@ def create_role_binding(
             logger.info(f"Creating RoleBinding '{role_binding_name}'.")
             role_binding_obj = client.V1RoleBinding(
                 metadata=client.V1ObjectMeta(name=role_binding_name, namespace=namespace),
-                subjects=[
-                    client.V1Subject(
-                        kind="ServiceAccount", name=service_account_name, namespace=namespace
-                    )
-                ],
+                subjects=[client.V1Subject(kind="ServiceAccount", name=service_account_name, namespace=namespace)],
                 role_ref=client.V1RoleRef(
                     kind="Role",
                     name=role_name,
@@ -336,18 +314,12 @@ def create_kubeconfig(namespace, service_account_name, output_dir):
     secrets = v1.list_namespaced_secret(namespace=namespace)
     sa_secret = None
     for secret in secrets.items:
-        if (
-            secret.metadata.annotations
-            and secret.metadata.annotations.get("kubernetes.io/service-account.name")
-            == service_account_name
-        ):
+        if secret.metadata.annotations and secret.metadata.annotations.get("kubernetes.io/service-account.name") == service_account_name:
             sa_secret = secret
             break
 
     if not sa_secret:
-        raise Exception(
-            f"No secret found for service account '{service_account_name}' in namespace '{namespace}'."
-        )
+        raise Exception(f"No secret found for service account '{service_account_name}' in namespace '{namespace}'.")
 
     # Prepare kubeconfig
     token = sa_secret.data["token"]
@@ -356,9 +328,7 @@ def create_kubeconfig(namespace, service_account_name, output_dir):
 
     kubeconfig = {
         "apiVersion": "v1",
-        "clusters": [
-            {"cluster": {"certificate-authority-data": ca_cert, "server": server}, "name": server}
-        ],
+        "clusters": [{"cluster": {"certificate-authority-data": ca_cert, "server": server}, "name": server}],
         "contexts": [
             {
                 "context": {

@@ -71,13 +71,9 @@ if __name__ == "__main__":
     from pyVim import connect
 
     PARSER = cli.build_arg_parser()
-    PARSER.add_argument(
-        "-n", "--name", required=True, action="store", help="Name of the Datacenter to create."
-    )
+    PARSER.add_argument("-n", "--name", required=True, action="store", help="Name of the Datacenter to create.")
     MY_ARGS = PARSER.parse_args()
     cli.prompt_for_password(MY_ARGS)
-    SI = connect.SmartConnect(
-        host=MY_ARGS.host, user=MY_ARGS.user, pwd=MY_ARGS.password, port=MY_ARGS.port
-    )
+    SI = connect.SmartConnect(host=MY_ARGS.host, user=MY_ARGS.user, pwd=MY_ARGS.password, port=MY_ARGS.port)
     create_datacenter(dc_name=MY_ARGS.name, service_instance=SI)
     atexit.register(connect.Disconnect, SI)

@@ -200,9 +200,7 @@ def get_vsphere_config(namespace: str, verify_ssl: bool) -> Optional[VSphereConf
         return None
 
 
-def _initialize_resources(
-    portworx_namespace: str, verify_vsphere_ssl: bool
-) -> Optional[VSphereConfig]:
+def _initialize_resources(portworx_namespace: str, verify_vsphere_ssl: bool) -> Optional[VSphereConfig]:
     """Load kubeconfig and get vSphere configuration.
 
     Performs initialization tasks including loading Kubernetes configuration
@@ -279,13 +277,9 @@ def _find_cloud_drive_configmap(namespace: str, v1_client: client.CoreV1Api) -> 
     """
     prefix = "px-cloud-drive-"
     try:
-        logger.debug(
-            "Searching for ConfigMaps with prefix '%s' in namespace '%s'...", prefix, namespace
-        )
+        logger.debug("Searching for ConfigMaps with prefix '%s' in namespace '%s'...", prefix, namespace)
         configmaps = v1_client.list_namespaced_config_map(namespace)
-        matching_cms = [
-            cm.metadata.name for cm in configmaps.items if cm.metadata.name.startswith(prefix)
-        ]
+        matching_cms = [cm.metadata.name for cm in configmaps.items if cm.metadata.name.startswith(prefix)]
 
         if len(matching_cms) == 1:
             # Type cast: cm.metadata.name is Any due to incomplete kubernetes type stubs
@@ -311,9 +305,7 @@ def _find_cloud_drive_configmap(namespace: str, v1_client: client.CoreV1Api) -> 
         logger.error("API error listing ConfigMaps in namespace '%s': %s", namespace, str(e))
         return None
     except Exception as e:
-        logger.error(
-            "Unexpected error searching for ConfigMaps in namespace '%s': %s", namespace, str(e)
-        )
+        logger.error("Unexpected error searching for ConfigMaps in namespace '%s': %s", namespace, str(e))
         return None
 
 
@@ -350,9 +342,7 @@ def _fetch_cluster_drive_data(namespace: str, configmap_name: str) -> Optional[D
         return None
 
 
-def get_vm_info(  # noqa: C901
-    vsphere_config: VSphereConfig, vm_uuid: str
-) -> Optional[Tuple[Dict[str, float], float]]:
+def get_vm_info(vsphere_config: VSphereConfig, vm_uuid: str) -> Optional[Tuple[Dict[str, float], float]]:  # noqa: C901
     """Get VM disk information and total committed storage using pyVmomi.
 
     Connects to vSphere, finds a VM by UUID, and retrieves information about
@@ -394,9 +384,7 @@ def get_vm_info(  # noqa: C901
 
         # Check if connection was successful
         if not si:
-            logger.error(
-                "Failed to connect to vSphere host: %s. Cannot get VM info.", vsphere_config.host
-            )
+            logger.error("Failed to connect to vSphere host: %s. Cannot get VM info.", vsphere_config.host)
             return None
 
         # Test the service instance connection by getting current time
@@ -568,9 +556,7 @@ def show_vm_drives(  # noqa: C901
         logger.info("ConfigMap name not specified, searching in namespace '%s'...", namespace)
         configmap_name = _find_cloud_drive_configmap(namespace, k8s_v1_client)
         if configmap_name is None:
-            click.echo(
-                "ERROR: Could not automatically find a unique px-cloud-drive-* ConfigMap.", err=True
-            )
+            click.echo("ERROR: Could not automatically find a unique px-cloud-drive-* ConfigMap.", err=True)
             raise click.Abort()
     else:
         logger.info("Using specified ConfigMap name: '%s'", configmap_name)
@@ -587,9 +573,7 @@ def show_vm_drives(  # noqa: C901
     logger.info(f"Successfully retrieved vSphere config details for host: {vsphere_config.host}")
 
     # Fetch the cloud drive data (needs namespace where CM resides)
-    logger.info(
-        f"Fetching cloud drive data from ConfigMap '{configmap_name}' in namespace '{namespace}'..."
-    )
+    logger.info(f"Fetching cloud drive data from ConfigMap '{configmap_name}' in namespace '{namespace}'...")
     cloud_drive_data = _fetch_cluster_drive_data(namespace, configmap_name)
     if not cloud_drive_data:
         logger.error(f"Failed to fetch or parse data from ConfigMap '{configmap_name}'.")
@@ -635,9 +619,7 @@ def show_vm_drives(  # noqa: C901
             err_msg = f"Failed to get drive information for VM {instance_id}. Check logs."
             logger.error(err_msg)
             # Add a row indicating failure for this node
-            table.add_row(
-                scheduler_name, instance_id, f"[bold red]ERROR:[/bold red] {err_msg}", "-"
-            )
+            table.add_row(scheduler_name, instance_id, f"[bold red]ERROR:[/bold red] {err_msg}", "-")
         else:
             actual_drives, total_committed_gb = vm_info_result
             # Display total committed storage - REMOVED - Cannot show per disk

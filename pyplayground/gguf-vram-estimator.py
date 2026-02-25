@@ -251,22 +251,11 @@ def run_estimator(gguf_file: str, context_sizes: List[int], overhead_gib: float)
         console.print(f"\n[bold blue]Model '{metadata.get('general.name', 'N/A')}'[/bold blue]")
         if training_context > 0:
             console.print(f"[green]Max Context:[/green] {training_context:,} tokens")
-        console.print(
-            f"[green]Model Size:[/green] {format_mem(model_size_bytes).strip()} (from file size)"
-        )
-        console.print(
-            f"[green]Incl. Overhead:[/green] {overhead_gib:.2f} GiB (for compute buffer, etc. adjustable via --overhead)"
-        )
+        console.print(f"[green]Model Size:[/green] {format_mem(model_size_bytes).strip()} (from file size)")
+        console.print(f"[green]Incl. Overhead:[/green] {overhead_gib:.2f} GiB (for compute buffer, etc. adjustable via --overhead)")
 
         if training_context > 0:
-            context_sizes = sorted(
-                list(
-                    set(
-                        [c for c in context_sizes if c <= training_context]
-                        + [c for c in [training_context] if c not in context_sizes]
-                    )
-                )
-            )
+            context_sizes = sorted(list(set([c for c in context_sizes if c <= training_context] + [c for c in [training_context] if c not in context_sizes])))
         else:
             context_sizes = sorted(context_sizes)
 
@@ -283,9 +272,7 @@ def run_estimator(gguf_file: str, context_sizes: List[int], overhead_gib: float)
             mem_swa = min(n_ctx, swa_window_size) * n_layers_swa * bytes_per_token_per_layer
             kv_cache_bytes = mem_full + mem_swa
             total_bytes = model_size_bytes + kv_cache_bytes + overhead_bytes
-            table.add_row(
-                f"{n_ctx:,}", format_mem(kv_cache_bytes).strip(), format_mem(total_bytes).strip()
-            )
+            table.add_row(f"{n_ctx:,}", format_mem(kv_cache_bytes).strip(), format_mem(total_bytes).strip())
 
         console.print(table)
 
@@ -314,9 +301,7 @@ def main() -> None:
         description="Calculate VRAM requirements for a GGUF model, including a configurable overhead for compute buffers.",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument(
-        "gguf_file", help="Path to the GGUF model file (any part of a multi-part model)."
-    )
+    parser.add_argument("gguf_file", help="Path to the GGUF model file (any part of a multi-part model).")
     parser.add_argument(
         "-c",
         "--contexts",

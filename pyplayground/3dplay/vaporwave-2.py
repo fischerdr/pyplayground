@@ -43,9 +43,7 @@ class Frame:
         # Track which voxels are part of wireframe grid lines
         self.grid_mask = np.zeros((width, height, depth), dtype=bool)
 
-    def set_voxel(
-        self, x: int, y: int, z: int, color: Tuple[int, int, int], is_grid: bool = False
-    ) -> None:
+    def set_voxel(self, x: int, y: int, z: int, color: Tuple[int, int, int], is_grid: bool = False) -> None:
         """Set a voxel with grid line information for proper wireframe rendering."""
         if 0 <= x < self.shape[0] and 0 <= y < self.shape[1] and 0 <= z < self.shape[2]:
             self.data[x, y, z] = color
@@ -59,11 +57,7 @@ class Frame:
                     color = other.data[x, y, z]
                     if np.any(color):
                         nx, ny, nz = x + ox, y + oy, z + oz
-                        if (
-                            0 <= nx < self.shape[0]
-                            and 0 <= ny < self.shape[1]
-                            and 0 <= nz < self.shape[2]
-                        ):
+                        if 0 <= nx < self.shape[0] and 0 <= ny < self.shape[1] and 0 <= nz < self.shape[2]:
                             self.set_voxel(nx, ny, nz, color, other.grid_mask[x, y, z])
 
     def sdf_triangle(self, p: np.ndarray, a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
@@ -143,9 +137,7 @@ class Frame:
 
         # Clamp to frame boundaries
         min_coords = np.maximum(min_coords, [0, 0, 0])
-        max_coords = np.minimum(
-            max_coords, [self.shape[0] - 1, self.shape[1] - 1, self.shape[2] - 1]
-        )
+        max_coords = np.minimum(max_coords, [self.shape[0] - 1, self.shape[1] - 1, self.shape[2] - 1])
 
         # Triangle rasterization with SDF
         triangle_thickness = max(1.0, spacing / 10.0)  # Adaptive thickness based on spacing
@@ -224,17 +216,13 @@ class Frame:
 class AudioProcessor:
     """Audio processing matching original implementation exactly."""
 
-    def __init__(
-        self, path: str, bands: int, sr: int = 44100, hop: int = 512, thresh: float = 0.5
-    ) -> None:
+    def __init__(self, path: str, bands: int, sr: int = 44100, hop: int = 512, thresh: float = 0.5) -> None:
         """Initialize audio processor with specified parameters."""
         self.sr, self.hop = sr, hop
         self.raw, _ = librosa.load(path, sr=sr)
         self.frames = 1 + len(self.raw) // hop
         mag = np.abs(librosa.stft(self.raw, hop_length=hop))
-        basis = librosa.filters.mel(
-            sr=sr, n_fft=mag.shape[0] * 2 - 2, n_mels=bands, fmin=50.0, fmax=20000.0
-        )
+        basis = librosa.filters.mel(sr=sr, n_fft=mag.shape[0] * 2 - 2, n_mels=bands, fmin=50.0, fmax=20000.0)
         db = librosa.power_to_db(basis @ mag, ref=np.max)
         self.spec = (db - db.min()) / (db.max() - db.min())
         self.thresh = thresh
@@ -280,11 +268,7 @@ class Encoder:
             f.write(b"".join(self.audio_pcm))
 
         video_out = os.path.join(self.output_dir, "output.mp4")
-        os.system(
-            f"ffmpeg -framerate {self.fps} -i {self.output_dir}/frame_%04d.png "
-            f"-f s16le -ar 44100 -ac 1 -i {audio_path} "
-            f"-pix_fmt yuv420p -y {video_out}"
-        )
+        os.system(f"ffmpeg -framerate {self.fps} -i {self.output_dir}/frame_%04d.png " f"-f s16le -ar 44100 -ac 1 -i {audio_path} " f"-pix_fmt yuv420p -y {video_out}")
 
         if os.path.exists(video_out):
             print(f"Video saved to {video_out}. Attempting to open...")
@@ -349,9 +333,7 @@ class Visualizer:
 
                         if (y // stripes) % 2 == 0:
                             # Original sun color gradient
-                            color = interpolate_color(
-                                [(255, 94, 0), (255, 42, 100), (180, 0, 255)], y_norm
-                            )
+                            color = interpolate_color([(255, 94, 0), (255, 42, 100), (180, 0, 255)], y_norm)
                             sun.set_voxel(x, y, z, color, True)  # Sun is always "grid"
         return sun
 
@@ -427,16 +409,7 @@ class Visualizer:
                 p3 = np.array([x + spacing, h11, z + spacing - z_base], dtype=float)
 
                 # Skip triangles that fall outside frame depth
-                if (
-                    p0[2] < 0
-                    or p0[2] >= d
-                    or p1[2] < 0
-                    or p1[2] >= d
-                    or p2[2] < 0
-                    or p2[2] >= d
-                    or p3[2] < 0
-                    or p3[2] >= d
-                ):
+                if p0[2] < 0 or p0[2] >= d or p1[2] < 0 or p1[2] >= d or p2[2] < 0 or p2[2] >= d or p3[2] < 0 or p3[2] >= d:
                     continue
 
                 # Create two triangles per grid cell (original mesh topology)

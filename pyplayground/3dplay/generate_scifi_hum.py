@@ -19,9 +19,7 @@ from scipy import signal as sp_signal
 from scipy.io.wavfile import write
 
 
-def generate_sci_fi_hum(
-    filename: str = "resonance.mp3", duration: int = 30, sample_rate: int = 44100
-) -> None:
+def generate_sci_fi_hum(filename: str = "resonance.mp3", duration: int = 30, sample_rate: int = 44100) -> None:
     """Generate a sci-fi hum sound and save it as an MP3 file.
 
     This function creates a complex, layered sci-fi hum using multiple synthesis

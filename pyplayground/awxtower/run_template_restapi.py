@@ -55,12 +55,8 @@ def _resolve_resource_ids(
         A tuple containing the job template ID and inventory ID.
         If the job template or inventory is not found, returns None for the respective ID.
     """
-    job_templates = search_resource_by_name(
-        tower_url, headers, "job_templates", template_name, verify=verify
-    )
-    inventories = search_resource_by_name(
-        tower_url, headers, "inventories", inventory_name, verify=verify
-    )
+    job_templates = search_resource_by_name(tower_url, headers, "job_templates", template_name, verify=verify)
+    inventories = search_resource_by_name(tower_url, headers, "inventories", inventory_name, verify=verify)
 
     job_template_id: Optional[int] = None
     inventory_id: Optional[int] = None
@@ -72,9 +68,7 @@ def _resolve_resource_ids(
         if job_templates and len(job_templates) > 0:
             job_template_id = job_templates[0].get("id")
             if job_template_id:
-                logger.info(
-                    f"Automatically selected job template: {job_templates[0].get('name')} (ID: {job_template_id})"
-                )
+                logger.info(f"Automatically selected job template: {job_templates[0].get('name')} (ID: {job_template_id})")
             else:
                 logger.error(f"Could not determine ID for job template matching '{template_name}'.")
         else:
@@ -83,9 +77,7 @@ def _resolve_resource_ids(
         if inventories and len(inventories) > 0:
             inventory_id = inventories[0].get("id")
             if inventory_id:
-                logger.info(
-                    f"Automatically selected inventory: {inventories[0].get('name')} (ID: {inventory_id})"
-                )
+                logger.info(f"Automatically selected inventory: {inventories[0].get('name')} (ID: {inventory_id})")
             else:
                 logger.error(f"Could not determine ID for inventory matching '{inventory_name}'.")
         else:
@@ -128,19 +120,13 @@ def _execute_and_manage_job(
                     except IOError as e:
                         logger.error(f"Failed to write job output to {output_file}: {e}")
                 else:
-                    logger.warning(
-                        f"No output content fetched for job ID {job_id} to save to {output_file}."
-                    )
+                    logger.warning(f"No output content fetched for job ID {job_id} to save to {output_file}.")
             final_status = final_job_details.get("status")
             logger.info(f"Job ID {job_id} completed with final status: {final_status}")
         else:
-            logger.error(
-                f"Failed to monitor job ID {job_id} to completion or monitoring was cancelled."
-            )
+            logger.error(f"Failed to monitor job ID {job_id} to completion or monitoring was cancelled.")
     elif job_details is None and extra_vars != "{}":
-        logger.error(
-            "Job launch failed. This might be due to invalid extra_vars. Please check the format."
-        )
+        logger.error("Job launch failed. This might be due to invalid extra_vars. Please check the format.")
     else:
         logger.error("Job launch failed or job details are incomplete.")
 
@@ -175,9 +161,7 @@ def _execute_and_manage_job(
 )
 @click.option("--template-name", required=True, help="Partial name of the job template.")
 @click.option("--inventory-name", required=True, help="Partial name of the inventory.")
-@click.option(
-    "--extra-vars", default="{}", help='Extra variables as JSON string (e.g., \'{"key": "value"}\')'
-)
+@click.option("--extra-vars", default="{}", help='Extra variables as JSON string (e.g., \'{"key": "value"}\')')
 @click.option(
     "--interactive",
     is_flag=True,
@@ -189,9 +173,7 @@ def _execute_and_manage_job(
     type=click.Path(dir_okay=False, writable=True),
     help="File to save job output.",
 )
-@click.option(
-    "--insecure", is_flag=True, default=False, help="Disable SSL certificate verification."
-)
+@click.option("--insecure", is_flag=True, default=False, help="Disable SSL certificate verification.")
 @click.option("--debug", is_flag=True, default=False, help="Enable debug logging.")
 def run_job(
     tower_url: Optional[str],
@@ -219,25 +201,19 @@ def run_job(
 
     # Validate TOWER_URL
     if not tower_url:
-        logger.error(
-            "Tower URL not provided. Set TOWER_URL environment variable or use --tower-url option."
-        )
+        logger.error("Tower URL not provided. Set TOWER_URL environment variable or use --tower-url option.")
         return
 
     final_token = token
     if not final_token:
         if tower_user and tower_password:
             logger.info(f"No token provided, attempting to fetch token for user '{tower_user}'.")
-            final_token = get_tower_token_from_credentials(
-                tower_url, tower_user, tower_password, verify=verify_ssl
-            )
+            final_token = get_tower_token_from_credentials(tower_url, tower_user, tower_password, verify=verify_ssl)
             if not final_token:
                 logger.error("Failed to obtain token using user credentials. Exiting.")
                 return
         else:
-            logger.error(
-                "Authentication required: Provide TOWER_TOKEN, or TOWER_USER and TOWER_PASSWORD. Exiting."
-            )
+            logger.error("Authentication required: Provide TOWER_TOKEN, or TOWER_USER and TOWER_PASSWORD. Exiting.")
             return
 
     headers: Dict[str, str] = {
@@ -245,9 +221,7 @@ def run_job(
         "Authorization": f"Bearer {final_token}",
     }
 
-    job_template_id, inventory_id = _resolve_resource_ids(
-        tower_url, headers, template_name, inventory_name, interactive, verify=verify_ssl
-    )
+    job_template_id, inventory_id = _resolve_resource_ids(tower_url, headers, template_name, inventory_name, interactive, verify=verify_ssl)
 
     if not job_template_id:
         logger.error("Job template ID not determined or selected. Exiting.")

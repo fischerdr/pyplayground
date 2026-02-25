@@ -53,9 +53,7 @@ class CombatAI:
         return chosen_action
 
     # flake8: noqa: C901
-    def calculate_action_weights(
-        self, opponent: "Character", environment: "BaseEnvironment"
-    ) -> List[float]:
+    def calculate_action_weights(self, opponent: "Character", environment: "BaseEnvironment") -> List[float]:
         """Calculates weights for different actions based on personality and situation.
 
         Considers Line of Sight, cover, and adjacency for attacks.
@@ -110,9 +108,7 @@ class CombatAI:
 
         # --- Adjust Weights Based on Personality ---
         if self.personality == Personality.AGGRESSIVE:
-            weights[attack_idx] *= (
-                2.0 if attack_possible else 0.1
-            )  # Further increase aggressive attack
+            weights[attack_idx] *= 2.0 if attack_possible else 0.1  # Further increase aggressive attack
             weights[move_idx] *= 1.5  # Encourage closing distance
             weights[dodge_idx] *= 0.5  # Aggressive less likely to dodge
             weights[parry_idx] *= 0.3  # Aggressive very unlikely to parry
@@ -164,9 +160,7 @@ class CombatAI:
 
         return weights
 
-    def _get_initial_move_direction(
-        self, char_loc: Coordinate, opp_loc: Coordinate, environment: "BaseEnvironment"
-    ) -> Tuple[int, int]:
+    def _get_initial_move_direction(self, char_loc: Coordinate, opp_loc: Coordinate, environment: "BaseEnvironment") -> Tuple[int, int]:
         """Determines the initial move direction based on personality."""
         char_x, char_y = char_loc
         opp_x, opp_y = opp_loc
@@ -196,9 +190,7 @@ class CombatAI:
 
                 if cover_tiles:
                     # Find nearest cover tile
-                    target_x, target_y = min(
-                        cover_tiles, key=lambda pos: (pos[0] - char_x) ** 2 + (pos[1] - char_y) ** 2
-                    )
+                    target_x, target_y = min(cover_tiles, key=lambda pos: (pos[0] - char_x) ** 2 + (pos[1] - char_y) ** 2)
                     # If already in cover, maybe don't move?
                     current_tile = environment.get_tile(char_x, char_y)
                     if current_tile and current_tile.provides_cover != CoverType.NONE:
@@ -215,9 +207,7 @@ class CombatAI:
                         dx = 1 if opp_x > char_x else -1 if opp_x < char_x else 0
                         dy = 1 if opp_y > char_y else -1 if opp_y < char_y else 0
                     else:
-                        dx, dy = random.choice(
-                            [(0, 1), (0, -1), (1, 0), (-1, 0), (0, 0)]
-                        )  # Add stay put option
+                        dx, dy = random.choice([(0, 1), (0, -1), (1, 0), (-1, 0), (0, 0)])  # Add stay put option
         else:  # Tactical
             # Find tiles providing cover
             cover_tiles: List[Coordinate] = []
@@ -229,9 +219,7 @@ class CombatAI:
 
             if cover_tiles:
                 # Find nearest cover tile
-                target_x, target_y = min(
-                    cover_tiles, key=lambda pos: (pos[0] - char_x) ** 2 + (pos[1] - char_y) ** 2
-                )
+                target_x, target_y = min(cover_tiles, key=lambda pos: (pos[0] - char_x) ** 2 + (pos[1] - char_y) ** 2)
                 dx = 1 if target_x > char_x else -1 if target_x < char_x else 0
                 dy = 1 if target_y > char_y else -1 if target_y < char_y else 0
             else:
@@ -242,15 +230,9 @@ class CombatAI:
     def _is_move_valid(self, x: int, y: int, environment: "BaseEnvironment") -> bool:
         """Checks if a potential move coordinate is valid."""
         target_tile = environment.get_tile(x, y)
-        return (
-            target_tile is not None
-            and not target_tile.blocks_movement
-            and target_tile.character is None
-        )
+        return target_tile is not None and not target_tile.blocks_movement and target_tile.character is None
 
-    def _find_random_valid_move(
-        self, char_loc: Coordinate, environment: "BaseEnvironment"
-    ) -> Tuple[int, int]:
+    def _find_random_valid_move(self, char_loc: Coordinate, environment: "BaseEnvironment") -> Tuple[int, int]:
         """Finds a random valid move direction if the initial choice is blocked."""
         char_x, char_y = char_loc
         possible_moves = [(0, 1), (0, -1), (1, 0), (-1, 0)]
@@ -260,9 +242,7 @@ class CombatAI:
                 return rdx, rdy
         return 0, 0  # No valid move found, stay put
 
-    def choose_move_direction(
-        self, environment: "BaseEnvironment", opponent: "Character"
-    ) -> Tuple[int, int]:
+    def choose_move_direction(self, environment: "BaseEnvironment", opponent: "Character") -> Tuple[int, int]:
         """Determines the final direction to move based on personality and situation.
 
         Args:

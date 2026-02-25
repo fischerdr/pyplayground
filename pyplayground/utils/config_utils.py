@@ -38,9 +38,7 @@ def load_env_file(env_file: Optional[Union[str, Path]] = None) -> None:
         raise
 
 
-def get_env_var(
-    key: str, default: Optional[str] = None, required: bool = False, as_type: type = str
-) -> Optional[Any]:
+def get_env_var(key: str, default: Optional[str] = None, required: bool = False, as_type: type = str) -> Optional[Any]:
     """Get an environment variable with optional default value and type conversion.
 
     Args:
@@ -80,9 +78,7 @@ def get_env_var(
     return value
 
 
-def load_json_config(
-    config_name: str, config_dir: Optional[Union[str, Path]] = DEFAULT_CONFIG_DIR
-) -> Dict[str, Any]:
+def load_json_config(config_name: str, config_dir: Optional[Union[str, Path]] = DEFAULT_CONFIG_DIR) -> Dict[str, Any]:
     """Load configuration from a JSON file in the config directory.
 
     Args:

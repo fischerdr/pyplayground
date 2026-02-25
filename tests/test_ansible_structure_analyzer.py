@@ -299,9 +299,7 @@ class TestOutputGenerator:
             "statistics": {},
             "dependency_graph": {"nodes": ["my_role"], "edges": []},
         }
-        path = generator.generate_markdown(
-            structure, include_diagrams=True, diagram_scope="per_playbook"
-        )
+        path = generator.generate_markdown(structure, include_diagrams=True, diagram_scope="per_playbook")
         content = path.read_text()
         assert "```mermaid" in content
         assert "Execution flow" in content
@@ -362,9 +360,7 @@ class TestAnsibleStructureAnalyzer:
         analyzer = AnsibleStructureAnalyzer(repo_root)
 
         playbook = tmp_path / "playbook.yml"
-        playbook.write_text(
-            "---\n- hosts: all\n  tasks:\n    - name: test\n      command: echo hello\n"
-        )
+        playbook.write_text("---\n- hosts: all\n  tasks:\n    - name: test\n      command: echo hello\n")
 
         result = analyzer.analyze(playbook)
 
@@ -399,9 +395,7 @@ class TestAnsibleStructureAnalyzer:
 
         # Create playbook that includes it
         playbook = tmp_path / "playbook.yml"
-        playbook.write_text(
-            "---\n- hosts: all\n  tasks:\n    - include_tasks: tasks/included.yml\n"
-        )
+        playbook.write_text("---\n- hosts: all\n  tasks:\n    - include_tasks: tasks/included.yml\n")
 
         result = analyzer.analyze(playbook)
 
@@ -597,16 +591,10 @@ class TestLoopHandling:
         # Check for false positive circular dependencies
         errors = result.get("errors", [])
         false_positives = [
-            e
-            for e in errors
-            if e.get("type") == "CIRCULAR_DEPENDENCY"
-            and "scale_nodes.yml" in str(e.get("file", ""))
-            and "post_provision.yml" in str(e.get("file", ""))
+            e for e in errors if e.get("type") == "CIRCULAR_DEPENDENCY" and "scale_nodes.yml" in str(e.get("file", "")) and "post_provision.yml" in str(e.get("file", ""))
         ]
 
-        assert (
-            len(false_positives) == 0
-        ), "Should not have false positive circular dependency for scale_nodes -> post_provision"
+        assert len(false_positives) == 0, "Should not have false positive circular dependency for scale_nodes -> post_provision"
 
     def test_true_circular_dependency_still_detected(self, fixture_dir, fixture_repo_root):
         """Test true circular dependency (A -> B -> C -> A) is still detected."""
@@ -669,9 +657,7 @@ class TestLoopHandling:
 
         # Check markdown content
         content = md_path.read_text()
-        assert (
-            "[with_sequence]" in content or "[with_items]" in content or "[loop]" in content
-        ), "Markdown should show loop context"
+        assert "[with_sequence]" in content or "[with_items]" in content or "[loop]" in content, "Markdown should show loop context"
 
     def test_breadcrumbs_with_loop_context(self, fixture_dir, fixture_repo_root):
         """Test include chain shows loop context in debug logs."""
@@ -794,9 +780,7 @@ class TestCrossRole:
         result = analyzer.analyze(playbook)
 
         templates = result.get("templates", [])
-        cross_templates = [
-            t for t in templates if t.get("cross_role") and t.get("template_role") == "role_b"
-        ]
+        cross_templates = [t for t in templates if t.get("cross_role") and t.get("template_role") == "role_b"]
         assert len(cross_templates) >= 1, "Should find cross-role template usage"
         assert cross_templates[0].get("caller_role") == "role_a"
         assert cross_templates[0].get("template_role") == "role_b"
@@ -808,9 +792,7 @@ class TestCrossRole:
         (repo / "roles" / "role_b" / "tasks").mkdir(parents=True)
         (repo / "playbooks").mkdir(parents=True)
 
-        (repo / "roles" / "role_a" / "tasks" / "main.yml").write_text(
-            "- include_tasks: ../../role_b/tasks/extra.yml\n"
-        )
+        (repo / "roles" / "role_a" / "tasks" / "main.yml").write_text("- include_tasks: ../../role_b/tasks/extra.yml\n")
         (repo / "roles" / "role_b" / "tasks" / "extra.yml").write_text("- debug: msg=ok\n")
 
         playbook = repo / "playbooks" / "pb.yml"
@@ -828,21 +810,15 @@ class TestCrossRole:
                     return True
             return False
 
-        assert has_cross_role_in_includes(
-            result.get("playbooks", [{}])[0].get("includes") or []
-        ), "Playbook includes tree should contain cross_role include"
+        assert has_cross_role_in_includes(result.get("playbooks", [{}])[0].get("includes") or []), "Playbook includes tree should contain cross_role include"
         roles_includes = []
         for r in result.get("roles", []):
             roles_includes.extend(r.get("includes") or [])
-        assert has_cross_role_in_includes(
-            roles_includes
-        ), "Roles includes should contain cross_role"
+        assert has_cross_role_in_includes(roles_includes), "Roles includes should contain cross_role"
 
         # Markdown: Cross-role summary section present
         output_gen = OutputGenerator(tmp_path)
         md_path = output_gen.generate_markdown(result)
         content = md_path.read_text()
         assert "## Cross-role summary" in content, "Markdown should have Cross-role summary section"
-        assert (
-            "Cross-role task includes" in content or "role_a" in content
-        ), "Markdown should list cross-role task includes"
+        assert "Cross-role task includes" in content or "role_a" in content, "Markdown should list cross-role task includes"

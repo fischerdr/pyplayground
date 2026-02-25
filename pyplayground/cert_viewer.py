@@ -171,9 +171,7 @@ class X509CertViewer:
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Create listbox and pack it to fill remaining space
-        self.cert_list = tk.Listbox(
-            self.list_container, height=15, width=50, yscrollcommand=self.scrollbar.set
-        )
+        self.cert_list = tk.Listbox(self.list_container, height=15, width=50, yscrollcommand=self.scrollbar.set)
         self.cert_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # Configure the scrollbar to scroll the listbox
@@ -234,9 +232,7 @@ class X509CertViewer:
         )
         self.fetch_button.grid(row=0, column=1, padx=5)
 
-        self.validate_button = ttk.Button(
-            self.button_frame, text="Validate Chain (Ctrl+V)", command=self.validate_trust_chain
-        )
+        self.validate_button = ttk.Button(self.button_frame, text="Validate Chain (Ctrl+V)", command=self.validate_trust_chain)
         self.validate_button.grid(row=0, column=2, padx=5)
 
         # Add Quit button
@@ -367,12 +363,8 @@ class X509CertViewer:
             self.logger.info(f"Loaded {len(certs)} certificates from PEM file.")
         except ValueError as e:
             # Handle cases where the file is not a valid PEM or contains no certs
-            self.logger.error(
-                f"Could not decode PEM file or no certificates found: {e}", exc_info=True
-            )
-            messagebox.showerror(
-                "Error", f"Could not decode PEM file or no certificates found: {e}"
-            )
+            self.logger.error(f"Could not decode PEM file or no certificates found: {e}", exc_info=True)
+            messagebox.showerror("Error", f"Could not decode PEM file or no certificates found: {e}")
         except Exception as e:
             self.logger.error(f"Error loading PEM file: {e}", exc_info=True)
             messagebox.showerror("Error", f"Error loading PEM file: {e}")
@@ -407,9 +399,7 @@ class X509CertViewer:
             # Load the PKCS#12 data
             # The cryptography library's pkcs12.load_key_and_certificates
             # returns a tuple: (private_key, certificate, additional_certificates)
-            key, cert, cas = pkcs12.load_key_and_certificates(
-                pkcs12_data, password_bytes, default_backend()
-            )
+            key, cert, cas = pkcs12.load_key_and_certificates(pkcs12_data, password_bytes, default_backend())
 
             if cert:
                 self.certificates.append(cert)
@@ -457,12 +447,8 @@ class X509CertViewer:
             self.trust_text.insert(tk.END, "  Certificate validation failed\\n")
             self.trust_text.insert(tk.END, f"  Error: {e.stderr.strip()}\\n")
         except FileNotFoundError:
-            self.logger.error(
-                "OpenSSL command not found. Please ensure OpenSSL is installed and in your PATH."
-            )
-            self.trust_text.insert(
-                tk.END, "  Error: OpenSSL command not found. Cannot perform system validation.\\n"
-            )
+            self.logger.error("OpenSSL command not found. Please ensure OpenSSL is installed and in your PATH.")
+            self.trust_text.insert(tk.END, "  Error: OpenSSL command not found. Cannot perform system validation.\\n")
 
     def _perform_additional_chain_checks(self, chain: List[x509.Certificate]):  # noqa: C901
         """Helper to perform additional checks on the certificate chain."""
@@ -477,9 +463,7 @@ class X509CertViewer:
 
         if all_valid:
             self.logger.info("All certificates in chain are within validity period")
-            self.trust_text.insert(
-                tk.END, "  All certificates in chain are within validity period\\n"
-            )
+            self.trust_text.insert(tk.END, "  All certificates in chain are within validity period\\n")
 
         for i, chain_cert in enumerate(chain[1:], 1):  # Skip end-entity cert
             try:
@@ -534,21 +518,15 @@ class X509CertViewer:
             self.trust_text.insert(tk.END, "Certificate Chain:\n")
             for i, chain_cert in enumerate(chain):
                 self.trust_text.insert(tk.END, f"Level {i}:\n")
-                self.trust_text.insert(
-                    tk.END, f"  Subject: {chain_cert.subject.rfc4514_string()}\n"
-                )
+                self.trust_text.insert(tk.END, f"  Subject: {chain_cert.subject.rfc4514_string()}\n")
                 self.trust_text.insert(tk.END, f"  Issuer: {chain_cert.issuer.rfc4514_string()}\n")
                 if i > 0:  # Not the end-entity certificate
                     try:
-                        basic_constraints = chain_cert.extensions.get_extension_for_oid(
-                            ExtensionOID.BASIC_CONSTRAINTS
-                        )
+                        basic_constraints = chain_cert.extensions.get_extension_for_oid(ExtensionOID.BASIC_CONSTRAINTS)
                         path_length = basic_constraints.value.path_length
                         self.trust_text.insert(tk.END, "  CA: Yes\n")
                         if path_length is not None:
-                            self.trust_text.insert(
-                                tk.END, f"  Path Length Constraint: {path_length}\n"
-                            )
+                            self.trust_text.insert(tk.END, f"  Path Length Constraint: {path_length}\n")
                     except ExtensionNotFound:
                         msg = f"Certificate at level {i} is not a CA certificate"
                         self.logger.warning(msg)
@@ -591,10 +569,7 @@ class X509CertViewer:
         while True:
             issuer_found = False
             for potential_issuer in self.certificates:
-                if (
-                    current_cert.issuer == potential_issuer.subject
-                    and current_cert != potential_issuer
-                ):
+                if current_cert.issuer == potential_issuer.subject and current_cert != potential_issuer:
                     chain.append(potential_issuer)
                     current_cert = potential_issuer
                     issuer_found = True
@@ -622,11 +597,7 @@ class X509CertViewer:
             self.security_text.insert(tk.END, "  - TLS 1.2\n")
 
         # TLS 1.3
-        if (
-            ("sha256" in sig_alg or "sha384" in sig_alg or "sha512" in sig_alg)
-            and not isinstance(cert.public_key(), rsa.RSAPublicKey)
-            or cert.public_key().key_size >= 2048
-        ):
+        if ("sha256" in sig_alg or "sha384" in sig_alg or "sha512" in sig_alg) and not isinstance(cert.public_key(), rsa.RSAPublicKey) or cert.public_key().key_size >= 2048:
             self.security_text.insert(tk.END, "  - TLS 1.3\n")
 
     def display_certificate_details(self, event):
@@ -709,9 +680,7 @@ class X509CertViewer:
             for usage, value in key_usage.value.__dict__.items():
                 if value:
                     self.usage_text.insert(tk.END, f"  - {usage}\\n")
-            self.logger.debug(
-                f"Found {sum(1 for _, v in key_usage.value.__dict__.items() if v)} key usage restrictions"
-            )
+            self.logger.debug(f"Found {sum(1 for _, v in key_usage.value.__dict__.items() if v)} key usage restrictions")
         except ExtensionNotFound:
             self.logger.warning("No Key Usage restrictions specified")
             self.usage_text.insert(tk.END, "No Key Usage restrictions specified\\n")
@@ -731,18 +700,12 @@ class X509CertViewer:
     def _display_basic_constraints(self, cert: x509.Certificate):
         """Helper to display Basic Constraints extension."""
         try:
-            basic_constraints = cert.extensions.get_extension_for_oid(
-                ExtensionOID.BASIC_CONSTRAINTS
-            )
+            basic_constraints = cert.extensions.get_extension_for_oid(ExtensionOID.BASIC_CONSTRAINTS)
             self.usage_text.insert(tk.END, "\\nBasic Constraints:\\n")
             self.usage_text.insert(tk.END, f"  CA: {basic_constraints.value.ca}\\n")
             if basic_constraints.value.ca and basic_constraints.value.path_length is not None:
-                self.usage_text.insert(
-                    tk.END, f"  Path Length Constraint: {basic_constraints.value.path_length}\\n"
-                )
-            self.logger.debug(
-                f"Basic Constraints - CA: {basic_constraints.value.ca}, Path Length: {basic_constraints.value.path_length}"
-            )
+                self.usage_text.insert(tk.END, f"  Path Length Constraint: {basic_constraints.value.path_length}\\n")
+            self.logger.debug(f"Basic Constraints - CA: {basic_constraints.value.ca}, Path Length: {basic_constraints.value.path_length}")
         except ExtensionNotFound:
             self.logger.warning("No Basic Constraints specified")
             self.usage_text.insert(tk.END, "\\nNo Basic Constraints specified\\n")
@@ -782,9 +745,7 @@ class X509CertViewer:
             widget.delete(1.0, tk.END)
             widget.config(state=tk.DISABLED)
 
-    def _get_certificate_from_socket(
-        self, hostname: str, port: int = 443
-    ) -> Optional[x509.Certificate]:
+    def _get_certificate_from_socket(self, hostname: str, port: int = 443) -> Optional[x509.Certificate]:
         """Helper to fetch the end-entity certificate from a host and port.
 
         Args:
@@ -801,9 +762,7 @@ class X509CertViewer:
                 return x509.load_der_x509_certificate(der_cert, default_backend())
         return None  # Should not be reached if successful
 
-    def _get_certificate_chain_from_socket(
-        self, hostname: str, port: int = 443
-    ) -> List[x509.Certificate]:
+    def _get_certificate_chain_from_socket(self, hostname: str, port: int = 443) -> List[x509.Certificate]:
         """Helper to fetch the certificate chain from a host and port.
 
         Args:
@@ -831,18 +790,12 @@ class X509CertViewer:
                     except ssl.SSLError:  # If it's already DER or not a valid PEM
                         try:
                             # Assuming item might be binary DER
-                            ca_cert = x509.load_der_x509_certificate(
-                                cert_pem_item, default_backend()
-                            )
+                            ca_cert = x509.load_der_x509_certificate(cert_pem_item, default_backend())
                             chain_certs.append(ca_cert)
                         except Exception as e_der_load:  # Catch specific loading errors
-                            self.logger.warning(
-                                f"Could not decode certificate in chain (as DER): {e_der_load}"
-                            )
+                            self.logger.warning(f"Could not decode certificate in chain (as DER): {e_der_load}")
                     except Exception as e_pem_load:  # Catch specific loading errors
-                        self.logger.warning(
-                            f"Could not decode certificate in chain (as PEM): {e_pem_load}"
-                        )
+                        self.logger.warning(f"Could not decode certificate in chain (as PEM): {e_pem_load}")
         return chain_certs
 
     def _process_fetched_chain(self, hostname: str, port: int):
@@ -858,15 +811,11 @@ class X509CertViewer:
             if chain_certs_list:
                 self.logger.info(f"Found {len(chain_certs_list)} additional certificates in chain")
                 for ca_cert in chain_certs_list:
-                    if (
-                        ca_cert not in self.certificates
-                    ):  # Avoid duplicates if server sends end-entity in chain
+                    if ca_cert not in self.certificates:  # Avoid duplicates if server sends end-entity in chain
                         self.certificates.append(ca_cert)
                         self.cert_list.insert(tk.END, ca_cert.subject.rfc4514_string())
             else:
-                self.logger.info(
-                    "No additional certificates found in chain via getpeercert()['chain']"
-                )
+                self.logger.info("No additional certificates found in chain via getpeercert()['chain']")
         except Exception as e_chain:
             self.logger.warning(f"Could not fetch or process certificate chain: {e_chain}")
 
@@ -924,9 +873,7 @@ def main(debug):
     setup_logging(
         level=log_level,
         script_name="cert_viewer",
-        handlers=[
-            RichHandler(rich_tracebacks=True, show_time=False, show_level=True, show_path=False)
-        ],
+        handlers=[RichHandler(rich_tracebacks=True, show_time=False, show_level=True, show_path=False)],
     )
     logger = get_logger(__name__)
     try:

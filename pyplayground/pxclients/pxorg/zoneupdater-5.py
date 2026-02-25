@@ -64,15 +64,10 @@ class PortworxNodeManager:
 
     def get_nodes_from_machineset_specific(self, machineset_name: str) -> Dict[str, str]:
         """Query Kubernetes for nodes associated with a specific MachineSet and their Portworx zone."""
-        node_info = get_nodes_from_machineset_specific(
-            machineset_name=machineset_name, label_key=PORTWORX_ZONE_LABEL, crd_client=self.crd
-        )
+        node_info = get_nodes_from_machineset_specific(machineset_name=machineset_name, label_key=PORTWORX_ZONE_LABEL, crd_client=self.crd)
 
         # Convert the node_info dict to just node->zone mapping
-        return {
-            node_name: info.get(PORTWORX_ZONE_LABEL, "unknown")
-            for node_name, info in node_info.items()
-        }
+        return {node_name: info.get(PORTWORX_ZONE_LABEL, "unknown") for node_name, info in node_info.items()}
 
     def get_zone_for_node(self, node_name: str, unattended: bool = False) -> Optional[str]:
         """Fetch the zone for a node by checking its Machine and MachineSet."""
@@ -84,19 +79,13 @@ class PortworxNodeManager:
                 if labels:
                     zone = labels.get(PORTWORX_ZONE_LABEL, None)
                     if zone:
-                        logger.info(
-                            f"Zone '{zone}' found in MachineSet '{machineset['metadata']['name']}'"
-                        )
+                        logger.info(f"Zone '{zone}' found in MachineSet '{machineset['metadata']['name']}'")
                         return zone
                 else:
-                    logger.warning(
-                        f"No labels found in MachineSet '{machineset['metadata']['name']}'"
-                    )
+                    logger.warning(f"No labels found in MachineSet '{machineset['metadata']['name']}'")
 
         if self.fallback_zone:
-            logger.info(
-                f"No zone found in MachineSet, using provided fallback zone: '{self.fallback_zone}'"
-            )
+            logger.info(f"No zone found in MachineSet, using provided fallback zone: '{self.fallback_zone}'")
             return self.fallback_zone
 
         if unattended:
@@ -144,9 +133,7 @@ class PortworxNodeManager:
 
                 for node_id, node_config in data.items():
                     if node_config["SchedulerNodeName"] == node_name:
-                        logger.info(
-                            f"Found SchedulerNodeName '{node_name}' in ConfigMap '{cm.metadata.name}'."
-                        )
+                        logger.info(f"Found SchedulerNodeName '{node_name}' in ConfigMap '{cm.metadata.name}'.")
                         current_zone = node_config.get("Zone", "not set")
                         logger.info(f"Current zone for '{node_name}': {current_zone}")
                         if current_zone != zone:
@@ -162,9 +149,7 @@ class PortworxNodeManager:
                     if self.dry_run:
                         logger.info(f"DRY-RUN: Would have updated ConfigMap '{cm.metadata.name}'.")
                         if self.debug_cm:
-                            logger.debug(
-                                f"DRY-RUN: New ConfigMap content for '{cm.metadata.name}':\n{new_configmap}"
-                            )
+                            logger.debug(f"DRY-RUN: New ConfigMap content for '{cm.metadata.name}':\n{new_configmap}")
                     else:
                         backup_filename = f"cm_backup_{cm.metadata.name}.json"
                         with open(backup_filename, "w") as backup_file:
@@ -172,21 +157,15 @@ class PortworxNodeManager:
                         logger.info(f"Backup of ConfigMap saved to '{backup_filename}'.")
 
                         body = {"data": {"cloud-drive": new_configmap}}
-                        self.v1.patch_namespaced_config_map(
-                            cm.metadata.name, KUBE_SYSTEM_NAMESPACE, body
-                        )
+                        self.v1.patch_namespaced_config_map(cm.metadata.name, KUBE_SYSTEM_NAMESPACE, body)
                         logger.info(f"ConfigMap '{cm.metadata.name}' updated successfully.")
                 else:
-                    logger.debug(
-                        f"No changes required for node '{node_name}' in ConfigMap '{cm.metadata.name}'."
-                    )
+                    logger.debug(f"No changes required for node '{node_name}' in ConfigMap '{cm.metadata.name}'.")
 
     def get_px_nodes(self) -> List[V1Node]:
         """Get a list of all nodes that are running Portworx pods."""
         logger.info("Fetching all nodes where Portworx pods are running...")
-        pods = self.v1.list_namespaced_pod(
-            namespace=PORTWORX_NAMESPACE, label_selector=PX_POD_LABEL_SELECTOR
-        )
+        pods = self.v1.list_namespaced_pod(namespace=PORTWORX_NAMESPACE, label_selector=PX_POD_LABEL_SELECTOR)
         px_nodes = {pod.spec.node_name for pod in pods.items if pod.spec.node_name}
         logger.info(f"Found {len(px_nodes)} node(s) running Portworx pods.")
         return [self.v1.read_node(node_name) for node_name in px_nodes]
@@ -194,9 +173,7 @@ class PortworxNodeManager:
     def get_portworx_pod_for_node(self, node_name: str) -> Optional[V1Pod]:
         """Get the Portworx pod running on a specific node."""
         try:
-            pods = self.v1.list_namespaced_pod(
-                namespace=PORTWORX_NAMESPACE, label_selector=PX_POD_LABEL_SELECTOR
-            )
+            pods = self.v1.list_namespaced_pod(namespace=PORTWORX_NAMESPACE, label_selector=PX_POD_LABEL_SELECTOR)
             for pod in pods.items:
                 if pod.spec.node_name == node_name:
                     return pod
@@ -211,9 +188,7 @@ class PortworxNodeManager:
         self.label_node(node_name, {PX_SERVICE_LABEL: "stop"})
 
         if not self.dry_run:
-            logger.info(
-                f"Waiting for 1 minute after labeling '{node_name}' with px/service=stop..."
-            )
+            logger.info(f"Waiting for 1 minute after labeling '{node_name}' with px/service=stop...")
             time.sleep(60)
 
         self.update_cm(node_name, zone)
@@ -246,9 +221,7 @@ class PortworxNodeManager:
 
             current_zone = node.metadata.labels.get(PORTWORX_ZONE_LABEL)
             if current_zone == zone:
-                logger.info(
-                    f"Node '{node_name}' is already in the correct zone ('{zone}'). Skipping."
-                )
+                logger.info(f"Node '{node_name}' is already in the correct zone ('{zone}'). Skipping.")
                 continue
 
             logger.info(f"Updating zone for node '{node_name}': from '{current_zone}' to '{zone}'")
@@ -261,9 +234,7 @@ class PortworxNodeManager:
 
             pod = self.get_portworx_pod_for_node(node_name)
             if not pod:
-                logger.warning(
-                    f"No Portworx pod found for node '{node_name}'. Skipping readiness check."
-                )
+                logger.warning(f"No Portworx pod found for node '{node_name}'. Skipping readiness check.")
                 continue
 
             if node_type == "storage":
@@ -272,19 +243,11 @@ class PortworxNodeManager:
                 self._handle_storageless_node(node_name)
 
             if not self.dry_run:
-                logger.info(
-                    f"Waiting for Portworx pod '{pod.metadata.name}' on node '{node_name}' to be ready..."
-                )
-                pod_ready = wait_for_pod_readiness(
-                    pod_name=pod.metadata.name, namespace=PORTWORX_NAMESPACE, v1_client=self.v1
-                )
+                logger.info(f"Waiting for Portworx pod '{pod.metadata.name}' on node '{node_name}' to be ready...")
+                pod_ready = wait_for_pod_readiness(pod_name=pod.metadata.name, namespace=PORTWORX_NAMESPACE, v1_client=self.v1)
                 if not pod_ready:
-                    logger.error(
-                        f"Pod '{pod.metadata.name}' did not become ready within the timeout."
-                    )
-                    raise RuntimeError(
-                        f"Portworx pod on node '{node_name}' failed to become ready. Exiting."
-                    )
+                    logger.error(f"Pod '{pod.metadata.name}' did not become ready within the timeout.")
+                    raise RuntimeError(f"Portworx pod on node '{node_name}' failed to become ready. Exiting.")
 
 
 def load_nodes_from_file(file_path: str) -> List[str]:
@@ -301,13 +264,9 @@ def load_nodes_from_file(file_path: str) -> List[str]:
 
 @click.command()
 @click.option("--zone", help="Zone value to set for nodes (used as fallback).")
-@click.option(
-    "--real-run", is_flag=True, default=False, help="If set, run for real (not a dry-run)."
-)
+@click.option("--real-run", is_flag=True, default=False, help="If set, run for real (not a dry-run).")
 @click.option("--kubeconfig", help="Path to the kubeconfig file.", type=click.Path())
-@click.option(
-    "--node-file", help="Path to a file with node names, one per line.", type=click.Path()
-)
+@click.option("--node-file", help="Path to a file with node names, one per line.", type=click.Path())
 @click.option("--debug-cm", is_flag=True, default=False, help="Enable debug Config Map.")
 @click.option(
     "--fully-unattended",
@@ -361,9 +320,7 @@ def main(
         logger.info(f"Loading nodes from file: '{node_file}'")
         node_names = load_nodes_from_file(node_file)
     else:
-        logger.error(
-            "No node source specified. Use --fully-unattended, --machine-set, or --node-file."
-        )
+        logger.error("No node source specified. Use --fully-unattended, --machine-set, or --node-file.")
         return
 
     if node_names:

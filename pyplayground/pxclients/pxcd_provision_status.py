@@ -52,9 +52,7 @@ def _find_running_portworx_pod(v1_client: client.CoreV1Api, namespace: str) -> s
         ApiException: If the Kubernetes API call fails.
     """
     target_labels = "name=portworx,storage=true"
-    logger.debug(
-        f"Searching for running pods in namespace '{namespace}' with labels '{target_labels}'..."
-    )
+    logger.debug(f"Searching for running pods in namespace '{namespace}' with labels '{target_labels}'...")
     try:
         pod_list = v1_client.list_namespaced_pod(namespace=namespace, label_selector=target_labels)
     except ApiException as e:
@@ -72,18 +70,14 @@ def _find_running_portworx_pod(v1_client: client.CoreV1Api, namespace: str) -> s
             break  # Found the first one, stop searching
 
     if not running_pod_name:
-        error_msg = (
-            f"No running pod with labels '{target_labels}' found in namespace '{namespace}'."
-        )
+        error_msg = f"No running pod with labels '{target_labels}' found in namespace '{namespace}'."
         logger.error(error_msg)
         raise ValueError(error_msg)
 
     return running_pod_name
 
 
-def _prepare_execution_command(
-    env_var_list: List[str], base_command: str
-) -> Tuple[str, Dict[str, str]]:
+def _prepare_execution_command(env_var_list: List[str], base_command: str) -> Tuple[str, Dict[str, str]]:
     """Parses environment variables and constructs the full command string.
 
     Args:
@@ -400,10 +394,7 @@ def _print_rich_table(summary_data: Dict[str, int], node_details: List[Dict[str,
         console.print(table)
     else:
         # Print summary even if no storage nodes found
-        console.print(
-            f"Total Nodes Found: {summary_data['total_nodes']}, Nodes Up: {summary_data['up_nodes']}. "
-            f"No storage nodes with provisioned pools found in the output."
-        )
+        console.print(f"Total Nodes Found: {summary_data['total_nodes']}, Nodes Up: {summary_data['up_nodes']}. " f"No storage nodes with provisioned pools found in the output.")
 
 
 def _display_provision_status(json_output: str, as_json: bool) -> bool:
@@ -567,9 +558,7 @@ def get_px_status(
         container_name = determine_target_container(pod, "portworx")
 
         # Execute the command and stream output
-        exit_code, stdout_data = _execute_and_stream_output(
-            v1, namespace, pod_name, container_name, full_command_str
-        )
+        exit_code, stdout_data = _execute_and_stream_output(v1, namespace, pod_name, container_name, full_command_str)
 
         # Handle exit code from the executed command
         if exit_code != 0:
@@ -594,9 +583,7 @@ def get_px_status(
     except ApiException as e:
         # Handle Kubernetes API errors
         if e.status == 404:
-            logger.error(
-                f"Could not find/read pod details in namespace '{namespace}'. Ensure Portworx is running and RBAC permissions are correct."
-            )
+            logger.error(f"Could not find/read pod details in namespace '{namespace}'. Ensure Portworx is running and RBAC permissions are correct.")
         else:
             logger.error(f"Kubernetes API error: {e.status} {e.reason} - {e.body}", exc_info=True)
         sys.exit(1)

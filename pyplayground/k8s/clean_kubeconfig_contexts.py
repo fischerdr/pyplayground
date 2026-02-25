@@ -65,9 +65,7 @@ def get_kube_config_data(config_file: str = config.KUBE_CONFIG_DEFAULT_LOCATION)
         sys.exit(1)
 
 
-def display_contexts(
-    verbose: bool = False, config_file: str = config.KUBE_CONFIG_DEFAULT_LOCATION
-) -> None:
+def display_contexts(verbose: bool = False, config_file: str = config.KUBE_CONFIG_DEFAULT_LOCATION) -> None:
     """Display all available contexts in the kubeconfig.
 
     Args:
@@ -144,9 +142,7 @@ def show_current_context(config_file: str = config.KUBE_CONFIG_DEFAULT_LOCATION)
                 break
 
         if not current_context:
-            console.print(
-                f"[yellow]Current context '[bold]{current_context_name}[/bold]' not found in contexts list.[/yellow]"
-            )
+            console.print(f"[yellow]Current context '[bold]{current_context_name}[/bold]' not found in contexts list.[/yellow]")
             return
 
         # Extract details
@@ -218,9 +214,7 @@ def set_kube_context(
         sys.exit(1)
 
 
-def delete_kube_context(
-    context_name: str, config_file: str = config.KUBE_CONFIG_DEFAULT_LOCATION
-) -> bool:
+def delete_kube_context(context_name: str, config_file: str = config.KUBE_CONFIG_DEFAULT_LOCATION) -> bool:
     """Delete a kubeconfig context.
 
     Args:
@@ -248,9 +242,7 @@ def delete_kube_context(
         return False
 
 
-def delete_unused_cluster(
-    cluster_name: str, config_file: str = config.KUBE_CONFIG_DEFAULT_LOCATION
-) -> bool:
+def delete_unused_cluster(cluster_name: str, config_file: str = config.KUBE_CONFIG_DEFAULT_LOCATION) -> bool:
     """Delete an unused cluster from kubeconfig.
 
     Args:
@@ -278,9 +270,7 @@ def delete_unused_cluster(
         return False
 
 
-def delete_unused_user(
-    user_name: str, config_file: str = config.KUBE_CONFIG_DEFAULT_LOCATION
-) -> bool:
+def delete_unused_user(user_name: str, config_file: str = config.KUBE_CONFIG_DEFAULT_LOCATION) -> bool:
     """Delete an unused user from kubeconfig.
 
     Args:
@@ -314,12 +304,8 @@ def delete_unused_user(
 @click.option("--context-name", help="Name of the new consolidated context.")
 @click.option("--dry-run", is_flag=True, help="Show what would be changed without applying.")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging.")
-@click.option(
-    "--list-contexts", is_flag=True, help="List all available contexts in the kubeconfig."
-)
-@click.option(
-    "--show-current-context", is_flag=True, help="Show the current context and its details."
-)
+@click.option("--list-contexts", is_flag=True, help="List all available contexts in the kubeconfig.")
+@click.option("--show-current-context", is_flag=True, help="Show the current context and its details.")
 def clean_kubeconfig(  # noqa: C901
     kubeconfig: str,
     namespace: str,
@@ -415,9 +401,7 @@ def clean_kubeconfig(  # noqa: C901
         if not dry_run:
             set_kube_context(context_name, cluster, user, namespace, config_file)
         else:
-            logger.info(
-                f"Would create consolidated context '{context_name}' with namespace '{namespace}'."
-            )
+            logger.info(f"Would create consolidated context '{context_name}' with namespace '{namespace}'.")
 
         # Remove redundant contexts
         for context in contexts_to_remove:
@@ -441,12 +425,8 @@ def clean_kubeconfig(  # noqa: C901
 
         # Recalculate contexts after potential deletions
         contexts = config_dict.get("contexts", [])
-        used_clusters: Set[str] = {
-            c["context"]["cluster"] for c in contexts if c["name"] not in contexts_to_remove
-        }
-        used_users: Set[str] = {
-            c["context"]["user"] for c in contexts if c["name"] not in contexts_to_remove
-        }
+        used_clusters: Set[str] = {c["context"]["cluster"] for c in contexts if c["name"] not in contexts_to_remove}
+        used_users: Set[str] = {c["context"]["user"] for c in contexts if c["name"] not in contexts_to_remove}
 
         unused_clusters = cluster_names - used_clusters
         unused_users = user_names - used_users

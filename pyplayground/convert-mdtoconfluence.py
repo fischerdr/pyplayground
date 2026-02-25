@@ -22,9 +22,7 @@ import requests
 import typer
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 app = typer.Typer()
@@ -100,9 +98,7 @@ def update_confluence_page(
             "version": {"number": version + 1},
         }
 
-        response = requests.put(
-            update_url, json=data, auth=auth, headers={"Content-Type": "application/json"}
-        )
+        response = requests.put(update_url, json=data, auth=auth, headers={"Content-Type": "application/json"})
 
         logger.info(f"Updated page: {title}")
     else:
@@ -119,9 +115,7 @@ def update_confluence_page(
         if parent_id:
             data["ancestors"] = [{"id": parent_id}]
 
-        response = requests.post(
-            create_url, json=data, auth=auth, headers={"Content-Type": "application/json"}
-        )
+        response = requests.post(create_url, json=data, auth=auth, headers={"Content-Type": "application/json"})
 
         logger.info(f"Created page: {title}")
 
@@ -165,13 +159,9 @@ def upload_markdown(
 
         # Update Confluence
         auth = (username, api_token)
-        result = update_confluence_page(
-            confluence_url, auth, space_key, title, storage_format, parent_id
-        )
+        result = update_confluence_page(confluence_url, auth, space_key, title, storage_format, parent_id)
 
-        logger.info(
-            f"Successfully uploaded to Confluence: {confluence_url}/pages/viewpage.action?pageId={result['id']}"
-        )
+        logger.info(f"Successfully uploaded to Confluence: {confluence_url}/pages/viewpage.action?pageId={result['id']}")
 
     except Exception as e:
         logger.error(f"Error uploading markdown to Confluence: {str(e)}")

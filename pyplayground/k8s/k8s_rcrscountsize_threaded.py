@@ -89,9 +89,7 @@ def _calculate_crd_items_size(
         try:
             item_name = item.get("metadata", {}).get("name")
             if not item_name:
-                logging.warning(
-                    f"Skipping CR item size calculation in {namespace} for kind {kind} due to missing metadata.name"
-                )
+                logging.warning(f"Skipping CR item size calculation in {namespace} for kind {kind} due to missing metadata.name")
                 continue
 
             # Fetch the full custom object to calculate its size
@@ -107,9 +105,7 @@ def _calculate_crd_items_size(
             # Log error getting specific instance but continue with others
             logging.error(f"Could not read CR {kind} instance {item_name} in {namespace}: {e_get}")
         except Exception as e_size:
-            logging.error(
-                f"Error calculating size for CR {kind} instance {item_name} in {namespace}: {e_size}"
-            )
+            logging.error(f"Error calculating size for CR {kind} instance {item_name} in {namespace}: {e_size}")
     return total_size
 
 
@@ -133,14 +129,7 @@ def _process_custom_resources(
 
     for crd in crd_list:
         # Ensure basic CRD structure is present before proceeding
-        if not (
-            crd.spec
-            and crd.spec.group
-            and crd.spec.versions
-            and crd.spec.names
-            and crd.spec.names.plural
-            and crd.spec.names.kind
-        ):
+        if not (crd.spec and crd.spec.group and crd.spec.versions and crd.spec.names and crd.spec.names.plural and crd.spec.names.kind):
             logging.warning(f"Skipping CRD with incomplete spec: {crd.metadata.name}")
             continue
 
@@ -156,26 +145,18 @@ def _process_custom_resources(
 
         try:
             # List instances of this CRD in the namespace
-            custom_objects = custom_api.list_namespaced_custom_object(
-                group=group, version=version, namespace=namespace, plural=plural
-            )
+            custom_objects = custom_api.list_namespaced_custom_object(group=group, version=version, namespace=namespace, plural=plural)
             items = custom_objects.get("items", [])
             cr_counts[kind] = len(items)  # Count CR instances by Kind
 
             # Calculate total size for instances of this CRD
-            total_cr_size_bytes += _calculate_crd_items_size(
-                custom_api, namespace, group, version, plural, kind, items
-            )
+            total_cr_size_bytes += _calculate_crd_items_size(custom_api, namespace, group, version, plural, kind, items)
 
         except client.exceptions.ApiException as e_list:
             if e_list.status != 404:
-                logging.error(
-                    f"Could not list instances for {kind} ({group}/{version}) in namespace {namespace}: {e_list.reason}"
-                )
+                logging.error(f"Could not list instances for {kind} ({group}/{version}) in namespace {namespace}: {e_list.reason}")
         except Exception as e_general:
-            logging.error(
-                f"Unexpected error processing CRD {kind} in namespace {namespace}: {e_general}"
-            )
+            logging.error(f"Unexpected error processing CRD {kind} in namespace {namespace}: {e_general}")
 
     return cr_counts, total_cr_size_bytes
 
@@ -238,13 +219,9 @@ def _process_pvcs(v1: client.CoreV1Api, namespace: str) -> Tuple[int, int]:
                         if pvc_bytes is not None:
                             total_pvc_capacity_bytes += pvc_bytes
                         else:
-                            logging.warning(
-                                f"Could not parse PVC capacity for {pvc.metadata.name} in {namespace}: '{storage_size_str}'"
-                            )
+                            logging.warning(f"Could not parse PVC capacity for {pvc.metadata.name} in {namespace}: '{storage_size_str}'")
             except Exception as e:
-                logging.error(
-                    f"Error processing PVC {pvc.metadata.name} capacity in {namespace}: {e}"
-                )
+                logging.error(f"Error processing PVC {pvc.metadata.name} capacity in {namespace}: {e}")
     except client.exceptions.ApiException as e:
         logging.error(f"Could not list PVCs in {namespace}: {e}")
     except Exception as e:
@@ -324,15 +301,9 @@ def count_resources(
         namespace_resources["Endpoints"] = len(endpoints.items)
 
         # --- Count Apps Resources (Counts only for now) ---
-        namespace_resources["Deployments"] = len(
-            apps_v1.list_namespaced_deployment(namespace).items
-        )
-        namespace_resources["ReplicaSets"] = len(
-            apps_v1.list_namespaced_replica_set(namespace).items
-        )
-        namespace_resources["StatefulSets"] = len(
-            apps_v1.list_namespaced_stateful_set(namespace).items
-        )
+        namespace_resources["Deployments"] = len(apps_v1.list_namespaced_deployment(namespace).items)
+        namespace_resources["ReplicaSets"] = len(apps_v1.list_namespaced_replica_set(namespace).items)
+        namespace_resources["StatefulSets"] = len(apps_v1.list_namespaced_stateful_set(namespace).items)
         namespace_resources["DaemonSets"] = len(apps_v1.list_namespaced_daemon_set(namespace).items)
 
         # --- Count Batch Resources (Counts only for now) ---
@@ -342,23 +313,15 @@ def count_resources(
         # Process Custom Resources if requested and list is available
         if include_crds:
             if crd_list is not None:
-                cr_counts, total_cr_size_bytes = _process_custom_resources(
-                    custom_api, namespace, crd_list
-                )
+                cr_counts, total_cr_size_bytes = _process_custom_resources(custom_api, namespace, crd_list)
                 namespace_resources.update(cr_counts)
-                namespace_resources["TotalCustomResourceSizeKiB"] = round(
-                    total_cr_size_bytes / 1024, 2
-                )
+                namespace_resources["TotalCustomResourceSizeKiB"] = round(total_cr_size_bytes / 1024, 2)
             else:
-                logging.error(
-                    f"CRD list not provided for namespace {namespace} when include_crds=True. Skipping CRDs."
-                )
+                logging.error(f"CRD list not provided for namespace {namespace} when include_crds=True. Skipping CRDs.")
                 namespace_resources["TotalCustomResourceSizeKiB"] = 0  # Explicitly set to 0
 
         # Add calculated sizes to the results
-        namespace_resources["TotalCoreResourcesSizeKiB"] = round(
-            total_core_resources_size_bytes / 1024, 2
-        )
+        namespace_resources["TotalCoreResourcesSizeKiB"] = round(total_core_resources_size_bytes / 1024, 2)
 
     except client.exceptions.ApiException as e:
         logging.error(f"General K8s API error counting resources in namespace {namespace}: {e}")
@@ -527,9 +490,7 @@ def _determine_namespaces_to_scan(
             namespaces_to_scan = [target_namespace]
             logger.info(f"Targeting specified namespace: {target_namespace}")
         else:
-            logger.error(
-                f"Specified namespace '{target_namespace}' not found or could not be accessed."
-            )
+            logger.error(f"Specified namespace '{target_namespace}' not found or could not be accessed.")
             return None
     else:
         # Delegate to the specific handler for scanning all namespaces
@@ -566,10 +527,7 @@ def _process_namespaces_concurrently(
     show_progress = not target_namespace and namespaces_to_scan and len(namespaces_to_scan) > 1
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_ns = {
-            executor.submit(count_resources, ns, include_crds, api_client, cluster_crd_list): ns
-            for ns in namespaces_to_scan
-        }
+        future_to_ns = {executor.submit(count_resources, ns, include_crds, api_client, cluster_crd_list): ns for ns in namespaces_to_scan}
 
         iterable_futures = concurrent.futures.as_completed(future_to_ns)
         progress_label = "Processing namespaces"
@@ -594,23 +552,17 @@ def _process_namespaces_concurrently(
                     ns_data = {"Namespace": ns, **resources}
                     all_resources_data.append(ns_data)
                     all_field_names.update(ns_data.keys())
-                    logging.info(
-                        f"Successfully processed namespace: {ns}. Resources found: {len(resources)}"
-                    )
+                    logging.info(f"Successfully processed namespace: {ns}. Resources found: {len(resources)}")
                     processed_count += 1
                 else:
-                    logging.warning(
-                        f"No data returned for namespace: {ns}. It might have failed processing."
-                    )
+                    logging.warning(f"No data returned for namespace: {ns}. It might have failed processing.")
                     failed_namespaces.append(ns)
             except Exception as exc:
                 logging.error(f"Namespace {ns} generated an exception during processing: {exc}")
                 failed_namespaces.append(ns)
             # No bar.update() needed here, click.progressbar handles it when iterating
 
-    logging.info(
-        f"Finished processing namespaces. Successful: {processed_count}, Failed: {len(failed_namespaces)}."
-    )
+    logging.info(f"Finished processing namespaces. Successful: {processed_count}, Failed: {len(failed_namespaces)}.")
     if failed_namespaces:
         logging.warning(f"Failed namespaces: {', '.join(failed_namespaces)}")
 
@@ -649,9 +601,7 @@ def _determine_csv_headers(all_field_names: set[str], sizes_only: bool) -> List[
         ordered_fieldnames = ["Namespace"] + size_fields
         logging.info("Sizes only flag detected, outputting only namespace and size columns.")
     else:
-        count_fields = sorted(
-            [f for f in all_field_names if not f.endswith(("KiB", "GiB")) and f != "Namespace"]
-        )
+        count_fields = sorted([f for f in all_field_names if not f.endswith(("KiB", "GiB")) and f != "Namespace"])
         ordered_fieldnames = ["Namespace"] + count_fields + size_fields
     return ordered_fieldnames
 
@@ -675,9 +625,7 @@ def _write_output_csv(
     ordered_fieldnames = _determine_csv_headers(all_field_names, sizes_only)
 
     # Determine final output file path
-    final_output_file = _determine_output_file_path(
-        output_file, target_namespace, include_crds, sizes_only, timestamp
-    )
+    final_output_file = _determine_output_file_path(output_file, target_namespace, include_crds, sizes_only, timestamp)
 
     # Ensure the output directory exists
     try:
@@ -696,14 +644,10 @@ def _write_output_csv(
             logging.info(f"Acquired lock on {lock_path}")
             try:
                 with open(final_output_file, mode="w", newline="", encoding="utf-8") as csvfile:
-                    writer = csv.DictWriter(
-                        csvfile, fieldnames=ordered_fieldnames, restval="0", extrasaction="ignore"
-                    )
+                    writer = csv.DictWriter(csvfile, fieldnames=ordered_fieldnames, restval="0", extrasaction="ignore")
                     writer.writeheader()
                     writer.writerows(all_resources_data)
-                    logging.info(
-                        f"Successfully wrote data for {len(all_resources_data)} namespaces to {final_output_file}"
-                    )
+                    logging.info(f"Successfully wrote data for {len(all_resources_data)} namespaces to {final_output_file}")
             except IOError as e:
                 logging.error(f"Error writing to output file {final_output_file}: {e}")
             except Exception as e:

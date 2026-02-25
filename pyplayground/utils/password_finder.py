@@ -47,9 +47,7 @@ class CustomSafeConstructor(SafeConstructor):
             return
 
         for ch, items in cls.yaml_implicit_resolvers.items():
-            cls.yaml_implicit_resolvers[ch] = [
-                (tag, regexp) for tag, regexp in items if tag != tag_to_remove
-            ]
+            cls.yaml_implicit_resolvers[ch] = [(tag, regexp) for tag, regexp in items if tag != tag_to_remove]
 
 
 def create_custom_yaml_loader() -> type:
@@ -71,10 +69,7 @@ def create_custom_yaml_loader() -> type:
         elif isinstance(node, yaml.SequenceNode):
             return [self.construct_undefined(item) for item in node.value]
         elif isinstance(node, yaml.MappingNode):
-            return {
-                self.construct_undefined(key): self.construct_undefined(value)
-                for key, value in node.value
-            }
+            return {self.construct_undefined(key): self.construct_undefined(value) for key, value in node.value}
         return None
 
     # Register the custom constructor for all tags
@@ -312,10 +307,7 @@ def _process_json_file(content: str) -> List[PasswordInfo]:
     try:
         data = json.loads(content)
         secrets = extract_from_dict(data)
-        passwords = [
-            {"line": None, "password": secret[1], "text": None, "type": secret[0]}
-            for secret in secrets
-        ]
+        passwords = [{"line": None, "password": secret[1], "text": None, "type": secret[0]} for secret in secrets]
         # Also check for patterns in the raw content
         passwords.extend(extract_from_text_with_line_numbers(content))
     except json.JSONDecodeError:
@@ -332,18 +324,13 @@ def _process_yaml_file(content: str, file_path: Path) -> List[PasswordInfo]:
         data = yaml.load(content, Loader=CustomLoader)
         if data:  # Only process if YAML parsing succeeded
             secrets = extract_from_dict(data)
-            passwords = [
-                {"line": None, "password": secret[1], "text": None, "type": secret[0]}
-                for secret in secrets
-            ]
+            passwords = [{"line": None, "password": secret[1], "text": None, "type": secret[0]} for secret in secrets]
             # Also check for patterns in the raw content
             passwords.extend(extract_from_text_with_line_numbers(content))
         else:
             passwords = extract_from_text_with_line_numbers(content)
     except yaml.YAMLError as e:
-        logger.warning(
-            f"YAML parsing error in {file_path}, falling back to text scanning: {str(e)}"
-        )
+        logger.warning(f"YAML parsing error in {file_path}, falling back to text scanning: {str(e)}")
         passwords = extract_from_text_with_line_numbers(content)
     return passwords
 

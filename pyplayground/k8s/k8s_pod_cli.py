@@ -67,9 +67,7 @@ def _get_node_external_ip(v1: client.CoreV1Api, node_name: str) -> Optional[str]
         logger.debug(f"No ExternalIP found for node '{node_name}' in status addresses.")
         return None  # No ExternalIP found
     except ApiException as node_e:
-        logger.warning(
-            f"Could not fetch node '{node_name}' details: {node_e.status} - {node_e.reason}"
-        )
+        logger.warning(f"Could not fetch node '{node_name}' details: {node_e.status} - {node_e.reason}")
         # Return formatted error string for display
         return "[yellow]Error fetching node info[/yellow]"
     except Exception as node_e:
@@ -117,15 +115,11 @@ def get_pod_info(pod_name: str) -> Optional[Dict[str, Any]]:
         return None
     except ApiException as e:
         logger.error(f"API error searching for pod '{pod_name}': {e.status} - {e.reason}")
-        console.print(
-            f"[bold red]API Error:[/bold red] Could not search for pod. Reason: {e.reason}"
-        )
+        console.print(f"[bold red]API Error:[/bold red] Could not search for pod. Reason: {e.reason}")
         return None
     except Exception as e:
         logger.exception(f"Unexpected error searching for pod '{pod_name}': {e}")
-        console.print(
-            f"[bold red]Error:[/bold red] An unexpected error occurred during search: {e}"
-        )
+        console.print(f"[bold red]Error:[/bold red] An unexpected error occurred during search: {e}")
         return None
 
 
@@ -153,16 +147,10 @@ def get_pod_details(namespace: str, pod_name: str) -> Optional[client.V1Pod]:
     except ApiException as e:
         if e.status == 404:
             logger.error(f"Pod '{pod_name}' not found in namespace '{namespace}'.")
-            console.print(
-                f"[bold red]Error:[/bold red] Pod '{pod_name}' not found in namespace '{namespace}'."
-            )
+            console.print(f"[bold red]Error:[/bold red] Pod '{pod_name}' not found in namespace '{namespace}'.")
         else:
-            logger.error(
-                f"API error fetching pod '{pod_name}' in '{namespace}': {e.status} - {e.reason}"
-            )
-            console.print(
-                f"[bold red]Error:[/bold red] Could not fetch pod '{pod_name}' in namespace '{namespace}'. Reason: {e.reason}"
-            )
+            logger.error(f"API error fetching pod '{pod_name}' in '{namespace}': {e.status} - {e.reason}")
+            console.print(f"[bold red]Error:[/bold red] Could not fetch pod '{pod_name}' in namespace '{namespace}'. Reason: {e.reason}")
         return None
     except Exception as e:
         logger.exception(f"Unexpected error fetching pod '{pod_name}' in '{namespace}': {e}")
@@ -170,9 +158,7 @@ def get_pod_details(namespace: str, pod_name: str) -> Optional[client.V1Pod]:
         return None
 
 
-def get_pod_logs(
-    namespace: str, pod_name: str, container_name: str, tail_lines: int
-) -> Optional[str]:
+def get_pod_logs(namespace: str, pod_name: str, container_name: str, tail_lines: int) -> Optional[str]:
     """Fetches the last N lines of logs for a specific container in a pod.
 
     Used by the 'inspect' command.
@@ -186,41 +172,25 @@ def get_pod_logs(
     Returns:
         A string containing the fetched logs, or None if an error occurred.
     """
-    logger.info(
-        f"Attempting to fetch last {tail_lines} log lines for container '{container_name}' in pod '{pod_name}' (namespace: '{namespace}')."
-    )
+    logger.info(f"Attempting to fetch last {tail_lines} log lines for container '{container_name}' in pod '{pod_name}' (namespace: '{namespace}').")
     try:
         v1 = client.CoreV1Api()
-        logs = v1.read_namespaced_pod_log(
-            name=pod_name, namespace=namespace, container=container_name, tail_lines=tail_lines
-        )
+        logs = v1.read_namespaced_pod_log(name=pod_name, namespace=namespace, container=container_name, tail_lines=tail_lines)
         logger.info(f"Successfully fetched logs for container '{container_name}'.")
         return logs
     except ApiException as e:
-        logger.error(
-            f"API error fetching logs for container '{container_name}' in pod '{pod_name}': {e.status} - {e.reason}"
-        )
+        logger.error(f"API error fetching logs for container '{container_name}' in pod '{pod_name}': {e.status} - {e.reason}")
         # Check if the container exists but logs are not ready (e.g., ContainerCreating)
         if "container not found" in str(e.body).lower():
-            console.print(
-                f"[bold yellow]Warning:[/bold yellow] Container '{container_name}' not found in pod '{pod_name}'."
-            )
+            console.print(f"[bold yellow]Warning:[/bold yellow] Container '{container_name}' not found in pod '{pod_name}'.")
         elif "container is waiting" in str(e.body).lower():
-            console.print(
-                f"[bold yellow]Warning:[/bold yellow] Container '{container_name}' is still waiting to start, logs not available yet."
-            )
+            console.print(f"[bold yellow]Warning:[/bold yellow] Container '{container_name}' is still waiting to start, logs not available yet.")
         else:
-            console.print(
-                f"[bold red]Error:[/bold red] Could not fetch logs for container '{container_name}'. Reason: {e.reason}"
-            )
+            console.print(f"[bold red]Error:[/bold red] Could not fetch logs for container '{container_name}'. Reason: {e.reason}")
         return None
     except Exception as e:
-        logger.exception(
-            f"Unexpected error fetching logs for container '{container_name}' in pod '{pod_name}': {e}"
-        )
-        console.print(
-            f"[bold red]Error:[/bold red] An unexpected error occurred while fetching logs: {e}"
-        )
+        logger.exception(f"Unexpected error fetching logs for container '{container_name}' in pod '{pod_name}': {e}")
+        console.print(f"[bold red]Error:[/bold red] An unexpected error occurred while fetching logs: {e}")
         return None
 
 
@@ -229,18 +199,10 @@ def format_container_status(status: client.V1ContainerStatus) -> str:
     state_str = "[grey50]Unknown State[/grey50]"
     if status.state:
         if status.state.running:
-            started_at_str = (
-                status.state.running.started_at.strftime("%Y-%m-%d %H:%M:%S")
-                if status.state.running.started_at
-                else "N/A"
-            )
+            started_at_str = status.state.running.started_at.strftime("%Y-%m-%d %H:%M:%S") if status.state.running.started_at else "N/A"
             state_str = f"[green]Running[/green] (started at {started_at_str})"
         elif status.state.terminated:
-            finished_at_str = (
-                status.state.terminated.finished_at.strftime("%Y-%m-%d %H:%M:%S")
-                if status.state.terminated.finished_at
-                else "N/A"
-            )
+            finished_at_str = status.state.terminated.finished_at.strftime("%Y-%m-%d %H:%M:%S") if status.state.terminated.finished_at else "N/A"
             exit_code = status.state.terminated.exit_code
             reason = status.state.terminated.reason or "N/A"
             state_str = f"[yellow]Terminated[/yellow] (exit code {exit_code}, reason: {reason}, finished at {finished_at_str})"
@@ -276,9 +238,7 @@ def _create_init_containers_table(pod: client.V1Pod) -> Optional[Table]:
         command_str = " ".join(container.command) if container.command else "[grey50]N/A[/grey50]"
         args_str = " ".join(container.args) if container.args else "[grey50]N/A[/grey50]"
         status_obj = init_container_statuses.get(container.name)
-        status_str = (
-            format_container_status(status_obj) if status_obj else "[red]Status not available[/red]"
-        )
+        status_str = format_container_status(status_obj) if status_obj else "[red]Status not available[/red]"
         init_table.add_row(container.name, container.image, command_str, args_str, status_str)
     return init_table
 
@@ -298,9 +258,7 @@ def _create_containers_table(pod: client.V1Pod) -> Table:
         command_str = " ".join(container.command) if container.command else "[grey50]N/A[/grey50]"
         args_str = " ".join(container.args) if container.args else "[grey50]N/A[/grey50]"
         status_obj = container_statuses.get(container.name)
-        status_str = (
-            format_container_status(status_obj) if status_obj else "[red]Status not available[/red]"
-        )
+        status_str = format_container_status(status_obj) if status_obj else "[red]Status not available[/red]"
         container_table.add_row(container.name, container.image, command_str, args_str, status_str)
     return container_table
 
@@ -326,9 +284,7 @@ def _create_pvc_mounts_table(pod: client.V1Pod) -> Optional[Table]:
     if not pvc_volumes:
         return None
 
-    volume_table = Table(
-        title="Persistent Volume Claim Mounts", show_header=True, header_style="bold magenta"
-    )
+    volume_table = Table(title="Persistent Volume Claim Mounts", show_header=True, header_style="bold magenta")
     volume_table.add_column("PVC Name", style="cyan")
     volume_table.add_column("Volume Name (in Pod Spec)", style="dim")
     volume_table.add_column("Mounted In Containers (Path)", style="yellow")
@@ -385,9 +341,7 @@ def display_pod_info(
     # --- Volume Mounts Table (PVCs only) ---
     volume_table = _create_pvc_mounts_table(pod)
     if volume_table:
-        console.print(
-            Panel(volume_table, title="[bold]Persistent Volume Claims[/bold]", expand=False)
-        )
+        console.print(Panel(volume_table, title="[bold]Persistent Volume Claims[/bold]", expand=False))
 
     # --- Container Logs Panel (if fetched) ---
     if logs is not None and container_name_for_logs and tail_lines is not None:
@@ -403,9 +357,7 @@ def display_pod_info(
 
 
 @click.group()
-@click.option(
-    "--verbose", "-v", is_flag=True, default=False, help="Enable verbose (DEBUG level) logging."
-)
+@click.option("--verbose", "-v", is_flag=True, default=False, help="Enable verbose (DEBUG level) logging.")
 @click.pass_context
 def pod_cli(ctx, verbose):  # Renamed from pod_manager
     """A tool to find and inspect Kubernetes pods."""
@@ -479,9 +431,7 @@ def inspect(ctx, pod_name: str, namespace: str, container_name: Optional[str], t
 
     # Argument Validation
     if tail != 5 and container_name is None:
-        raise click.UsageError(
-            "The --container/-c option is required when explicitly setting --tail/-t."
-        )
+        raise click.UsageError("The --container/-c option is required when explicitly setting --tail/-t.")
 
     logger.info(f"Attempting to inspect pod '{pod_name}' in namespace '{namespace}'.")
     if container_name:
@@ -515,9 +465,7 @@ def inspect(ctx, pod_name: str, namespace: str, container_name: Optional[str], t
             tail_lines=tail,
         )
     else:
-        logger.warning(
-            f"Could not display info because pod details were not found for '{pod_name}' in '{namespace}'."
-        )
+        logger.warning(f"Could not display info because pod details were not found for '{pod_name}' in '{namespace}'.")
 
 
 if __name__ == "__main__":

@@ -109,9 +109,7 @@ def print_cert_info(cert_info: Dict[str, str], title: str = "Certificate Informa
     console.print(Panel(table))
 
 
-def print_cert_info_verbose(
-    cert_info: Dict[str, str], title: str = "Certificate Information"
-) -> None:
+def print_cert_info_verbose(cert_info: Dict[str, str], title: str = "Certificate Information") -> None:
     """Print certificate information in a formatted panel with all details."""
     table = Table(title=title)
     table.add_column("Field", style="cyan")
@@ -253,15 +251,11 @@ def display_ca_certs(verbose: bool = False) -> None:
                 # Display the first certificate in the bundle
                 if "-----BEGIN CERTIFICATE-----" in content:
                     cert_start = content.find("-----BEGIN CERTIFICATE-----")
-                    cert_end = content.find("-----END CERTIFICATE-----", cert_start) + len(
-                        "-----END CERTIFICATE-----"
-                    )
+                    cert_end = content.find("-----END CERTIFICATE-----", cert_start) + len("-----END CERTIFICATE-----")
                     first_cert = content[cert_start:cert_end]
 
                     try:
-                        cert = OpenSSL.crypto.load_certificate(
-                            OpenSSL.crypto.FILETYPE_PEM, first_cert
-                        )
+                        cert = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, first_cert)
                         cert_info = get_cert_info(cert)
                         print_cert_info_verbose(cert_info, f"First Certificate in {name}")
                     except Exception as e:
@@ -359,9 +353,7 @@ def _display_site_information(response: requests.Response, url: str) -> None:
         value = response.headers.get(header, "Not set")
         site_table.add_row(f"{description}", value)
 
-    if hasattr(response.raw.connection, "sock") and hasattr(
-        response.raw.connection.sock, "version"
-    ):
+    if hasattr(response.raw.connection, "sock") and hasattr(response.raw.connection.sock, "version"):
         tls_version = response.raw.connection.sock.version()
         site_table.add_row("TLS Version", tls_version)
 
@@ -376,9 +368,7 @@ def _display_site_information(response: requests.Response, url: str) -> None:
 
 def _display_server_certificate(response: requests.Response, hostname: str, verbose: bool) -> None:
     """Get and display the server's certificate from the response."""
-    cert = OpenSSL.crypto.load_certificate(
-        OpenSSL.crypto.FILETYPE_ASN1, response.raw.connection.sock.getpeercert(binary_form=True)
-    )
+    cert = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, response.raw.connection.sock.getpeercert(binary_form=True))
     cert_info = get_cert_info(cert)
     if verbose:
         print_cert_info_verbose(cert_info, f"Server Certificate for {hostname}")
@@ -402,14 +392,10 @@ def _display_certificate_chain(hostname: str, port: int, verbose: bool) -> None:
             else:
                 print_cert_info(chain_cert_info, f"Chain Certificate {i}")
     elif certs:  # Only server cert was found, no additional chain certs
-        console.print(
-            "[yellow]Only the server certificate was retrieved. No additional chain certificates found.[/yellow]"
-        )
+        console.print("[yellow]Only the server certificate was retrieved. No additional chain certificates found.[/yellow]")
     else:  # No certs found at all
         console.print("[yellow]Could not retrieve the certificate chain.[/yellow]")
-        console.print(
-            "This might be due to limitations in the SSL library or server configuration."
-        )
+        console.print("This might be due to limitations in the SSL library or server configuration.")
 
 
 def verify_certificate_chain(hostname: str, port: int = 443) -> bool:
@@ -468,9 +454,7 @@ def inspect_https_endpoint(url: str, verbose: bool = False) -> None:
 
 def main() -> None:
     """Main function to run the script."""
-    parser = argparse.ArgumentParser(
-        description="Display SSL CA certificates and inspect HTTPS endpoints"
-    )
+    parser = argparse.ArgumentParser(description="Display SSL CA certificates and inspect HTTPS endpoints")
     parser.add_argument("--url", type=str, help="HTTPS URL to inspect (e.g., https://example.com)")
     parser.add_argument(
         "--verbose",

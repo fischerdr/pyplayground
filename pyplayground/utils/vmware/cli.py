@@ -60,9 +60,7 @@ class Parser:
         )
 
         # because we want -p for password, we use -o for port
-        self._standard_args_group.add_argument(
-            "-o", "--port", type=int, default=443, action="store", help="Port to connect on"
-        )
+        self._standard_args_group.add_argument("-o", "--port", type=int, default=443, action="store", help="Port to connect on")
 
         self._standard_args_group.add_argument(
             "-u",
@@ -135,10 +133,7 @@ class Parser:
     def _prompt_for_password(self, args):
         """If no password is specified on the command line, prompt for it."""
         if not args.password:
-            args.password = getpass.getpass(
-                prompt='"--password" not provided! Please enter password for host %s and user %s: '
-                % (args.host, args.user)
-            )
+            args.password = getpass.getpass(prompt='"--password" not provided! Please enter password for host %s and user %s: ' % (args.host, args.user))
         return args
 
 
@@ -295,10 +290,7 @@ class Argument:
         "name_or_flags": ["--device-name"],
         "options": {
             "action": "store",
-            "help": "The device name. Might look like "
-            '"/vmfs/devices/disks/naa.*". '
-            "See vim.vm.device.VirtualDisk."
-            "RawDiskMappingVer1BackingInfo documentation.",
+            "help": "The device name. Might look like " '"/vmfs/devices/disks/naa.*". ' "See vim.vm.device.VirtualDisk." "RawDiskMappingVer1BackingInfo documentation.",
         },
     }
     DISK_MODE = {
@@ -332,8 +324,7 @@ class Argument:
         "name_or_flags": ["--iso"],
         "options": {
             "action": "store",
-            "help": "ISO to use in test. Use datastore path format. "
-            "E.g. [datastore1] path/to/file.iso",
+            "help": "ISO to use in test. Use datastore path format. " "E.g. [datastore1] path/to/file.iso",
         },
     }
     NIC_NAME = {

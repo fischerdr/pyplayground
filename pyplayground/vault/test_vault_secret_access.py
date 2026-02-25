@@ -57,13 +57,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # --- Helper Functions (Reused from the main script) ---
 
 
-def get_vault_connection_info(
-    core_v1_client: client.CoreV1Api, namespace: str
-) -> Optional[Dict[str, str]]:
+def get_vault_connection_info(core_v1_client: client.CoreV1Api, namespace: str) -> Optional[Dict[str, str]]:
     """Retrieves Vault connection and auth info from the 'px-vault' secret."""
-    logger.debug(
-        f"Attempting to read secret '{VAULT_ADDR_SECRET_NAME}' in namespace '{namespace}'."
-    )
+    logger.debug(f"Attempting to read secret '{VAULT_ADDR_SECRET_NAME}' in namespace '{namespace}'.")
     try:
         secret = core_v1_client.read_namespaced_secret(VAULT_ADDR_SECRET_NAME, namespace)
         secret_data = secret.data
@@ -79,9 +75,7 @@ def get_vault_connection_info(
         for key, secret_key in required_keys.items():
             value_b64 = secret_data.get(secret_key)
             if not value_b64:
-                logger.error(
-                    f"Secret '{VAULT_ADDR_SECRET_NAME}' is missing the key '{secret_key}'."
-                )
+                logger.error(f"Secret '{VAULT_ADDR_SECRET_NAME}' is missing the key '{secret_key}'.")
                 return None
             conn_info[key] = base64.b64decode(value_b64).decode("utf-8").strip()
 
@@ -97,9 +91,7 @@ def get_vault_connection_info(
 
 def get_service_account_jwt(core_v1_client: client.CoreV1Api, namespace: str) -> Optional[str]:
     """Retrieves an existing K8s service account token (JWT) from a secret."""
-    logger.info(
-        f"Searching for an existing secret for SA '{VAULT_SA_NAME}' containing '{VAULT_SA_NAME}-token' in its name."
-    )
+    logger.info(f"Searching for an existing secret for SA '{VAULT_SA_NAME}' containing '{VAULT_SA_NAME}-token' in its name.")
     try:
         secrets = core_v1_client.list_namespaced_secret(namespace)
         for secret in secrets.items:
@@ -114,9 +106,7 @@ def get_service_account_jwt(core_v1_client: client.CoreV1Api, namespace: str) ->
                 if "token" in secret.data:
                     token_b64 = secret.data["token"]
                     token = base64.b64decode(token_b64).decode("utf-8").strip()
-                    logger.info(
-                        f"Found and decoded service account JWT from secret '{secret_name}'."
-                    )
+                    logger.info(f"Found and decoded service account JWT from secret '{secret_name}'.")
                     return token
     except ApiException as e:
         logger.error(f"API error listing secrets: {e.reason}", exc_info=True)
@@ -133,18 +123,12 @@ def check_vault_secret(
     vault_namespace: Optional[str] = None,
 ) -> tuple[str, Optional[Dict[str, Any]]]:
     """Checks for a secret in Vault and returns its status and data."""
-    logger.debug(
-        f"Checking Vault for secret at path '{secret_path}' in mount '{mount_point}' (namespace: {vault_namespace or 'root'})."
-    )
+    logger.debug(f"Checking Vault for secret at path '{secret_path}' in mount '{mount_point}' (namespace: {vault_namespace or 'root'}).")
     status = "Unknown"
     data = None
     try:
-        vault_client = create_vault_client(
-            url=vault_addr, token=vault_token, namespace=vault_namespace
-        )
-        response = vault_client.secrets.kv.v2.read_secret_version(
-            path=secret_path, mount_point=mount_point
-        )
+        vault_client = create_vault_client(url=vault_addr, token=vault_token, namespace=vault_namespace)
+        response = vault_client.secrets.kv.v2.read_secret_version(path=secret_path, mount_point=mount_point)
         if response and "data" in response and "data" in response["data"]:
             status = "[green]Found[/green]"
             data = response["data"]["data"]
@@ -167,9 +151,7 @@ def check_vault_secret(
 
 @click.command()
 @click.option("--secret-path", required=True, help="The full path of the secret to check in Vault.")
-@click.option(
-    "--vault-namespace", required=True, help="The Vault namespace where the secret resides."
-)
+@click.option("--vault-namespace", required=True, help="The Vault namespace where the secret resides.")
 @click.option(
     "--kubeconfig",
     type=click.Path(exists=True, dir_okay=False),
@@ -218,9 +200,7 @@ def main(
     setup_logging(level=log_level, script_name=os.path.basename(__file__).replace(".py", ""))
     logger.info("Starting Vault secret access test script.")
 
-    if not load_kube_config_auto(
-        config_file=kubeconfig, verify_ssl=k8s_verify_ssl, ssl_ca_cert=k8s_ssl_ca_cert
-    ):
+    if not load_kube_config_auto(config_file=kubeconfig, verify_ssl=k8s_verify_ssl, ssl_ca_cert=k8s_ssl_ca_cert):
         console.print("[bold red]Error: Failed to load Kubernetes configuration.[/bold red]")
         sys.exit(1)
 
@@ -233,16 +213,12 @@ def main(
 
     vault_conn_info = get_vault_connection_info(core_v1, px_namespace)
     if not vault_conn_info:
-        console.print(
-            "[bold red]Failed to retrieve Vault connection info from Kubernetes. Exiting.[/bold red]"
-        )
+        console.print("[bold red]Failed to retrieve Vault connection info from Kubernetes. Exiting.[/bold red]")
         sys.exit(1)
 
     sa_jwt = get_service_account_jwt(core_v1, px_namespace)
     if not sa_jwt:
-        console.print(
-            "[bold red]Failed to retrieve Service Account JWT for Vault auth. Exiting.[/bold red]"
-        )
+        console.print("[bold red]Failed to retrieve Service Account JWT for Vault auth. Exiting.[/bold red]")
         sys.exit(1)
 
     try:
@@ -262,9 +238,7 @@ def main(
         console.print(f"[bold red]Failed to authenticate with Vault: {e}[/bold red]")
         sys.exit(1)
 
-    console.print(
-        f"[bold blue]Checking secret:[/bold blue] [green]{secret_path}[/green] in Vault namespace [green]{vault_namespace}[/green]"
-    )
+    console.print(f"[bold blue]Checking secret:[/bold blue] [green]{secret_path}[/green] in Vault namespace [green]{vault_namespace}[/green]")
 
     status, data = check_vault_secret(
         vault_addr=vault_conn_info["addr"],
@@ -277,10 +251,7 @@ def main(
     output_content = f"[bold]Status:[/bold] {status}\n\n"
     if data:
         # Format the data dictionary into a string for the panel
-        data_str = "\n".join(
-            f"  [bold cyan]{key}:[/bold cyan] {'********' if mask_values else value}"
-            for key, value in data.items()
-        )
+        data_str = "\n".join(f"  [bold cyan]{key}:[/bold cyan] {'********' if mask_values else value}" for key, value in data.items())
         output_content += f"[bold]Data:[/bold]\n{data_str}"
     else:
         output_content += "[bold]Data:[/bold] None"

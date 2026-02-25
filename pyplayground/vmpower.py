@@ -32,13 +32,9 @@ def power_on_vm(vm: vim.VirtualMachine):
         task = vm.PowerOn()
         console.print(f"Powering on VM '[bold cyan]{vm.name}[/bold cyan]'...")
         task.Wait()  # pyVmomi tasks are synchronous by default in recent versions
-        console.print(
-            f"VM '[bold cyan]{vm.name}[/bold cyan]' powered on successfully.", style="green"
-        )
+        console.print(f"VM '[bold cyan]{vm.name}[/bold cyan]' powered on successfully.", style="green")
     else:
-        console.print(
-            f"VM '[bold cyan]{vm.name}[/bold cyan]' is already powered on.", style="yellow"
-        )
+        console.print(f"VM '[bold cyan]{vm.name}[/bold cyan]' is already powered on.", style="yellow")
 
 
 def power_off_vm(vm: vim.VirtualMachine):
@@ -47,13 +43,9 @@ def power_off_vm(vm: vim.VirtualMachine):
         task = vm.PowerOff()
         console.print(f"Powering off VM '[bold cyan]{vm.name}[/bold cyan]'...")
         task.Wait()
-        console.print(
-            f"VM '[bold cyan]{vm.name}[/bold cyan]' powered off successfully.", style="green"
-        )
+        console.print(f"VM '[bold cyan]{vm.name}[/bold cyan]' powered off successfully.", style="green")
     else:
-        console.print(
-            f"VM '[bold cyan]{vm.name}[/bold cyan]' is already powered off.", style="yellow"
-        )
+        console.print(f"VM '[bold cyan]{vm.name}[/bold cyan]' is already powered off.", style="yellow")
 
 
 def reboot_vm(vm: vim.VirtualMachine):
@@ -62,9 +54,7 @@ def reboot_vm(vm: vim.VirtualMachine):
         if vm.guest.toolsStatus == vim.vm.GuestInfo.ToolsStatus.toolsOk:
             console.print(f"Rebooting guest OS for VM '[bold cyan]{vm.name}[/bold cyan]'...")
             vm.RebootGuest()
-            console.print(
-                f"VM '[bold cyan]{vm.name}[/bold cyan]' guest OS reboot initiated.", style="green"
-            )
+            console.print(f"VM '[bold cyan]{vm.name}[/bold cyan]' guest OS reboot initiated.", style="green")
         else:
             console.print(
                 f"VMware Tools not available for '[bold cyan]{vm.name}[/bold cyan]'; performing a hard reset...",
@@ -72,9 +62,7 @@ def reboot_vm(vm: vim.VirtualMachine):
             )
             task = vm.ResetVM_Task()
             task.Wait()
-            console.print(
-                f"VM '[bold cyan]{vm.name}[/bold cyan]' hard reset successfully.", style="green"
-            )
+            console.print(f"VM '[bold cyan]{vm.name}[/bold cyan]' hard reset successfully.", style="green")
     else:
         console.print(
             f"VM '[bold cyan]{vm.name}[/bold cyan]' is powered off and cannot be rebooted.",
@@ -111,9 +99,7 @@ def find_vm(si: vim.ServiceInstance, args: argparse.Namespace) -> Optional[vim.V
             console.print(f"Found VM: '[bold cyan]{vm.name}[/bold cyan]'", style="green")
             logger.info(f"Successfully found VM '{vm.name}' by {search_method}: {search_value}")
         else:
-            console.print(
-                f"VM not found using {search_method}: [bold]'{search_value}'[/bold]", style="red"
-            )
+            console.print(f"VM not found using {search_method}: [bold]'{search_value}'[/bold]", style="red")
             logger.warning(f"VM not found using {search_method}: '{search_value}'")
 
     except vim.fault.InvalidState as e:
@@ -123,9 +109,7 @@ def find_vm(si: vim.ServiceInstance, args: argparse.Namespace) -> Optional[vim.V
         vm = None
     except Exception:
         logger.exception(f"Unexpected error during VM search by {search_method} '{search_value}'")
-        console.print(
-            "[bold red]An unexpected error occurred during VM search.[/bold red]", style="red"
-        )
+        console.print("[bold red]An unexpected error occurred during VM search.[/bold red]", style="red")
         vm = None
 
     return vm
@@ -134,17 +118,13 @@ def find_vm(si: vim.ServiceInstance, args: argparse.Namespace) -> Optional[vim.V
 def handle_vm_power_interaction(vm: vim.VirtualMachine):
     """Handle the user interaction for VM power operations."""
     power_state = check_vm_power_state(vm)
-    console.print(
-        f"Current power state of '[bold cyan]{vm.name}[/bold cyan]' is: [bold yellow]{power_state}[/bold yellow]"
-    )
+    console.print(f"Current power state of '[bold cyan]{vm.name}[/bold cyan]' is: [bold yellow]{power_state}[/bold yellow]")
 
     if power_state == vim.VirtualMachine.PowerState.poweredOn:
         choice = Prompt.ask("Choose an action", choices=["off", "reboot", "none"], default="none")
         if choice == "off":
             logger.info(f"User chose to power off VM '{vm.name}'")
-            if Confirm.ask(
-                f"Are you sure you want to power off '[bold cyan]{vm.name}[/bold cyan]'?"
-            ):
+            if Confirm.ask(f"Are you sure you want to power off '[bold cyan]{vm.name}[/bold cyan]'?"):
                 power_off_vm(vm)
         elif choice == "reboot":
             logger.info(f"User chose to reboot VM '{vm.name}'")
@@ -165,9 +145,7 @@ def handle_vm_power_interaction(vm: vim.VirtualMachine):
 def main():
     """Main function to interact with VM power states in vSphere."""
     parser = cli.Parser()
-    parser.add_optional_arguments(
-        cli.Argument.VM_NAME, cli.Argument.DNS_NAME, cli.Argument.UUID, cli.Argument.VM_IP
-    )
+    parser.add_optional_arguments(cli.Argument.VM_NAME, cli.Argument.DNS_NAME, cli.Argument.UUID, cli.Argument.VM_IP)
     # Add verbose flag manually if not part of standard cli.Argument
     parser.add_argument(
         "-v",

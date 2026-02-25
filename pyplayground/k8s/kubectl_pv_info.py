@@ -77,10 +77,7 @@ def format_storage_info(pvcs: List[Dict], pvs: List[Dict], storage_classes: List
     pv_dict = {pv.metadata.name: pv for pv in pvs}
     print("\nPersistentVolumeClaim Information:")
     print("-" * 100)
-    print(
-        f"{'NAMESPACE':<20} {'PVC NAME':<30} {'STORAGE CLASS':<20} "
-        f"{'SIZE':<10} {'STATUS':<10} {'PV NAME':<20}"
-    )
+    print(f"{'NAMESPACE':<20} {'PVC NAME':<30} {'STORAGE CLASS':<20} " f"{'SIZE':<10} {'STATUS':<10} {'PV NAME':<20}")
     print("-" * 100)
 
     for pvc in pvcs:
@@ -91,10 +88,7 @@ def format_storage_info(pvcs: List[Dict], pvs: List[Dict], storage_classes: List
         status = pvc.status.phase
         pv_name = pvc.spec.volume_name if pvc.spec.volume_name else "N/A"
 
-        print(
-            f"{namespace:<20} {name:<30} {storage_class:<20} "
-            f"{size:<10} {status:<10} {pv_name:<20}"
-        )
+        print(f"{namespace:<20} {name:<30} {storage_class:<20} " f"{size:<10} {status:<10} {pv_name:<20}")
 
         if pv_name != "N/A" and pv_name in pv_dict:
             # pv = pv_dict[pv_name]

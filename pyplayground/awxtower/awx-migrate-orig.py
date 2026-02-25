@@ -244,9 +244,7 @@ def decrypt_inputs(awx_creds):
                 try:
                     decrypted = decrypt_value(encryption_key, encrypted)
                 except InvalidToken:
-                    _err = (
-                        "Wrong encryption key for " "input field {0} for " "credential {1}"
-                    ).format(k, name)
+                    _err = ("Wrong encryption key for " "input field {0} for " "credential {1}").format(k, name)
                     sys.stderr.write(_err + "\n")
                     continue
                 value["inputs"][k] = decrypted
@@ -272,9 +270,7 @@ def update_data_with_creds(awx_data, awx_creds):
                 awx_data.remove(item)
                 awx_data.insert(index, item2)
             else:
-                _err = ("Credential not found in the database for " "credential {0}").format(
-                    item["name"]
-                )
+                _err = ("Credential not found in the database for " "credential {0}").format(item["name"])
                 sys.stderr.write(_err + "\n")
         index += 1
 
@@ -348,9 +344,7 @@ def awx_migratedb_conf():  # noqa: C901
             row.insert(0, str(datetime.datetime.now()))
             row.insert(0, str(datetime.datetime.now()))
         else:
-            sql = "UPDATE conf_setting SET (key, value, user_id) = (%s, %s, %s) WHERE key = '{0}'".format(
-                key
-            )
+            sql = "UPDATE conf_setting SET (key, value, user_id) = (%s, %s, %s) WHERE key = '{0}'".format(key)
 
         # sys.stderr.write("%s <- %s\n\n" %(sql, row))
         cur2 = conn2.cursor()
@@ -368,10 +362,7 @@ def awx_migratedb_conf():  # noqa: C901
             try:
                 v = decrypt_value(encryption_key, v)
             except InvalidToken:
-                _err = (
-                    "Wrong encryption key for "
-                    "config field {0}, you will need to update this manually.".format(k)
-                )
+                _err = "Wrong encryption key for " "config field {0}, you will need to update this manually.".format(k)
                 sys.stderr.write(_err + "\n")
                 continue
             print(v)

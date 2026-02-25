@@ -30,17 +30,12 @@ def main():
     print("---- PVCs ---")
     print("%-16s\t%-40s\t%-6s" % ("Name", "Volume", "Size"))
     for pvc in pvcs.items:
-        print(
-            "%-16s\t%-40s\t%-6s"
-            % (pvc.metadata.name, pvc.spec.volume_name, pvc.spec.resources.requests["storage"])
-        )
+        print("%-16s\t%-40s\t%-6s" % (pvc.metadata.name, pvc.spec.volume_name, pvc.spec.resources.requests["storage"]))
     print("")
 
     # setup watch
     w = watch.Watch()
-    for item in w.stream(
-        api.list_namespaced_persistent_volume_claim, namespace=ns, timeout_seconds=0
-    ):
+    for item in w.stream(api.list_namespaced_persistent_volume_claim, namespace=ns, timeout_seconds=0):
         pvc = item["object"]
 
         # parse PVC events

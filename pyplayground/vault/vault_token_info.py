@@ -108,9 +108,7 @@ class VaultTokenInfo:
                 if field == "creation_time":
                     # Convert Unix timestamp to readable format
                     try:
-                        value = datetime.fromtimestamp(float(token_info[field])).strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        )
+                        value = datetime.fromtimestamp(float(token_info[field])).strftime("%Y-%m-%d %H:%M:%S")
                     except (ValueError, TypeError):
                         pass
                 table.add_row(field, value)

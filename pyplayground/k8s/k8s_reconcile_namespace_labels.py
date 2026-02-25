@@ -24,9 +24,7 @@ def setup_logging(log_file_path: str):
     log_dir = os.path.dirname(log_file_path)
     os.makedirs(log_dir, exist_ok=True)
 
-    log_formatter_file = logging.Formatter(
-        "%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s"
-    )
+    log_formatter_file = logging.Formatter("%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s")
     log_formatter_console = logging.Formatter("%(levelname)s: %(message)s")
 
     root_logger = logging.getLogger()
@@ -96,9 +94,7 @@ def reconcile_namespace_label(
         action_prefix = "DRY RUN:" if dry_run else ""
 
         if current_value == desired_value:
-            logging.debug(
-                f"Namespace '{namespace_name}': Label '{label_key}' already set to '{desired_value}'. No change needed."
-            )
+            logging.debug(f"Namespace '{namespace_name}': Label '{label_key}' already set to '{desired_value}'. No change needed.")
             return "NO_CHANGE"
         elif current_value is None:
             action = f"Add label '{label_key}={desired_value}' to namespace '{namespace_name}'"
@@ -115,26 +111,18 @@ def reconcile_namespace_label(
         else:
             logging.info(f"Attempting: {action}")
             # Use merge-patch to only add/update the specific label
-            v1_api.patch_namespace(
-                name=namespace_name, body=patch_body, _content_type="application/merge-patch+json"
-            )
-            logging.info(
-                f"Successfully {'added' if patch_type == 'ADD' else 'updated'} label for namespace '{namespace_name}'"
-            )
+            v1_api.patch_namespace(name=namespace_name, body=patch_body, _content_type="application/merge-patch+json")
+            logging.info(f"Successfully {'added' if patch_type == 'ADD' else 'updated'} label for namespace '{namespace_name}'")
             return patch_type
 
     except ApiException as e:
         if e.status == 404:
             logging.error(f"Namespace '{namespace_name}' not found. Cannot reconcile label.")
         else:
-            logging.error(
-                f"Failed to reconcile label for namespace '{namespace_name}': {e.status} - {e.reason} - {e.body}"
-            )
+            logging.error(f"Failed to reconcile label for namespace '{namespace_name}': {e.status} - {e.reason} - {e.body}")
         return "ERROR"
     except Exception as e:
-        logging.exception(
-            f"Unexpected error reconciling label for namespace '{namespace_name}': {e}"
-        )
+        logging.exception(f"Unexpected error reconciling label for namespace '{namespace_name}': {e}")
         return "ERROR"
 
 
@@ -145,9 +133,7 @@ def get_namespaces_with_label(v1_api: client.CoreV1Api, label_key: str) -> Optio
         namespaces = v1_api.list_namespace(label_selector=label_key)
         return {ns.metadata.name for ns in namespaces.items}
     except ApiException as e:
-        logging.error(
-            f"Failed to list namespaces with label '{label_key}': {e.status} - {e.reason}"
-        )
+        logging.error(f"Failed to list namespaces with label '{label_key}': {e.status} - {e.reason}")
         return None
     except Exception as e:
         logging.exception(f"Unexpected error listing namespaces with label '{label_key}': {e}")
@@ -253,17 +239,13 @@ def main(  # noqa: C901
         desired_value = label_mapping.get(group_id)
         if desired_value is None:
             if group_id not in unmapped_groups:
-                logging.warning(
-                    f"No label mapping found for group '{group_id}'. Namespaces in this group will be skipped."
-                )
+                logging.warning(f"No label mapping found for group '{group_id}'. Namespaces in this group will be skipped.")
                 unmapped_groups.add(group_id)
             processed_ns_from_json.update(ns for ns in namespaces if isinstance(ns, str) and ns)
             continue  # Skip mapping for this group
 
         if not isinstance(desired_value, str):
-            logging.warning(
-                f"Invalid label value '{desired_value}' defined for group '{group_id}' in YAML (must be a string). Skipping."
-            )
+            logging.warning(f"Invalid label value '{desired_value}' defined for group '{group_id}' in YAML (must be a string). Skipping.")
             unmapped_groups.add(group_id)
             processed_ns_from_json.update(ns for ns in namespaces if isinstance(ns, str) and ns)
             continue
@@ -271,21 +253,15 @@ def main(  # noqa: C901
         for ns_name in namespaces:
             if isinstance(ns_name, str) and ns_name:
                 if ns_name in desired_ns_labels:
-                    logging.warning(
-                        f"Namespace '{ns_name}' found in multiple groups in JSON. Using mapping from group '{group_id}'."
-                    )
+                    logging.warning(f"Namespace '{ns_name}' found in multiple groups in JSON. Using mapping from group '{group_id}'.")
                 desired_ns_labels[ns_name] = desired_value
                 processed_ns_from_json.add(ns_name)
             else:
-                logging.warning(
-                    f"Skipping invalid namespace name '{ns_name}' in group '{group_id}'."
-                )
+                logging.warning(f"Skipping invalid namespace name '{ns_name}' in group '{group_id}'.")
 
     logging.info(f"Desired state map built for {len(desired_ns_labels)} namespaces.")
     if unmapped_groups:
-        logging.warning(
-            f"Skipped processing for groups not in YAML mapping: {', '.join(sorted(list(unmapped_groups)))}"
-        )
+        logging.warning(f"Skipped processing for groups not in YAML mapping: {', '.join(sorted(list(unmapped_groups)))}")
 
     # --- Reconcile Labels --- #
     results = {"ADD": 0, "UPDATE": 0, "NO_CHANGE": 0, "ERROR": 0, "SKIP_UNMAPPED": 0}
@@ -306,9 +282,7 @@ def main(  # noqa: C901
         if namespaces_with_label_in_cluster is not None:
             orphans_found = namespaces_with_label_in_cluster - processed_ns_from_json
             if orphans_found:
-                logging.warning(
-                    f"Found {len(orphans_found)} potential orphan namespaces with label '{label_key}' but not in input JSON: {', '.join(sorted(list(orphans_found)))}"
-                )
+                logging.warning(f"Found {len(orphans_found)} potential orphan namespaces with label '{label_key}' but not in input JSON: {', '.join(sorted(list(orphans_found)))}")
             else:
                 logging.info("No orphan namespaces found with the specified label.")
         else:
@@ -321,9 +295,7 @@ def main(  # noqa: C901
     logging.info(f"{action_prefix}Added label: {results['ADD']} namespaces.")
     logging.info(f"{action_prefix}Updated label: {results['UPDATE']} namespaces.")
     logging.info(f"No change needed: {results['NO_CHANGE']} namespaces.")
-    logging.info(
-        f"Skipped (group not mapped in YAML, invalid NS name): {skipped_count} namespaces."
-    )
+    logging.info(f"Skipped (group not mapped in YAML, invalid NS name): {skipped_count} namespaces.")
     logging.info(f"Errors encountered: {results['ERROR']} namespaces.")
     if check_orphans:
         logging.info(f"Potential orphan namespaces found: {len(orphans_found)}")

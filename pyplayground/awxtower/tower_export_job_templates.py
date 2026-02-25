@@ -41,17 +41,13 @@ def get_username_by_id(tower_url: str, headers: Dict[str, str], user_id: str, ve
 
 def get_job_run_count(tower_url: str, headers: Dict[str, str], jt_id: int, verify: bool) -> int:
     """Helper to get job run count for a job template."""
-    count_job_runs = find_resource_by_attribute_name(
-        tower_url, headers, "jobs", "job_template", jt_id, verify
-    )
+    count_job_runs = find_resource_by_attribute_name(tower_url, headers, "jobs", "job_template", jt_id, verify)
     if count_job_runs:
         return count_job_runs.get("count", 0)
     return 0
 
 
-def extract_job_template_row(
-    jt: Dict[str, Any], tower_url: str, headers: Dict[str, str], verify: bool
-) -> List[Any]:
+def extract_job_template_row(jt: Dict[str, Any], tower_url: str, headers: Dict[str, str], verify: bool) -> List[Any]:
     """Extract a row for the job template CSV."""
     # Project lookup logic (robust, as in tower_job_templates_rich.py)
     project_id = str(jt.get("project", ""))
@@ -105,9 +101,7 @@ def export(
     include_workflows: bool = typer.Option(False, help="Include workflow job templates in export"),
     verify: bool = typer.Option(False, help="Verify the connection to Tower"),
     search: Optional[str] = typer.Option(None, help="Search term for filtering workflows"),
-    order_by: Optional[str] = typer.Option(
-        None, help="Sort workflows by field (e.g., 'name', '-name')"
-    ),
+    order_by: Optional[str] = typer.Option(None, help="Sort workflows by field (e.g., 'name', '-name')"),
 ) -> None:
     """Export Tower job templates and workflows to timestamped CSV files."""
     try:
@@ -131,9 +125,7 @@ def export(
                 params["search"] = search
             if order_by:
                 params["order_by"] = order_by
-            workflows_result = export_all_resources(
-                tower_url, headers, "workflow_job_templates", verify, params
-            )
+            workflows_result = export_all_resources(tower_url, headers, "workflow_job_templates", verify, params)
             if workflows_result is None:
                 logger.error("Failed to fetch workflows from Tower")
                 print("Failed to fetch workflows from Tower.")
@@ -146,9 +138,7 @@ def export(
             return
 
         sorted_job_templates = sorted(job_templates, key=lambda x: x.get("name", "").lower())
-        sorted_workflows = (
-            sorted(workflows, key=lambda x: x.get("name", "").lower()) if include_workflows else []
-        )
+        sorted_workflows = sorted(workflows, key=lambda x: x.get("name", "").lower()) if include_workflows else []
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         jt_csv_filename = f"tmp/job_templates_{timestamp}.csv"
@@ -165,9 +155,7 @@ def export(
             "Last Modified",
             "Job Runs",
         ]
-        jt_rows = [
-            extract_job_template_row(jt, tower_url, headers, verify) for jt in sorted_job_templates
-        ]
+        jt_rows = [extract_job_template_row(jt, tower_url, headers, verify) for jt in sorted_job_templates]
         write_csv(jt_csv_filename, jt_fields, jt_rows)
         logger.info(f"Exported {len(jt_rows)} job templates to {jt_csv_filename}")
         print(f"Exported {len(jt_rows)} job templates to {jt_csv_filename}")

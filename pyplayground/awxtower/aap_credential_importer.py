@@ -123,9 +123,7 @@ class AAPCredentialImporter:
             True if connection successful, False otherwise
         """
         try:
-            response = self.session.get(
-                urljoin(self.connection.url, "/api/v2/ping/"), timeout=self.connection.timeout
-            )
+            response = self.session.get(urljoin(self.connection.url, "/api/v2/ping/"), timeout=self.connection.timeout)
             response.raise_for_status()
 
             ping_data = response.json()
@@ -311,9 +309,7 @@ class AAPCredentialImporter:
         # Try case-insensitive name matching
         for aap_id, aap_type in aap_types.items():
             if aap_type["name"].lower() == tower_type_name.lower():
-                logger.debug(
-                    f"Mapped credential type '{tower_type_name}' -> ID {aap_id} (case insensitive)"
-                )
+                logger.debug(f"Mapped credential type '{tower_type_name}' -> ID {aap_id} (case insensitive)")
                 return aap_id
 
         # Common mappings for Tower -> AAP
@@ -334,18 +330,13 @@ class AAPCredentialImporter:
             target_name = type_mappings[tower_name_lower]
             for aap_id, aap_type in aap_types.items():
                 if aap_type["name"] == target_name:
-                    logger.debug(
-                        f"Mapped credential type '{tower_type_name}' -> "
-                        f"'{target_name}' (ID {aap_id})"
-                    )
+                    logger.debug(f"Mapped credential type '{tower_type_name}' -> " f"'{target_name}' (ID {aap_id})")
                     return aap_id
 
         logger.warning(f"Could not map credential type '{tower_type_name}' (ID {tower_type_id})")
         return None
 
-    def check_credential_exists(
-        self, name: str, organization_id: Optional[int] = None
-    ) -> Optional[Dict]:
+    def check_credential_exists(self, name: str, organization_id: Optional[int] = None) -> Optional[Dict]:
         """Check if a credential with the given name already exists.
 
         Args:
@@ -389,22 +380,17 @@ class AAPCredentialImporter:
 
         try:
             # Map credential type
-            aap_type_id = self.map_credential_type(
-                credential_data["credential_type_id"], credential_data["credential_type_name"]
-            )
+            aap_type_id = self.map_credential_type(credential_data["credential_type_id"], credential_data["credential_type_name"])
 
             if not aap_type_id:
                 return ImportResult(
                     credential_name=cred_name,
                     success=False,
-                    message=f"Unsupported credential type: "
-                    f"{credential_data['credential_type_name']}",
+                    message=f"Unsupported credential type: " f"{credential_data['credential_type_name']}",
                 )
 
             # Check if credential already exists
-            existing = self.check_credential_exists(
-                cred_name, credential_data.get("organization_id")
-            )
+            existing = self.check_credential_exists(cred_name, credential_data.get("organization_id"))
             if existing:
                 return ImportResult(
                     credential_name=cred_name,
@@ -427,9 +413,7 @@ class AAPCredentialImporter:
                 if credential_data["organization_id"] in orgs:
                     payload["organization"] = credential_data["organization_id"]
                 else:
-                    logger.warning(
-                        f"Organization ID {credential_data['organization_id']} not found in AAP"
-                    )
+                    logger.warning(f"Organization ID {credential_data['organization_id']} not found in AAP")
 
             # Create credential via API
             response = self.session.post(
@@ -454,9 +438,7 @@ class AAPCredentialImporter:
             logger.error(f"Error creating credential '{cred_name}': {e}")
             return ImportResult(credential_name=cred_name, success=False, message=f"Exception: {e}")
 
-    def import_credentials(
-        self, credentials: List[Dict], skip_existing: bool = True
-    ) -> List[ImportResult]:
+    def import_credentials(self, credentials: List[Dict], skip_existing: bool = True) -> List[ImportResult]:
         """Import multiple credentials into AAP.
 
         Args:
@@ -482,16 +464,12 @@ class AAPCredentialImporter:
                     if result.success:
                         logger.info(f"✓ Imported credential: {result.credential_name}")
                     else:
-                        logger.warning(
-                            f"✗ Failed to import {result.credential_name}: {result.message}"
-                        )
+                        logger.warning(f"✗ Failed to import {result.credential_name}: {result.message}")
 
                     progress.update(task, advance=1)
 
                 except Exception as e:
-                    logger.error(
-                        f"Unexpected error importing {cred_data.get('name', 'Unknown')}: {e}"
-                    )
+                    logger.error(f"Unexpected error importing {cred_data.get('name', 'Unknown')}: {e}")
                     results.append(
                         ImportResult(
                             credential_name=cred_data.get("name", "Unknown"),
@@ -503,9 +481,7 @@ class AAPCredentialImporter:
 
         return results
 
-    def import_credential_types(
-        self, credential_types: List[Dict]
-    ) -> List[CredentialTypeCreateResult]:
+    def import_credential_types(self, credential_types: List[Dict]) -> List[CredentialTypeCreateResult]:
         """Import multiple credential types into AAP.
 
         Args:
@@ -537,17 +513,12 @@ class AAPCredentialImporter:
                         elif "managed" in result.message.lower():
                             logger.debug(f"○ Skipped managed type: {result.credential_type_name}")
                         else:
-                            logger.warning(
-                                f"✗ Failed to create {result.credential_type_name}: "
-                                f"{result.message}"
-                            )
+                            logger.warning(f"✗ Failed to create {result.credential_type_name}: " f"{result.message}")
 
                     progress.update(task, advance=1)
 
                 except Exception as e:
-                    logger.error(
-                        f"Unexpected error creating {type_data.get('name', 'Unknown')}: {e}"
-                    )
+                    logger.error(f"Unexpected error creating {type_data.get('name', 'Unknown')}: {e}")
                     results.append(
                         CredentialTypeCreateResult(
                             credential_type_name=type_data.get("name", "Unknown"),
@@ -583,10 +554,7 @@ def load_exported_data(file_path: str) -> tuple[List[Dict], List[Dict]]:
         credential_types = data.get("credential_types", [])
         metadata = data.get("metadata", {})
 
-        logger.info(
-            f"Loaded {len(credentials)} credentials and "
-            f"{len(credential_types)} credential types from {file_path}"
-        )
+        logger.info(f"Loaded {len(credentials)} credentials and " f"{len(credential_types)} credential types from {file_path}")
         if metadata.get("export_date"):
             logger.info(f"Export date: {metadata['export_date']}")
 
@@ -675,11 +643,7 @@ def display_credential_type_summary(results: List[CredentialTypeCreateResult]) -
         )
 
     console.print(table)
-    console.print(
-        f"\n[green]Created: {successful}[/green] | "
-        f"[blue]Existing/Skipped: {skipped}[/blue] | "
-        f"[red]Failed: {failed}[/red]"
-    )
+    console.print(f"\n[green]Created: {successful}[/green] | " f"[blue]Existing/Skipped: {skipped}[/blue] | " f"[red]Failed: {failed}[/red]")
 
 
 @click.command()
@@ -692,9 +656,7 @@ def display_credential_type_summary(results: List[CredentialTypeCreateResult]) -
     help="Path to exported credentials JSON file",
     type=click.Path(exists=True, readable=True),
 )
-@click.option(
-    "--skip-existing", is_flag=True, default=True, help="Skip credentials that already exist in AAP"
-)
+@click.option("--skip-existing", is_flag=True, default=True, help="Skip credentials that already exist in AAP")
 @click.option("--verify-ssl/--no-verify-ssl", default=True, help="Verify SSL certificates")
 @click.option("--timeout", default=30, help="API request timeout in seconds", show_default=True)
 @click.option("--debug", is_flag=True, help="Enable debug logging")
@@ -748,8 +710,7 @@ def main(  # noqa: C901
     # Display banner
     console.print(
         Panel.fit(
-            "[bold blue]AAP Credential Import Tool[/bold blue]\n"
-            "Import Tower credentials into Red Hat Ansible Automation Platform",
+            "[bold blue]AAP Credential Import Tool[/bold blue]\n" "Import Tower credentials into Red Hat Ansible Automation Platform",
             border_style="blue",
         )
     )
@@ -757,24 +718,17 @@ def main(  # noqa: C901
     try:
         # Prompt for password if not provided
         if not aap_password:
-            aap_password = Prompt.ask(
-                f"Enter password for AAP user '{aap_username}'", password=True, show_default=False
-            )
+            aap_password = Prompt.ask(f"Enter password for AAP user '{aap_username}'", password=True, show_default=False)
 
         # Load credentials and credential types from export file
         console.print(f"[green]Loading data from {credentials_file}...[/green]")
         credentials, credential_types = load_exported_data(credentials_file)
 
         if not credentials and not credential_types:
-            console.print(
-                "[yellow]No credentials or credential types found in export file.[/yellow]"
-            )
+            console.print("[yellow]No credentials or credential types found in export file.[/yellow]")
             return
 
-        console.print(
-            f"[green]Loaded {len(credentials)} credentials and "
-            f"{len(credential_types)} credential types for import.[/green]"
-        )
+        console.print(f"[green]Loaded {len(credentials)} credentials and " f"{len(credential_types)} credential types for import.[/green]")
 
         # Create AAP connection
         connection = AAPConnection(
@@ -805,9 +759,7 @@ def main(  # noqa: C901
 
             # Validate credential types first
             if credential_types:
-                console.print(
-                    f"[blue]Validating {len(credential_types)} credential types...[/blue]"
-                )
+                console.print(f"[blue]Validating {len(credential_types)} credential types...[/blue]")
                 type_validation_results = []
                 for cred_type in credential_types:
                     existing = importer.get_credential_type_by_name(cred_type["name"])
@@ -852,9 +804,7 @@ def main(  # noqa: C901
                 console.print(f"[blue]Validating {len(credentials)} credentials...[/blue]")
                 validation_results = []
                 for cred in credentials:
-                    aap_type_id = importer.map_credential_type(
-                        cred["credential_type_id"], cred["credential_type_name"]
-                    )
+                    aap_type_id = importer.map_credential_type(cred["credential_type_id"], cred["credential_type_name"])
 
                     validation_results.append(
                         {
@@ -874,11 +824,7 @@ def main(  # noqa: C901
 
                 mappable = 0
                 for result in validation_results:
-                    status = (
-                        "[green]✓ OK[/green]"
-                        if result["type_mappable"]
-                        else "[red]✗ No Mapping[/red]"
-                    )
+                    status = "[green]✓ OK[/green]" if result["type_mappable"] else "[red]✗ No Mapping[/red]"
                     aap_type = str(result["aap_type_id"]) if result["aap_type_id"] else "-"
 
                     table.add_row(result["name"], result["tower_type"], aap_type, status)
@@ -887,17 +833,11 @@ def main(  # noqa: C901
                         mappable += 1
 
                 console.print(table)
-                console.print(
-                    f"\n[green]Mappable: {mappable}[/green] | "
-                    f"[red]Not Mappable: {len(validation_results) - mappable}[/red]"
-                )
+                console.print(f"\n[green]Mappable: {mappable}[/green] | " f"[red]Not Mappable: {len(validation_results) - mappable}[/red]")
             return
 
         # Confirm import
-        if not Confirm.ask(
-            f"Import {len(credential_types)} credential types and "
-            f"{len(credentials)} credentials into AAP?"
-        ):
+        if not Confirm.ask(f"Import {len(credential_types)} credential types and " f"{len(credentials)} credentials into AAP?"):
             console.print("[yellow]Import cancelled.[/yellow]")
             return
 
@@ -920,15 +860,7 @@ def main(  # noqa: C901
         cred_failed = len(cred_results) - cred_successful
 
         type_successful = sum(1 for r in type_results if r.success)
-        type_failed = sum(
-            1
-            for r in type_results
-            if (
-                not r.success
-                and "exists" not in r.message.lower()
-                and "managed" not in r.message.lower()
-            )
-        )
+        type_failed = sum(1 for r in type_results if (not r.success and "exists" not in r.message.lower() and "managed" not in r.message.lower()))
 
         total_failed = cred_failed + type_failed
         if total_failed == 0:

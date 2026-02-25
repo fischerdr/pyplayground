@@ -27,9 +27,7 @@ _CACHE_MAX_SIZE = 1000  # Maximum number of cached entries
 _resource_cache: Dict[Tuple[str, str, str, str, str], Tuple[Dict[str, Any], float]] = {}
 
 
-def _get_cache_key(
-    tower_url: str, endpoint: str, attribute_name: str, value: str, verify: bool
-) -> Tuple[str, str, str, str, str]:
+def _get_cache_key(tower_url: str, endpoint: str, attribute_name: str, value: str, verify: bool) -> Tuple[str, str, str, str, str]:
     """Generate a cache key for resource lookups.
 
     Args:
@@ -61,11 +59,7 @@ def _is_cache_valid(cache_entry: Tuple[Dict[str, Any], float]) -> bool:
 def _cleanup_expired_cache() -> None:
     """Remove expired cache entries to prevent memory bloat."""
     current_time = time()
-    expired_keys = [
-        key
-        for key, (_, timestamp) in _resource_cache.items()
-        if (current_time - timestamp) >= _CACHE_TTL
-    ]
+    expired_keys = [key for key, (_, timestamp) in _resource_cache.items() if (current_time - timestamp) >= _CACHE_TTL]
     for key in expired_keys:
         del _resource_cache[key]
 
@@ -101,9 +95,7 @@ def get_cache_stats() -> Dict[str, Any]:
         Dictionary containing cache statistics
     """
     current_time = time()
-    valid_entries = sum(
-        1 for _, timestamp in _resource_cache.values() if (current_time - timestamp) < _CACHE_TTL
-    )
+    valid_entries = sum(1 for _, timestamp in _resource_cache.values() if (current_time - timestamp) < _CACHE_TTL)
     expired_entries = len(_resource_cache) - valid_entries
 
     return {
@@ -115,9 +107,7 @@ def get_cache_stats() -> Dict[str, Any]:
     }
 
 
-def invalidate_cache_entry(
-    tower_url: str, endpoint: str, attribute_name: str, value: str, verify: bool = True
-) -> bool:
+def invalidate_cache_entry(tower_url: str, endpoint: str, attribute_name: str, value: str, verify: bool = True) -> bool:
     """Invalidate a specific cache entry.
 
     Args:
@@ -133,9 +123,7 @@ def invalidate_cache_entry(
     cache_key = _get_cache_key(tower_url, endpoint, attribute_name, value, verify)
     if cache_key in _resource_cache:
         del _resource_cache[cache_key]
-        logger.debug(
-            f"Invalidated cache entry for {endpoint} with attribute '{attribute_name}' and value '{value}'"
-        )
+        logger.debug(f"Invalidated cache entry for {endpoint} with attribute '{attribute_name}' and value '{value}'")
         return True
     return False
 
@@ -230,19 +218,14 @@ def get_awx_or_tower_client(prefix: str, verify: bool = False) -> Dict[str, Any]
                 logger.error(f"Failed to obtain token for user {username}")
                 sys.exit(1)
         else:
-            logger.error(
-                f"Missing credentials for {prefix}. "
-                f"Set ({prefix}_USERNAME and {prefix}_PASSWORD), or {prefix}_TOKEN."
-            )
+            logger.error(f"Missing credentials for {prefix}. " f"Set ({prefix}_USERNAME and {prefix}_PASSWORD), or {prefix}_TOKEN.")
             sys.exit(1)
     except Exception as e:
         logger.error(f"Failed to connect to {prefix} instance at {host}: {e}", exc_info=True)
         sys.exit(1)
 
 
-def get_tower_token_from_credentials(
-    tower_url: str, username: str, password: str, verify: bool = True
-) -> Optional[str]:
+def get_tower_token_from_credentials(tower_url: str, username: str, password: str, verify: bool = True) -> Optional[str]:
     """Obtain an API token from Tower using username and password."""
     token_url = f"{tower_url.rstrip('/')}/api/v2/tokens/"
     payload = {
@@ -281,9 +264,7 @@ def get_tower_token_from_credentials(
         return None
 
 
-def search_resource_by_name(
-    tower_url: str, headers: Dict[str, str], endpoint: str, partial_name: str, verify: bool = True
-) -> Optional[List[Dict[str, Any]]]:
+def search_resource_by_name(tower_url: str, headers: Dict[str, str], endpoint: str, partial_name: str, verify: bool = True) -> Optional[List[Dict[str, Any]]]:
     """Search for a resource by partial name (e.g., job_templates, inventories)."""
     url = f"{tower_url}/api/v2/{endpoint}/?name__icontains={partial_name}"
     try:
@@ -315,10 +296,7 @@ def select_resource(resources: Optional[List[Dict[str, Any]]], resource_type: st
 
     if len(resources) == 1:
         selected_resource = resources[0]
-        logger.info(
-            f"Automatically selecting {resource_type}: "
-            f"{selected_resource.get('name')} (ID: {selected_resource.get('id')})"
-        )
+        logger.info(f"Automatically selecting {resource_type}: " f"{selected_resource.get('name')} (ID: {selected_resource.get('id')})")
         return selected_resource.get("id")
 
     logger.info(f"Please select a {resource_type} from the following list:")
@@ -327,20 +305,14 @@ def select_resource(resources: Optional[List[Dict[str, Any]]], resource_type: st
 
     while True:
         try:
-            selection = input(
-                f"Enter the number for the desired {resource_type} (1-{len(resources)}): "
-            )
+            selection = input(f"Enter the number for the desired {resource_type} (1-{len(resources)}): ")
             selection_int = int(selection)
             if 1 <= selection_int <= len(resources):
                 selected = resources[selection_int - 1]
-                logger.info(
-                    f"Selected {resource_type}: {selected.get('name')} (ID: {selected.get('id')})"
-                )
+                logger.info(f"Selected {resource_type}: {selected.get('name')} (ID: {selected.get('id')})")
                 return selected.get("id")
             else:
-                logger.warning(
-                    f"Invalid selection. Please choose a number between 1 and {len(resources)}."
-                )
+                logger.warning(f"Invalid selection. Please choose a number between 1 and {len(resources)}.")
         except ValueError:
             logger.warning("Invalid input. Please enter a number.")
         except KeyboardInterrupt:
@@ -383,9 +355,7 @@ def launch_job_template(
         return None
 
 
-def monitor_job_status(
-    tower_url: str, headers: Dict[str, str], job_id: int, verify: bool = True
-) -> Optional[Dict[str, Any]]:
+def monitor_job_status(tower_url: str, headers: Dict[str, str], job_id: int, verify: bool = True) -> Optional[Dict[str, Any]]:
     """Monitor the status of a running job and return its details upon completion."""
     url = f"{tower_url}/api/v2/jobs/{job_id}/"
     logger.info(f"Monitoring job ID: {job_id} at {url}")
@@ -414,9 +384,7 @@ def monitor_job_status(
             return None
 
 
-def fetch_job_events(
-    tower_url: str, headers: Dict[str, str], job_id: int, verify: bool = True
-) -> None:
+def fetch_job_events(tower_url: str, headers: Dict[str, str], job_id: int, verify: bool = True) -> None:
     """Fetch and log notable job events for a completed job."""
     url = f"{tower_url}/api/v2/jobs/{job_id}/job_events/"
     logger.info(f"Fetching events for job ID: {job_id}")
@@ -435,11 +403,7 @@ def fetch_job_events(
             if event_type == "playbook_on_task_start":
                 logger.info(f"  Task Started: {event.get('task')}")
             elif event_type == "runner_on_failed":
-                failed_details = (
-                    f"  Task Failed: {event.get('task')}\n"
-                    f"    Host: {event.get('host')}\n"
-                    f"    Message: {event.get('stdout', 'No stdout message').strip()}"
-                )
+                failed_details = f"  Task Failed: {event.get('task')}\n" f"    Host: {event.get('host')}\n" f"    Message: {event.get('stdout', 'No stdout message').strip()}"
                 logger.error(failed_details)
             elif event_type == "runner_on_ok":
                 # Reduce verbosity for runner_on_ok, could be many.
@@ -453,16 +417,12 @@ def fetch_job_events(
         logger.error(f"Failed to decode JSON for job events (ID {job_id}): {e}")
 
 
-def fetch_job_output(
-    tower_url: str, headers: Dict[str, str], job_id: int, verify: bool = True
-) -> Optional[str]:
+def fetch_job_output(tower_url: str, headers: Dict[str, str], job_id: int, verify: bool = True) -> Optional[str]:
     """Fetch the full stdout output of a completed job."""
     url = f"{tower_url}/api/v2/jobs/{job_id}/stdout/"
     logger.info(f"Fetching stdout for job ID: {job_id}")
     try:
-        response = requests.get(
-            url, headers=headers, params={"format": "txt"}, verify=verify, timeout=30
-        )
+        response = requests.get(url, headers=headers, params={"format": "txt"}, verify=verify, timeout=30)
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
@@ -541,9 +501,7 @@ def _fetch_all_paginated_resources(
             page_count += 1
             logger.debug(f"Fetching page {page_count} for {endpoint}")
 
-            response = requests.get(
-                url, headers=headers, params=current_params, verify=verify, timeout=30
-            )
+            response = requests.get(url, headers=headers, params=current_params, verify=verify, timeout=30)
             response.raise_for_status()
             data = response.json()
 
@@ -574,9 +532,7 @@ def _fetch_all_paginated_resources(
         return None
 
 
-def list_resources(
-    tower_url: str, headers: Dict[str, str], endpoint: str, verify: bool = True
-) -> Optional[List[Dict[str, Any]]]:
+def list_resources(tower_url: str, headers: Dict[str, str], endpoint: str, verify: bool = True) -> Optional[List[Dict[str, Any]]]:
     """List all resources of a specific type from AWX/Tower API.
 
     Args:
@@ -618,14 +574,10 @@ def find_resource_by_attribute_name(
     if cache_key in _resource_cache:
         cached_data, timestamp = _resource_cache[cache_key]
         if _is_cache_valid((cached_data, timestamp)):
-            logger.debug(
-                f"Returning cached data for {endpoint} with attribute '{attribute_name}' and value '{value}'"
-            )
+            logger.debug(f"Returning cached data for {endpoint} with attribute '{attribute_name}' and value '{value}'")
             return cached_data
         else:
-            logger.debug(
-                f"Cache expired for {endpoint} with attribute '{attribute_name}' and value '{value}'. Refreshing."
-            )
+            logger.debug(f"Cache expired for {endpoint} with attribute '{attribute_name}' and value '{value}'. Refreshing.")
             del _resource_cache[cache_key]  # Remove expired entry
 
     # Log cache stats on cache miss
@@ -649,25 +601,19 @@ def find_resource_by_attribute_name(
 
         return results
     except requests.exceptions.RequestException as e:
-        logger.error(
-            f"Failed to find {endpoint} with attribute '{attribute_name}' and value '{value}': {e}"
-        )
+        logger.error(f"Failed to find {endpoint} with attribute '{attribute_name}' and value '{value}': {e}")
         return None
     except json.JSONDecodeError as e:
         logger.error(f"Failed to decode JSON response when finding {endpoint}: {e}")
         return None
 
 
-def find_resource_by_name(
-    tower_url: str, headers: Dict[str, str], endpoint: str, name: str, verify: bool = True
-) -> Optional[Dict[str, Any]]:
+def find_resource_by_name(tower_url: str, headers: Dict[str, str], endpoint: str, name: str, verify: bool = True) -> Optional[Dict[str, Any]]:
     """Find a specific resource by exact name."""
     return find_resource_by_attribute_name(tower_url, headers, endpoint, "name", name, verify)
 
 
-def find_resource_by_id(
-    tower_url: str, headers: Dict[str, str], endpoint: str, id: int, verify: bool = True
-) -> Optional[Dict[str, Any]]:
+def find_resource_by_id(tower_url: str, headers: Dict[str, str], endpoint: str, id: int, verify: bool = True) -> Optional[Dict[str, Any]]:
     """Find a specific resource by exact ID."""
     return find_resource_by_attribute_name(tower_url, headers, endpoint, "id", str(id), verify)
 
@@ -776,9 +722,7 @@ def get_resource(
         return None
 
 
-def get_inventory_hosts(
-    tower_url: str, headers: Dict[str, str], inventory_id: int, verify: bool = True
-) -> Optional[List[Dict[str, Any]]]:
+def get_inventory_hosts(tower_url: str, headers: Dict[str, str], inventory_id: int, verify: bool = True) -> Optional[List[Dict[str, Any]]]:
     """Get all hosts for a specific inventory.
 
     Args:

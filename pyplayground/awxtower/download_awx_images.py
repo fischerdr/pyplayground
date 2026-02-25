@@ -131,9 +131,7 @@ def download_images(
             REQUIRED_IMAGES.update(custom_images_dict)
 
         # Filter out EE images if requested
-        images_to_download = {
-            k: v for k, v in REQUIRED_IMAGES.items() if not (skip_ee and k.startswith("awx-ee"))
-        }
+        images_to_download = {k: v for k, v in REQUIRED_IMAGES.items() if not (skip_ee and k.startswith("awx-ee"))}
 
         # Pull and save each image
         for name, image in images_to_download.items():

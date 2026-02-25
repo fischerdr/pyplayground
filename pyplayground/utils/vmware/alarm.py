@@ -77,15 +77,11 @@ def _build_payload(**kwargs):
     root = Element("soap:Envelope", attribs)
     body = SubElement(root, "soap:Body")
     alarm_status = SubElement(body, "SetAlarmStatus", {"xmlns": "urn:vim25"})
-    this = SubElement(
-        alarm_status, "_this", {"xsi:type": "ManagedObjectReference", "type": "AlarmManager"}
-    )
+    this = SubElement(alarm_status, "_this", {"xsi:type": "ManagedObjectReference", "type": "AlarmManager"})
     this.text = "AlarmManager"
     alarm = SubElement(alarm_status, "alarm", {"type": "Alarm"})
     alarm.text = alarm_moref
-    entity = SubElement(
-        alarm_status, "entity", {"xsi:type": "ManagedObjectReference", "type": entity_type}
-    )
+    entity = SubElement(alarm_status, "entity", {"xsi:type": "ManagedObjectReference", "type": entity_type})
     entity.text = entity_moref
     status = SubElement(alarm_status, "status")
     status.text = "green"

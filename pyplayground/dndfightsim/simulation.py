@@ -45,9 +45,7 @@ def timed_input(prompt: str, timeout: float) -> Optional[str]:
         return result
     except queue.Empty:
         # Timeout occurred
-        console.print(
-            "\n[dim](Timeout reached, continuing...)[/dim]"
-        )  # Add a newline for clarity after timeout
+        console.print("\n[dim](Timeout reached, continuing...)[/dim]")  # Add a newline for clarity after timeout
         return None
 
 
@@ -74,9 +72,7 @@ def create_random_character(name: str, character_class_enum: CharacterClass) -> 
     elif character_class_enum == CharacterClass.ROGUE:
         character = Rogue(name)
     else:
-        print(
-            f"Warning: Unknown character class '{character_class_enum}', creating base Character."
-        )
+        print(f"Warning: Unknown character class '{character_class_enum}', creating base Character.")
         character = Character(name)
 
     return character
@@ -136,9 +132,7 @@ def run_leveling_simulation(num_fights: int = 5):
 
         # --- Add Pause Here --- #
         if i < num_fights - 1:  # Don't pause after the last fight
-            timed_input(
-                f"[dim]Press Enter to continue to Battle {i + 2} or wait 5s...[/dim]", timeout=5.0
-            )
+            timed_input(f"[dim]Press Enter to continue to Battle {i + 2} or wait 5s...[/dim]", timeout=5.0)
         else:
             print("Leveling simulation finished.")
         # --- End Pause --- #
@@ -179,9 +173,7 @@ def run_example_grid_fight():
                     placed_a = True
                     break
                 except ValueError as e:
-                    print(
-                        f"Error placing {char_a.name} at ({x},{y}): {e}"
-                    )  # Should not happen with check
+                    print(f"Error placing {char_a.name} at ({x},{y}): {e}")  # Should not happen with check
         if placed_a:
             break
     if not placed_a:
@@ -200,15 +192,11 @@ def run_example_grid_fight():
                     placed_b = True
                     break
                 except ValueError as e:
-                    print(
-                        f"Error placing {char_b.name} at ({x},{y}): {e}"
-                    )  # Should not happen with check
+                    print(f"Error placing {char_b.name} at ({x},{y}): {e}")  # Should not happen with check
         if placed_b:
             break
     if not placed_b:
-        print(
-            f"Could not find a valid starting position for {char_b.name}! Placing {char_a.name} failed? Aborting."
-        )
+        print(f"Could not find a valid starting position for {char_b.name}! Placing {char_a.name} failed? Aborting.")
         # Optionally remove char_a from grid if placement failed
         if char_a in environment_main.character_locations:
             loc_a = environment_main.get_character_location(char_a)

@@ -50,9 +50,7 @@ def fetch_clusters(px_client: PXBackupClient, org_id: str) -> List[Dict]:
         response = px_client.make_request("GET", endpoint)
         clusters = response.get("clusters", [])
         if not isinstance(clusters, list):
-            logger.warning(
-                f"API response for clusters was not a list: {type(clusters)}. Returning empty list."
-            )
+            logger.warning(f"API response for clusters was not a list: {type(clusters)}. Returning empty list.")
             return []
         logger.info(f"Successfully fetched {len(clusters)} clusters.")
         return clusters
@@ -101,9 +99,7 @@ def _filter_clusters_by_name(clusters: List[Dict], name_pattern: str) -> List[Di
     return matched
 
 
-def _fetch_all_backups_for_cluster(
-    px_client: PXBackupClient, org_id: str, cluster_uid: str
-) -> List[Dict]:
+def _fetch_all_backups_for_cluster(px_client: PXBackupClient, org_id: str, cluster_uid: str) -> List[Dict]:
     """Fetches all backups associated with a specific cluster UID."""
     logger.info(f"Fetching all backups for cluster UID: {cluster_uid}")
     params = {"enumerate_options.cluster_uid_filter": cluster_uid}
@@ -112,9 +108,7 @@ def _fetch_all_backups_for_cluster(
         response = px_client.make_request("GET", endpoint, params=params)
         backups = response.get("backups", [])
         if not isinstance(backups, list):
-            logger.warning(
-                f"API response for backups for cluster {cluster_uid} was not a list: {type(backups)}. Returning empty list."
-            )
+            logger.warning(f"API response for backups for cluster {cluster_uid} was not a list: {type(backups)}. Returning empty list.")
             return []
         logger.info(f"Fetched {len(backups)} total backups for cluster {cluster_uid}.")
         return backups
@@ -123,9 +117,7 @@ def _fetch_all_backups_for_cluster(
         raise  # Re-raise for handling in the caller
 
 
-def _get_all_backups(
-    px_client: PXBackupClient, org_id: str, cluster_filter_uid: Optional[str] = None
-) -> List[Dict]:
+def _get_all_backups(px_client: PXBackupClient, org_id: str, cluster_filter_uid: Optional[str] = None) -> List[Dict]:
     """Fetches all backups, optionally filtered by a specific cluster UID."""
     if cluster_filter_uid:
         # Fetch backups only for the specified cluster
@@ -141,11 +133,7 @@ def _get_all_backups(
             logger.warning("Cluster list API response was not a list.")
             clusters_raw = []
 
-        cluster_uids = [
-            c.get("metadata", {}).get("uid")
-            for c in clusters_raw
-            if c.get("metadata", {}).get("uid")
-        ]
+        cluster_uids = [c.get("metadata", {}).get("uid") for c in clusters_raw if c.get("metadata", {}).get("uid")]
         logger.info(f"Found {len(cluster_uids)} clusters. Fetching backups for each.")
 
         for uid in cluster_uids:
@@ -158,9 +146,7 @@ def _get_all_backups(
         return all_backups
 
 
-def fetch_running_backups(
-    px_client: PXBackupClient, org_id: str, cluster_filter_uid: Optional[str] = None
-) -> List[Dict[str, str]]:
+def fetch_running_backups(px_client: PXBackupClient, org_id: str, cluster_filter_uid: Optional[str] = None) -> List[Dict[str, str]]:
     """Fetches backups from PX-Backup and filters for those in a running state.
 
     Args:
@@ -218,12 +204,8 @@ def find_jobs_for_backup(batch_v1_api: client.BatchV1Api, backup_uid: str) -> Li
         logger.info(f"Found {len(job_list.items)} job(s) matching backup UID {backup_uid}.")
         return job_list.items
     except ApiException as e:
-        logger.error(
-            f"API error searching for jobs with label '{label_selector}': {e.status} - {e.reason}"
-        )
-        console.print(
-            f"[bold red]K8s API Error:[/bold red] Could not list jobs. Reason: {e.reason}"
-        )
+        logger.error(f"API error searching for jobs with label '{label_selector}': {e.status} - {e.reason}")
+        console.print(f"[bold red]K8s API Error:[/bold red] Could not list jobs. Reason: {e.reason}")
         return []  # Return empty list on error
     except Exception as e:
         logger.exception(f"Unexpected error finding jobs for backup UID {backup_uid}: {e}")
@@ -255,18 +237,12 @@ def find_pods_for_job(core_v1_api: client.CoreV1Api, job: client.V1Job) -> List[
     logger.debug(f"Using pod label selector: {pod_label_selector}")
 
     try:
-        pod_list = core_v1_api.list_namespaced_pod(
-            namespace=job_namespace, label_selector=pod_label_selector
-        )
+        pod_list = core_v1_api.list_namespaced_pod(namespace=job_namespace, label_selector=pod_label_selector)
         logger.info(f"Found {len(pod_list.items)} pod(s) for job '{job_name}'.")
         return pod_list.items
     except ApiException as e:
-        logger.error(
-            f"API error listing pods for job '{job_name}' in ns '{job_namespace}': {e.status} - {e.reason}"
-        )
-        console.print(
-            f"[bold red]K8s API Error:[/bold red] Could not list pods for job '{job_name}'. Reason: {e.reason}"
-        )
+        logger.error(f"API error listing pods for job '{job_name}' in ns '{job_namespace}': {e.status} - {e.reason}")
+        console.print(f"[bold red]K8s API Error:[/bold red] Could not list pods for job '{job_name}'. Reason: {e.reason}")
         return []
     except Exception as e:
         logger.exception(f"Unexpected error finding pods for job '{job_name}': {e}")
@@ -274,9 +250,7 @@ def find_pods_for_job(core_v1_api: client.CoreV1Api, job: client.V1Job) -> List[
         return []
 
 
-def get_kopia_logs_from_pod(
-    core_v1_api: client.CoreV1Api, pod: client.V1Pod, tail_lines: int
-) -> Optional[str]:
+def get_kopia_logs_from_pod(core_v1_api: client.CoreV1Api, pod: client.V1Pod, tail_lines: int) -> Optional[str]:
     """Attempts to get logs from the kopiaexecutor container within a pod.
 
     Args:
@@ -304,9 +278,7 @@ def get_kopia_logs_from_pod(
         # Don't print to console here, let the main loop indicate no logs found
         return None
 
-    logger.info(
-        f"Attempting to fetch last {tail_lines} logs for '{target_container}' in pod '{pod_name}'."
-    )
+    logger.info(f"Attempting to fetch last {tail_lines} logs for '{target_container}' in pod '{pod_name}'.")
     try:
         logs = core_v1_api.read_namespaced_pod_log(
             name=pod_name,
@@ -317,35 +289,18 @@ def get_kopia_logs_from_pod(
         logger.info(f"Successfully fetched logs for '{target_container}' in pod '{pod_name}'.")
         return logs
     except ApiException as e:
-        logger.error(
-            f"API error fetching logs for container '{target_container}' in pod '{pod_name}': {e.status} - {e.reason}"
-        )
+        logger.error(f"API error fetching logs for container '{target_container}' in pod '{pod_name}': {e.status} - {e.reason}")
         # Check common reasons
-        if (
-            "container not found" in str(e.body).lower()
-        ):  # Should not happen due to check above, but handle defensively
-            console.print(
-                f"  [yellow]Warning:[/yellow] K8s API reported '{target_container}' not found in pod '{pod_name}' (unexpected)."
-            )
-        elif (
-            "container is waiting" in str(e.body).lower()
-            or "waiting to start" in str(e.body).lower()
-        ):
-            console.print(
-                f"  [yellow]Warning:[/yellow] Container '{target_container}' in pod '{pod_name}' is waiting, logs not available yet."
-            )
+        if "container not found" in str(e.body).lower():  # Should not happen due to check above, but handle defensively
+            console.print(f"  [yellow]Warning:[/yellow] K8s API reported '{target_container}' not found in pod '{pod_name}' (unexpected).")
+        elif "container is waiting" in str(e.body).lower() or "waiting to start" in str(e.body).lower():
+            console.print(f"  [yellow]Warning:[/yellow] Container '{target_container}' in pod '{pod_name}' is waiting, logs not available yet.")
         else:
-            console.print(
-                f"  [red]Error:[/red] Could not fetch logs for '{target_container}' in pod '{pod_name}'. Reason: {e.reason}"
-            )
+            console.print(f"  [red]Error:[/red] Could not fetch logs for '{target_container}' in pod '{pod_name}'. Reason: {e.reason}")
         return None
     except Exception as e:
-        logger.exception(
-            f"Unexpected error fetching logs for '{target_container}' in pod '{pod_name}': {e}"
-        )
-        console.print(
-            f"  [red]Error:[/red] Unexpected error fetching logs for '{target_container}' in '{pod_name}': {e}"
-        )
+        logger.exception(f"Unexpected error fetching logs for '{target_container}' in pod '{pod_name}': {e}")
+        console.print(f"  [red]Error:[/red] Unexpected error fetching logs for '{target_container}' in '{pod_name}': {e}")
         return None
 
 
@@ -373,9 +328,7 @@ def _authenticate_and_setup_clients(
                 ]
                 if not v
             ]
-            raise click.ClickException(
-                f"Missing options for token generation: {', '.join(missing)}"
-            )
+            raise click.ClickException(f"Missing options for token generation: {', '.join(missing)}")
         try:
             current_token = generate_token(auth_url, client_id, username, password, validate_certs)
             logger.info("Successfully generated authentication token.")
@@ -403,9 +356,7 @@ def _determine_target_cluster_uid(
     """Determines the target cluster UID based on provided CLI options."""
     target_cluster_uid: Optional[str] = None
     if cluster_uid and cluster_name:
-        logger.warning(
-            "Both --cluster-name and --cluster-uid provided. Prioritizing --cluster-uid."
-        )
+        logger.warning("Both --cluster-name and --cluster-uid provided. Prioritizing --cluster-uid.")
         target_cluster_uid = cluster_uid
     elif cluster_uid:
         target_cluster_uid = cluster_uid
@@ -425,9 +376,7 @@ def _determine_target_cluster_uid(
                 )
             else:
                 target_cluster_uid = matched_clusters[0]["uid"]
-                logger.info(
-                    f"Found matching cluster: {matched_clusters[0]['name']} (UID: {target_cluster_uid})"
-                )
+                logger.info(f"Found matching cluster: {matched_clusters[0]['name']} (UID: {target_cluster_uid})")
         except requests.exceptions.RequestException as e:
             # Raised by fetch_clusters
             raise click.ClickException(f"Failed to fetch cluster list: {e}")
@@ -459,15 +408,11 @@ def _process_backup_logs(
     for backup in running_backups:
         backup_name = backup["name"]
         backup_uid = backup["uid"]
-        console.print(
-            f"\n--- Processing Backup: [cyan]{backup_name}[/cyan] (UID: {backup_uid}) ---"
-        )
+        console.print(f"\n--- Processing Backup: [cyan]{backup_name}[/cyan] (UID: {backup_uid}) ---")
 
         jobs = find_jobs_for_backup(k8s_batch_v1, backup_uid)
         if not jobs:
-            console.print(
-                f"  [yellow]No Kubernetes Job found for backup UID {backup_uid}.[/yellow]"
-            )
+            console.print(f"  [yellow]No Kubernetes Job found for backup UID {backup_uid}.[/yellow]")
             continue
 
         for job in jobs:
@@ -494,14 +439,10 @@ def _process_backup_logs(
                 else:
                     # Message printed within get_kopia_logs_from_pod if container missing or error
                     # Added a generic message here for clarity when no logs are retrieved
-                    console.print(
-                        f"      [grey50]Logs not retrieved for {KOPIAEXECUTOR_CONTAINER_NAME} in pod {pod_name}.[/grey50]"
-                    )
+                    console.print(f"      [grey50]Logs not retrieved for {KOPIAEXECUTOR_CONTAINER_NAME} in pod {pod_name}.[/grey50]")
 
     if not results_found:
-        console.print(
-            "\n[bold]Process complete. No kopiaexecutor logs found for any running backup jobs.[/bold]"
-        )
+        console.print("\n[bold]Process complete. No kopiaexecutor logs found for any running backup jobs.[/bold]")
     else:
         console.print("\n[bold]Process complete.[/bold]")
 
@@ -555,9 +496,7 @@ def _process_backup_logs(
     hide_input=True,
 )
 # Filtering and Control Options
-@click.option(
-    "--cluster-name", required=False, help="Filter backups by cluster name (regex pattern)."
-)
+@click.option("--cluster-name", required=False, help="Filter backups by cluster name (regex pattern).")
 @click.option("--cluster-uid", required=False, help="Filter backups by a specific cluster UID.")
 @click.option(
     "--tail",
@@ -611,9 +550,7 @@ def main(
         )
 
         # --- Determine Target Cluster UID ---
-        target_cluster_uid = _determine_target_cluster_uid(
-            px_client, org_id, cluster_name, cluster_uid
-        )
+        target_cluster_uid = _determine_target_cluster_uid(px_client, org_id, cluster_name, cluster_uid)
 
         console.print("[bold]Starting backup job log fetch process...[/bold]")
 

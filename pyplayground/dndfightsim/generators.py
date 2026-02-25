@@ -27,14 +27,9 @@ def _grow_cluster(
     visited: Set[Tuple[int, int]] = set()
 
     while frontier and len(cluster_tiles) < max_size:
-        current_x, current_y = frontier.pop(
-            random.randrange(len(frontier))
-        )  # Random pop for irregularity
+        current_x, current_y = frontier.pop(random.randrange(len(frontier)))  # Random pop for irregularity
 
-        if (
-            not environment.is_valid_coordinate(current_x, current_y)
-            or (current_x, current_y) in visited
-        ):
+        if not environment.is_valid_coordinate(current_x, current_y) or (current_x, current_y) in visited:
             continue
 
         visited.add((current_x, current_y))
@@ -80,9 +75,7 @@ def generate_field_environment(width: int, height: int) -> "GridEnv":
     for _ in range(num_tree_clusters):
         start_x = random.randint(0, width - 1)
         start_y = random.randint(0, height - 1)
-        _grow_cluster(
-            environment, start_x, start_y, TerrainType.TREE, max_cluster_size, cluster_spread_prob
-        )
+        _grow_cluster(environment, start_x, start_y, TerrainType.TREE, max_cluster_size, cluster_spread_prob)
 
     for _ in range(num_rock_clusters):
         start_x = random.randint(0, width - 1)

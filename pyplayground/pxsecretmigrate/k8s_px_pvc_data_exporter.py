@@ -60,13 +60,9 @@ def get_vault_secret_details(
     vault_namespace: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Reads a secret from Vault and returns its full data (including metadata)."""
-    logger.debug(
-        f"Reading Vault secret at path '{secret_path}' in mount '{mount_point}' (namespace: {vault_namespace or 'root'})."
-    )
+    logger.debug(f"Reading Vault secret at path '{secret_path}' in mount '{mount_point}' (namespace: {vault_namespace or 'root'}).")
     try:
-        vault_client = create_vault_client(
-            url=vault_addr, token=vault_token, namespace=vault_namespace
-        )
+        vault_client = create_vault_client(url=vault_addr, token=vault_token, namespace=vault_namespace)
         secret_content = get_secret(vault_client, secret_path, mount_point=mount_point)
 
         if secret_content is None:
@@ -78,22 +74,16 @@ def get_vault_secret_details(
         return {"error": f"Error reading secret: {type(e).__name__}"}
 
 
-def _initialize_export_environment(
-    core_v1_client: client.CoreV1Api, px_namespace: str
-) -> Optional[tuple[Dict[str, str], str, client.V1Pod, List[str]]]:
+def _initialize_export_environment(core_v1_client: client.CoreV1Api, px_namespace: str) -> Optional[tuple[Dict[str, str], str, client.V1Pod, List[str]]]:
     """Gets Portworx and Vault connection info and returns it, or None if setup fails."""
     return initialize_pvc_vault_environment(core_v1_client, px_namespace)
 
 
-def gather_pvc_data(
-    core_v1: client.CoreV1Api, storage_v1: client.StorageV1Api, px_namespace: str
-) -> Dict[str, List[Dict[str, Any]]]:
+def gather_pvc_data(core_v1: client.CoreV1Api, storage_v1: client.StorageV1Api, px_namespace: str) -> Dict[str, List[Dict[str, Any]]]:
     """Gathers data from PVCs, PVs, and pxctl inspect and returns a dictionary."""
     init_result = _initialize_export_environment(core_v1, px_namespace)
     if not init_result:
-        console.print(
-            "[bold red]Failed to initialize export environment. Check logs for details.[/bold red]"
-        )
+        console.print("[bold red]Failed to initialize export environment. Check logs for details.[/bold red]")
         sys.exit(1)
     vault_conn_info, sa_jwt, px_pod, effective_env_vars = init_result
 
@@ -124,9 +114,7 @@ def gather_pvc_data(
 
             vault_namespace = pvc_data_entry["vaultnamespace"]
             if vault_namespace:
-                vault_token = get_token_for_namespace(
-                    vault_namespace, vault_tokens, vault_conn_info, sa_jwt
-                )
+                vault_token = get_token_for_namespace(vault_namespace, vault_tokens, vault_conn_info, sa_jwt)
                 if vault_token:
                     pvc_data_entry["vault_data"] = get_vault_secret_details(
                         vault_conn_info["addr"],
@@ -156,12 +144,8 @@ def gather_pvc_data(
                 elif pxctl_json and "spec" in pxctl_json:
                     all_labels = pxctl_json.get("locator", {}).get("volume_labels") or {}
                     logger.debug(f"Unfiltered volume labels for {pv_name}: {all_labels}")
-                    pvc_data_entry["portworxvolumeinspect_labels"] = filter_volume_labels(
-                        all_labels
-                    )
-                    logger.debug(
-                        f"Filtered volume labels for {pv_name}: {pvc_data_entry['portworxvolumeinspect_labels']}"
-                    )
+                    pvc_data_entry["portworxvolumeinspect_labels"] = filter_volume_labels(all_labels)
+                    logger.debug(f"Filtered volume labels for {pv_name}: {pvc_data_entry['portworxvolumeinspect_labels']}")
             else:
                 logger.warning(f"PVC {namespace}/{pvc_name} has no PV name (unbound?).")
 

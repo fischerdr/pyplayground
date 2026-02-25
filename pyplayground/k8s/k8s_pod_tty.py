@@ -117,9 +117,7 @@ class Interceptor:
                 os.execlp(argv_list[0], *argv_list)
             except OSError as e:
                 # Log error in child before exiting if execlp fails
-                sys.stderr.write(
-                    f"Child process failed to execute command '{' '.join(argv_list)}': {e}\\n"
-                )
+                sys.stderr.write(f"Child process failed to execute command '{' '.join(argv_list)}': {e}\\n")
                 os._exit(1)  # Use _exit in child to avoid running finally blocks
 
         # Parent process
@@ -174,9 +172,7 @@ class Interceptor:
             return
         try:
             # Get terminal size
-            packed = fcntl.ioctl(
-                pty.STDOUT_FILENO, termios.TIOCGWINSZ, struct.pack("HHHH", 0, 0, 0, 0)
-            )
+            packed = fcntl.ioctl(pty.STDOUT_FILENO, termios.TIOCGWINSZ, struct.pack("HHHH", 0, 0, 0, 0))
             rows, cols, h_pixels, v_pixels = struct.unpack("HHHH", packed)
             logger.debug(f"Terminal size: {rows} rows, {cols} cols")
 
@@ -316,9 +312,7 @@ def _ensure_pod_exists(  # noqa: C901
                 logger.info(f"Pod '{pod_name}' not found. Creating it as requested...")
                 # Proceed with creation logic below
             else:
-                logger.error(
-                    f"Pod '{pod_name}' not found in namespace '{namespace}'. Creation not requested."
-                )
+                logger.error(f"Pod '{pod_name}' not found in namespace '{namespace}'. Creation not requested.")
                 return None  # Pod not found, creation not requested
         else:
             logger.error(f"Kubernetes API error checking pod: {e}")
@@ -358,9 +352,7 @@ def _ensure_pod_exists(  # noqa: C901
             elif pod.status and pod.status.phase in ["Failed", "Unknown"]:
                 logger.error(f"Pod '{pod_name}' entered Failed/Unknown state.")
                 return None  # Indicate failure
-            logger.debug(
-                f"Pod '{pod_name}' current phase: {pod.status.phase if pod.status else 'Unknown'}. Waiting..."
-            )
+            logger.debug(f"Pod '{pod_name}' current phase: {pod.status.phase if pod.status else 'Unknown'}. Waiting...")
             time.sleep(2)  # Shorter sleep interval
     except ApiException as e:
         logger.error(f"API error creating/waiting for pod '{pod_name}': {e}")
@@ -415,9 +407,7 @@ def _setup_stream(
 
 @click.command()
 @click.argument("pod_name", required=True, metavar="POD_NAME", help="Name of the target pod.")
-@click.argument(
-    "namespace", required=True, metavar="NAMESPACE", help="Namespace of the target pod."
-)
+@click.argument("namespace", required=True, metavar="NAMESPACE", help="Namespace of the target pod.")
 @click.argument(
     "command",
     required=True,
@@ -425,9 +415,7 @@ def _setup_stream(
     metavar="COMMAND",
     help="Command and arguments to execute in the pod.",
 )
-@click.option(
-    "-c", "--container", default=None, help="Specify container name within pod (if multiple exist)."
-)
+@click.option("-c", "--container", default=None, help="Specify container name within pod (if multiple exist).")
 @click.option(
     "-x",
     "--create-if-missing",
@@ -482,9 +470,7 @@ def main(
             logger.critical(f"Container selection error: {e}")
             sys.exit(1)
 
-        k8s_stream = _setup_stream(
-            api, pod_name, namespace, command, container_name=target_container
-        )
+        k8s_stream = _setup_stream(api, pod_name, namespace, command, container_name=target_container)
 
         interceptor = Interceptor(k8s_stream=k8s_stream)
         logger.info("Switching to interactive pty mode. Press Ctrl+D or type 'exit' to quit.")

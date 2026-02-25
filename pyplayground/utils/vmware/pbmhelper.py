@@ -68,9 +68,7 @@ def retrieve_storage_policy(pbm_content, policy):
     profile_manager = pbm_content.profileManager
 
     # Retrieving Storage Policies
-    profile_ids = profile_manager.PbmQueryProfile(
-        resourceType=pbm.profile.ResourceType(resourceType="STORAGE"), profileCategory="REQUIREMENT"
-    )
+    profile_ids = profile_manager.PbmQueryProfile(resourceType=pbm.profile.ResourceType(resourceType="STORAGE"), profileCategory="REQUIREMENT")
     if len(profile_ids) > 0:
         profiles = profile_manager.PbmRetrieveContent(profileIds=profile_ids)
     else:

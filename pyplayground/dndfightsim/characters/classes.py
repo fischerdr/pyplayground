@@ -199,10 +199,8 @@ class Mage(Character):
             self.defense_spell_duration -= 1
             if self.defense_spell_duration <= 0:
                 ac_bonus_removed = self.active_defense_spell.get("ac_bonus", 0)
-                print(
-                    f"{self.name}'s {self.active_defense_spell['name']} wears off (-\
-{ac_bonus_removed} AC)."
-                )
+                print(f"{self.name}'s {self.active_defense_spell['name']} wears off (-\
+{ac_bonus_removed} AC).")
                 self.ac -= ac_bonus_removed  # Correctly remove the bonus
                 self.active_defense_spell = None
             # No need to re-apply the bonus here, it persists until duration ends

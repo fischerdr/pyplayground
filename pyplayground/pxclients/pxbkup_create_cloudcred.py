@@ -1,6 +1,7 @@
 #! /usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Creates a cloud credential for PX-backup."""
+
 import argparse
 import csv
 import getpass

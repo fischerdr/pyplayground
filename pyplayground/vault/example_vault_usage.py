@@ -5,6 +5,7 @@
 This script demonstrates how to use the vault namespace review
 functionality programmatically.
 """
+
 import json
 import logging
 import os

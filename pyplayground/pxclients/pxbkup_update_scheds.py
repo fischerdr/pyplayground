@@ -6,6 +6,7 @@ This script manages PX-Backup schedules by updating their suspend status.
 It allows for bulk suspension or resumption of schedules based on command-line arguments.
 
 """
+
 import json
 import logging
 import os

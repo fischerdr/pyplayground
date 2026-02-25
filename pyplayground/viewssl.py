@@ -4,6 +4,7 @@
 This script provides functionality to view SSL certificate details.
 It includes proper logging and type hints as per project guidelines.
 """
+
 import base64
 import logging
 import os

@@ -21,6 +21,7 @@ Example:
     k8s_pod_tty.py nginx-test default -c nginx-container -x /bin/bash
     k8s_pod_tty.py nginx-test default -c nginx-container -x -d /bin/bash
 """
+
 import errno
 import fcntl
 import json

@@ -1,6 +1,7 @@
 #! /usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Counts and sizes Kubernetes resources in a namespace."""
+
 import concurrent.futures  # Import for threading
 import csv
 import datetime

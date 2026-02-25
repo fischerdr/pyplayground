@@ -1,6 +1,7 @@
 #! /usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Tests for the validate_k8s_token command."""
+
 import unittest
 from unittest.mock import MagicMock, patch
 

@@ -57,8 +57,8 @@ dev = [
     "pytest-mock>=3.12.0",
     "pytest-xdist>=3.5.0",     # Parallel test execution
 
-    # Code formatting
-    "black>=23.7.0",
+    # Code formatting (pinned so CI and local match; 26.x enforces blank after docstring)
+    "black==26.1.0",
     "isort>=5.12.0",
     
     # Markdownb linting

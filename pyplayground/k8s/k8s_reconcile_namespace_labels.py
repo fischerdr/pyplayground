@@ -1,6 +1,7 @@
 #! /usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Reconciles namespace labels based on a mapping configuration."""
+
 import datetime
 import json
 import logging

@@ -6,6 +6,7 @@ This module provides functionality to authenticate with PX-Backup instances
 and retrieve version information from the API. It supports both username/password
 authentication and OAuth2 client credentials flow.
 """
+
 import argparse
 import getpass
 import json

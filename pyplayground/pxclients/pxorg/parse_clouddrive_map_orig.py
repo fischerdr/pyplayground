@@ -19,6 +19,7 @@ kubectl get cm <cluster-name> -ojson -n kube-system | jq -r '.data."cloud-drive"
 
 python parse_cd.py cd.json
 """
+
 import json
 import logging
 import os

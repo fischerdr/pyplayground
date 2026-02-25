@@ -1,6 +1,7 @@
 #! /usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Counts standard resources and custom resources (CRDs) grouped by namespace."""
+
 from kubernetes import client, config
 
 

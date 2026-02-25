@@ -5,6 +5,7 @@
 This script demonstrates how to use the vault_namespace_review module
 and provides a simple way to test the functionality.
 """
+
 import json
 import logging
 import os

@@ -39,6 +39,7 @@ python script.py --kubeconfig ~/.kube/config --namespace my-namespace --label-se
 This will run ls / on each pod and mark it as "pass" if the output contains "bin", grouping pods into passing and failing categories based on this condition. Adjust the command and pass/fail criteria as needed
 
 """
+
 from concurrent.futures import ThreadPoolExecutor
 
 import click

@@ -187,10 +187,8 @@ def awx_getdb_creds():
         sys.exit(1)
 
     cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-    cur.execute(
-        """SELECT id, name, organization_id, inputs,
-                 credential_type_id FROM main_credential"""
-    )
+    cur.execute("""SELECT id, name, organization_id, inputs,
+                 credential_type_id FROM main_credential""")
     table = cur.fetchall()
 
     # TODO what if multiple credentials with same name?

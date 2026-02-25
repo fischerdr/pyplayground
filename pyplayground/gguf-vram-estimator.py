@@ -120,7 +120,7 @@ class GGUFMetadataReader:
             (length,) = struct.unpack("<Q", self.f.read(8))
             self.f.seek(length, 1)
         elif value_type == "ARRAY":
-            (array_type_idx, count) = struct.unpack("<IQ", self.f.read(12))
+            array_type_idx, count = struct.unpack("<IQ", self.f.read(12))
             type_map = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8}
             element_size = type_map.get(array_type_idx)
             if element_size:

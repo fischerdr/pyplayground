@@ -12,6 +12,7 @@ This code is licensed under the MIT license.
 Dependencies:
     pip install spatialstudio librosa noise tqdm numpy
 """
+
 # 3‑D video example: https://www.splats.tv/watch/514
 # Tested with spatialstudio 1.1.0.41
 # pip install spatialstudio librosa noise tqdm

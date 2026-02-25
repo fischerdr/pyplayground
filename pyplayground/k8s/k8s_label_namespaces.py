@@ -5,6 +5,7 @@
 This script applies labels to namespaces based on a mapping configuration,
 outputting a log file and console output.
 """
+
 import json
 import logging
 import os

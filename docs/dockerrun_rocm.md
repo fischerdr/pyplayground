@@ -472,6 +472,18 @@ llama-server --alias "Qwen-Coder-30B" --host 0.0.0.0 --port 10000 \
   --temp 0.1 --top-p 0.9 --top-k 40 --min-p 0.05 --repeat-penalty 1.1 \
   --jinja --batch-size 4096 --ubatch-size 1024 \
   --ctx-size 65536 --log-prefix --log-timestamps
+
+llama-server --alias "Qwen-Coder-30B" --host 0.0.0.0 --port 10000 \
+    -hf unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q8_0 \
+    -ngl 99 -np 1 --kv-unified --cache-type-k q8_0 --cache-type-v q8_0 \
+    -fa on --fit on --seed 42 \
+    --temp 0.7 --top-p 0.9 --top-k 40 --min-p 0.05 --repeat-penalty 1.1 \
+    --jinja --batch-size 4096 --ubatch-size 1024 \
+    --ctx-size 98304 --log-prefix --log-timestamps --metrics \
+    --keep 8192 --ctx-checkpoints 128 --cache-reuse 64 --mlock --swa-full 
+
+llama-server --alias "Qwen3.5-35B-A3B" --host 0.0.0.0 --port 10000 -hf unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q4_K_XL --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.00 -fa on --fit on --seed 42 -ngl 99 -np 1 --jinja --batch-size 4096 --ctx-size 98304 --log-prefix --log-timestamps
+
 ```
 
 #### Qwen3-Coder-Next (Balanced code generation)

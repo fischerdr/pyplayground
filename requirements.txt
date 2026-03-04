@@ -45,7 +45,7 @@ cryptography==46.0.5
     #   pyplayground (pyproject.toml)
 distro==1.9.0
     # via bindep
-durationpy==0.9
+durationpy==0.10
     # via kubernetes
 filelock==3.24.3
     # via pyplayground (pyproject.toml)

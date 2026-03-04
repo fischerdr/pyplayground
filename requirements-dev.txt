@@ -72,7 +72,7 @@ docutils==0.21.2
     # via
     #   sphinx
     #   sphinx-rtd-theme
-durationpy==0.9
+durationpy==0.10
     # via kubernetes
 execnet==2.1.2
     # via pytest-xdist

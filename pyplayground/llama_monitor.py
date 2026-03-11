@@ -138,6 +138,7 @@ def _dump_raw(raw: object) -> None:
 @dataclass
 class GpuMetrics:
     """Point-in-time view of AMD GPU and VRAM metrics."""
+
     available: bool = False
     error: str = ""
     # Memory
@@ -183,6 +184,7 @@ class GpuMetrics:
 @dataclass
 class ProcMetrics:
     """Per-process CPU, memory, I/O and VRAM metrics for llama-server."""
+
     available: bool = False
     error: str = ""
     pid: int = 0
@@ -202,6 +204,7 @@ class ProcMetrics:
 @dataclass
 class SysMetrics:
     """Host-wide CPU, memory, swap, load and uptime metrics."""
+
     cpu_pct_total: float = 0.0
     cpu_pct_cores: list = field(default_factory=list)
     mem_total_mib: float = 0.0
@@ -242,6 +245,7 @@ class SysMetrics:
 @dataclass
 class ServerMetrics:
     """Combined llama-server, GPU, process and system metrics for a single host."""
+
     name: str
     url: str
     reachable: bool = False
@@ -777,7 +781,7 @@ def _bar(value: float, maximum: float, width: int = 14) -> str:
 def _fmt_bps(bps: float) -> str:
     if bps < 1024:
         return f"{bps:.0f} B/s"
-    if bps < 1024 ** 2:
+    if bps < 1024**2:
         return f"{bps / 1024:.1f} KB/s"
     return f"{bps / 1024 ** 2:.1f} MB/s"
 
@@ -842,6 +846,7 @@ class SysPanel(Widget):
 
     def refresh_data(self, sy: SysMetrics) -> None:
         """Update the system panel with the latest `SysMetrics` sample."""
+
         def _g(v: float) -> str:
             return f"{v / 1024:.1f}G" if v >= 1024 else f"{v:.0f}M"
 
@@ -865,6 +870,7 @@ class SysPanel(Widget):
 
 class ServerCard(Widget):
     """Per-server detailed card combining inference, GPU, process and system data."""
+
     DEFAULT_CSS = """
     ServerCard {
         border: solid $primary-darken-2;
@@ -1021,6 +1027,7 @@ class ServerCard(Widget):
 
 class SummaryTable(Widget):
     """Compact tabular overview of all configured servers."""
+
     DEFAULT_CSS = """
     SummaryTable {
         height: auto;
@@ -1083,6 +1090,7 @@ class SummaryTable(Widget):
 
 class AddServerScreen(Screen):
     """Modal dialog for interactively adding a new monitored server."""
+
     DEFAULT_CSS = """
     AddServerScreen { align: center middle; }
     #dialog {
@@ -1123,6 +1131,7 @@ class AddServerScreen(Screen):
 
 class LlamaMonitor(App):
     """Textual TUI application that monitors one or more llama-cpp servers."""
+
     CSS = """
     Screen { background: $background; }
     #cards_container {
@@ -1279,6 +1288,7 @@ class LlamaMonitor(App):
 
     def action_add_server(self):
         """Open the add-server dialog and append a new card on success."""
+
         def on_result(r):
             if r:
                 s = ServerMetrics(name=r["name"], url=r["url"])

@@ -5,7 +5,6 @@ This document provides container runtime commands and configurations for running
 ## Table of Contents
 
 - [Common ROCm Environment Variables](#common-rocm-environment-variables)
-- [LocalAI Containers](#localai-containers)
 - [Open-WebUI Containers](#open-webui-containers)
 - [Ollama Containers](#ollama-containers)
 - [Ollama Docker Compose](#ollama-docker-compose)
@@ -19,52 +18,6 @@ Key environment variables used across ROCm containers:
 - `HSA_OVERRIDE_GFX_VERSION`: Override GPU architecture version (e.g., `11.0.0` for compatibility)
 - `HIP_VISIBLE_DEVICES`: Select specific GPU(s) to use (e.g., `0` for first GPU)
 - `GPU_TARGETS`: Specific GPU architecture target (e.g., `gfx1100`, `gfx1151`)
-
-## LocalAI Containers
-
-### LocalAI with HIPBlas Backend
-
-**Use case**: Best performance for RDNA 3 GPUs (RX 7000 series) with gfx1100 architecture.
-
-```bash
-podman run -ti --name local-ai \
-  -p 8080:8080 \
-  --group-add video \
-  --security-opt seccomp=unconfined \
-  --security-opt apparmor=unconfined \
-  --device /dev/kfd \
-  --device /dev/dri \
-  -v localai:/models \
-  -v /opt/rocm/:/opt/rocm/ \
-  -e HSA_OVERRIDE_GFX_VERSION=11.0.0 \
-  -e DEBUG=true \
-  -e REBUILD=true \
-  -e BUILD_TYPE=hipblas \
-  -e GPU_TARGETS=gfx1100 \
-  quay.io/go-skynet/local-ai:master-aio-gpu-hipblas
-```
-
-### LocalAI with Vulkan Backend
-
-**Use case**: Alternative backend for broader GPU compatibility, uses gfx1151 architecture.
-
-```bash
-podman run -ti --name local-ai \
-  -p 8080:8080 \
-  --group-add video \
-  --security-opt seccomp=unconfined \
-  --security-opt apparmor=unconfined \
-  --device /dev/kfd \
-  --device /dev/dri \
-  --ipc=host \
-  --shm-size 16G \
-  -v ${PWD}/models:/models \
-  -e HSA_OVERRIDE_GFX_VERSION=11.0.0 \
-  -e GPU_TARGETS=gfx1151 \
-  -e BUILD_TYPE=vulkan \
-  -e DEBUG=true \
-  localai/localai:master-aio-gpu-vulkan
-```
 
 ## Open-WebUI Containers
 
@@ -692,12 +645,18 @@ llama-server --alias "gpt-oss-20b" --host 0.0.0.0 --port 10001 \
 - **Use case**: Large context reasoning tasks with extended 96k context window
 
 ```bash
-llama-server --alias "GLM-4.7-Flash-Thinking" --host 0.0.0.0 --port 10001 \
+llama-server --alias "GLM-4.7-Flash-Thinking" --host 0.0.0.0 --port 10000 \
   -hf unsloth/GLM-4.7-Flash-GGUF:Q8_0 \
-  --temp 1.0 --top-p 0.95 --min-p 0.01 \
-  --kv-unified --cache-type-k q8_0 --cache-type-v q8_0 -fa on \
+  # --temp 0.7 --top-p 1.0 --min-p 0.01 --repeat-penalty 1.0 tools calls \
+  --temp 1.0 --top-p 0.95 --min-p 0.01 -fa on \
   -ngl 99 --parallel 1 --seed 42 --fit on \
+  --kv-unified --cache-type-k bf16 --cache-type-v bf16 \
   --jinja --batch-size 4096 --ubatch-size 1024 \
-  --mlock --no-mmap --ctx-size 98304 \
+  --no-mmap --ctx-size 131072 --reasoning-format deepseek --metrics \
   --log-prefix --log-timestamps
+
+llama-server   --alias "GLM-4.7-Flash" --host 0.0.0.0 --port 10000   -hf unsloth/GLM-4.7-Flash-GGUF:Q8_0 --temp 0.7 --top-p 1.0 --min-p 0.01 --repeat-penalty 1.0 -fa on --seed 42 --parallel 1 --no-mmap   --fit on --jinja   --batch-size 4096 --ubatch-size 1024   --ctx-size 131072 -ngl 99   --cache-type-k Q8_0 --cache-type-v Q8_0 --reasoning-format deepseek --metrics --log-prefix --log-timestamps --kv-unified   --chat-template-kwargs '{"enable_thinking": false}' 
+
+llama-server   --alias "Qwen3.5-35B-A3B"   --host 0.0.0.0 --port 10000   -hf unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q8_K_XL   --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.00   --presence-penalty 0.0 -fa on --seed 42 -np 1 --jinja --no-mmap --batch-size 4096 --ubatch-size 1024 --ctx-size 131072 -ngl 99 --image-min-tokens 2048 --metrics   --log-prefix --log-timestamps --kv-unified --cache-type-k q8_0 --cache-type-v q8_0
+
 ```

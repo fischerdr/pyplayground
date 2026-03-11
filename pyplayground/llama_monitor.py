@@ -1304,7 +1304,6 @@ class LlamaMonitor(App):
 
 def main():
     """Parse CLI arguments, configure logging and run the TUI."""
-
     import argparse
 
     parser = argparse.ArgumentParser(

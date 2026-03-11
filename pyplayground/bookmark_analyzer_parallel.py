@@ -141,12 +141,16 @@ def parse_firefox_bookmarks(file_path):
 
 
 @click.command()
-@click.option("--file", default="bookmarks.html", help="Path to the bookmark HTML file")
-@click.option("--debug", is_flag=True, help="Enable debug logging")
-def cli(file, debug):
+@click.option('--api-url', default='http://flyyn.modmtrx.net:10000/v1/chat/completions', help='Custom API Endpoint URL')
+@click.option('--file', default='bookmarks.html', help='Path to the bookmark HTML file')
+@click.option('--debug', is_flag=True, help='Enable debug logging')
+def cli(file, debug, api_url):
     """Tool to validate bookmarks, scrape content, and generate tags using LLM."""
     setup_logging(debug)
     logging.info("Starting Bookmark Analyzer...")
+    # Update the global URL configuration to use the passed option
+    global DEFAULT_URL
+    DEFAULT_URL = api_url
 
     bookmarks = parse_firefox_bookmarks(file)
 

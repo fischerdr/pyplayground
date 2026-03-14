@@ -187,7 +187,7 @@ pep8-naming==0.15.1
     # via pyplayground (pyproject.toml)
 pexpect==4.9.0
     # via ansible-runner
-pick==2.4.0
+pick==2.6.0
     # via pyplayground (pyproject.toml)
 pint==0.25.2
     # via pyplayground (pyproject.toml)

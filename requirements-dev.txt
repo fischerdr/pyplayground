@@ -199,7 +199,7 @@ platformdirs==4.3.7
     #   pint
     #   textual
     #   virtualenv
-pluggy==1.5.0
+pluggy==1.6.0
     # via
     #   pytest
     #   pytest-cov

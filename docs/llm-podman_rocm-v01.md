@@ -660,3 +660,124 @@ llama-server   --alias "GLM-4.7-Flash" --host 0.0.0.0 --port 10000   -hf unsloth
 llama-server   --alias "Qwen3.5-35B-A3B"   --host 0.0.0.0 --port 10000   -hf unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q8_K_XL   --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.00   --presence-penalty 0.0 -fa on --seed 42 -np 1 --jinja --no-mmap --batch-size 4096 --ubatch-size 1024 --ctx-size 131072 -ngl 99 --image-min-tokens 2048 --metrics   --log-prefix --log-timestamps --kv-unified --cache-type-k q8_0 --cache-type-v q8_0
 
 ```
+Based on everything we've established — hardware, ROCm constraints, agentic coding use case, and the help output — here are the five configs:
+
+---
+
+**`unsloth/Qwen3-Coder-Next-GGUF:UD-Q4_K_XL`** — `case` port 10001, primary precision coding
+```bash
+llama-server \
+  --alias "Qwen3-Coder-Next" \
+  --host 0.0.0.0 --port 10001 \
+  -hf unsloth/Qwen3-Coder-Next-GGUF:UD-Q4_K_XL \
+  --temp 1.0 --top-p 0.95 --min-p 0.01 --top-k 40 \
+  --reasoning off \
+  --reasoning-format deepseek \
+  -fa on -ngl 99 --seed 42 --jinja \
+  --no-mmap \
+  -np 1 \
+  --batch-size 4096 --ubatch-size 256 \
+  --ctx-size 65536 \
+  --kv-unified --cache-type-k q8_0 --cache-type-v q8_0 \
+  --keep 8192 --cache-reuse 64 --ctx-checkpoints 128 \
+  --swa-full \
+  --metrics --log-prefix --log-timestamps
+```
+
+---
+
+**`unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q8_K_XL`** — `case` port 10000, Python/high-level, secondary
+```bash
+llama-server \
+  --alias "Qwen3.5-35B-A3B" \
+  --host 0.0.0.0 --port 10000 \
+  -hf unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q8_K_XL \
+  --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.00 \
+  --reasoning off \
+  --reasoning-format deepseek \
+  -fa on -ngl 99 --seed 42 --jinja \
+  --no-mmap \
+  -np 2 \
+  --batch-size 4096 --ubatch-size 512 \
+  --ctx-size 98304 \
+  --kv-unified --cache-type-k q8_0 --cache-type-v q8_0 \
+  --keep 8192 --cache-reuse 64 --ctx-checkpoints 64 \
+  --image-min-tokens 2048 \
+  --metrics --log-prefix --log-timestamps
+```
+
+---
+
+**`unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q6_K_XL`** — `case` port 10000, same role, lower memory footprint
+```bash
+llama-server \
+  --alias "Qwen3.5-35B-A3B" \
+  --host 0.0.0.0 --port 10000 \
+  -hf unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q6_K_XL \
+  --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.00 \
+  --reasoning off \
+  --reasoning-format deepseek \
+  -fa on -ngl 99 --seed 42 --jinja \
+  --no-mmap \
+  -np 2 \
+  --batch-size 4096 --ubatch-size 512 \
+  --ctx-size 131072 \
+  --kv-unified --cache-type-k q8_0 --cache-type-v q8_0 \
+  --keep 8192 --cache-reuse 64 --ctx-checkpoints 64 \
+  --image-min-tokens 2048 \
+  --metrics --log-prefix --log-timestamps
+```
+Note: Q6_K_XL saves ~17GB over Q8_K_XL, so ctx bumps to 131072 with room to spare.
+
+---
+
+**`unsloth/Qwen3.5-27B-GGUF:UD-Q6_K_XL`** — `case` port 10000, quality-focused alternative
+```bash
+llama-server \
+  --alias "Qwen3.5-27B" \
+  --host 0.0.0.0 --port 10000 \
+  -hf unsloth/Qwen3.5-27B-GGUF:UD-Q6_K_XL \
+  --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.00 \
+  --reasoning off \
+  --reasoning-format deepseek \
+  -fa on -ngl 99 --seed 42 --jinja \
+  --no-mmap \
+  -np 2 \
+  --batch-size 4096 --ubatch-size 256 \
+  --ctx-size 131072 \
+  --kv-unified --cache-type-k q8_0 --cache-type-v q8_0 \
+  --keep 8192 --cache-reuse 64 --ctx-checkpoints 64 \
+  --metrics --log-prefix --log-timestamps
+```
+Note: No `--image-min-tokens` — 27B is dense/text-only, no multimodal capability.
+
+---
+
+**`unsloth/Qwen3.5-27B-GGUF:UD-Q8_K_XL`** — `case` port 10000, max quality, tighter memory
+```bash
+llama-server \
+  --alias "Qwen3.5-27B" \
+  --host 0.0.0.0 --port 10000 \
+  -hf unsloth/Qwen3.5-27B-GGUF:UD-Q8_K_XL \
+  --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.00 \
+  --reasoning off \
+  --reasoning-format deepseek \
+  -fa on -ngl 99 --seed 42 --jinja \
+  --no-mmap \
+  -np 2 \
+  --batch-size 4096 --ubatch-size 256 \
+  --ctx-size 98304 \
+  --kv-unified --cache-type-k q8_0 --cache-type-v q8_0 \
+  --keep 8192 --cache-reuse 64 --ctx-checkpoints 64 \
+  --metrics --log-prefix --log-timestamps
+```
+Note: ctx drops back to 98304 vs Q6 since Q8_K_XL for 27B is ~35.5GB vs ~22GB.
+
+---
+
+**Key differences across the five:**
+
+- Coder-Next keeps `--swa-full` and `-np 1` — pure transformer, single slot, cache-reuse optimized for long agentic sessions
+- 35B-A3B variants keep `--image-min-tokens 2048` — multimodal confirmed via `/v1/models`; 27B drops it
+- Q6 variants get the ctx bump that Q8 can't afford
+- `--ubatch-size 256` on 27B vs 512 on 35B-A3B — 27B is denser per active parameter, lower ubatch reduces ROCm init_batch risk

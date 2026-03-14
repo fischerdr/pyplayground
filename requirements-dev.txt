@@ -296,7 +296,7 @@ rich==14.3.3
     #   typer
 roman-numerals==4.1.0
     # via sphinx
-rpds-py==0.26.0
+rpds-py==0.30.0
     # via
     #   jsonschema
     #   referencing

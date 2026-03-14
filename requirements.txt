@@ -12,6 +12,8 @@ ansible-core==2.20.3
     # via pyplayground (pyproject.toml)
 ansible-runner==2.4.2
     # via pyplayground (pyproject.toml)
+anyio==4.12.1
+    # via httpx
 attrs==25.4.0
     # via
     #   jsonschema
@@ -28,6 +30,8 @@ botocore==1.42.56
     #   s3transfer
 certifi==2025.1.31
     # via
+    #   httpcore
+    #   httpx
     #   kubernetes
     #   requests
 cffi==2.0.0
@@ -53,10 +57,19 @@ flexcache==0.3
     # via pint
 flexparser==0.4
     # via pint
+h11==0.16.0
+    # via httpcore
+httpcore==1.0.9
+    # via httpx
+httpx==0.28.1
+    # via pyplayground (pyproject.toml)
 hvac==2.4.0
     # via pyplayground (pyproject.toml)
 idna==3.10
-    # via requests
+    # via
+    #   anyio
+    #   httpx
+    #   requests
 jinja2==3.1.6
     # via ansible-core
 jmespath==1.1.0
@@ -69,14 +82,21 @@ jsonschema-specifications==2025.4.1
     # via jsonschema
 kubernetes==35.0.0
     # via pyplayground (pyproject.toml)
+linkify-it-py==2.1.0
+    # via markdown-it-py
 lockfile==0.12.2
     # via python-daemon
 markdown==3.10.2
     # via pyplayground (pyproject.toml)
-markdown-it-py==3.0.0
-    # via rich
+markdown-it-py[linkify]==3.0.0
+    # via
+    #   mdit-py-plugins
+    #   rich
+    #   textual
 markupsafe==3.0.2
     # via jinja2
+mdit-py-plugins==0.5.0
+    # via textual
 mdurl==0.1.2
     # via markdown-it-py
 oauthlib==3.2.2
@@ -98,7 +118,11 @@ pick==2.4.0
 pint==0.25.2
     # via pyplayground (pyproject.toml)
 platformdirs==4.3.7
-    # via pint
+    # via
+    #   pint
+    #   textual
+psutil==7.2.2
+    # via pyplayground (pyproject.toml)
 psycopg2-binary==2.9.11
     # via pyplayground (pyproject.toml)
 ptyprocess==0.7.0
@@ -108,7 +132,9 @@ pyasn1==0.6.2
 pycparser==2.22
     # via cffi
 pygments==2.19.2
-    # via rich
+    # via
+    #   rich
+    #   textual
 pyopenssl==25.3.0
     # via pyplayground (pyproject.toml)
 python-daemon==3.1.2
@@ -147,6 +173,7 @@ resolvelib==1.2.1
 rich==14.3.3
     # via
     #   pyplayground (pyproject.toml)
+    #   textual
     #   typer
 rpds-py==0.26.0
     # via
@@ -164,6 +191,8 @@ structlog==25.5.0
     # via pyplayground (pyproject.toml)
 tenacity==9.1.4
     # via pyplayground (pyproject.toml)
+textual==8.0.2
+    # via pyplayground (pyproject.toml)
 typer==0.24.1
     # via pyplayground (pyproject.toml)
 typing-extensions==4.13.2
@@ -171,6 +200,9 @@ typing-extensions==4.13.2
     #   flexcache
     #   flexparser
     #   pint
+    #   textual
+uc-micro-py==2.0.0
+    # via linkify-it-py
 urllib3==2.6.3
     # via
     #   botocore

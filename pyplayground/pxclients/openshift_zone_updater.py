@@ -26,7 +26,8 @@ Usage:
 
 import logging
 import os
-from typing import Any, Dict, Optional
+import time
+from typing import Any, Callable, Dict, Optional, TypeVar
 
 import click
 from rich.console import Console
@@ -42,6 +43,8 @@ from pyplayground.utils.k8s_utils import (
 )
 from pyplayground.utils.logging_utils import get_logger, setup_logging
 
+T = TypeVar("T")
+
 logger = get_logger(__name__)
 
 console = Console()
@@ -49,6 +52,74 @@ console = Console()
 # Constants
 NAMESPACE = "openshift-machine-api"
 ZONE_LABEL_KEY = "topology.portworx.io/zone"
+
+MAX_API_RETRIES = 3
+API_RETRY_DELAY = 1.0
+
+
+def retry_with_backoff(
+    func: Callable[..., T],
+    *args: Any,
+    max_retries: int = MAX_API_RETRIES,
+    base_delay: float = API_RETRY_DELAY,
+    **kwargs: Any,
+) -> T:
+    """Execute a function with exponential backoff retry logic.
+
+    Args:
+        func: The function to execute
+        *args: Positional arguments to pass to the function
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay in seconds for exponential backoff
+        **kwargs: Keyword arguments to pass to the function
+
+    Returns:
+        The result of the function call
+
+    Raises:
+        Exception: The last exception if all retries are exhausted
+    """
+    last_exception: Optional[BaseException] = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.debug(
+                "Executing %s (attempt %d/%d)",
+                func.__name__,
+                attempt,
+                max_retries,
+            )
+            return func(*args, **kwargs)
+        except Exception as e:
+            last_exception = e
+            logger.warning(
+                "%s attempt %d/%d failed: %s",
+                func.__name__,
+                attempt,
+                max_retries,
+                e,
+            )
+
+            if attempt < max_retries:
+                delay = base_delay * (2 ** (attempt - 1))
+                logger.debug(
+                    "Retrying %s in %.1fs (exponential backoff)",
+                    func.__name__,
+                    delay,
+                )
+                time.sleep(delay)
+
+    if last_exception is not None:
+        logger.error(
+            "%s failed after %d retries: %s",
+            func.__name__,
+            max_retries,
+            last_exception,
+            exc_info=True,
+        )
+        raise last_exception
+
+    raise RuntimeError("Unexpected state in retry_with_backoff")
 
 
 def validate_machine_status(
@@ -170,17 +241,41 @@ def process_machineset(
         new_zone_value,
     )
 
+    # Collect changes for dry-run summary
+    changes_summary: Dict[str, Any] = {
+        "machineset": {"name": resource_name, "old": None, "new": new_zone_value},
+        "machines": [],
+        "nodes": [],
+    }
+
     # Step 1: Update MachineSet labels
-    if not update_zone_label(
+    machineset_updated, machineset_old_value = update_zone_label(
         machineset,
         ZONE_LABEL_KEY,
         new_zone_value,
         dry_run=dry_run,
-    ):
+    )
+    if not machineset_updated:
         return False
 
+    if dry_run:
+        changes_summary["machineset"]["old"] = machineset_old_value if machineset_old_value else "not set"
+
     # Step 2: Get and update Machines in the MachineSet
-    machines = get_machines_for_machineset(resource_name)
+    try:
+        machines = retry_with_backoff(
+            get_machines_for_machineset,
+            resource_name,
+        )
+    except Exception as e:
+        logger.error(
+            "Failed to get Machines for MachineSet %s after retries: %s",
+            resource_name,
+            e,
+            exc_info=True,
+        )
+        return False
+
     if not machines:
         logger.warning(
             "No Machines found for MachineSet %s",
@@ -192,23 +287,61 @@ def process_machineset(
                 resource_name,
             )
     for machine in machines:
+        machine_name = machine["metadata"]["name"]
         # Validate Machine status before processing
         if not validate_machine_status(machine, dry_run=dry_run):
             logger.warning(
                 "Machine %s failed status validation, skipping",
-                machine["metadata"]["name"],
+                machine_name,
             )
             continue
-        if not update_zone_label(
+
+        machine_updated, machine_old_value = update_zone_label(
             machine,
             ZONE_LABEL_KEY,
             new_zone_value,
             dry_run=dry_run,
-        ):
+        )
+        if not machine_updated:
             return False
 
+        # Post-update verification for Machine labels
+        if not dry_run:
+            machine_labels = machine.get("spec", {}).get("metadata", {}).get("labels", {})
+            if machine_labels.get(ZONE_LABEL_KEY) != new_zone_value:
+                logger.error(
+                    "Post-update verification failed for Machine %s: " "expected %s=%s, got %s",
+                    machine_name,
+                    ZONE_LABEL_KEY,
+                    new_zone_value,
+                    machine_labels.get(ZONE_LABEL_KEY, "not set"),
+                )
+                return False
+
+        if dry_run:
+            changes_summary["machines"].append(
+                {
+                    "name": machine_name,
+                    "old": machine_old_value if machine_old_value else "not set",
+                    "new": new_zone_value,
+                }
+            )
+
     # Step 3: Get and update Nodes for the Machines
-    nodes = get_nodes_for_machines(machines)
+    try:
+        nodes = retry_with_backoff(
+            get_nodes_for_machines,
+            machines,
+        )
+    except Exception as e:
+        logger.error(
+            "Failed to get Nodes for Machines in MachineSet %s after retries: %s",
+            resource_name,
+            e,
+            exc_info=True,
+        )
+        return False
+
     if dry_run and len(nodes) < len(machines):
         missing_count = len(machines) - len(nodes)
         logger.info(
@@ -216,13 +349,65 @@ def process_machineset(
             missing_count,
         )
     for node in nodes:
-        if not update_zone_label(
+        node_name = node["metadata"]["name"]
+        node_updated, node_old_value = update_zone_label(
             node,
             ZONE_LABEL_KEY,
             new_zone_value,
             dry_run=dry_run,
-        ):
+        )
+        if not node_updated:
             return False
+
+        if dry_run:
+            changes_summary["nodes"].append(
+                {
+                    "name": node_name,
+                    "old": node_old_value if node_old_value else "not set",
+                    "new": new_zone_value,
+                }
+            )
+
+    # Print dry-run summary if in dry-run mode
+    if dry_run:
+        logger.info("\n%s", "=" * 60)
+        logger.info("DRY-RUN SUMMARY FOR MachineSet: %s", resource_name)
+        logger.info("%s", "=" * 60)
+
+        ms_old = changes_summary["machineset"]["old"]
+        ms_new = changes_summary["machineset"]["new"]
+        logger.info(
+            "MachineSet %s: %s -> %s",
+            resource_name,
+            ms_old if ms_old else "not set",
+            ms_new,
+        )
+
+        for machine_info in changes_summary["machines"]:
+            logger.info(
+                "Machine %s: %s -> %s",
+                machine_info["name"],
+                machine_info["old"] if machine_info["old"] else "not set",
+                machine_info["new"],
+            )
+
+        for node_info in changes_summary["nodes"]:
+            logger.info(
+                "Node %s: %s -> %s",
+                node_info["name"],
+                node_info["old"] if node_info["old"] else "not set",
+                node_info["new"],
+            )
+
+        logger.info("%s", "=" * 60)
+        total_changes = 1 + len(changes_summary["machines"]) + len(changes_summary["nodes"])
+        logger.info(
+            "Total resources to update: %d (1 MachineSet, %d Machines, %d Nodes)",
+            total_changes,
+            len(changes_summary["machines"]),
+            len(changes_summary["nodes"]),
+        )
+        logger.info("%s", "=" * 60)
 
     return True
 
@@ -294,7 +479,18 @@ def main(kubeconfig: Optional[str], dry_run: bool, live: bool, debug: bool) -> N
             raise click.Abort()
 
         # Get all MachineSets (client created internally by utility function)
-        machinesets = get_all_machinesets()
+        try:
+            machinesets = retry_with_backoff(
+                get_all_machinesets,
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to get MachineSets after retries: %s",
+                e,
+                exc_info=True,
+            )
+            click.echo("ERROR: Failed to get MachineSets.", err=True)
+            raise click.Abort()
 
         if not machinesets:
             logger.warning("No MachineSets found in namespace %s", NAMESPACE)
@@ -310,7 +506,7 @@ def main(kubeconfig: Optional[str], dry_run: bool, live: bool, debug: bool) -> N
                     success_count += 1
                 else:
                     failure_count += 1
-            except Exception as e:
+            except BaseException as e:
                 logger.error(
                     "Failed to process MachineSet %s: %s",
                     machineset["metadata"]["name"],

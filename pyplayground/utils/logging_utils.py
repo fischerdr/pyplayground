@@ -116,9 +116,9 @@ def setup_logging(  # noqa: C901
     root_logger.handlers.clear()
 
     # Create logs directory if it doesn't exist
-    if not os.path.exists(log_dir):
+    if log_dir and not os.path.exists(str(log_dir)):
         try:
-            os.makedirs(log_dir)
+            os.makedirs(str(log_dir))
         except OSError as e:
             # Fallback gracefully if dir creation fails (e.g., permissions)
             print(

@@ -5,6 +5,7 @@ including client creation, secret management, and token operations.
 """
 
 import base64
+import binascii
 import json
 import logging
 import os
@@ -277,7 +278,12 @@ def list_secrets(client: hvac.Client, path: str, mount_point: str = "secret") ->
         raise
 
 
-def get_secret(client: hvac.Client, path: str, mount_point: str = "secret", version: Optional[int] = None) -> Optional[Dict[str, Any]]:
+def get_secret(
+    client: hvac.Client,
+    path: str,
+    mount_point: str = "secret",
+    version: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
     """Retrieve a secret from Vault.
 
     Gets the secret data at the specified path from the Vault KV2 secrets engine.
@@ -343,7 +349,7 @@ def debug_token(token: str) -> str:
     return "Token too short"
 
 
-def log_jwt_payload(jwt: str):
+def log_jwt_payload(jwt: str) -> None:
     """Safely decodes and logs the payload of a JWT for debugging.
 
     Args:
@@ -369,7 +375,7 @@ def log_jwt_payload(jwt: str):
 
         logger.debug("Decoded JWT Payload Claims: %s", payload_dict)
 
-    except (IndexError, TypeError, base64.binascii.Error, json.JSONDecodeError) as e:
+    except (IndexError, TypeError, binascii.Error, json.JSONDecodeError) as e:
         logger.warning("Could not decode JWT payload for debugging: %s", e, exc_info=True)
 
 
@@ -646,7 +652,7 @@ def get_policies(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
     Returns:
         Dict containing policy information
     """
-    policies_data = {"policies": [], "errors": []}
+    policies_data: Dict[str, Any] = {"policies": [], "errors": []}
 
     logger.debug("Starting policy retrieval process...")
     logger.debug(f"Vault client namespace: {getattr(client, 'namespace', 'None')}")
@@ -693,10 +699,10 @@ def get_policies(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
                     # Analyze policy rules for common patterns
                     if rules:
                         rules_lower = rules.lower()
-                        capabilities_count = rules_lower.count("capabilities")
-                        path_count = rules_lower.count("path")
-                        secret_refs = rules_lower.count("secret")
-                        deny_refs = rules_lower.count("deny")
+                        capabilities_count: int = rules_lower.count("capabilities")
+                        path_count: int = rules_lower.count("path")
+                        secret_refs: int = rules_lower.count("secret")
+                        deny_refs: int = rules_lower.count("deny")
 
                         logger.debug(f"  - Policy analysis for '{policy_name}':")
                         logger.debug(f"    * Capabilities statements: {capabilities_count}")
@@ -741,7 +747,7 @@ def get_groups(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
     Returns:
         Dict containing group information
     """
-    groups_data = {"groups": [], "errors": []}
+    groups_data: Dict[str, Any] = {"groups": [], "errors": []}
 
     logger.debug("Starting identity groups retrieval process...")
     logger.debug(f"Vault client namespace: {getattr(client, 'namespace', 'None')}")
@@ -779,9 +785,9 @@ def get_groups(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
                     group_data = group_response["data"]
                     group_name = group_data.get("name", "Unknown")
                     group_type = group_data.get("type", "unknown")
-                    member_entities = group_data.get("member_entity_ids", [])
-                    member_groups = group_data.get("member_group_ids", [])
-                    policies = group_data.get("policies", [])
+                    member_entities: List[str] = group_data.get("member_entity_ids", [])
+                    member_groups: List[str] = group_data.get("member_group_ids", [])
+                    policies: List[str] = group_data.get("policies", [])
                     metadata = group_data.get("metadata", {})
 
                     group_info = {
@@ -851,7 +857,7 @@ def get_auth_methods(client: hvac.Client) -> Dict[str, Any]:  # noqa: C901
     Returns:
         Dict containing auth method information
     """
-    auth_methods_data = {"auth_methods": [], "errors": []}
+    auth_methods_data: Dict[str, Any] = {"auth_methods": [], "errors": []}
 
     logger.debug("Starting authentication methods retrieval process...")
     logger.debug(f"Vault client namespace: {getattr(client, 'namespace', 'None')}")
@@ -955,7 +961,7 @@ def get_auth_role_bindings(client: hvac.Client, auth_methods: List[Dict[str, Any
     Returns:
         Dict containing role binding information for each auth method
     """
-    role_bindings_data = {"role_bindings": [], "errors": []}
+    role_bindings_data: Dict[str, Any] = {"role_bindings": [], "errors": []}
 
     logger.debug("Starting authentication role bindings retrieval process...")
     logger.debug(f"Processing {len(auth_methods)} auth methods for role bindings")
@@ -1015,7 +1021,7 @@ def get_auth_role_bindings(client: hvac.Client, auth_methods: List[Dict[str, Any
 
 def _get_kubernetes_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, Any]:  # noqa: C901
     """Retrieve Kubernetes auth method role bindings."""
-    roles_data = {"roles": [], "errors": []}
+    roles_data: Dict[str, Any] = {"roles": [], "errors": []}
 
     logger.debug(f"Retrieving Kubernetes roles for auth path: {auth_path}")
 
@@ -1092,7 +1098,7 @@ def _get_kubernetes_role_bindings(client: hvac.Client, auth_path: str) -> Dict[s
 
 def _get_ldap_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, Any]:  # noqa: C901
     """Retrieve LDAP auth method role bindings."""
-    roles_data = {"roles": [], "errors": []}
+    roles_data: Dict[str, Any] = {"roles": [], "errors": []}
 
     logger.debug(f"Retrieving LDAP groups/users for auth path: {auth_path}")
 
@@ -1181,7 +1187,7 @@ def _get_ldap_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, An
 
 def _get_userpass_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, Any]:
     """Retrieve userpass auth method role bindings."""
-    roles_data = {"roles": [], "errors": []}
+    roles_data: Dict[str, Any] = {"roles": [], "errors": []}
 
     logger.debug(f"Retrieving userpass users for auth path: {auth_path}")
 
@@ -1233,7 +1239,7 @@ def _get_userpass_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str
 
 def _get_aws_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, Any]:
     """Retrieve AWS auth method role bindings."""
-    roles_data = {"roles": [], "errors": []}
+    roles_data: Dict[str, Any] = {"roles": [], "errors": []}
 
     logger.debug(f"Retrieving AWS roles for auth path: {auth_path}")
 
@@ -1296,7 +1302,7 @@ def _get_aws_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, Any
 
 def _get_azure_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, Any]:
     """Retrieve Azure auth method role bindings."""
-    roles_data = {"roles": [], "errors": []}
+    roles_data: Dict[str, Any] = {"roles": [], "errors": []}
 
     logger.debug(f"Retrieving Azure roles for auth path: {auth_path}")
 
@@ -1349,7 +1355,7 @@ def _get_azure_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, A
 
 def _get_oidc_jwt_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, Any]:
     """Retrieve OIDC/JWT auth method role bindings."""
-    roles_data = {"roles": [], "errors": []}
+    roles_data: Dict[str, Any] = {"roles": [], "errors": []}
 
     logger.debug(f"Retrieving OIDC/JWT roles for auth path: {auth_path}")
 
@@ -1408,7 +1414,7 @@ def _get_oidc_jwt_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str
 
 def _get_approle_role_bindings(client: hvac.Client, auth_path: str) -> Dict[str, Any]:
     """Retrieve AppRole auth method role bindings."""
-    roles_data = {"roles": [], "errors": []}
+    roles_data: Dict[str, Any] = {"roles": [], "errors": []}
 
     logger.debug(f"Retrieving AppRole roles for auth path: {auth_path}")
 
@@ -1477,7 +1483,11 @@ def get_namespace_info(client: hvac.Client, namespace: str) -> Dict[str, Any]:
     Returns:
         Dict containing namespace information
     """
-    namespace_info = {"name": namespace, "timestamp": None, "errors": []}
+    namespace_info: Dict[str, Any] = {
+        "name": namespace,
+        "timestamp": None,
+        "errors": [],
+    }
 
     try:
         # Get current time for timestamp
@@ -1515,7 +1525,7 @@ def perform_namespace_review(namespace: str, debug: bool = False) -> Dict[str, A
     logger.info(f"Starting Vault namespace review for: {namespace}")
     logger.debug(f"Debug mode enabled: {debug}")
 
-    review_results = {
+    review_results: Dict[str, Any] = {
         "namespace_info": {},
         "policies": {},
         "groups": {},
@@ -1585,7 +1595,7 @@ def perform_namespace_review(namespace: str, debug: bool = False) -> Dict[str, A
         logger.debug(f"=== ROLE BINDINGS RETRIEVAL PHASE COMPLETED: {total_roles} roles found across all auth methods ===")
 
         # Collect all errors
-        all_errors = []
+        all_errors: List[str] = []
         all_errors.extend(policies_data.get("errors", []))
         all_errors.extend(groups_data.get("errors", []))
         all_errors.extend(auth_methods_data.get("errors", []))

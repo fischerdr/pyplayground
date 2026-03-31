@@ -123,6 +123,7 @@ tmp/build/*
 *.tmp
 *.temp
 models/**/*
+examples/
 
 # Config files
 !config/**/*

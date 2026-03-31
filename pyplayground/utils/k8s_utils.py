@@ -1107,3 +1107,466 @@ def get_cluster_name_from_config() -> str:
     except Exception as e:
         logger.error(f"Failed to get cluster name from kubeconfig: {e}", exc_info=True)
         return "unknown_cluster"
+
+
+def get_machineset_resource_pool(
+    machineset: Dict[str, Any],
+) -> Optional[str]:
+    """Extract the resourcePool path from a MachineSet.
+
+    Args:
+        machineset: The MachineSet resource dictionary
+
+    Returns:
+        The resourcePool path string, or None if not found
+
+    Example:
+        >>> machineset = get_machineset("my-machineset")
+        >>> resource_pool = get_machineset_resource_pool(machineset)
+        >>> print(resource_pool)
+        /SDDC2D1LINFVS01-DC1/host/SDDC2D1LINFVS01-C12/Resources
+    """
+    return (
+        machineset.get("spec", {})
+        .get("template", {})
+        .get("spec", {})
+        .get("providerSpec", {})
+        .get("value", {})
+        .get("workspace", {})
+        .get("resourcePool")
+    )
+
+
+def parse_resource_pool_path(resource_pool: str) -> str:
+    """Extract the ESXi host cluster name from the resourcePool path.
+
+    The resourcePool path follows the format:
+    /datacenter/host/cluster_name/Resources
+
+    Args:
+        resource_pool: The resourcePool path (e.g.,
+            '/SDDC2D1LINFVS01-DC1/host/SDDC2D1LINFVS01-C12/Resources')
+
+    Returns:
+        The extracted host cluster name (e.g., 'SDDC2D1LINFVS01-C12')
+
+    Examples:
+        >>> parse_resource_pool_path('/SDDC2D1LINFVS01-DC1/host/SDDC2D1LINFVS01-C12/Resources')
+        'SDDC2D1LINFVS01-C12'
+        >>> parse_resource_pool_path('/DC1/host/CLUSTER/Resources')
+        'CLUSTER'
+    """
+    logger.debug("Parsing resourcePool path: %s", resource_pool)
+
+    # Parse the path: /datacenter/host/cluster_name/Resources
+    # Extract the cluster name (third component)
+    parts = resource_pool.strip("/").split("/")
+
+    if len(parts) >= 3:
+        cluster_name = parts[2]
+        logger.debug("Extracted cluster name: %s", cluster_name)
+        return cluster_name
+
+    logger.warning(
+        "Could not parse cluster name from resourcePool path: %s, using original",
+        resource_pool,
+    )
+    return resource_pool
+
+
+def get_zone_label(
+    resource: Dict[str, Any],
+    label_key: str = "topology.portworx.io/zone",
+) -> Optional[str]:
+    """Get the zone label value from any Kubernetes resource.
+
+    Args:
+        resource: The Kubernetes resource dictionary (MachineSet, Machine, or Node)
+        label_key: The label key to look for (default: topology.portworx.io/zone)
+
+    Returns:
+        The label value if found, None otherwise
+
+    Examples:
+        >>> machineset = get_machineset("my-machineset")
+        >>> zone = get_zone_label(machineset)
+        >>> print(zone)
+        SDDC2D1LINFVS01-C12
+    """
+    # Try different label paths based on resource type
+    # MachineSet: spec.template.spec.metadata.labels
+    # Machine: spec.metadata.labels
+    # Node: metadata.labels
+
+    # Try MachineSet path first
+    labels = (
+        resource.get("spec", {})
+        .get("template", {})
+        .get("spec", {})
+        .get("metadata", {})
+        .get("labels")
+    )
+
+    # Try Machine path if not found
+    if not labels:
+        labels = resource.get("spec", {}).get("metadata", {}).get("labels")
+
+    # Try Node path if not found
+    if not labels:
+        labels = resource.get("metadata", {}).get("labels")
+
+    if labels:
+        return labels.get(label_key)
+
+    return None
+
+
+def update_zone_label(
+    resource: Dict[str, Any],
+    label_key: str,
+    new_value: str,
+    dry_run: bool = False,
+    crd_client: Optional[client.CustomObjectsApi] = None,
+    v1_client: Optional[client.CoreV1Api] = None,
+) -> bool:
+    """Update the zone label on a Kubernetes resource.
+
+    Args:
+        resource: The Kubernetes resource dictionary (MachineSet, Machine, or Node)
+        label_key: The label key to update
+        new_value: The new label value
+        dry_run: If True, only show what would be changed
+        crd_client: Optional CustomObjectsApi client for MachineSet/Machine updates
+        v1_client: Optional CoreV1Api client for Node updates
+
+    Returns:
+        True if update succeeded or skipped, False if user declined
+
+    Examples:
+        >>> machineset = get_machineset("my-machineset")
+        >>> success = update_zone_label(machineset, "topology.portworx.io/zone", "new-zone")
+    """
+    resource_name = resource.get("metadata", {}).get("name", "unknown")
+    existing_value = get_zone_label(resource, label_key)
+
+    # Check for mismatch
+    if existing_value and existing_value != new_value:
+        logger.warning(
+            "Label mismatch for %s %s: existing=%s, new=%s",
+            resource.get("kind", "Resource"),
+            resource_name,
+            existing_value,
+            new_value,
+        )
+        # Note: This function doesn't handle user confirmation - that's up to the caller
+
+    # Determine resource type and patch path
+    kind = resource.get("kind", "")
+
+    if not dry_run:
+        try:
+            if kind == "Node":
+                # Node is a CoreV1 resource
+                if not v1_client:
+                    v1_client = client.CoreV1Api()
+                patch_data = {"metadata": {"labels": {label_key: new_value}}}
+                v1_client.patch_node(name=resource_name, body=patch_data)
+            else:
+                # MachineSet and Machine are Custom Resources
+                if not crd_client:
+                    crd_client = client.CustomObjectsApi()
+
+                if kind == "MachineSet":
+                    patch_data = {
+                        "spec": {
+                            "template": {"spec": {"metadata": {"labels": {label_key: new_value}}}}
+                        }
+                    }
+                    crd_client.patch_namespaced_custom_object(
+                        group="machine.openshift.io",
+                        version="v1beta1",
+                        namespace="openshift-machine-api",
+                        plural="machinesets",
+                        name=resource_name,
+                        body=patch_data,
+                    )
+                elif kind == "Machine":
+                    patch_data = {"spec": {"metadata": {"labels": {label_key: new_value}}}}
+                    crd_client.patch_cluster_custom_object(
+                        group="machine.openshift.io",
+                        version="v1beta1",
+                        plural="machines",
+                        name=resource_name,
+                        body=patch_data,
+                    )
+                else:
+                    logger.warning("Unknown resource kind: %s", kind)
+                    return False
+
+            logger.info(
+                "Updated %s %s with label %s: %s",
+                kind,
+                resource_name,
+                label_key,
+                new_value,
+            )
+            return True
+
+        except ApiException as e:
+            logger.error(
+                "Failed to update %s %s: %s",
+                kind,
+                resource_name,
+                e,
+            )
+            return False
+        except Exception as e:
+            logger.error(
+                "Unexpected error updating %s %s: %s",
+                kind,
+                resource_name,
+                e,
+                exc_info=True,
+            )
+            return False
+    else:
+        logger.info(
+            "DRY-RUN: Would update %s %s with label %s: %s",
+            kind,
+            resource_name,
+            label_key,
+            new_value,
+        )
+        return True
+
+
+def get_machines_for_machineset(
+    machineset_name: str,
+    crd_client: Optional[client.CustomObjectsApi] = None,
+    namespace: str = "openshift-machine-api",
+) -> List[Dict[str, Any]]:
+    """Query Kubernetes for Machines associated with a specific MachineSet.
+
+    Args:
+        machineset_name: Name of the MachineSet to query
+        crd_client: Optional CustomObjectsApi client. If not provided, creates a new one.
+        namespace: Namespace where MachineSets reside (default: openshift-machine-api)
+
+    Returns:
+        List[Dict[str, Any]]: A list of Machine objects associated with the MachineSet.
+    """
+    if not crd_client:
+        crd_client = client.CustomObjectsApi()
+
+    try:
+        # Get all Machines in the namespace
+        machines = crd_client.list_namespaced_custom_object(
+            group="machine.openshift.io",
+            version="v1beta1",
+            namespace=namespace,
+            plural="machines",
+        )
+
+        # Find machines that belong to the specified MachineSet
+        matching_machines = []
+        for machine in machines.get("items", []):
+            machine_name = machine.get("metadata", {}).get("name", "")
+            # Machine names typically follow pattern: <machineset-name>-<random-string>
+            if machineset_name in machine_name:
+                matching_machines.append(machine)
+
+        logger.info(
+            "Found %d Machine(s) for MachineSet %s",
+            len(matching_machines),
+            machineset_name,
+        )
+        return matching_machines
+
+    except ApiException as e:
+        logger.error(
+            "Kubernetes API error retrieving Machines for MachineSet '%s': %s",
+            machineset_name,
+            e,
+        )
+        return []
+    except Exception as e:
+        logger.error(
+            "Unexpected error retrieving Machines for MachineSet '%s': %s",
+            machineset_name,
+            e,
+            exc_info=True,
+        )
+        return []
+
+
+def get_all_machinesets(
+    crd_client: Optional[client.CustomObjectsApi] = None,
+    namespace: str = "openshift-machine-api",
+) -> List[Dict[str, Any]]:
+    """Get all MachineSets in the cluster.
+
+    Args:
+        crd_client: Optional CustomObjectsApi client. If not provided, creates a new one.
+        namespace: Namespace where MachineSets reside (default: openshift-machine-api)
+
+    Returns:
+        List[Dict[str, Any]]: A list of all MachineSet objects in the cluster.
+
+    Example:
+        >>> machinesets = get_all_machinesets()
+        >>> for ms in machinesets:
+        ...     print(ms["metadata"]["name"])
+    """
+    if not crd_client:
+        crd_client = client.CustomObjectsApi()
+
+    try:
+        # Get all MachineSets in the namespace
+        machinesets = crd_client.list_namespaced_custom_object(
+            group="machine.openshift.io",
+            version="v1beta1",
+            namespace=namespace,
+            plural="machinesets",
+        )
+
+        ms_list = machinesets.get("items", [])
+        logger.info("Found %d MachineSet(s) in namespace %s", len(ms_list), namespace)
+        return ms_list
+
+    except ApiException as e:
+        logger.error(
+            "Kubernetes API error retrieving MachineSets: %s",
+            e,
+        )
+        return []
+    except Exception as e:
+        logger.error(
+            "Unexpected error retrieving MachineSets: %s",
+            e,
+            exc_info=True,
+        )
+        return []
+
+
+def get_nodes_for_machines(
+    machines: List[Dict[str, Any]],
+    v1_client: Optional[client.CoreV1Api] = None,
+) -> List[Dict[str, Any]]:
+    """Get all Nodes associated with the given Machines.
+
+    Args:
+        machines: List of Machine resources (dictionaries)
+        v1_client: Optional CoreV1Api client. If not provided, creates a new one.
+
+    Returns:
+        List[Dict[str, Any]]: List of Node resources (dictionaries)
+    """
+    if not v1_client:
+        v1_client = get_k8s_client("CoreV1Api")
+
+    try:
+        nodes = v1_client.list_node()
+        node_names = set()
+
+        for machine in machines:
+            node_ref = machine.get("status", {}).get("nodeRef", {})
+            if node_ref and node_ref.get("name"):
+                node_names.add(node_ref["name"])
+
+        # Convert V1Node objects to dictionaries for consistency
+        matching_nodes = []
+        for node in nodes.items:
+            if node.metadata.name in node_names:
+                # Convert V1Node to dict for consistency with Machine objects
+                node_dict = {
+                    "metadata": {
+                        "name": node.metadata.name,
+                        "labels": dict(node.metadata.labels) if node.metadata.labels else {},
+                    },
+                    "spec": {},
+                    "status": {},
+                }
+                matching_nodes.append(node_dict)
+
+        logger.info(
+            "Found %d Node(s) for %d Machine(s)",
+            len(matching_nodes),
+            len(machines),
+        )
+        return matching_nodes
+
+    except ApiException as e:
+        logger.error("Kubernetes API error retrieving Nodes: %s", e)
+        return []
+    except Exception as e:
+        logger.error("Error retrieving Nodes: %s", e, exc_info=True)
+        return []
+
+
+def get_existing_zone_label(
+    machineset: Dict[str, Any],
+    label_key: str = "topology.portworx.io/zone",
+) -> Optional[str]:
+    """Extract the existing zone label from a MachineSet.
+
+    Args:
+        machineset: The MachineSet resource dictionary
+        label_key: The label key to extract (default: topology.portworx.io/zone)
+
+    Returns:
+        The existing label value, or None if not found
+    """
+    labels = cast(
+        Dict[str, str],
+        machineset.get("spec", {}).get("template", {}).get("spec", {}).get("metadata", {}).get("labels", {}),
+    )
+    return labels.get(label_key)
+
+
+def get_nodes_from_machinesets_with_labels(
+    label_key: str = "topology.portworx.io/zone",
+    crd_client: Optional[client.CustomObjectsApi] = None,
+    namespace: str = "openshift-machine-api",
+) -> Dict[str, Dict[str, str]]:
+    """Query Kubernetes for all nodes associated with MachineSets and their labels.
+
+    This is a convenience wrapper around get_nodes_from_machinesets that specifically
+    retrieves the zone label.
+
+    Args:
+        label_key: The label key to extract (default: topology.portworx.io/zone)
+        crd_client: Optional CustomObjectsApi client. If not provided, creates a new one.
+        namespace: Namespace where MachineSets reside (default: openshift-machine-api)
+
+    Returns:
+        Dict[str, Dict[str, str]]: A dictionary mapping node names to their labels and values.
+    """
+    return get_nodes_from_machinesets(label_key=label_key, crd_client=crd_client, namespace=namespace)
+
+
+def get_nodes_from_machineset_specific_with_labels(
+    machineset_name: str,
+    label_key: str = "topology.portworx.io/zone",
+    crd_client: Optional[client.CustomObjectsApi] = None,
+    namespace: str = "openshift-machine-api",
+) -> Dict[str, Dict[str, str]]:
+    """Query Kubernetes for nodes associated with a specific MachineSet and their labels.
+
+    This is a convenience wrapper around get_nodes_from_machineset_specific that specifically
+    retrieves the zone label.
+
+    Args:
+        machineset_name: Name of the MachineSet to query
+        label_key: The label key to extract (default: topology.portworx.io/zone)
+        crd_client: Optional CustomObjectsApi client. If not provided, creates a new one.
+        namespace: Namespace where MachineSets reside (default: openshift-machine-api)
+
+    Returns:
+        Dict[str, Dict[str, str]]: A dictionary mapping node names to their labels and values.
+    """
+    return get_nodes_from_machineset_specific(
+        machineset_name=machineset_name,
+        label_key=label_key,
+        crd_client=crd_client,
+        namespace=namespace,
+    )

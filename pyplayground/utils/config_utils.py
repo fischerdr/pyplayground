@@ -62,14 +62,9 @@ def get_env_var(key: str, default: Optional[str] = None, required: bool = False,
     if value is not None:
         try:
             if as_type is bool:
-                # Handle case where value is already a boolean (from default)
-                if isinstance(value, bool):
-                    return value
                 # Handle string conversion to boolean
                 if isinstance(value, str):
                     return value.lower() in ("true", "1", "yes", "on")
-                # Handle other types that can be converted to bool
-                return bool(value)
             return as_type(value)
         except (ValueError, TypeError) as e:
             logger.error(f"Failed to convert {key}={value} to type {as_type.__name__}: {e}")
@@ -96,13 +91,14 @@ def load_json_config(config_name: str, config_dir: Optional[Union[str, Path]] = 
         if not config_name.endswith(".json"):
             config_name += ".json"
 
-        config_path = os.path.join(config_dir, config_name)
+        config_path_str = str(config_dir) if config_dir else str(DEFAULT_CONFIG_DIR)
+        config_path = os.path.join(config_path_str, config_name)
 
         if not os.path.exists(config_path):
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
         with open(config_path, "r") as f:
-            config = json.load(f)
+            config: Dict[str, Any] = json.load(f)
             logger.debug(f"Loaded configuration from {config_path}")
             return config
 
@@ -130,13 +126,13 @@ def save_json_config(
         IOError: If unable to write to file
     """
     try:
-        if not os.path.exists(config_dir):
-            os.makedirs(config_dir)
+        if config_dir and not os.path.exists(str(config_dir)):
+            os.makedirs(str(config_dir))
 
         if not config_name.endswith(".json"):
             config_name += ".json"
 
-        config_path = os.path.join(config_dir, config_name)
+        config_path = os.path.join(str(config_dir), config_name)
 
         with open(config_path, "w") as f:
             json.dump(config, f, indent=4)

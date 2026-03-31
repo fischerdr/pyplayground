@@ -22,7 +22,11 @@ from kubernetes import client, config, stream  # type: ignore
 from kubernetes.client import ApiClient, V1Pod  # type: ignore
 from kubernetes.client.rest import ApiException  # type: ignore
 
-from pyplayground.utils.vault_utils import create_vault_client, get_secret, normalize_vault_path
+from pyplayground.utils.vault_utils import (
+    create_vault_client,
+    get_secret,
+    normalize_vault_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +307,12 @@ def exec_pod_command(
     return exit_code, stdout_data, stderr_data
 
 
-def wait_for_pod_readiness(pod_name: str, namespace: str, timeout: int = 420, v1_client: Optional[client.CoreV1Api] = None) -> bool:
+def wait_for_pod_readiness(
+    pod_name: str,
+    namespace: str,
+    timeout: int = 420,
+    v1_client: Optional[client.CoreV1Api] = None,
+) -> bool:
     """Wait for a pod to be ready (1/1) with a timeout.
 
     Args:
@@ -390,8 +399,11 @@ def _extract_node_info_from_machine(machine: Dict[str, Any], machineset_name: st
     machine_name = machine_metadata.get("name", "")
     machine_status = machine.get("status")
 
+    # Use exact match pattern: machineset_name + hyphen + at least one random char
+    pattern = re.compile(rf"^{re.escape(machineset_name)}-.+")
+
     # Check if the machine belongs to the specified MachineSet and has status
-    if machineset_name in machine_name and machine_status:
+    if pattern.match(machine_name) and machine_status:
         node_name = machine_status.get("nodeRef", {}).get("name")
         if node_name:
             logger.info(f"Associated node {node_name} with MachineSet {machineset_name} via Machine {machine_name}")
@@ -500,7 +512,11 @@ def get_kubeconfig_from_vault(  # noqa: C901
 
     # Create Vault client and get kubeconfig
     logger.debug("Creating Vault client")
-    vault_client = create_vault_client(url=vault_url if vault_url else None, token=vault_token, namespace=vault_namespace)
+    vault_client = create_vault_client(
+        url=vault_url if vault_url else None,
+        token=vault_token,
+        namespace=vault_namespace,
+    )
     try:
         secret = get_secret(vault_client, vault_path, mount_point=vault_mount)
         if not secret:
@@ -579,7 +595,12 @@ def get_nodes_from_machineset_specific(  # noqa: C901
                 logger.warning(f"Label '{label_key}' not found in MachineSet {machineset_name}")
 
         # Find associated machines for the MachineSet
-        machines = crd_client.list_namespaced_custom_object(group="machine.openshift.io", version="v1beta1", namespace=namespace, plural="machines")
+        machines = crd_client.list_namespaced_custom_object(
+            group="machine.openshift.io",
+            version="v1beta1",
+            namespace=namespace,
+            plural="machines",
+        )
 
         for machine in machines.get("items", []):
             # Use helper function to process each machine
@@ -645,9 +666,11 @@ def get_nodes_from_machinesets(  # noqa: C901
             # Find associated machines for the MachineSet
             machines = crd_client.list_cluster_custom_object(group="machine.openshift.io", version="v1beta1", plural="machines")
 
+            pattern = re.compile(rf"^{re.escape(ms_name)}-.+")
+
             for machine in machines["items"]:
-                # Check if the machine is part of the current MachineSet
-                if ms_name in machine["metadata"]["name"] and "status" in machine:
+                # Check if the machine is part of the current MachineSet using exact match
+                if pattern.match(machine["metadata"]["name"]) and "status" in machine:
                     node_name = machine["status"].get("nodeRef", {}).get("name", None)
                     if node_name:
                         # Store all labels and their values
@@ -1056,7 +1079,10 @@ def get_service_account_jwt(
                     logger.warning(f"Secret '{secret_name}' is a SA token but missing 'token' data.")
 
     except ApiException as e:
-        logger.error(f"API error listing secrets in namespace '{namespace}': {e.reason}", exc_info=True)
+        logger.error(
+            f"API error listing secrets in namespace '{namespace}': {e.reason}",
+            exc_info=True,
+        )
 
     logger.error(f"Could not retrieve a token for ServiceAccount '{service_account_name}'.")
     return None
@@ -1126,15 +1152,7 @@ def get_machineset_resource_pool(
         >>> print(resource_pool)
         /SDDC2D1LINFVS01-DC1/host/SDDC2D1LINFVS01-C12/Resources
     """
-    return (
-        machineset.get("spec", {})
-        .get("template", {})
-        .get("spec", {})
-        .get("providerSpec", {})
-        .get("value", {})
-        .get("workspace", {})
-        .get("resourcePool")
-    )
+    return machineset.get("spec", {}).get("template", {}).get("spec", {}).get("providerSpec", {}).get("value", {}).get("workspace", {}).get("resourcePool")
 
 
 def parse_resource_pool_path(resource_pool: str) -> str:
@@ -1199,13 +1217,7 @@ def get_zone_label(
     # Node: metadata.labels
 
     # Try MachineSet path first
-    labels = (
-        resource.get("spec", {})
-        .get("template", {})
-        .get("spec", {})
-        .get("metadata", {})
-        .get("labels")
-    )
+    labels = resource.get("spec", {}).get("template", {}).get("spec", {}).get("metadata", {}).get("labels")
 
     # Try Machine path if not found
     if not labels:
@@ -1249,6 +1261,17 @@ def update_zone_label(
     resource_name = resource.get("metadata", {}).get("name", "unknown")
     existing_value = get_zone_label(resource, label_key)
 
+    # Idempotency check: skip if label already matches
+    if existing_value and existing_value == new_value:
+        logger.debug(
+            "Label %s already set to %s on %s %s, skipping",
+            label_key,
+            new_value,
+            resource.get("kind", "Resource"),
+            resource_name,
+        )
+        return True
+
     # Check for mismatch
     if existing_value and existing_value != new_value:
         logger.warning(
@@ -1277,11 +1300,7 @@ def update_zone_label(
                     crd_client = client.CustomObjectsApi()
 
                 if kind == "MachineSet":
-                    patch_data = {
-                        "spec": {
-                            "template": {"spec": {"metadata": {"labels": {label_key: new_value}}}}
-                        }
-                    }
+                    patch_data = {"spec": {"template": {"spec": {"metadata": {"labels": {label_key: new_value}}}}}}
                     crd_client.patch_namespaced_custom_object(
                         group="machine.openshift.io",
                         version="v1beta1",
@@ -1367,12 +1386,17 @@ def get_machines_for_machineset(
             plural="machines",
         )
 
-        # Find machines that belong to the specified MachineSet
+        # Find machines that belong to the specified MachineSet using exact match
+        # Machine names follow pattern: <machineset-name>-<random-string>
+        # We use regex to match: machineset_name + hyphen + at least one random char
+        import re
+
+        pattern = re.compile(rf"^{re.escape(machineset_name)}-.+")
+
         matching_machines = []
         for machine in machines.get("items", []):
             machine_name = machine.get("metadata", {}).get("name", "")
-            # Machine names typically follow pattern: <machineset-name>-<random-string>
-            if machineset_name in machine_name:
+            if pattern.match(machine_name):
                 matching_machines.append(machine)
 
         logger.info(

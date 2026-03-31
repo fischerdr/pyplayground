@@ -17,17 +17,20 @@ Usage:
     # Dry-run mode
     python openshift_zone_updater.py --dry-run
 
-    # With custom kubeconfig
+    # With custom kubeconfig (or KUBECONFIG environment variable)
     python openshift_zone_updater.py --kubeconfig /path/to/kubeconfig
+
+    # Using KUBECONFIG environment variable
+    KUBECONFIG=/path/to/kubeconfig python openshift_zone_updater.py
 """
 
 import logging
 import os
+from typing import Any, Dict, Optional
 
 import click
 from rich.console import Console
 
-from pyplayground.utils import get_logger, setup_logging
 from pyplayground.utils.k8s_utils import (
     get_all_machinesets,
     get_machines_for_machineset,
@@ -37,6 +40,7 @@ from pyplayground.utils.k8s_utils import (
     parse_resource_pool_path,
     update_zone_label,
 )
+from pyplayground.utils.logging_utils import get_logger, setup_logging
 
 logger = get_logger(__name__)
 
@@ -45,6 +49,60 @@ console = Console()
 # Constants
 NAMESPACE = "openshift-machine-api"
 ZONE_LABEL_KEY = "topology.portworx.io/zone"
+
+
+def validate_machine_status(
+    machine: Dict[str, Any],
+    dry_run: bool = False,
+) -> bool:
+    """Validate that a Machine is ready for label propagation.
+
+    Checks:
+    - Machine has status section
+    - Machine has nodeRef (node associated)
+    - Machine phase is Running (not Provisioning)
+
+    Args:
+        machine: The Machine resource dictionary
+        dry_run: If True, only log validation result
+
+    Returns:
+        True if Machine is valid, False otherwise
+    """
+    resource_name = machine["metadata"]["name"]
+    machine_status = machine.get("status", {})
+
+    if not machine_status:
+        logger.warning(
+            "Machine %s has no status section, skipping",
+            resource_name,
+        )
+        return False
+
+    node_ref = machine_status.get("nodeRef", {})
+    if not node_ref or not node_ref.get("name"):
+        logger.warning(
+            "Machine %s has no nodeRef, skipping",
+            resource_name,
+        )
+        return False
+
+    phase = machine_status.get("phase", "Unknown")
+    if phase != "Running":
+        logger.warning(
+            "Machine %s phase is %s (not Running), skipping",
+            resource_name,
+            phase,
+        )
+        return False
+
+    logger.debug(
+        "Machine %s passed status validation (phase=%s, node=%s)",
+        resource_name,
+        phase,
+        node_ref.get("name"),
+    )
+    return True
 
 
 def confirm_update(
@@ -80,45 +138,8 @@ def confirm_update(
     return response.lower() == "y"
 
 
-def get_kubeconfig_path(kubeconfig: str | None) -> str | None:
-    """Get the kubeconfig path to use for cluster connection.
-
-    Args:
-        kubeconfig: Optional custom kubeconfig path
-
-    Returns:
-        Path to the kubeconfig file, or None if not found
-    """
-    if kubeconfig:
-        logger.info("Using custom kubeconfig at %s", kubeconfig)
-        return kubeconfig
-
-    logger.info("Using default kubeconfig location")
-    return None
-
-
-def connect_to_cluster(kubeconfig: str | None) -> bool:
-    """Connect to the OpenShift cluster using the provided kubeconfig.
-
-    Args:
-        kubeconfig: Path to the kubeconfig file
-
-    Returns:
-        True if connection succeeded, False otherwise
-    """
-    try:
-        if not load_kube_config_auto(config_file=kubeconfig):
-            logger.error("Failed to load Kubernetes configuration")
-            return False
-        logger.info("Successfully connected to OpenShift cluster")
-        return True
-    except Exception as e:
-        logger.error("Failed to load Kubernetes config: %s", e)
-        return False
-
-
 def process_machineset(
-    machineset: dict,
+    machineset: Dict[str, Any],
     dry_run: bool,
 ) -> bool:
     """Process a single MachineSet: update labels and propagate to Machines and Nodes.
@@ -160,7 +181,24 @@ def process_machineset(
 
     # Step 2: Get and update Machines in the MachineSet
     machines = get_machines_for_machineset(resource_name)
+    if not machines:
+        logger.warning(
+            "No Machines found for MachineSet %s",
+            resource_name,
+        )
+        if dry_run:
+            logger.info(
+                "DRY-RUN: Would report missing Machines for MachineSet %s",
+                resource_name,
+            )
     for machine in machines:
+        # Validate Machine status before processing
+        if not validate_machine_status(machine, dry_run=dry_run):
+            logger.warning(
+                "Machine %s failed status validation, skipping",
+                machine["metadata"]["name"],
+            )
+            continue
         if not update_zone_label(
             machine,
             ZONE_LABEL_KEY,
@@ -171,6 +209,12 @@ def process_machineset(
 
     # Step 3: Get and update Nodes for the Machines
     nodes = get_nodes_for_machines(machines)
+    if dry_run and len(nodes) < len(machines):
+        missing_count = len(machines) - len(nodes)
+        logger.info(
+            "DRY-RUN: Would report %d Machine(s) without associated Node(s)",
+            missing_count,
+        )
     for node in nodes:
         if not update_zone_label(
             node,
@@ -186,8 +230,9 @@ def process_machineset(
 @click.command()
 @click.option(
     "--kubeconfig",
-    default=None,
-    help="Path to the kubeconfig file.",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to the kubeconfig file. If not provided, uses default lookup.",
+    envvar="KUBECONFIG",
 )
 @click.option(
     "--dry-run",
@@ -205,7 +250,7 @@ def process_machineset(
     is_flag=True,
     help="Enable debug logging.",
 )
-def main(kubeconfig: str | None, dry_run: bool, live: bool, debug: bool) -> None:
+def main(kubeconfig: Optional[str], dry_run: bool, live: bool, debug: bool) -> None:
     r"""Update Portworx zone labels across OpenShift resources.
 
     This script updates the topology.portworx.io/zone label on MachineSets,
@@ -227,7 +272,7 @@ def main(kubeconfig: str | None, dry_run: bool, live: bool, debug: bool) -> None
         # Dry-run mode
         python openshift_zone_updater.py --dry-run
 
-        # With custom kubeconfig
+        # With custom kubeconfig (or KUBECONFIG environment variable)
         python openshift_zone_updater.py --kubeconfig /path/to/kubeconfig
     """
     # Handle flag logic

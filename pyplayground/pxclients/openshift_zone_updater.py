@@ -375,51 +375,20 @@ def process_machineset(
         console.print(f"DRY-RUN SUMMARY FOR MachineSet: {resource_name}")
         console.print(f"{header_line}")
 
-        logger.info("\n%s", header_line)
-        logger.info("DRY-RUN SUMMARY FOR MachineSet: %s", resource_name)
-        logger.info("%s", header_line)
-
         ms_old = changes_summary["machineset"]["old"]
         ms_new = changes_summary["machineset"]["new"]
         console.print(f"MachineSet {resource_name}: {ms_old if ms_old else 'not set'} -> {ms_new}")
-        logger.info(
-            "MachineSet %s: %s -> %s",
-            resource_name,
-            ms_old if ms_old else "not set",
-            ms_new,
-        )
 
         for machine_info in changes_summary["machines"]:
             console.print(f"Machine {machine_info['name']}: {machine_info['old'] if machine_info['old'] else 'not set'} -> {machine_info['new']}")
-            logger.info(
-                "Machine %s: %s -> %s",
-                machine_info["name"],
-                machine_info["old"] if machine_info["old"] else "not set",
-                machine_info["new"],
-            )
 
         for node_info in changes_summary["nodes"]:
             console.print(f"Node {node_info['name']}: {node_info['old'] if node_info['old'] else 'not set'} -> {node_info['new']}")
-            logger.info(
-                "Node %s: %s -> %s",
-                node_info["name"],
-                node_info["old"] if node_info["old"] else "not set",
-                node_info["new"],
-            )
 
         console.print(f"{header_line}")
         total_changes = 1 + len(changes_summary["machines"]) + len(changes_summary["nodes"])
         console.print(f"Total resources to update: {total_changes} (1 MachineSet, {len(changes_summary['machines'])} Machines, {len(changes_summary['nodes'])} Nodes)")
         console.print(f"{header_line}")
-
-        logger.info("%s", header_line)
-        logger.info(
-            "Total resources to update: %d (1 MachineSet, %d Machines, %d Nodes)",
-            total_changes,
-            len(changes_summary["machines"]),
-            len(changes_summary["nodes"]),
-        )
-        logger.info("%s", header_line)
 
     return True
 

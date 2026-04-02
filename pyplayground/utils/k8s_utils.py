@@ -30,6 +30,37 @@ from pyplayground.utils.vault_utils import (
 
 logger = logging.getLogger(__name__)
 
+# OpenShift Machine -> MachineSet association (label set by the machine controller).
+_MACHINESET_LABEL_KEY = "machine.openshift.io/cluster-api-machineset"
+
+
+def _machine_owned_by_machineset(machine: Dict[str, Any], machineset_name: str) -> bool:
+    """Return True if a Machine belongs to the named MachineSet.
+
+    Resolution order:
+        1. Label ``machine.openshift.io/cluster-api-machineset`` when present (must match).
+        2. ``ownerReferences`` with ``kind`` MachineSet and matching ``name``.
+        3. Name pattern ``<machineset>-<suffix>`` where ``suffix`` contains no hyphens,
+           so e.g. ``...-worker-storage-abc12`` matches ``...-worker-storage`` but
+           ``...-worker-storage-ds02-abc12`` does not.
+
+    Args:
+        machine: Machine object from the Kubernetes API.
+        machineset_name: MachineSet metadata.name.
+
+    Returns:
+        True if the Machine is owned by that MachineSet.
+    """
+    metadata = machine.get("metadata", {}) or {}
+    labels = metadata.get("labels", {}) or {}
+    if _MACHINESET_LABEL_KEY in labels:
+        return labels.get(_MACHINESET_LABEL_KEY) == machineset_name
+    for ref in metadata.get("ownerReferences", []) or []:
+        if ref.get("kind") == "MachineSet" and ref.get("name") == machineset_name:
+            return True
+    machine_name = metadata.get("name", "")
+    return bool(re.match(rf"^{re.escape(machineset_name)}-[^-]+$", machine_name))
+
 
 def load_kube_config(config_file: Optional[str] = None, context: Optional[str] = None) -> None:
     """Load Kubernetes configuration from a kubeconfig file.
@@ -397,21 +428,9 @@ def _extract_node_info_from_machine(machine: Dict[str, Any], machineset_name: st
     """
     machine_metadata = machine.get("metadata", {})
     machine_name = machine_metadata.get("name", "")
-    machine_labels = machine_metadata.get("labels", {}) or {}
     machine_status = machine.get("status")
 
-    # Prefer authoritative label-based association (avoids prefix collisions like "<ms>-worker" matching "<ms>-worker-ds02").
-    machineset_label_key = "machine.openshift.io/cluster-api-machineset"
-    label_machineset_name = machine_labels.get(machineset_label_key)
-
-    machine_belongs_to_machineset = label_machineset_name == machineset_name
-    if label_machineset_name is None:
-        # Backward-compat fallback when label is absent.
-        pattern = re.compile(rf"^{re.escape(machineset_name)}-.+")
-        machine_belongs_to_machineset = bool(pattern.match(machine_name))
-
-    # Check if the machine belongs to the specified MachineSet and has status
-    if machine_belongs_to_machineset and machine_status:
+    if _machine_owned_by_machineset(machine, machineset_name) and machine_status:
         node_name = machine_status.get("nodeRef", {}).get("name")
         if node_name:
             logger.info(f"Associated node {node_name} with MachineSet {machineset_name} via Machine {machine_name}")
@@ -1293,16 +1312,26 @@ def update_zone_label(
         )
         return (True, existing_value)
 
-    # Check for mismatch
+    # Existing label differs from target (e.g. old cluster id vs ESXi cluster from resourcePool)
     if existing_value and existing_value != new_value:
-        logger.warning(
-            "Label mismatch for %s %s (resourceVersion=%s): existing=%s, new=%s",
-            resource.get("kind", "Resource"),
-            resource_name,
-            resource_version if resource_version else "none",
-            existing_value,
-            new_value,
-        )
+        if dry_run:
+            logger.info(
+                "DRY-RUN: %s %s would set %s: %s -> %s",
+                resource.get("kind", "Resource"),
+                resource_name,
+                label_key,
+                existing_value,
+                new_value,
+            )
+        else:
+            logger.warning(
+                "Label mismatch for %s %s (resourceVersion=%s): existing=%s, new=%s",
+                resource.get("kind", "Resource"),
+                resource_name,
+                resource_version if resource_version else "none",
+                existing_value,
+                new_value,
+            )
         # Note: This function doesn't handle user confirmation - that's up to the caller
 
     # Determine resource type and patch path
@@ -1446,30 +1475,23 @@ def get_machines_for_machineset(
             plural="machines",
         )
 
-        # Prefer authoritative label-based association (avoids prefix collisions like "<ms>-worker" matching "<ms>-worker-ds02").
-        machineset_label_key = "machine.openshift.io/cluster-api-machineset"
         matching_machines = []
+        unlabeled_match_count = 0
         for machine in machines.get("items", []):
+            if not _machine_owned_by_machineset(machine, machineset_name):
+                continue
+            matching_machines.append(machine)
             labels = machine.get("metadata", {}).get("labels", {}) or {}
-            if labels.get(machineset_label_key) == machineset_name:
-                matching_machines.append(machine)
+            if _MACHINESET_LABEL_KEY not in labels:
+                unlabeled_match_count += 1
 
-        if not matching_machines:
-            # Backward-compat fallback when label is absent.
-            import re
-
-            pattern = re.compile(rf"^{re.escape(machineset_name)}-.+")
-            for machine in machines.get("items", []):
-                machine_name = machine.get("metadata", {}).get("name", "")
-                if pattern.match(machine_name):
-                    matching_machines.append(machine)
-            if matching_machines:
-                logger.warning(
-                    "MachineSet %s: matched %d Machine(s) via name prefix; label %s missing on Machines",
-                    machineset_name,
-                    len(matching_machines),
-                    machineset_label_key,
-                )
+        if unlabeled_match_count:
+            logger.warning(
+                "MachineSet %s: %d Machine(s) matched without label %s (used ownerReferences/name pattern)",
+                machineset_name,
+                unlabeled_match_count,
+                _MACHINESET_LABEL_KEY,
+            )
 
         logger.info(
             "Found %d Machine(s) for MachineSet %s",

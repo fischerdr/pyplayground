@@ -299,6 +299,7 @@ def process_machineset(
         nodes = retry_with_backoff(
             get_nodes_for_machines,
             machines,
+            dry_run=dry_run,
         )
     except Exception as e:
         logger.error(

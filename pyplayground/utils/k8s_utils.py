@@ -21,6 +21,7 @@ from hvac.exceptions import VaultError
 from kubernetes import client, config, stream
 from kubernetes.client import ApiClient, V1Pod
 from kubernetes.client.rest import ApiException
+from rich.console import Console
 
 from pyplayground.utils.vault_utils import (
     create_vault_client,
@@ -29,6 +30,7 @@ from pyplayground.utils.vault_utils import (
 )
 
 logger = logging.getLogger(__name__)
+console = Console()
 
 # OpenShift Machine -> MachineSet association (label set by the machine controller).
 _MACHINESET_LABEL_KEY = "machine.openshift.io/cluster-api-machineset"
@@ -1315,14 +1317,7 @@ def update_zone_label(
     # Existing label differs from target (e.g. old cluster id vs ESXi cluster from resourcePool)
     if existing_value and existing_value != new_value:
         if dry_run:
-            logger.info(
-                "DRY-RUN: %s %s would set %s: %s -> %s",
-                resource.get("kind", "Resource"),
-                resource_name,
-                label_key,
-                existing_value,
-                new_value,
-            )
+            console.print(f"[yellow]DRY-RUN:[/yellow] {resource.get('kind', 'Resource')} {resource_name} would set {label_key}: {existing_value} -> {new_value}")
         else:
             logger.warning(
                 "Label mismatch for %s %s (resourceVersion=%s): existing=%s, new=%s",
@@ -1438,13 +1433,7 @@ def update_zone_label(
         )
         return (False, existing_value)
     else:
-        logger.info(
-            "DRY-RUN: Would update %s %s with label %s: %s",
-            kind,
-            resource_name,
-            label_key,
-            new_value,
-        )
+        console.print(f"[yellow]DRY-RUN:[/yellow] Would update {kind} {resource_name} with label {label_key}: {new_value}")
         return (True, existing_value)
 
 
@@ -1569,12 +1558,14 @@ def get_all_machinesets(
 def get_nodes_for_machines(
     machines: List[Dict[str, Any]],
     v1_client: Optional[client.CoreV1Api] = None,
+    dry_run: bool = False,
 ) -> List[Dict[str, Any]]:
     """Get all Nodes associated with the given Machines.
 
     Args:
         machines: List of Machine resources (dictionaries)
         v1_client: Optional CoreV1Api client. If not provided, creates a new one.
+        dry_run: If True, print summary to console instead of logging
 
     Returns:
         List[Dict[str, Any]]: List of Node resources (dictionaries)
@@ -1606,11 +1597,14 @@ def get_nodes_for_machines(
                 }
                 matching_nodes.append(node_dict)
 
-        logger.info(
-            "Found %d Node(s) for %d Machine(s)",
-            len(matching_nodes),
-            len(machines),
-        )
+        if dry_run:
+            console.print(f"Found {len(matching_nodes)} Node(s) for {len(machines)} Machine(s)")
+        else:
+            logger.info(
+                "Found %d Node(s) for %d Machine(s)",
+                len(matching_nodes),
+                len(machines),
+            )
         return matching_nodes
 
     except ApiException as e:

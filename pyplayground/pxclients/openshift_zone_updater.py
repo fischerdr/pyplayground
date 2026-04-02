@@ -50,7 +50,7 @@ logger = get_logger(__name__)
 console = Console()
 
 # Constants
-NAMESPACE = "openshift-machine-api"
+NAMESPACE = os.getenv("OPENSHIFT_NAMESPACE", "openshift-machine-api")
 ZONE_LABEL_KEY = "topology.portworx.io/zone"
 
 MAX_API_RETRIES = 3
@@ -174,39 +174,6 @@ def validate_machine_status(
         node_ref.get("name"),
     )
     return True
-
-
-def confirm_update(
-    resource_type: str,
-    resource_name: str,
-    existing_value: str,
-    new_value: str,
-) -> bool:
-    """Ask user for confirmation to proceed with label update.
-
-    Args:
-        resource_type: Type of resource (MachineSet, Machine, Node)
-        resource_name: Name of the resource
-        existing_value: Current label value
-        new_value: New label value to apply
-
-    Returns:
-        True if user confirms, False otherwise
-
-    Examples:
-        >>> # User types 'y'
-        >>> confirm_update('MachineSet', 'test-ms', 'old', 'new')
-        True
-        >>> # User types 'n'
-        >>> confirm_update('MachineSet', 'test-ms', 'old', 'new')
-        False
-    """
-    console.print("\n[yellow]WARNING: Label mismatch detected[/yellow]")
-    console.print(f"   Resource: {resource_type} '{resource_name}'")
-    console.print(f"   Current value: {existing_value}")
-    console.print(f"   New value: {new_value}")
-    response = input("Continue with update? (y/N): ")
-    return response.lower() == "y"
 
 
 def process_machineset(
@@ -359,6 +326,18 @@ def process_machineset(
         if not node_updated:
             return False
 
+        if not dry_run:
+            node_labels = node.get("metadata", {}).get("labels", {})
+            if node_labels.get(ZONE_LABEL_KEY) != new_zone_value:
+                logger.error(
+                    "Post-update verification failed for Node %s: " "expected %s=%s, got %s",
+                    node_name,
+                    ZONE_LABEL_KEY,
+                    new_zone_value,
+                    node_labels.get(ZONE_LABEL_KEY, "not set"),
+                )
+                return False
+
         if dry_run:
             changes_summary["nodes"].append(
                 {
@@ -487,7 +466,7 @@ def main(kubeconfig: Optional[str], dry_run: bool, live: bool, debug: bool) -> N
                     success_count += 1
                 else:
                     failure_count += 1
-            except BaseException as e:
+            except Exception as e:
                 logger.error(
                     "Failed to process MachineSet %s: %s",
                     machineset["metadata"]["name"],

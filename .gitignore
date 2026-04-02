@@ -169,3 +169,7 @@ vault.txt
 *.wma
 *.aiff
 *.au
+
+# Ingore claude.settings.local as they should only be in my system
+.claude/settings.local.json
+.claude/settings.json

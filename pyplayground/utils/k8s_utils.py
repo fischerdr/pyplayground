@@ -397,13 +397,21 @@ def _extract_node_info_from_machine(machine: Dict[str, Any], machineset_name: st
     """
     machine_metadata = machine.get("metadata", {})
     machine_name = machine_metadata.get("name", "")
+    machine_labels = machine_metadata.get("labels", {}) or {}
     machine_status = machine.get("status")
 
-    # Use exact match pattern: machineset_name + hyphen + at least one random char
-    pattern = re.compile(rf"^{re.escape(machineset_name)}-.+")
+    # Prefer authoritative label-based association (avoids prefix collisions like "<ms>-worker" matching "<ms>-worker-ds02").
+    machineset_label_key = "machine.openshift.io/cluster-api-machineset"
+    label_machineset_name = machine_labels.get(machineset_label_key)
+
+    machine_belongs_to_machineset = label_machineset_name == machineset_name
+    if label_machineset_name is None:
+        # Backward-compat fallback when label is absent.
+        pattern = re.compile(rf"^{re.escape(machineset_name)}-.+")
+        machine_belongs_to_machineset = bool(pattern.match(machine_name))
 
     # Check if the machine belongs to the specified MachineSet and has status
-    if pattern.match(machine_name) and machine_status:
+    if machine_belongs_to_machineset and machine_status:
         node_name = machine_status.get("nodeRef", {}).get("name")
         if node_name:
             logger.info(f"Associated node {node_name} with MachineSet {machineset_name} via Machine {machine_name}")
@@ -1438,18 +1446,30 @@ def get_machines_for_machineset(
             plural="machines",
         )
 
-        # Find machines that belong to the specified MachineSet using exact match
-        # Machine names follow pattern: <machineset-name>-<random-string>
-        # We use regex to match: machineset_name + hyphen + at least one random char
-        import re
-
-        pattern = re.compile(rf"^{re.escape(machineset_name)}-.+")
-
+        # Prefer authoritative label-based association (avoids prefix collisions like "<ms>-worker" matching "<ms>-worker-ds02").
+        machineset_label_key = "machine.openshift.io/cluster-api-machineset"
         matching_machines = []
         for machine in machines.get("items", []):
-            machine_name = machine.get("metadata", {}).get("name", "")
-            if pattern.match(machine_name):
+            labels = machine.get("metadata", {}).get("labels", {}) or {}
+            if labels.get(machineset_label_key) == machineset_name:
                 matching_machines.append(machine)
+
+        if not matching_machines:
+            # Backward-compat fallback when label is absent.
+            import re
+
+            pattern = re.compile(rf"^{re.escape(machineset_name)}-.+")
+            for machine in machines.get("items", []):
+                machine_name = machine.get("metadata", {}).get("name", "")
+                if pattern.match(machine_name):
+                    matching_machines.append(machine)
+            if matching_machines:
+                logger.warning(
+                    "MachineSet %s: matched %d Machine(s) via name prefix; label %s missing on Machines",
+                    machineset_name,
+                    len(matching_machines),
+                    machineset_label_key,
+                )
 
         logger.info(
             "Found %d Machine(s) for MachineSet %s",

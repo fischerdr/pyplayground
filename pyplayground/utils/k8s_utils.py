@@ -1158,7 +1158,7 @@ def get_machineset_resource_pool(
         >>> machineset = get_machineset("my-machineset")
         >>> resource_pool = get_machineset_resource_pool(machineset)
         >>> print(resource_pool)
-        /SDDC2D1LINFVS01-DC1/host/SDDC2D1LINFVS01-C12/Resources
+        /vcenterdc/host/hostclustername/Resources
     """
     resource_pool: Optional[str] = cast(
         Optional[str],
@@ -1175,14 +1175,14 @@ def parse_resource_pool_path(resource_pool: str) -> str:
 
     Args:
         resource_pool: The resourcePool path (e.g.,
-            '/SDDC2D1LINFVS01-DC1/host/SDDC2D1LINFVS01-C12/Resources')
+            '/vcenterdc/host/hostclustername/Resources')
 
     Returns:
-        The extracted host cluster name (e.g., 'SDDC2D1LINFVS01-C12')
+        The extracted host cluster name (e.g., 'hostclustername')
 
     Examples:
-        >>> parse_resource_pool_path('/SDDC2D1LINFVS01-DC1/host/SDDC2D1LINFVS01-C12/Resources')
-        'SDDC2D1LINFVS01-C12'
+        >>> parse_resource_pool_path('/vcenterdc/host/hostclustername/Resources')
+        'hostclustername'
         >>> parse_resource_pool_path('/DC1/host/CLUSTER/Resources')
         'CLUSTER'
     """
@@ -1221,7 +1221,7 @@ def get_zone_label(
         >>> machineset = get_machineset("my-machineset")
         >>> zone = get_zone_label(machineset)
         >>> print(zone)
-        SDDC2D1LINFVS01-C12
+        hostclustername
     """
     # Try different label paths based on resource type
     # MachineSet: spec.template.spec.metadata.labels

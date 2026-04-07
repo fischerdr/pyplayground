@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
 """OpenShift Portworx Zone Label Updater.
 
-This script updates the topology.portworx.io/zone label across OpenShift resources
-(MachineSets, Machines, and Nodes) based on the ESXi host cluster name extracted
-from the MachineSet's resourcePool configuration.
+This script updates zone labels across OpenShift resources (MachineSets, Machines,
+and Nodes) based on the ESXi host cluster name extracted from the MachineSet's
+resourcePool configuration.
 
 Label Propagation Order:
 1. MachineSet (spec.template.spec.metadata.labels)
 2. Machine (spec.metadata.labels)
 3. Node (metadata.labels)
 
+Multiple Labels:
+The script supports updating multiple zone labels simultaneously (e.g., for different
+storage systems like Portworx, CSI, Rook/ODF). All labels receive the same value
+extracted from the ESXi resourcePool.
+
 Usage:
-    # Default behavior (live mode)
+    # Default behavior (topology.portworx.io/zone)
     python openshift_zone_updater.py
 
     # Dry-run mode
     python openshift_zone_updater.py --dry-run
+
+    # Custom label
+    python openshift_zone_updater.py --label csi.storage.k8s.io/zone
+
+    # Multiple labels (all get same value from resourcePool)
+    python openshift_zone_updater.py --label topology.portworx.io/zone --label csi.storage.k8s.io/zone --label topology.rook.io/zone
 
     # With custom kubeconfig (or KUBECONFIG environment variable)
     python openshift_zone_updater.py --kubeconfig /path/to/kubeconfig
@@ -27,7 +38,7 @@ Usage:
 import logging
 import os
 import time
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Any, Callable, Dict, Optional, Tuple, TypeVar
 
 import click
 from rich.console import Console
@@ -51,7 +62,6 @@ console = Console()
 
 # Constants
 NAMESPACE = os.getenv("OPENSHIFT_NAMESPACE", "openshift-machine-api")
-ZONE_LABEL_KEY = "topology.portworx.io/zone"
 
 MAX_API_RETRIES = 3
 API_RETRY_DELAY = 1.0
@@ -179,12 +189,14 @@ def validate_machine_status(
 def process_machineset(
     machineset: Dict[str, Any],
     dry_run: bool,
+    label_keys: Tuple[str, ...],
 ) -> bool:
     """Process a single MachineSet: update labels and propagate to Machines and Nodes.
 
     Args:
         machineset: The MachineSet resource dictionary
         dry_run: If True, only show what would be changed
+        label_keys: Tuple of label keys to update (all get same value from resourcePool)
 
     Returns:
         True if processing succeeded, False otherwise
@@ -216,17 +228,22 @@ def process_machineset(
     }
 
     # Step 1: Update MachineSet labels
-    machineset_updated, machineset_old_value = update_zone_label(
-        machineset,
-        ZONE_LABEL_KEY,
-        new_zone_value,
-        dry_run=dry_run,
-    )
-    if not machineset_updated:
-        return False
+    for label_key in label_keys:
+        machineset_updated, machineset_old_value = update_zone_label(
+            machineset,
+            label_key,
+            new_zone_value,
+            dry_run=dry_run,
+        )
+        if not machineset_updated:
+            return False
 
-    if dry_run:
-        changes_summary["machineset"]["old"] = machineset_old_value if machineset_old_value else "not set"
+        if dry_run:
+            if "old_labels" not in changes_summary["machineset"]:
+                changes_summary["machineset"]["old_labels"] = {}
+                changes_summary["machineset"]["new_labels"] = {}
+            changes_summary["machineset"]["old_labels"][label_key] = machineset_old_value if machineset_old_value else "not set"
+            changes_summary["machineset"]["new_labels"][label_key] = new_zone_value
 
     # Step 2: Get and update Machines in the MachineSet
     try:
@@ -263,36 +280,38 @@ def process_machineset(
             )
             continue
 
-        machine_updated, machine_old_value = update_zone_label(
-            machine,
-            ZONE_LABEL_KEY,
-            new_zone_value,
-            dry_run=dry_run,
-        )
-        if not machine_updated:
-            return False
-
-        # Post-update verification for Machine labels
-        if not dry_run:
-            machine_labels = machine.get("spec", {}).get("metadata", {}).get("labels", {})
-            if machine_labels.get(ZONE_LABEL_KEY) != new_zone_value:
-                logger.error(
-                    "Post-update verification failed for Machine %s: " "expected %s=%s, got %s",
-                    machine_name,
-                    ZONE_LABEL_KEY,
-                    new_zone_value,
-                    machine_labels.get(ZONE_LABEL_KEY, "not set"),
-                )
+        for label_key in label_keys:
+            machine_updated, machine_old_value = update_zone_label(
+                machine,
+                label_key,
+                new_zone_value,
+                dry_run=dry_run,
+            )
+            if not machine_updated:
                 return False
 
-        if dry_run:
-            changes_summary["machines"].append(
-                {
-                    "name": machine_name,
-                    "old": machine_old_value if machine_old_value else "not set",
-                    "new": new_zone_value,
-                }
-            )
+            # Post-update verification for Machine labels
+            if not dry_run:
+                machine_labels = machine.get("spec", {}).get("metadata", {}).get("labels", {})
+                if machine_labels.get(label_key) != new_zone_value:
+                    logger.error(
+                        "Post-update verification failed for Machine %s: " "expected %s=%s, got %s",
+                        machine_name,
+                        label_key,
+                        new_zone_value,
+                        machine_labels.get(label_key, "not set"),
+                    )
+                    return False
+
+            if dry_run:
+                changes_summary["machines"].append(
+                    {
+                        "name": machine_name,
+                        "old": machine_old_value if machine_old_value else "not set",
+                        "new": new_zone_value,
+                        "label_key": label_key,
+                    }
+                )
 
     # Step 3: Get and update Nodes for the Machines
     try:
@@ -318,35 +337,37 @@ def process_machineset(
         )
     for node in nodes:
         node_name = node["metadata"]["name"]
-        node_updated, node_old_value = update_zone_label(
-            node,
-            ZONE_LABEL_KEY,
-            new_zone_value,
-            dry_run=dry_run,
-        )
-        if not node_updated:
-            return False
-
-        if not dry_run:
-            node_labels = node.get("metadata", {}).get("labels", {})
-            if node_labels.get(ZONE_LABEL_KEY) != new_zone_value:
-                logger.error(
-                    "Post-update verification failed for Node %s: " "expected %s=%s, got %s",
-                    node_name,
-                    ZONE_LABEL_KEY,
-                    new_zone_value,
-                    node_labels.get(ZONE_LABEL_KEY, "not set"),
-                )
+        for label_key in label_keys:
+            node_updated, node_old_value = update_zone_label(
+                node,
+                label_key,
+                new_zone_value,
+                dry_run=dry_run,
+            )
+            if not node_updated:
                 return False
 
-        if dry_run:
-            changes_summary["nodes"].append(
-                {
-                    "name": node_name,
-                    "old": node_old_value if node_old_value else "not set",
-                    "new": new_zone_value,
-                }
-            )
+            if not dry_run:
+                node_labels = node.get("metadata", {}).get("labels", {})
+                if node_labels.get(label_key) != new_zone_value:
+                    logger.error(
+                        "Post-update verification failed for Node %s: " "expected %s=%s, got %s",
+                        node_name,
+                        label_key,
+                        new_zone_value,
+                        node_labels.get(label_key, "not set"),
+                    )
+                    return False
+
+            if dry_run:
+                changes_summary["nodes"].append(
+                    {
+                        "name": node_name,
+                        "old": node_old_value if node_old_value else "not set",
+                        "new": new_zone_value,
+                        "label_key": label_key,
+                    }
+                )
 
     # Print dry-run summary if in dry-run mode
     if dry_run:
@@ -355,19 +376,30 @@ def process_machineset(
         console.print(f"DRY-RUN SUMMARY FOR MachineSet: {resource_name}")
         console.print(f"{header_line}")
 
-        ms_old = changes_summary["machineset"]["old"]
-        ms_new = changes_summary["machineset"]["new"]
-        console.print(f"MachineSet {resource_name}: {ms_old if ms_old else 'not set'} -> {ms_new}")
+        # Show all labels for MachineSet
+        if "old_labels" in changes_summary["machineset"]:
+            ms_old = changes_summary["machineset"]["old_labels"]
+            ms_new = changes_summary["machineset"]["new_labels"]
+            label_changes = ", ".join([f"{k}: {v if v else 'not set'} -> {ms_new[k]}" for k, v in ms_old.items()])
+            console.print(f"MachineSet {resource_name}: {label_changes}")
 
+        # Show machines with label info
         for machine_info in changes_summary["machines"]:
-            console.print(f"Machine {machine_info['name']}: {machine_info['old'] if machine_info['old'] else 'not set'} -> {machine_info['new']}")
+            label_key = machine_info.get("label_key", label_keys[0])
+            console.print(f"Machine {machine_info['name']} ({label_key}): " f"{machine_info['old'] if machine_info['old'] else 'not set'} -> {machine_info['new']}")
 
+        # Show nodes with label info
         for node_info in changes_summary["nodes"]:
-            console.print(f"Node {node_info['name']}: {node_info['old'] if node_info['old'] else 'not set'} -> {node_info['new']}")
+            label_key = node_info.get("label_key", label_keys[0])
+            console.print(f"Node {node_info['name']} ({label_key}): " f"{node_info['old'] if node_info['old'] else 'not set'} -> {node_info['new']}")
 
         console.print(f"{header_line}")
-        total_changes = 1 + len(changes_summary["machines"]) + len(changes_summary["nodes"])
-        console.print(f"Total resources to update: {total_changes} (1 MachineSet, {len(changes_summary['machines'])} Machines, {len(changes_summary['nodes'])} Nodes)")
+        total_changes = len(label_keys) + len(changes_summary["machines"]) * len(label_keys) + len(changes_summary["nodes"]) * len(label_keys)
+        console.print(
+            f"Total resources to update: {total_changes} "
+            f"({len(label_keys)} labels × "
+            f"(1 MachineSet, {len(changes_summary['machines'])} Machines, {len(changes_summary['nodes'])} Nodes))"
+        )
         console.print(f"{header_line}")
 
     return True
@@ -386,6 +418,14 @@ def process_machineset(
     help="Show what would be changed without applying.",
 )
 @click.option(
+    "--label",
+    "labels",
+    type=str,
+    multiple=True,
+    default=("topology.portworx.io/zone",),
+    help="Label key to update (can be specified multiple times). Default: topology.portworx.io/zone",
+)
+@click.option(
     "--live",
     is_flag=True,
     default=True,
@@ -396,12 +436,17 @@ def process_machineset(
     is_flag=True,
     help="Enable debug logging.",
 )
-def main(kubeconfig: Optional[str], dry_run: bool, live: bool, debug: bool) -> None:
-    r"""Update Portworx zone labels across OpenShift resources.
+def main(kubeconfig: Optional[str], dry_run: bool, labels: Tuple[str, ...], debug: bool) -> None:
+    r"""Update zone labels across OpenShift resources.
 
-    This script updates the topology.portworx.io/zone label on MachineSets,
-    Machines, and Nodes based on the ESXi host cluster name extracted from
-    the MachineSet's resourcePool configuration.
+    This script updates zone labels on MachineSets, Machines, and Nodes based on
+    the ESXi host cluster name extracted from the MachineSet's resourcePool
+    configuration.
+
+    Multiple Labels:
+    The script supports updating multiple zone labels simultaneously (e.g., for
+    different storage systems like Portworx, CSI, Rook/ODF). All labels receive
+    the same value extracted from the ESXi resourcePool.
 
     \b
     Label Propagation Order:
@@ -409,14 +454,19 @@ def main(kubeconfig: Optional[str], dry_run: bool, live: bool, debug: bool) -> N
     2. Machine (spec.metadata.labels)
     3. Node (metadata.labels)
 
-
     \b
     Examples:
-        # Default behavior (live mode)
+        # Default behavior (topology.portworx.io/zone)
         python openshift_zone_updater.py
 
         # Dry-run mode
         python openshift_zone_updater.py --dry-run
+
+        # Custom label
+        python openshift_zone_updater.py --label csi.storage.k8s.io/zone
+
+        # Multiple labels (all get same value from resourcePool)
+        python openshift_zone_updater.py --label topology.portworx.io/zone --label csi.storage.k8s.io/zone
 
         # With custom kubeconfig (or KUBECONFIG environment variable)
         python openshift_zone_updater.py --kubeconfig /path/to/kubeconfig
@@ -431,6 +481,17 @@ def main(kubeconfig: Optional[str], dry_run: bool, live: bool, debug: bool) -> N
 
     logger.info("Starting Portworx Zone Label Updater")
     logger.info("Mode: %s", "DRY-RUN" if dry_run else "LIVE")
+    logger.info("Labels: %s", ", ".join(labels))
+
+    if len(labels) > 1:
+        logger.warning("Updating %d labels. This may take longer.", len(labels))
+
+    for label_key in labels:
+        if "/" not in label_key:
+            logger.warning(
+                "Label key '%s' does not contain '/'. K8s API will validate.",
+                label_key,
+            )
 
     try:
         # Connect to cluster using auto-loading with in-cluster fallback
@@ -463,7 +524,7 @@ def main(kubeconfig: Optional[str], dry_run: bool, live: bool, debug: bool) -> N
 
         for machineset in machinesets:
             try:
-                if process_machineset(machineset, dry_run):
+                if process_machineset(machineset, dry_run, labels):
                     success_count += 1
                 else:
                     failure_count += 1

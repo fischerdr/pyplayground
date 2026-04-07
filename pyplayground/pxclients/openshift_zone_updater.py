@@ -426,12 +426,6 @@ def process_machineset(
     help="Label key to update (can be specified multiple times). Default: topology.portworx.io/zone",
 )
 @click.option(
-    "--live",
-    is_flag=True,
-    default=True,
-    help="Apply changes (default behavior).",
-)
-@click.option(
     "--debug",
     is_flag=True,
     help="Enable debug logging.",
@@ -471,10 +465,6 @@ def main(kubeconfig: Optional[str], dry_run: bool, labels: Tuple[str, ...], debu
         # With custom kubeconfig (or KUBECONFIG environment variable)
         python openshift_zone_updater.py --kubeconfig /path/to/kubeconfig
     """
-    # Handle flag logic
-    if dry_run:
-        live = False
-
     script_base_name = os.path.basename(__file__).replace(".py", "")
     log_level = logging.DEBUG if debug else logging.INFO
     setup_logging(level=log_level, script_name=script_base_name)

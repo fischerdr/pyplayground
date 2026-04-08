@@ -8,7 +8,7 @@ These functions are shared across the vmdk_manager and related scripts.
 
 import atexit
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Dict, List, Optional, Set
 
 import pyVmomi
 from pyVim.connect import Disconnect, SmartConnect
@@ -67,7 +67,9 @@ def wait_for_tasks(si, tasks):  # noqa: C901
     task_list = [str(task) for task in tasks]
     # Create filter
     obj_specs = [vmodl.query.PropertyCollector.ObjectSpec(obj=task) for task in tasks]
-    property_spec = vmodl.query.PropertyCollector.PropertySpec(type=vim.Task, pathSet=[], all=True)
+    property_spec = vmodl.query.PropertyCollector.PropertySpec(
+        type=vim.Task, pathSet=[], all=True
+    )
     filter_spec = vmodl.query.PropertyCollector.FilterSpec()
     filter_spec.objectSet = obj_specs
     filter_spec.propSet = [property_spec]
@@ -122,10 +124,14 @@ def connect(args) -> Optional[vim.ServiceInstance]:
 
                 context = ssl._create_unverified_context()
             except ImportError:
-                logger.warning("Could not import ssl module. Proceeding without specific SSL context.")
+                logger.warning(
+                    "Could not import ssl module. Proceeding without specific SSL context."
+                )
                 # context remains None
             except AttributeError:
-                logger.warning("ssl._create_unverified_context not available. Proceeding without specific SSL context.")
+                logger.warning(
+                    "ssl._create_unverified_context not available. Proceeding without specific SSL context."
+                )
                 # context remains None
 
             logger.debug(
@@ -150,7 +156,9 @@ def connect(args) -> Optional[vim.ServiceInstance]:
                 args.user,
                 args.port,
             )
-            service_instance = SmartConnect(host=args.host, user=args.user, pwd=args.password, port=args.port)
+            service_instance = SmartConnect(
+                host=args.host, user=args.user, pwd=args.password, port=args.port
+            )
 
         # Ensure connection was successful before registering disconnect
         if service_instance:
@@ -159,7 +167,10 @@ def connect(args) -> Optional[vim.ServiceInstance]:
             return service_instance  # Return on success
         else:
             # This case might occur if SmartConnect returns None without raising an exception
-            logger.error("SmartConnect returned None without raising an exception for host %s", args.host)
+            logger.error(
+                "SmartConnect returned None without raising an exception for host %s",
+                args.host,
+            )
             return None
 
     except vim.fault.InvalidLogin as e:
@@ -169,7 +180,12 @@ def connect(args) -> Optional[vim.ServiceInstance]:
         logger.error("vSphere connection error for host %s: %s", args.host, str(e))
         return None
     except Exception as e:  # Catch other potential exceptions during connect
-        logger.error("Unexpected error connecting to vSphere host %s: %s", args.host, str(e), exc_info=True)
+        logger.error(
+            "Unexpected error connecting to vSphere host %s: %s",
+            args.host,
+            str(e),
+            exc_info=True,
+        )
         return None
 
     # This part should ideally not be reached if logic above is correct
@@ -189,7 +205,9 @@ def extract_path_from_datastore_path(datastore_path: str) -> str:
     Returns:
         File path portion without datastore prefix
     """
-    return datastore_path.split("] ", 1)[1] if "] " in datastore_path else datastore_path
+    return (
+        datastore_path.split("] ", 1)[1] if "] " in datastore_path else datastore_path
+    )
 
 
 def collect_properties(si, view_ref, obj_type, path_set=None, include_mors=False):
@@ -273,7 +291,9 @@ def get_container_view(si, obj_type, container=None):
     if not container:
         container = si.content.rootFolder
 
-    view_ref = si.content.viewManager.CreateContainerView(container=container, type=obj_type, recursive=True)
+    view_ref = si.content.viewManager.CreateContainerView(
+        container=container, type=obj_type, recursive=True
+    )
     return view_ref
 
 
@@ -331,3 +351,137 @@ def get_obj(content, vim_type, name, folder=None, recurse=True):
     if not obj:
         raise RuntimeError("Managed Object " + name + " not found.")
     return obj
+
+
+def get_datastore_info(
+    si: vim.ServiceInstance, datastore_mor: vim.Datastore
+) -> Dict[str, Any]:
+    """Get datastore capacity, free space, and type information.
+
+    Args:
+        si: The vCenter ServiceInstance connection.
+        datastore_mor: The managed object reference for the datastore.
+
+    Returns:
+        Dictionary containing datastore information (capacity, free space, type).
+    """
+    content = si.RetrieveContent()
+    datastore_host_mounts: Dict[str, Any] = {}
+
+    try:
+        for host in datastore_mor.host:
+            if host.key not in datastore_host_mounts:
+                try:
+                    mount_info = datastore_mor.summary.mountInfo
+                    datastore_host_mounts[host.key] = {
+                        "host_name": host.name,
+                        "mount": mount_info,
+                    }
+                except vmodl.fault.NotFound:
+                    pass
+    except Exception as e:
+        logger.debug("Error getting datastore host mounts: %s", str(e))
+
+    try:
+        capacity = datastore_mor.summary.capacity
+        free_space = datastore_mor.summary.freeSpace
+        datastore_info: Dict[str, Any] = {
+            "name": datastore_mor.name,
+            "type": datastore_mor.summary.type,
+            "capacity_gb": capacity / (1024**3) if capacity else None,
+            "free_space_gb": free_space / (1024**3) if free_space else None,
+            "usable_space_gb": (capacity - free_space) / (1024**3)
+            if capacity and free_space
+            else None,
+            "host_mounts": datastore_host_mounts,
+        }
+        return datastore_info
+    except Exception as e:
+        logger.warning(
+            "Error getting datastore summary for %s: %s", datastore_mor.name, str(e)
+        )
+        return {
+            "name": datastore_mor.name,
+            "type": "unknown",
+            "capacity_gb": None,
+            "free_space_gb": None,
+            "usable_space_gb": None,
+            "host_mounts": datastore_host_mounts,
+        }
+
+
+def get_vm_cluster_info(
+    si: vim.ServiceInstance, vm: vim.VirtualMachine
+) -> Dict[str, Any]:
+    """Get VM's cluster information from vCenter inventory.
+
+    Args:
+        si: The vCenter ServiceInstance connection.
+        vm: The vim.VirtualMachine object.
+
+    Returns:
+        Dictionary containing cluster information and current host details.
+    """
+    cluster_info: Dict[str, Any] = {
+        "cluster_name": None,
+        "cluster_path": None,
+        "current_host_name": None,
+        "current_host_system": None,
+    }
+
+    try:
+        host_system = vm.runtime.host
+        if host_system:
+            cluster_info["current_host_name"] = host_system.name
+            cluster_info["current_host_system"] = host_system._moId
+
+            parent = host_system.parent
+            if parent:
+                if isinstance(parent, vim.ClusterComputeResource):
+                    cluster_info["cluster_name"] = parent.name
+                    cluster_info["cluster_path"] = parent.summary.config.name
+                elif isinstance(parent, vim.ComputeResource):
+                    cluster_info["cluster_name"] = parent.name
+                    cluster_info["cluster_path"] = parent.summary.config.name
+                elif hasattr(parent, "parent") and parent.parent:
+                    grandparent = parent.parent
+                    if isinstance(grandparent, vim.ClusterComputeResource):
+                        cluster_info["cluster_name"] = grandparent.name
+                        cluster_info["cluster_path"] = grandparent.summary.config.name
+
+    except Exception as e:
+        logger.warning("Error getting cluster info for VM %s: %s", vm.name, str(e))
+
+    return cluster_info
+
+
+def get_vm_datastores(vm: vim.VirtualMachine) -> List[Dict[str, Any]]:
+    """Get unique datastores used by VM's disks.
+
+    Args:
+        vm: The vim.VirtualMachine object.
+
+    Returns:
+        List of unique datastore information dictionaries.
+    """
+    datastores: List[Dict[str, Any]] = []
+    seen_datastores: Set[str] = set()
+
+    try:
+        for device in vm.config.hardware.device:
+            if isinstance(device, vim.vm.device.VirtualDisk):
+                backing = device.backing
+                if backing and hasattr(backing, "datastore"):
+                    datastore_mor = backing.datastore
+                    if datastore_mor and datastore_mor._moId not in seen_datastores:
+                        seen_datastores.add(datastore_mor._moId)
+                        datastores.append(
+                            {
+                                "datastore_mor": datastore_mor,
+                                "datastore_name": datastore_mor.name,
+                            }
+                        )
+    except Exception as e:
+        logger.warning("Error getting VM datastores for %s: %s", vm.name, str(e))
+
+    return datastores

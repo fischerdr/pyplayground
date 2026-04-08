@@ -105,74 +105,76 @@ def get_vm_details(si: vim.ServiceInstance, vm: vim.VirtualMachine) -> NodeESXiI
     )
 
 
-def create_vm_cache(si: vim.ServiceInstance, cluster_name: Optional[str] = None) -> Dict[str, vim.VirtualMachine]:
-    """Create a cache of VMs by name for faster lookup.
+def create_vm_cache(si: vim.ServiceInstance, cluster_name: Optional[str] = None) -> Dict[str, NodeESXiInfo]:
+    """Create a cache of pre-fetched VM details by name.
 
     If cluster_name is provided, only VMs matching the cluster name prefix are cached.
     This reduces VM count from 500+ to ~20-50 VMs per cluster.
+
+    All vCenter API calls happen here in a single-threaded context.
+    Threads later just do dictionary lookups - no shared connection needed.
 
     Args:
         si: The vCenter ServiceInstance.
         cluster_name: Optional cluster name prefix to filter VMs by.
 
     Returns:
-        Dictionary mapping VM names to vim.VirtualMachine objects.
+        Dictionary mapping VM names to pre-computed NodeESXiInfo objects.
     """
     if cluster_name:
         logger.info("Using cluster name filtering: %s", cluster_name)
-        return get_cluster_vms(si, cluster_name)
+        vms = get_cluster_vms(si, cluster_name)
+    else:
+        logger.warning("No cluster name provided, caching all VMs from vCenter")
+        vm_cache_raw: Dict[str, vim.VirtualMachine] = {}
+        content = si.RetrieveContent()
+        container = content.viewManager.CreateContainerView(  # type: ignore[attr-defined]
+            content.rootFolder,  # type: ignore[attr-defined]
+            [vim.VirtualMachine],
+            True,
+        )
+        try:
+            for vm in container.view:
+                vm_cache_raw[vm.name] = vm
+            logger.debug("Cached %d VMs from vCenter", len(vm_cache_raw))
+        finally:
+            container.Destroy()
+        vms = vm_cache_raw
 
-    logger.warning("No cluster name provided, caching all VMs from vCenter")
-    vm_cache: Dict[str, vim.VirtualMachine] = {}
-    content = si.RetrieveContent()
-    container = content.viewManager.CreateContainerView(  # type: ignore[attr-defined]
-        content.rootFolder,  # type: ignore[attr-defined]
-        [vim.VirtualMachine],
-        True,
-    )
-    try:
-        for vm in container.view:
-            vm_cache[vm.name] = vm
-        logger.debug("Cached %d VMs from vCenter", len(vm_cache))
-    finally:
-        container.Destroy()
-    return vm_cache
+    vm_details: Dict[str, NodeESXiInfo] = {}
+    for name, vm in vms.items():
+        try:
+            details = get_vm_details(si, vm)
+            vm_details[name] = details
+            logger.debug("Pre-fetched details for VM: %s", name)
+        except Exception as e:
+            logger.warning("Failed to fetch details for VM '%s': %s", name, str(e))
+
+    return vm_details
 
 
 def process_node_thread(
     node_name: str,
-    vm_cache: Dict[str, vim.VirtualMachine],
-    si: vim.ServiceInstance,
+    vm_cache: Dict[str, NodeESXiInfo],
 ) -> Optional[NodeESXiInfo]:
-    """Process a single node and extract ESXi infrastructure info.
+    """Process a single node by looking up pre-fetched ESXi info.
 
     Args:
         node_name: The name of the Kubernetes node to process.
-        vm_cache: Pre-fetched cache of VMs from vCenter.
-        si: The vCenter ServiceInstance connection.
+        vm_cache: Pre-computed cache of NodeESXiInfo objects from vCenter.
 
     Returns:
-        NodeESXiInfo object if VM found and details retrieved, None otherwise.
+        NodeESXiInfo object if VM found, None otherwise.
     """
     logger.debug("Processing node: %s", node_name)
 
-    vm = vm_cache.get(node_name)
-    if not vm:
+    node_info = vm_cache.get(node_name)
+    if not node_info:
         logger.error("VM for node %s not found in vCenter", node_name)
         return None
 
-    try:
-        node_info = get_vm_details(si, vm)
-        logger.info("Successfully retrieved ESXi info for node: %s", node_name)
-        return node_info
-    except Exception as e:
-        logger.error(
-            "Failed to retrieve ESXi info for VM '%s': %s",
-            node_name,
-            str(e),
-            exc_info=True,
-        )
-        return None
+    logger.info("Successfully retrieved ESXi info for node: %s", node_name)
+    return node_info
 
 
 @click.command()
@@ -334,7 +336,6 @@ def check_k8s_nodes_esxi_datastore(
         logger.info("Cached %d VMs from vCenter for lookup", len(vm_cache))
     except Exception as e:
         logger.error("Failed to create VM cache: %s", str(e), exc_info=True)
-        Disconnect(si)
         sys.exit(1)
 
     try:
@@ -349,7 +350,6 @@ def check_k8s_nodes_esxi_datastore(
         )
     except ApiException as e:
         logger.error("Failed to retrieve nodes from Kubernetes: %s", str(e))
-        Disconnect(si)
         sys.exit(1)
     except Exception as e:
         logger.error(
@@ -357,13 +357,12 @@ def check_k8s_nodes_esxi_datastore(
             str(e),
             exc_info=True,
         )
-        Disconnect(si)
         sys.exit(1)
 
     results: Dict[str, Optional[NodeESXiInfo]] = {}
 
     with ThreadPoolExecutor(max_workers=threads) as executor:
-        futures = {executor.submit(process_node_thread, node.metadata.name, vm_cache, si): node.metadata.name for node in nodes}
+        futures = {executor.submit(process_node_thread, node.metadata.name, vm_cache): node.metadata.name for node in nodes}
 
         for future in as_completed(futures):
             node_name = futures[future]

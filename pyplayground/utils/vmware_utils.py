@@ -27,8 +27,9 @@ class VSphereConnectionParams:
     host: str
     user: str
     password: str
-    disable_ssl: bool
-    effective_cert_path: Optional[str]
+    port: int = 443
+    disable_ssl: bool = False
+    effective_cert_path: Optional[str] = None
 
 
 def print_vm_info(vm, depth=1, max_depth=10):
@@ -336,11 +337,10 @@ def get_obj(content, vim_type, name, folder=None, recurse=True):
     return obj
 
 
-def get_datastore_info(si: vim.ServiceInstance, datastore_mor: vim.Datastore) -> Dict[str, Any]:
+def get_datastore_info(datastore_mor: vim.Datastore) -> Dict[str, Any]:
     """Get datastore capacity, free space, and type information.
 
     Args:
-        si: The vCenter ServiceInstance connection.
         datastore_mor: The managed object reference for the datastore.
 
     Returns:
@@ -386,11 +386,10 @@ def get_datastore_info(si: vim.ServiceInstance, datastore_mor: vim.Datastore) ->
         }
 
 
-def get_vm_cluster_info(si: vim.ServiceInstance, vm: vim.VirtualMachine) -> Dict[str, Any]:
+def get_vm_cluster_info(vm: vim.VirtualMachine) -> Dict[str, Any]:
     """Get VM's cluster information from vCenter inventory.
 
     Args:
-        si: The vCenter ServiceInstance connection.
         vm: The vim.VirtualMachine object.
 
     Returns:

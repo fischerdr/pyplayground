@@ -199,11 +199,6 @@ def process_node_thread(
 )
 @click.option("--threads", default=5, help="Number of threads for concurrent node processing.")
 @click.option(
-    "--pool_size",
-    default=5,
-    help="Number of connections in the vCenter connection pool.",
-)
-@click.option(
     "--output-format",
     type=click.Choice(["text", "json"]),
     default="text",
@@ -221,7 +216,6 @@ def check_k8s_nodes(
     disable_k8s_ssl: bool,
     disable_vcenter_ssl: bool,
     threads: int,
-    pool_size: int,
     output_format: str,
 ) -> None:
     """Check Kubernetes nodes against VMware VM status with threading.
@@ -246,7 +240,9 @@ def check_k8s_nodes(
             logger.info("Using default kubeconfig")
 
         if disable_k8s_ssl:
-            client.Configuration().verify_ssl = False
+            configuration = client.Configuration()
+            configuration.verify_ssl = False
+            client.Configuration.set_default(configuration)
             logger.info("SSL verification disabled for Kubernetes API")
     except config.config_exception.ConfigException as e:
         logger.error("Failed to load Kubernetes config: %s", str(e))

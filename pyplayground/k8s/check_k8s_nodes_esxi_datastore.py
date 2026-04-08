@@ -43,17 +43,16 @@ class NodeESXiInfo:
     datastores: List[Dict[str, Any]]
 
 
-def get_vm_details(si: vim.ServiceInstance, vm: vim.VirtualMachine) -> NodeESXiInfo:
+def get_vm_details(vm: vim.VirtualMachine) -> NodeESXiInfo:
     """Extract ESXi infrastructure information from a VM object.
 
     Args:
-        si: The vCenter ServiceInstance connection.
         vm: The vim.VirtualMachine object to extract information from.
 
     Returns:
         NodeESXiInfo object containing ESXi infrastructure details.
     """
-    cluster_info = get_vm_cluster_info(si, vm)
+    cluster_info = get_vm_cluster_info(vm)
     datastores = get_vm_datastores(vm)
 
     return NodeESXiInfo(
@@ -103,7 +102,7 @@ def create_vm_cache(si: vim.ServiceInstance, cluster_name: Optional[str] = None)
     vm_details: Dict[str, NodeESXiInfo] = {}
     for name, vm in vms.items():
         try:
-            details = get_vm_details(si, vm)
+            details = get_vm_details(vm)
             vm_details[name] = details
             logger.debug("Pre-fetched details for VM: %s", name)
         except Exception as e:
@@ -260,7 +259,9 @@ def check_k8s_nodes_esxi_datastore(
             logger.info("Using default kubeconfig")
 
         if disable_k8s_ssl:
-            client.Configuration().verify_ssl = False
+            configuration = client.Configuration()
+            configuration.verify_ssl = False
+            client.Configuration.set_default(configuration)
             logger.info("SSL verification disabled for Kubernetes API")
     except config.config_exception.ConfigException as e:
         logger.error("Failed to load Kubernetes config: %s", str(e))
@@ -355,7 +356,7 @@ def check_k8s_nodes_esxi_datastore(
             if node_info.datastores:
                 for ds_entry in node_info.datastores:
                     ds_mor = ds_entry["datastore_mor"]
-                    ds_info = get_datastore_info(si, ds_mor)
+                    ds_info = get_datastore_info(ds_mor)
                     datastore_info_list.append(ds_info)
 
             json_output[node_name] = {
@@ -398,7 +399,7 @@ def check_k8s_nodes_esxi_datastore(
             if node_info.datastores:
                 for ds_entry in node_info.datastores:
                     ds_mor = ds_entry["datastore_mor"]
-                    ds_info = get_datastore_info(si, ds_mor)
+                    ds_info = get_datastore_info(ds_mor)
                     ds_table = Table(title=f"Datastore: {ds_info['name']}")
                     ds_table.add_column("Property", style="cyan")
                     ds_table.add_column("Value", style="green")

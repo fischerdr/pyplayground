@@ -67,9 +67,7 @@ def wait_for_tasks(si, tasks):  # noqa: C901
     task_list = [str(task) for task in tasks]
     # Create filter
     obj_specs = [vmodl.query.PropertyCollector.ObjectSpec(obj=task) for task in tasks]
-    property_spec = vmodl.query.PropertyCollector.PropertySpec(
-        type=vim.Task, pathSet=[], all=True
-    )
+    property_spec = vmodl.query.PropertyCollector.PropertySpec(type=vim.Task, pathSet=[], all=True)
     filter_spec = vmodl.query.PropertyCollector.FilterSpec()
     filter_spec.objectSet = obj_specs
     filter_spec.propSet = [property_spec]
@@ -117,29 +115,11 @@ def connect(args) -> Optional[vim.ServiceInstance]:
     service_instance = None
     try:
         if args.disable_ssl_verification:
-            # Attempt to import ssl module for context creation
-            context = None  # Initialize context
-            try:
-                import ssl
-
-                context = ssl._create_unverified_context()
-            except ImportError:
-                logger.warning(
-                    "Could not import ssl module. Proceeding without specific SSL context."
-                )
-                # context remains None
-            except AttributeError:
-                logger.warning(
-                    "ssl._create_unverified_context not available. Proceeding without specific SSL context."
-                )
-                # context remains None
-
             logger.debug(
-                "Calling SmartConnect: host=%s, user=%s, port=%d, sslContext=%s",
+                "Calling SmartConnect: host=%s, user=%s, port=%d, sslContext=Unverified",
                 args.host,
                 args.user,
                 args.port,
-                "Unverified" if context else "Default",
             )
             service_instance = SmartConnect(
                 host=args.host,
@@ -156,9 +136,7 @@ def connect(args) -> Optional[vim.ServiceInstance]:
                 args.user,
                 args.port,
             )
-            service_instance = SmartConnect(
-                host=args.host, user=args.user, pwd=args.password, port=args.port
-            )
+            service_instance = SmartConnect(host=args.host, user=args.user, pwd=args.password, port=args.port)
 
         # Ensure connection was successful before registering disconnect
         if service_instance:
@@ -205,9 +183,7 @@ def extract_path_from_datastore_path(datastore_path: str) -> str:
     Returns:
         File path portion without datastore prefix
     """
-    return (
-        datastore_path.split("] ", 1)[1] if "] " in datastore_path else datastore_path
-    )
+    return datastore_path.split("] ", 1)[1] if "] " in datastore_path else datastore_path
 
 
 def collect_properties(si, view_ref, obj_type, path_set=None, include_mors=False):
@@ -224,7 +200,7 @@ def collect_properties(si, view_ref, obj_type, path_set=None, include_mors=False
         obj_type      (pyVmomi.vim.*): Type of managed object
         path_set               (list): List of properties to retrieve
         include_mors           (bool): If True include the managed objects
-                                       refs in the result
+                                        refs in the result
 
     Returns:
         A list of properties for the managed objects
@@ -252,8 +228,8 @@ def collect_properties(si, view_ref, obj_type, path_set=None, include_mors=False
 
     if not path_set:
         property_spec.all = True
-
-    property_spec.pathSet = path_set
+    else:
+        property_spec.pathSet = path_set
 
     # Add the object and property specification to the
     # property filter specification
@@ -261,19 +237,28 @@ def collect_properties(si, view_ref, obj_type, path_set=None, include_mors=False
     filter_spec.objectSet = [obj_spec]
     filter_spec.propSet = [property_spec]
 
-    # Retrieve properties
-    props = collector.RetrieveContents([filter_spec])
+    # Retrieve properties with pagination for large inventories
+    options = pyVmomi.vmodl.query.PropertyCollector.RetrieveOptions()
+    options.maxObjects = 200
+
+    result = collector.RetrievePropertiesEx([filter_spec], options)
 
     data = []
-    for obj in props:
-        properties = {}
-        for prop in obj.propSet:
-            properties[prop.name] = prop.val
+    while result:
+        for obj in result.objects:
+            props_dict = {}
+            for prop in obj.propSet:
+                props_dict[prop.name] = prop.val
 
-        if include_mors:
-            properties["obj"] = obj.obj
+            if include_mors:
+                props_dict["obj"] = obj.obj
 
-        data.append(properties)
+            data.append(props_dict)
+
+        if not result.token:
+            break
+        result = collector.ContinueRetrievePropertiesEx(result.token)
+
     return data
 
 
@@ -291,9 +276,7 @@ def get_container_view(si, obj_type, container=None):
     if not container:
         container = si.content.rootFolder
 
-    view_ref = si.content.viewManager.CreateContainerView(
-        container=container, type=obj_type, recursive=True
-    )
+    view_ref = si.content.viewManager.CreateContainerView(container=container, type=obj_type, recursive=True)
     return view_ref
 
 
@@ -353,9 +336,7 @@ def get_obj(content, vim_type, name, folder=None, recurse=True):
     return obj
 
 
-def get_datastore_info(
-    si: vim.ServiceInstance, datastore_mor: vim.Datastore
-) -> Dict[str, Any]:
+def get_datastore_info(si: vim.ServiceInstance, datastore_mor: vim.Datastore) -> Dict[str, Any]:
     """Get datastore capacity, free space, and type information.
 
     Args:
@@ -365,16 +346,15 @@ def get_datastore_info(
     Returns:
         Dictionary containing datastore information (capacity, free space, type).
     """
-    content = si.RetrieveContent()
     datastore_host_mounts: Dict[str, Any] = {}
 
     try:
-        for host in datastore_mor.host:
-            if host.key not in datastore_host_mounts:
+        for host_mount in datastore_mor.host:
+            if host_mount.key not in datastore_host_mounts:
                 try:
-                    mount_info = datastore_mor.summary.mountInfo
-                    datastore_host_mounts[host.key] = {
-                        "host_name": host.name,
+                    mount_info = host_mount.mountInfo
+                    datastore_host_mounts[host_mount.key] = {
+                        "host_name": host_mount.key.name,
                         "mount": mount_info,
                     }
                 except vmodl.fault.NotFound:
@@ -390,29 +370,23 @@ def get_datastore_info(
             "type": datastore_mor.summary.type,
             "capacity_gb": capacity / (1024**3) if capacity else None,
             "free_space_gb": free_space / (1024**3) if free_space else None,
-            "usable_space_gb": (capacity - free_space) / (1024**3)
-            if capacity and free_space
-            else None,
+            "used_space_gb": (capacity - free_space) / (1024**3) if capacity and free_space else None,
             "host_mounts": datastore_host_mounts,
         }
         return datastore_info
     except Exception as e:
-        logger.warning(
-            "Error getting datastore summary for %s: %s", datastore_mor.name, str(e)
-        )
+        logger.warning("Error getting datastore summary for %s: %s", datastore_mor.name, str(e))
         return {
             "name": datastore_mor.name,
             "type": "unknown",
             "capacity_gb": None,
             "free_space_gb": None,
-            "usable_space_gb": None,
+            "used_space_gb": None,
             "host_mounts": datastore_host_mounts,
         }
 
 
-def get_vm_cluster_info(
-    si: vim.ServiceInstance, vm: vim.VirtualMachine
-) -> Dict[str, Any]:
+def get_vm_cluster_info(si: vim.ServiceInstance, vm: vim.VirtualMachine) -> Dict[str, Any]:
     """Get VM's cluster information from vCenter inventory.
 
     Args:
@@ -485,3 +459,157 @@ def get_vm_datastores(vm: vim.VirtualMachine) -> List[Dict[str, Any]]:
         logger.warning("Error getting VM datastores for %s: %s", vm.name, str(e))
 
     return datastores
+
+
+def get_cluster_vms(si: vim.ServiceInstance, cluster_name: str) -> Dict[str, vim.VirtualMachine]:
+    """Get VMs filtered by cluster name prefix using PropertyCollector with pagination.
+
+    This function uses PropertyCollector with RetrievePropertiesEx to:
+    1. Fetch only required VM properties (not full objects) from vCenter
+    2. Use pagination (maxObjects=200) to keep memory usage flat
+    3. Filter VMs by name prefix client-side (vSphere has no server-side LIKE query)
+
+    With 1000+ VMs, this approach:
+    - Avoids loading full VM objects into memory
+    - Only transfers the properties we actually need
+    - Uses pagination to handle large inventories efficiently
+    - Filters locally since vSphere PropertyCollector has no server-side name filtering
+
+    Args:
+        si: The vCenter ServiceInstance connection.
+        cluster_name: The cluster name prefix to filter VMs by.
+
+    Returns:
+        Dictionary mapping VM names to vim.VirtualMachine objects for VMs
+        matching the cluster name prefix.
+
+    Example:
+        >>> cluster_vms = get_cluster_vms(si, "mycluster")
+        >>> print(f"Found {len(cluster_vms)} VMs for cluster 'mycluster'")
+    """
+    vm_cache: Dict[str, vim.VirtualMachine] = {}
+    content = si.RetrieveContent()
+    prefix_lower = cluster_name.lower()
+
+    try:
+        vms_data = _collect_vm_properties_paginated(content, cluster_name)
+
+        for vm_data in vms_data:
+            vm_mor = vm_data.get("_moref")
+            if vm_mor and vm_data.get("name", "").lower().startswith(prefix_lower):
+                vm_cache[vm_data["name"]] = vm_mor
+
+        logger.info(
+            "Cached %d VMs matching cluster name prefix '%s' using PropertyCollector",
+            len(vm_cache),
+            cluster_name,
+        )
+
+    except Exception as e:
+        logger.warning(
+            "PropertyCollector lookup failed for '%s', falling back to ContainerView: %s",
+            cluster_name,
+            str(e),
+        )
+        vm_cache = _get_cluster_vms_fallback(si, cluster_name)
+
+    return vm_cache
+
+
+def _collect_vm_properties_paginated(content: vim.ServiceInstance.Content, cluster_name: str) -> List[Dict[str, Any]]:
+    """Collect VM properties using PropertyCollector with pagination.
+
+    Args:
+        content: vCenter ServiceInstance content object.
+        cluster_name: Cluster name for logging purposes.
+
+    Returns:
+        List of dictionaries containing VM properties and managed object refs.
+    """
+    properties = [
+        "name",
+        "config.uuid",
+        "runtime.host",
+        "summary.config.vmPathName",
+    ]
+
+    obj_spec = vmodl.query.PropertyCollector.ObjectSpec()
+    obj_spec.obj = content.rootFolder
+    obj_spec.skip = True
+
+    traversal_spec = vmodl.query.PropertyCollector.TraversalSpec()
+    traversal_spec.name = "traverseEntities"
+    traversal_spec.path = "view"
+    traversal_spec.skip = False
+    traversal_spec.type = vim.ViewManager
+    obj_spec.selectSet = [traversal_spec]
+
+    prop_spec = vmodl.query.PropertyCollector.PropertySpec()
+    prop_spec.type = vim.VirtualMachine
+    prop_spec.all = False
+    prop_spec.pathSet = properties
+
+    filter_spec = vmodl.query.PropertyCollector.FilterSpec()
+    filter_spec.objectSet = [obj_spec]
+    filter_spec.propSet = [prop_spec]
+
+    options = vmodl.query.PropertyCollector.RetrieveOptions()
+    options.maxObjects = 200
+
+    result = content.propertyCollector.RetrievePropertiesEx([filter_spec], options)
+
+    all_objects: List[Dict[str, Any]] = []
+    while result:
+        for obj in result.objects:
+            vm_data: Dict[str, Any] = {"_moref": obj.obj}
+            for prop in obj.propSet:
+                vm_data[prop.name] = prop.val
+            all_objects.append(vm_data)
+
+        if not result.token:
+            break
+        result = content.propertyCollector.ContinueRetrievePropertiesEx(result.token)
+
+    return all_objects
+
+
+def _get_cluster_vms_fallback(si: vim.ServiceInstance, cluster_name: str) -> Dict[str, vim.VirtualMachine]:
+    """Fallback method using ContainerView when PropertyCollector fails.
+
+    Args:
+        si: The vCenter ServiceInstance connection.
+        cluster_name: The cluster name prefix to filter VMs by.
+
+    Returns:
+        Dictionary mapping VM names to vim.VirtualMachine objects.
+    """
+    vm_cache: Dict[str, vim.VirtualMachine] = {}
+    content = si.RetrieveContent()
+    container = None
+
+    try:
+        container = content.viewManager.CreateContainerView(  # type: ignore[attr-defined]
+            content.rootFolder,  # type: ignore[attr-defined]
+            [vim.VirtualMachine],
+            True,
+        )
+
+        prefix_lower = cluster_name.lower()
+        matching_count = 0
+
+        for vm in container.view:
+            if vm.name.lower().startswith(prefix_lower):
+                vm_cache[vm.name] = vm
+                matching_count += 1
+
+        logger.info(
+            "Cached %d VMs matching cluster name prefix '%s' via fallback",
+            matching_count,
+            cluster_name,
+        )
+
+    finally:
+        if container is not None:
+            container.Destroy()
+
+    return vm_cache

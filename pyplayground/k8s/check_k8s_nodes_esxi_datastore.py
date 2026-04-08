@@ -20,9 +20,10 @@ from pyVmomi import vim
 from rich.table import Table
 
 from pyplayground.utils.config_utils import get_env_var, load_env_file
-from pyplayground.utils.k8s_utils import console, get_k8s_client
+from pyplayground.utils.k8s_utils import console, get_k8s_client, get_ocp_cluster_name
 from pyplayground.utils.logging_utils import get_logger
 from pyplayground.utils.vmware_utils import (
+    get_cluster_vms,
     get_datastore_info,
     get_vm_cluster_info,
     get_vm_datastores,
@@ -104,15 +105,24 @@ def get_vm_details(si: vim.ServiceInstance, vm: vim.VirtualMachine) -> NodeESXiI
     )
 
 
-def create_vm_cache(si: vim.ServiceInstance) -> Dict[str, vim.VirtualMachine]:
+def create_vm_cache(si: vim.ServiceInstance, cluster_name: Optional[str] = None) -> Dict[str, vim.VirtualMachine]:
     """Create a cache of VMs by name for faster lookup.
+
+    If cluster_name is provided, only VMs matching the cluster name prefix are cached.
+    This reduces VM count from 500+ to ~20-50 VMs per cluster.
 
     Args:
         si: The vCenter ServiceInstance.
+        cluster_name: Optional cluster name prefix to filter VMs by.
 
     Returns:
         Dictionary mapping VM names to vim.VirtualMachine objects.
     """
+    if cluster_name:
+        logger.info("Using cluster name filtering: %s", cluster_name)
+        return get_cluster_vms(si, cluster_name)
+
+    logger.warning("No cluster name provided, caching all VMs from vCenter")
     vm_cache: Dict[str, vim.VirtualMachine] = {}
     content = si.RetrieveContent()
     container = content.viewManager.CreateContainerView(  # type: ignore[attr-defined]
@@ -315,7 +325,12 @@ def check_k8s_nodes_esxi_datastore(
         sys.exit(1)
 
     try:
-        vm_cache = create_vm_cache(si)
+        cluster_name = get_ocp_cluster_name(kubeconfig=kubeconfig)
+        if cluster_name:
+            logger.info("Detected OCP cluster name: %s", cluster_name)
+        else:
+            logger.warning("Could not detect OCP cluster name, will cache all VMs")
+        vm_cache = create_vm_cache(si, cluster_name)
         logger.info("Cached %d VMs from vCenter for lookup", len(vm_cache))
     except Exception as e:
         logger.error("Failed to create VM cache: %s", str(e), exc_info=True)

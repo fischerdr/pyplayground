@@ -178,6 +178,91 @@ def get_k8s_client(api_version: str = "CoreV1Api") -> Any:
         raise
 
 
+def get_ocp_cluster_name(kubeconfig: Optional[str] = None) -> Optional[str]:
+    """Extract OpenShift cluster name from kubeconfig or MachineSets.
+
+    This function attempts to derive the OpenShift cluster name using multiple strategies:
+    1. Parse cluster name from kubeconfig `clusters[].name`
+    2. Query MachineSets in openshift-machine-api namespace and extract cluster identifier
+    3. Return cluster identifier from MachineSet name (e.g., `mycluster-worker-a` -> `mycluster`)
+
+    Args:
+        kubeconfig: Optional path to kubeconfig file. If not provided, uses default location.
+
+    Returns:
+        Optional[str]: Cluster name if found, None otherwise.
+                       Returns the full cluster name from kubeconfig, or the base
+                       cluster identifier extracted from MachineSet names.
+
+    Example:
+        >>> cluster_name = get_ocp_cluster_name()
+        >>> print(cluster_name)
+        mycluster
+    """
+    try:
+        if kubeconfig:
+            config.load_kube_config(config_file=kubeconfig)
+        else:
+            config.load_kube_config()
+
+        current_context = config.current_context()
+        context_name = current_context.get("name", "unknown")
+        logger.debug(f"Current kubeconfig context: {context_name}")
+
+        kubeconfig_dict = config.get_kube_config().configuration
+        if hasattr(kubeconfig_dict, "api_client") and kubeconfig_dict.api_client:
+            pass
+
+        if hasattr(config, "KubeConfigLoader"):
+            pass
+
+        logger.info(f"Successfully loaded kubeconfig, attempting to extract cluster name")
+
+        try:
+            config_dict = config.load_kube_config(return_config=True, config_file=kubeconfig)
+            if hasattr(config_dict, "configuration") and hasattr(config_dict.configuration, "serialized_contents"):
+                serialized = config_dict.configuration.serialized_contents
+                parsed = yaml.safe_load(serialized)
+                if parsed and "clusters" in parsed:
+                    for cluster_entry in parsed["clusters"]:
+                        if "cluster" in cluster_entry:
+                            cluster_info = cluster_entry["cluster"]
+                            if "name" in cluster_info:
+                                cluster_name = cluster_info["name"]
+                                logger.info(f"Extracted cluster name from kubeconfig: {cluster_name}")
+                                return cluster_name
+        except Exception as e:
+            logger.debug(f"Could not extract cluster name from kubeconfig: {e}")
+
+        try:
+            machinesets = get_custom_objects_api().list_cluster_custom_object(group="machine.openshift.io", version="v1beta1", plural="machinesets")
+
+            if machinesets and "items" in machinesets and len(machinesets["items"]) > 0:
+                first_machineset = machinesets["items"][0]
+                ms_name = first_machineset.get("metadata", {}).get("name", "")
+                logger.debug(f"Found MachineSet: {ms_name}")
+
+                if ms_name:
+                    cluster_identifier = ms_name.split("-")[0]
+                    logger.info(f"Extracted cluster identifier from MachineSet '{ms_name}': {cluster_identifier}")
+                    return cluster_identifier
+
+        except ApiException as e:
+            logger.debug(f"Could not query MachineSets: {e}")
+        except Exception as e:
+            logger.debug(f"Unexpected error querying MachineSets: {e}")
+
+        logger.warning("Could not determine cluster name from kubeconfig or MachineSets")
+        return None
+
+    except config.ConfigException as e:
+        logger.error(f"Failed to load kubeconfig: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error extracting cluster name: {e}", exc_info=True)
+        return None
+
+
 def get_custom_objects_api() -> client.CustomObjectsApi:
     """Get a Kubernetes CustomObjectsApi client.
 

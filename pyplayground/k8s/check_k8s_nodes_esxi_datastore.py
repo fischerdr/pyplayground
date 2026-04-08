@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 import click
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-from pyVim.connect import Disconnect, SmartConnect
+from pyVim.connect import Disconnect
 from pyVmomi import vim
 from rich.table import Table
 
@@ -23,6 +23,7 @@ from pyplayground.utils.config_utils import get_env_var, load_env_file
 from pyplayground.utils.k8s_utils import console, get_k8s_client, get_ocp_cluster_name
 from pyplayground.utils.logging_utils import get_logger
 from pyplayground.utils.vmware_utils import (
+    connect,
     get_cluster_vms,
     get_datastore_info,
     get_vm_cluster_info,
@@ -40,48 +41,6 @@ class NodeESXiInfo:
     cluster_name: Optional[str]
     current_host_name: Optional[str]
     datastores: List[Dict[str, Any]]
-
-
-def get_vcenter_connection(
-    vcenter_host: str,
-    username: str,
-    password: str,
-    disable_ssl: bool,
-) -> Optional[vim.ServiceInstance]:
-    """Establish a connection to vCenter.
-
-    Args:
-        vcenter_host: The vCenter server host.
-        username: The vCenter server username.
-        password: The vCenter server password.
-        disable_ssl: Whether to disable SSL certificate validation.
-
-    Returns:
-        vim.ServiceInstance object upon successful connection, None otherwise.
-    """
-    try:
-        si = SmartConnect(
-            host=vcenter_host,
-            user=username,
-            pwd=password,
-            disableSslCertValidation=disable_ssl,
-        )
-        logger.debug("Successfully connected to vCenter: %s", vcenter_host)
-        return si  # type: ignore[no-any-return]
-    except vim.fault.InvalidLogin as e:
-        logger.error("vCenter login failed for %s: %s", vcenter_host, e.msg)
-        return None
-    except IOError as e:
-        logger.error("vCenter connection error for %s: %s", vcenter_host, str(e))
-        return None
-    except Exception as e:
-        logger.error(
-            "Unexpected error connecting to vCenter %s: %s",
-            vcenter_host,
-            str(e),
-            exc_info=True,
-        )
-        return None
 
 
 def get_vm_details(si: vim.ServiceInstance, vm: vim.VirtualMachine) -> NodeESXiInfo:
@@ -317,7 +276,19 @@ def check_k8s_nodes_esxi_datastore(
         sys.exit(1)
 
     try:
-        si = get_vcenter_connection(vcenter_host_str, username_str, password_str, disable_vcenter_ssl)
+        si = connect(
+            type(
+                "Args",
+                (),
+                {
+                    "host": vcenter_host_str,
+                    "user": username_str,
+                    "password": password_str,
+                    "port": 443,
+                    "disable_ssl_verification": disable_vcenter_ssl,
+                },
+            )()
+        )
         if not si:
             logger.error("Failed to connect to vCenter. Exiting.")
             sys.exit(1)

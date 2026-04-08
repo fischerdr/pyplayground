@@ -13,12 +13,13 @@ from typing import Any, Dict, List, Optional
 import click
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-from pyVim.connect import Disconnect, SmartConnect
+from pyVim.connect import Disconnect
 from pyVmomi import vim
 from rich.table import Table
 
-from pyplayground.utils.k8s_utils import console, get_k8s_client
+from pyplayground.utils.k8s_utils import console, get_k8s_client, get_ocp_cluster_name
 from pyplayground.utils.logging_utils import get_logger
+from pyplayground.utils.vmware_utils import connect, get_cluster_vms
 
 logger = get_logger(__name__)
 
@@ -32,48 +33,6 @@ class VMInfo:
     ip_address: Optional[str]
     disks: List[Dict[str, Any]]
     network_interfaces: List[Dict[str, Any]]
-
-
-def get_vcenter_connection(
-    vcenter_host: str,
-    username: str,
-    password: str,
-    disable_ssl: bool,
-) -> Optional[vim.ServiceInstance]:
-    """Establish a connection to vCenter.
-
-    Args:
-        vcenter_host: The vCenter server host.
-        username: The vCenter server username.
-        password: The vCenter server password.
-        disable_ssl: Whether to disable SSL certificate validation.
-
-    Returns:
-        vim.ServiceInstance object upon successful connection, None otherwise.
-    """
-    try:
-        si = SmartConnect(
-            host=vcenter_host,
-            user=username,
-            pwd=password,
-            disableSslCertValidation=disable_ssl,
-        )
-        logger.debug("Successfully connected to vCenter: %s", vcenter_host)
-        return si  # type: ignore[no-any-return]
-    except vim.fault.InvalidLogin as e:
-        logger.error("vCenter login failed for %s: %s", vcenter_host, e.msg)
-        return None
-    except IOError as e:
-        logger.error("vCenter connection error for %s: %s", vcenter_host, str(e))
-        return None
-    except Exception as e:
-        logger.error(
-            "Unexpected error connecting to vCenter %s: %s",
-            vcenter_host,
-            str(e),
-            exc_info=True,
-        )
-        return None
 
 
 def get_vm_details(vm: vim.VirtualMachine) -> VMInfo:
@@ -125,65 +84,75 @@ def get_vm_details(vm: vim.VirtualMachine) -> VMInfo:
     )
 
 
-def create_vm_cache(si: vim.ServiceInstance) -> Dict[str, vim.VirtualMachine]:
-    """Create a cache of VMs by name for faster lookup.
+def create_vm_cache(si: vim.ServiceInstance, cluster_name: Optional[str] = None) -> Dict[str, VMInfo]:
+    """Create a cache of pre-fetched VM details by name.
+
+    Uses optimized get_cluster_vms() with PropertyCollector pagination to:
+    - Fetch only required VM properties (not full objects)
+    - Handle large inventories (1000+ VMs) efficiently
+    - Filter VMs by cluster name prefix when provided
+
+    All vCenter API calls happen here in a single-threaded context.
+    Threads later just do dictionary lookups - no shared connection needed.
 
     Args:
         si: The vCenter ServiceInstance.
+        cluster_name: Optional cluster name prefix to filter VMs by.
 
     Returns:
-        Dictionary mapping VM names to vim.VirtualMachine objects.
+        Dictionary mapping VM names to pre-computed VMInfo objects.
     """
-    vm_cache: Dict[str, vim.VirtualMachine] = {}
-    content = si.RetrieveContent()
-    container = content.viewManager.CreateContainerView(  # type: ignore[attr-defined]
-        content.rootFolder,  # type: ignore[attr-defined]
-        [vim.VirtualMachine],
-        True,
-    )
-    try:
-        for vm in container.view:
-            vm_cache[vm.name] = vm
-        logger.debug("Cached %d VMs from vCenter", len(vm_cache))
-    finally:
-        container.Destroy()
-    return vm_cache
+    if cluster_name:
+        logger.info("Using cluster name filtering: %s", cluster_name)
+        vms = get_cluster_vms(si, cluster_name)
+    else:
+        logger.warning("No cluster name provided, caching all VMs from vCenter")
+        content = si.RetrieveContent()
+        container = content.viewManager.CreateContainerView(  # type: ignore[attr-defined]
+            content.rootFolder,  # type: ignore[attr-defined]
+            [vim.VirtualMachine],
+            True,
+        )
+        try:
+            vms = {vm.name: vm for vm in container.view}
+            logger.debug("Cached %d VMs from vCenter", len(vms))
+        finally:
+            container.Destroy()
+
+    vm_details: Dict[str, VMInfo] = {}
+    for name, vm in vms.items():
+        try:
+            details = get_vm_details(vm)
+            vm_details[name] = details
+            logger.debug("Pre-fetched details for VM: %s", name)
+        except Exception as e:
+            logger.warning("Failed to fetch details for VM '%s': %s", name, str(e))
+
+    return vm_details
 
 
 def process_node_thread(
     node_name: str,
-    vcenter_host: str,
-    vm_cache: Dict[str, vim.VirtualMachine],
+    vm_cache: Dict[str, VMInfo],
 ) -> Optional[VMInfo]:
-    """Process a single node in its own thread with dedicated connection.
+    """Process a single node by looking up pre-fetched VM details.
 
     Args:
         node_name: The name of the Kubernetes node to process.
-        vcenter_host: The vCenter server host.
-        vm_cache: Pre-fetched cache of VMs from vCenter.
+        vm_cache: Pre-computed cache of VMInfo objects from vCenter.
 
     Returns:
-        VMInfo object if VM found and details retrieved, None otherwise.
+        VMInfo object if VM found, None otherwise.
     """
     logger.debug("Processing node: %s", node_name)
 
-    vm = vm_cache.get(node_name)
-    if not vm:
+    vm_info = vm_cache.get(node_name)
+    if not vm_info:
         logger.error("VM for node %s not found in vCenter", node_name)
         return None
 
-    try:
-        vm_details = get_vm_details(vm)
-        logger.info("Successfully retrieved VM details for node: %s", node_name)
-        return vm_details
-    except Exception as e:
-        logger.error(
-            "Failed to retrieve details for VM '%s': %s",
-            node_name,
-            str(e),
-            exc_info=True,
-        )
-        return None
+    logger.info("Successfully retrieved VM details for node: %s", node_name)
+    return vm_info
 
 
 @click.command()
@@ -293,7 +262,19 @@ def check_k8s_nodes(
         sys.exit(1)
 
     try:
-        si = get_vcenter_connection(vcenter_host, username, password, disable_vcenter_ssl)
+        si = connect(
+            type(
+                "Args",
+                (),
+                {
+                    "host": vcenter_host,
+                    "user": username,
+                    "password": password,
+                    "port": 443,
+                    "disable_ssl_verification": disable_vcenter_ssl,
+                },
+            )()
+        )
         if not si:
             logger.error("Failed to connect to vCenter. Exiting.")
             sys.exit(1)
@@ -303,11 +284,15 @@ def check_k8s_nodes(
         sys.exit(1)
 
     try:
-        vm_cache = create_vm_cache(si)
+        cluster_name = get_ocp_cluster_name(kubeconfig=kubeconfig)
+        if cluster_name:
+            logger.info("Detected OCP cluster name: %s", cluster_name)
+        else:
+            logger.warning("Could not detect OCP cluster name, will cache all VMs")
+        vm_cache = create_vm_cache(si, cluster_name)
         logger.info("Cached %d VMs from vCenter for lookup", len(vm_cache))
     except Exception as e:
         logger.error("Failed to create VM cache: %s", str(e), exc_info=True)
-        Disconnect(si)
         sys.exit(1)
 
     try:
@@ -322,7 +307,6 @@ def check_k8s_nodes(
         )
     except ApiException as e:
         logger.error("Failed to retrieve nodes from Kubernetes: %s", str(e))
-        Disconnect(si)
         sys.exit(1)
     except Exception as e:
         logger.error(
@@ -330,21 +314,12 @@ def check_k8s_nodes(
             str(e),
             exc_info=True,
         )
-        Disconnect(si)
         sys.exit(1)
 
     results: Dict[str, Optional[VMInfo]] = {}
 
     with ThreadPoolExecutor(max_workers=threads) as executor:
-        futures = {
-            executor.submit(
-                process_node_thread,
-                node.metadata.name,
-                vcenter_host,
-                vm_cache,
-            ): node.metadata.name
-            for node in nodes
-        }
+        futures = {executor.submit(process_node_thread, node.metadata.name, vm_cache): node.metadata.name for node in nodes}
 
         for future in as_completed(futures):
             node_name = futures[future]

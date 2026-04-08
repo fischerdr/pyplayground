@@ -374,7 +374,6 @@ def check_k8s_nodes_esxi_datastore(
                 logger.error("Error processing %s: %s", node_name, str(e), exc_info=True)
                 results[node_name] = None
 
-    Disconnect(si)
     logger.info("Finished checking Kubernetes nodes and ESXi infrastructure.")
 
     json_output: Dict[str, Any] = {}
@@ -438,9 +437,11 @@ def check_k8s_nodes_esxi_datastore(
                     ds_table.add_row("Free Space (GB)", f"{ds_info.get('free_space_gb') or 'N/A'}")
                     ds_table.add_row(
                         "Usable Space (GB)",
-                        f"{ds_info.get('usable_space_gb') or 'N/A'}",
+                        f"{ds_info.get('used_space_gb') or 'N/A'}",
                     )
                     console.print(ds_table)
+
+    Disconnect(si)
 
 
 if __name__ == "__main__":

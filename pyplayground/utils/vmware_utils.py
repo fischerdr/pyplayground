@@ -516,7 +516,7 @@ def get_cluster_vms(si: vim.ServiceInstance, cluster_name: str) -> Dict[str, vim
     return vm_cache
 
 
-def _collect_vm_properties_paginated(content: vim.ServiceInstance.Content, cluster_name: str) -> List[Dict[str, Any]]:
+def _collect_vm_properties_paginated(content: vim.ServiceInstance.content, cluster_name: str) -> List[Dict[str, Any]]:
     """Collect VM properties using PropertyCollector with pagination.
 
     Args:
@@ -533,16 +533,37 @@ def _collect_vm_properties_paginated(content: vim.ServiceInstance.Content, clust
         "summary.config.vmPathName",
     ]
 
+    # Build correct folder hierarchy traversal: rootFolder -> Datacenter -> VM folder -> VMs
+    # Also include HostSystem.vm traversal for VMs on standalone hosts
+    folder_traversal = vmodl.query.PropertyCollector.TraversalSpec(
+        name="folderTraversal",
+        type=vim.Folder,
+        path="childEntity",
+        skip=False,
+        selectSet=[
+            vmodl.query.PropertyCollector.SelectionSpec(name="folderTraversal"),
+            # Datacenter -> vmFolder
+            vmodl.query.PropertyCollector.TraversalSpec(
+                name="datacenterTraversal",
+                type=vim.Datacenter,
+                path="vmFolder",
+                skip=False,
+                selectSet=[vmodl.query.PropertyCollector.SelectionSpec(name="folderTraversal")],
+            ),
+            # HostSystem -> vm (for standalone hosts)
+            vmodl.query.PropertyCollector.TraversalSpec(
+                name="hostTraversal",
+                type=vim.HostSystem,
+                path="vm",
+                skip=False,
+            ),
+        ],
+    )
+
     obj_spec = vmodl.query.PropertyCollector.ObjectSpec()
     obj_spec.obj = content.rootFolder
     obj_spec.skip = True
-
-    traversal_spec = vmodl.query.PropertyCollector.TraversalSpec()
-    traversal_spec.name = "traverseEntities"
-    traversal_spec.path = "view"
-    traversal_spec.skip = False
-    traversal_spec.type = vim.ViewManager
-    obj_spec.selectSet = [traversal_spec]
+    obj_spec.selectSet = [folder_traversal]
 
     prop_spec = vmodl.query.PropertyCollector.PropertySpec()
     prop_spec.type = vim.VirtualMachine

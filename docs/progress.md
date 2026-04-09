@@ -863,3 +863,43 @@
 - ✅ Syntax validation: Passed
 
 **Next Steps**: Continue monitoring logging compliance in future changes
+
+---
+
+### Task 3.6: Fix Logging Order and Output Path in K8s Node Checkers
+
+**Status**: ✅ Complete  
+**Date**: 2026-04-09  
+**Branch**: main  
+**Commit**: 46d7229
+
+**Changes Made**:
+- Fixed critical logging order in both scripts: setup_logging() called BEFORE load_env_file() so all logs captured to file
+- Added get_project_root import from logging_utils.py to both files
+- Updated output file path to use os.path.join(get_project_root(), "tmp") instead of manual path calculation
+- Changed .env file load failure logging from logger.debug() to logger.warning() for better visibility
+- Verified Python syntax compiles correctly in both files
+
+**Testing**:
+- Manual: py_compile passed for both scripts
+- Automated: black (line-length=180) formatting passed
+- Automated: isort (line-length=180) import sorting passed
+- Automated: flake8 (max-line-length=180) linting passed with no violations
+
+**Logging**:
+- Fixed: setup_logging() now called before load_env_file() to capture all logs to file
+- Changed: .env file load failure uses logger.warning() instead of logger.debug()
+- Added: get_project_root import for proper tmp directory path
+- Pattern: Follows k8s_px_pvc_data_exporter.py reference implementation (lines 198-201)
+
+**Files Modified**:
+- pyplayground/k8s/check_k8s_nodes_esxi_datastore.py (+4, -2 lines): Logging order fix, get_project_root import, output path
+- pyplayground/k8s/check_k8s_nodes_vmware_thrd.py (+4, -2 lines): Logging order fix, get_project_root import, output path
+
+**Code Quality**:
+- ✅ Black formatting: Passed
+- ✅ isort import sorting: Passed
+- ✅ flake8 linting: Passed
+- ✅ Syntax validation: Passed
+
+**Next Steps**: None - task complete

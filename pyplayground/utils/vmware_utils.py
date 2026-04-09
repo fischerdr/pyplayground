@@ -28,7 +28,7 @@ class VSphereConnectionParams:
     user: str
     password: str
     port: int = 443
-    disable_ssl: bool = False
+    disable_ssl_verification: bool = False
     effective_cert_path: Optional[str] = None
 
 

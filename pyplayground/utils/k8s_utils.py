@@ -181,79 +181,87 @@ def get_k8s_client(api_version: str = "CoreV1Api") -> Any:
 def get_ocp_cluster_name(kubeconfig: Optional[str] = None) -> Optional[str]:
     """Extract OpenShift cluster name from kubeconfig or MachineSets.
 
-    This function attempts to derive the OpenShift cluster name using multiple strategies:
-    1. Parse cluster name from kubeconfig `clusters[].name`
-    2. Query MachineSets in openshift-machine-api namespace and extract cluster identifier
-    3. Return cluster identifier from MachineSet name (e.g., `mycluster-worker-a` -> `mycluster`)
+    Attempts to derive the cluster name using these strategies in order:
+    1. Read kubeconfig YAML directly, resolve active context -> cluster name,
+       preferring short-form names (no colons/dots) over API-style fqdns.
+    2. Query MachineSets in openshift-machine-api and parse the cluster
+       identifier prefix from the first MachineSet name.
 
     Args:
-        kubeconfig: Optional path to kubeconfig file. If not provided, uses default location.
+        kubeconfig: Optional path to kubeconfig file. Defaults to ~/.kube/config.
 
     Returns:
-        Optional[str]: Cluster name if found, None otherwise.
-                       Returns the full cluster name from kubeconfig, or the base
-                       cluster identifier extracted from MachineSet names.
+        Cluster name string if found, None otherwise.
 
     Example:
-        >>> cluster_name = get_ocp_cluster_name()
-        >>> print(cluster_name)
-        mycluster
+        >>> print(get_ocp_cluster_name())
+        eng-paas-d-eusw1a-4
     """
     try:
         if kubeconfig:
             config.load_kube_config(config_file=kubeconfig)
         else:
             config.load_kube_config()
-
-        contexts, active_context = config.list_kube_config_contexts()
-        context_name = active_context.get("name", "unknown")
-        logger.debug(f"Current kubeconfig context: {context_name}")
-
-        logger.info("Successfully loaded kubeconfig, attempting to extract cluster name")
-
-        try:
-            config_dict = config.load_kube_config(return_config=True, config_file=kubeconfig)
-            if hasattr(config_dict, "configuration") and hasattr(config_dict.configuration, "serialized_contents"):
-                serialized = config_dict.configuration.serialized_contents
-                parsed = yaml.safe_load(serialized)
-                if parsed and "clusters" in parsed:
-                    for cluster_entry in parsed["clusters"]:
-                        if "cluster" in cluster_entry:
-                            cluster_info = cluster_entry["cluster"]
-                            if "name" in cluster_info:
-                                cluster_name = cluster_info["name"]
-                                logger.info(f"Extracted cluster name from kubeconfig: {cluster_name}")
-                                return cluster_name
-        except Exception as e:
-            logger.debug(f"Could not extract cluster name from kubeconfig: {e}")
-
-        try:
-            machinesets = get_custom_objects_api().list_cluster_custom_object(group="machine.openshift.io", version="v1beta1", plural="machinesets")
-
-            if machinesets and "items" in machinesets and len(machinesets["items"]) > 0:
-                first_machineset = machinesets["items"][0]
-                ms_name = first_machineset.get("metadata", {}).get("name", "")
-                logger.debug(f"Found MachineSet: {ms_name}")
-
-                if ms_name:
-                    cluster_identifier = ms_name.split("-")[0]
-                    logger.info(f"Extracted cluster identifier from MachineSet '{ms_name}': {cluster_identifier}")
-                    return cluster_identifier
-
-        except ApiException as e:
-            logger.debug(f"Could not query MachineSets: {e}")
-        except Exception as e:
-            logger.debug(f"Unexpected error querying MachineSets: {e}")
-
-        logger.warning("Could not determine cluster name from kubeconfig or MachineSets")
-        return None
-
     except config.ConfigException as e:
         logger.error(f"Failed to load kubeconfig: {e}")
         return None
+
+    # Strategy 1: Parse kubeconfig file directly
+    try:
+        kubeconfig_path = kubeconfig or os.path.expanduser("~/.kube/config")
+        with open(kubeconfig_path, "r") as f:
+            kc = yaml.safe_load(f)
+
+        # Resolve the cluster name referenced by the active context
+        active_context_name = kc.get("current-context", "")
+        context_cluster = None
+        for ctx in kc.get("contexts", []):
+            if ctx.get("name") == active_context_name:
+                context_cluster = ctx.get("context", {}).get("cluster")
+                break
+
+        logger.debug(f"Active context '{active_context_name}' -> cluster ref '{context_cluster}'")
+
+        # Collect all cluster names and prefer a short/clean one
+        # (no colons or dots = human-assigned name vs auto-generated API FQDN)
+        all_cluster_names = [c.get("name", "") for c in kc.get("clusters", []) if c.get("name")]
+        short_names = [n for n in all_cluster_names if ":" not in n and "." not in n]
+
+        if short_names:
+            cluster_name = short_names[0]
+            logger.info(f"Using short-form cluster name from kubeconfig: {cluster_name}")
+            return cluster_name
+        elif context_cluster:
+            logger.info(f"Using cluster name from active context: {context_cluster}")
+            return context_cluster
+        elif all_cluster_names:
+            logger.info(f"Using first available cluster name: {all_cluster_names[0]}")
+            return all_cluster_names[0]
+
     except Exception as e:
-        logger.error(f"Unexpected error extracting cluster name: {e}", exc_info=True)
-        return None
+        logger.debug(f"Could not extract cluster name from kubeconfig file: {e}")
+
+    # Strategy 2: Fall back to MachineSet name prefix
+    try:
+        machinesets = get_custom_objects_api().list_cluster_custom_object(
+            group="machine.openshift.io",
+            version="v1beta1",
+            plural="machinesets",
+        )
+        if machinesets and machinesets.get("items"):
+            ms_name = machinesets["items"][0].get("metadata", {}).get("name", "")
+            logger.debug(f"Found MachineSet: {ms_name}")
+            if ms_name:
+                cluster_identifier = ms_name.split("-")[0]
+                logger.info(f"Extracted cluster identifier from MachineSet '{ms_name}': {cluster_identifier}")
+                return cluster_identifier
+    except ApiException as e:
+        logger.debug(f"Could not query MachineSets: {e}")
+    except Exception as e:
+        logger.debug(f"Unexpected error querying MachineSets: {e}")
+
+    logger.warning("Could not determine cluster name from kubeconfig or MachineSets")
+    return None
 
 
 def get_custom_objects_api() -> client.CustomObjectsApi:

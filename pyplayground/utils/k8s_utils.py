@@ -195,7 +195,7 @@ def get_ocp_cluster_name(kubeconfig: Optional[str] = None) -> Optional[str]:
 
     Example:
         >>> print(get_ocp_cluster_name())
-        eng-paas-d-eusw1a-4
+        user-app-environment-eusw1a-4
     """
     try:
         if kubeconfig:

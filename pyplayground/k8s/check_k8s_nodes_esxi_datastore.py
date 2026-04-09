@@ -6,7 +6,9 @@ actual infrastructure location from vCenter inventory to detect drift from
 MachineSet resourcePool configurations.
 """
 
+import datetime
 import json
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -21,7 +23,7 @@ from rich.table import Table
 
 from pyplayground.utils.config_utils import get_env_var, load_env_file
 from pyplayground.utils.k8s_utils import console, get_k8s_client, get_ocp_cluster_name
-from pyplayground.utils.logging_utils import get_logger
+from pyplayground.utils.logging_utils import get_logger, get_project_root, setup_logging
 from pyplayground.utils.vmware_utils import (
     connect,
     get_cluster_vms,
@@ -140,14 +142,12 @@ def process_node_thread(
     "--vcenter_host",
     default=None,
     envvar="VCENTER_HOST",
-    prompt="vCenter Host",
     help="The vCenter server host. Can also be set via VCENTER_HOST env var.",
 )
 @click.option(
     "--username",
     default=None,
     envvar="VCENTER_USERNAME",
-    prompt="vCenter Username",
     help="The vCenter server username. Can also be set via VCENTER_USERNAME env var.",
 )
 @click.option(
@@ -156,7 +156,6 @@ def process_node_thread(
     envvar="VCENTER_PASSWORD",
     help="The vCenter server password. Can also be set via VCENTER_PASSWORD env var.",
     hide_input=True,
-    prompt="vCenter Password",
 )
 @click.option("--kubeconfig", default=None, help="Path to the kubeconfig file.")
 @click.option(
@@ -191,6 +190,11 @@ def process_node_thread(
     default=None,
     help="Optional file path to save JSON output.",
 )
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Enable debug logging to logs directory.",
+)
 @click.pass_context
 def check_k8s_nodes_esxi_datastore(
     ctx: click.Context,
@@ -205,6 +209,7 @@ def check_k8s_nodes_esxi_datastore(
     threads: int,
     output_format: str,
     output_file: Optional[str],
+    debug: bool,
 ) -> None:
     r"""Check Kubernetes nodes and map to ESXi cluster and datastore information.
 
@@ -223,31 +228,33 @@ def check_k8s_nodes_esxi_datastore(
         VCENTER_USERNAME - vCenter username
         VCENTER_PASSWORD - vCenter password
     """
-    if len(sys.argv) == 1:
-        click.echo(ctx.get_help())
-        ctx.exit()
+    logging_level = "DEBUG" if debug else "INFO"
+    setup_logging("check_k8s_nodes_esxi_datastore", level=logging_level)
+    logger.info("Logging initialized at %s level", logging_level)
 
     try:
         load_env_file()
         logger.debug("Loaded environment variables from .env file")
     except Exception as e:
-        logger.debug(f"Could not load .env file: {e}")
+        logger.warning("Could not load .env file: %s", str(e))
 
-    vcenter_host = get_env_var("VCENTER_HOST", default=vcenter_host, required=True, as_type=str)
-    username = get_env_var("VCENTER_USERNAME", default=username, required=True, as_type=str)
-    password = get_env_var("VCENTER_PASSWORD", default=password, required=False, as_type=str)
+    try:
+        vcenter_host = get_env_var("VCENTER_HOST", default=vcenter_host, required=True, as_type=str)
+        username = get_env_var("VCENTER_USERNAME", default=username, required=True, as_type=str)
+        password = get_env_var("VCENTER_PASSWORD", default=password, required=False, as_type=str)
+    except ValueError as e:
+        logger.error("Missing required credentials: %s", str(e))
+        sys.exit(1)
 
     if password is None:
-        password = click.prompt("vCenter Password", hide_input=True)
+        logger.error("vCenter password is required. Exiting.")
+        sys.exit(1)
 
     logger.info("Using vCenter host: %s", vcenter_host)
     logger.info("Using username: %s", username)
 
-    vcenter_host_str: str = vcenter_host  # type: ignore[assignment]
-    username_str: str = username  # type: ignore[assignment]
-    if password is None:
-        logger.error("vCenter password is required. Exiting.")
-        sys.exit(1)
+    vcenter_host_str: str = vcenter_host
+    username_str: str = username
     password_str: str = password
 
     try:
@@ -366,13 +373,17 @@ def check_k8s_nodes_esxi_datastore(
             }
 
     if output_format == "json":
+        if not output_file:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            cluster_safe = cluster_name.replace("/", "_").replace("\\", "_") if cluster_name else "unknown"
+            tmp_dir = os.path.join(get_project_root(), "tmp")
+            os.makedirs(tmp_dir, exist_ok=True)
+            output_file = os.path.join(tmp_dir, f"esxi_mapping_{cluster_safe}_{timestamp}.json")
+
         output_str = json.dumps(json_output, indent=2)
-        if output_file:
-            with open(output_file, "w") as f:
-                f.write(output_str)
-                logger.info("JSON output written to %s", output_file)
-        else:
-            click.echo(output_str)
+        with open(output_file, "w") as f:
+            f.write(output_str)
+        logger.info("JSON output written to %s", output_file)
     else:
         console.print("\n[bold]ESXi Infrastructure Mapping for all processed nodes:[/bold]")
         for node_name, node_info in results.items():

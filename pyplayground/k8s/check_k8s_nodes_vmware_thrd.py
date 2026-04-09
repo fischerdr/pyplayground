@@ -5,6 +5,8 @@ with VMware virtual machine status. It uses a thread pool for concurrent process
 with one connection per thread following the pool pattern.
 """
 
+import datetime
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -17,8 +19,9 @@ from pyVim.connect import Disconnect
 from pyVmomi import vim
 from rich.table import Table
 
+from pyplayground.utils.config_utils import get_env_var, load_env_file
 from pyplayground.utils.k8s_utils import console, get_k8s_client, get_ocp_cluster_name
-from pyplayground.utils.logging_utils import get_logger
+from pyplayground.utils.logging_utils import get_logger, get_project_root, setup_logging
 from pyplayground.utils.vmware_utils import connect, get_cluster_vms
 
 logger = get_logger(__name__)
@@ -158,23 +161,22 @@ def process_node_thread(
 @click.command()
 @click.option(
     "--vcenter_host",
-    required=True,
-    prompt="vCenter Host",
-    help="The vCenter server host.",
+    default=None,
+    envvar="VCENTER_HOST",
+    help="The vCenter server host. Can also be set via VCENTER_HOST env var.",
 )
 @click.option(
     "--username",
-    required=True,
-    prompt="vCenter Username",
-    help="The vCenter server username.",
+    default=None,
+    envvar="VCENTER_USERNAME",
+    help="The vCenter server username. Can also be set via VCENTER_USERNAME env var.",
 )
 @click.option(
     "--password",
-    required=True,
-    help="The vCenter server password.",
-    hide_input=True,
-    prompt="vCenter Password",
     default=None,
+    envvar="VCENTER_PASSWORD",
+    help="The vCenter server password. Can also be set via VCENTER_PASSWORD env var.",
+    hide_input=True,
 )
 @click.option("--kubeconfig", default=None, help="Path to the kubeconfig file.")
 @click.option(
@@ -201,14 +203,24 @@ def process_node_thread(
 @click.option(
     "--output-format",
     type=click.Choice(["text", "json"]),
-    default="text",
+    default="json",
     help="Output format: text (default) or json.",
+)
+@click.option(
+    "--output-file",
+    default=None,
+    help="Optional file path to save JSON output.",
+)
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Enable debug logging to logs directory.",
 )
 @click.pass_context
 def check_k8s_nodes(
     ctx: click.Context,
-    vcenter_host: str,
-    username: str,
+    vcenter_host: Optional[str],
+    username: Optional[str],
     password: Optional[str],
     kubeconfig: Optional[str],
     node_search: str,
@@ -217,6 +229,8 @@ def check_k8s_nodes(
     disable_vcenter_ssl: bool,
     threads: int,
     output_format: str,
+    output_file: Optional[str],
+    debug: bool,
 ) -> None:
     """Check Kubernetes nodes against VMware VM status with threading.
 
@@ -224,12 +238,30 @@ def check_k8s_nodes(
     VMware virtual machine status. It processes nodes concurrently using
     a thread pool with dedicated vCenter connections per thread.
     """
-    if len(sys.argv) == 1:
-        click.echo(ctx.get_help())
-        ctx.exit()
+    logging_level = "DEBUG" if debug else "INFO"
+    setup_logging("check_k8s_nodes_vmware_thrd", level=logging_level)
+    logger.info("Logging initialized at %s level", logging_level)
+
+    try:
+        load_env_file()
+        logger.debug("Loaded environment variables from .env file")
+    except Exception as e:
+        logger.warning("Could not load .env file: %s", str(e))
+
+    try:
+        vcenter_host = get_env_var("VCENTER_HOST", default=vcenter_host, required=True, as_type=str)
+        username = get_env_var("VCENTER_USERNAME", default=username, required=True, as_type=str)
+        password = get_env_var("VCENTER_PASSWORD", default=password, required=False, as_type=str)
+    except ValueError as e:
+        logger.error("Missing required credentials: %s", str(e))
+        sys.exit(1)
 
     if password is None:
-        password = click.prompt("vCenter Password", hide_input=True)
+        logger.error("vCenter password is required. Exiting.")
+        sys.exit(1)
+
+    logger.info("Using vCenter host: %s", vcenter_host)
+    logger.info("Using username: %s", username)
 
     try:
         if kubeconfig:
@@ -344,7 +376,18 @@ def check_k8s_nodes(
                     "disks": vm_info.disks,
                     "network_interfaces": vm_info.network_interfaces,
                 }
-        click.echo(json.dumps(json_output, indent=2))
+
+        if not output_file:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            cluster_safe = cluster_name.replace("/", "_").replace("\\", "_") if cluster_name else "unknown"
+            tmp_dir = os.path.join(get_project_root(), "tmp")
+            os.makedirs(tmp_dir, exist_ok=True)
+            output_file = os.path.join(tmp_dir, f"k8s_nodes_{cluster_safe}_{timestamp}.json")
+
+        output_str = json.dumps(json_output, indent=2)
+        with open(output_file, "w") as f:
+            f.write(output_str)
+        logger.info("JSON output written to %s", output_file)
     else:
         console.print("\n[bold]VM Information for all processed nodes:[/bold]")
         for node_name, vm_info in results.items():

@@ -350,10 +350,11 @@ def get_datastore_info(datastore_mor: vim.Datastore) -> Dict[str, Any]:
 
     try:
         for host_mount in datastore_mor.host:
-            if host_mount.key not in datastore_host_mounts:
+            host_key = host_mount.key._moId if hasattr(host_mount.key, "_moId") else host_mount.key
+            if host_key not in datastore_host_mounts:
                 try:
                     mount_info = host_mount.mountInfo
-                    datastore_host_mounts[host_mount.key] = {
+                    datastore_host_mounts[host_key] = {
                         "host_name": host_mount.key.name,
                         "mount": mount_info,
                     }

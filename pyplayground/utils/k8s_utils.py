@@ -208,7 +208,7 @@ def get_ocp_cluster_name(kubeconfig: Optional[str] = None) -> Optional[str]:
 
     # Strategy 1: Parse kubeconfig file directly
     try:
-        kubeconfig_path = kubeconfig or os.path.expanduser("~/.kube/config")
+        kubeconfig_path = kubeconfig or os.environ.get("KUBECONFIG", "").split(":")[0] or os.path.expanduser("~/.kube/config")
         with open(kubeconfig_path, "r") as f:
             kc = yaml.safe_load(f)
 

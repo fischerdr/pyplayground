@@ -314,6 +314,12 @@ def check_k8s_nodes_esxi_datastore(
         else:
             logger.warning("Could not detect OCP cluster name, will cache all VMs")
         vm_cache = create_vm_cache(si, cluster_name)
+        if len(vm_cache) == 0 and cluster_name:
+            logger.warning(
+                "No VMs found matching cluster name prefix '%s', caching all VMs as fallback",
+                cluster_name,
+            )
+            vm_cache = create_vm_cache(si, None)
         logger.info("Cached %d VMs from vCenter for lookup", len(vm_cache))
     except Exception as e:
         logger.error("Failed to create VM cache: %s", str(e), exc_info=True)

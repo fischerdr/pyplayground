@@ -8,6 +8,7 @@ MachineSet resourcePool configurations.
 
 import datetime
 import json
+import logging
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -228,9 +229,10 @@ def check_k8s_nodes_esxi_datastore(
         VCENTER_USERNAME - vCenter username
         VCENTER_PASSWORD - vCenter password
     """
-    logging_level = "DEBUG" if debug else "INFO"
-    setup_logging("check_k8s_nodes_esxi_datastore", level=logging_level)
-    logger.info("Logging initialized at %s level", logging_level)
+    logging_level = logging.DEBUG if debug else logging.INFO
+    script_name = os.path.basename(__file__).replace(".py", "")
+    setup_logging(level=logging_level, script_name=script_name)
+    logger.info("Logging initialized at %s level", logging.getLevelName(logging_level))
 
     try:
         load_env_file()

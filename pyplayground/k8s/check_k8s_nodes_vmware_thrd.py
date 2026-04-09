@@ -6,6 +6,7 @@ with one connection per thread following the pool pattern.
 """
 
 import datetime
+import logging
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -238,9 +239,10 @@ def check_k8s_nodes(
     VMware virtual machine status. It processes nodes concurrently using
     a thread pool with dedicated vCenter connections per thread.
     """
-    logging_level = "DEBUG" if debug else "INFO"
-    setup_logging("check_k8s_nodes_vmware_thrd", level=logging_level)
-    logger.info("Logging initialized at %s level", logging_level)
+    logging_level = logging.DEBUG if debug else logging.INFO
+    script_name = os.path.basename(__file__).replace(".py", "")
+    setup_logging(level=logging_level, script_name=script_name)
+    logger.info("Logging initialized at %s level", logging.getLevelName(logging_level))
 
     try:
         load_env_file()

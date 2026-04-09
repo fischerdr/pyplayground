@@ -412,15 +412,15 @@ def get_vm_cluster_info(vm: vim.VirtualMachine) -> Dict[str, Any]:
             if parent:
                 if isinstance(parent, vim.ClusterComputeResource):
                     cluster_info["cluster_name"] = parent.name
-                    cluster_info["cluster_path"] = parent.summary.config.name
+                    cluster_info["cluster_path"] = parent.name
                 elif isinstance(parent, vim.ComputeResource):
                     cluster_info["cluster_name"] = parent.name
-                    cluster_info["cluster_path"] = parent.summary.config.name
+                    cluster_info["cluster_path"] = parent.name
                 elif hasattr(parent, "parent") and parent.parent:
                     grandparent = parent.parent
                     if isinstance(grandparent, vim.ClusterComputeResource):
                         cluster_info["cluster_name"] = grandparent.name
-                        cluster_info["cluster_path"] = grandparent.summary.config.name
+                        cluster_info["cluster_path"] = grandparent.name
 
     except Exception as e:
         logger.warning("Error getting cluster info for VM %s: %s", vm.name, str(e))

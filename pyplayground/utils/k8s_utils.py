@@ -205,8 +205,8 @@ def get_ocp_cluster_name(kubeconfig: Optional[str] = None) -> Optional[str]:
         else:
             config.load_kube_config()
 
-        current_context = config.current_context()
-        context_name = current_context.get("name", "unknown")
+        contexts, active_context = config.list_kube_config_contexts()
+        context_name = active_context.get("name", "unknown")
         logger.debug(f"Current kubeconfig context: {context_name}")
 
         kubeconfig_dict = config.get_kube_config().configuration
@@ -216,7 +216,7 @@ def get_ocp_cluster_name(kubeconfig: Optional[str] = None) -> Optional[str]:
         if hasattr(config, "KubeConfigLoader"):
             pass
 
-        logger.info(f"Successfully loaded kubeconfig, attempting to extract cluster name")
+        logger.info("Successfully loaded kubeconfig, attempting to extract cluster name")
 
         try:
             config_dict = config.load_kube_config(return_config=True, config_file=kubeconfig)

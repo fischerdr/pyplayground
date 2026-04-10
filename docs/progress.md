@@ -903,3 +903,59 @@
 - ✅ Syntax validation: Passed
 
 **Next Steps**: None - task complete
+
+---
+
+### Task 4.1: Add --include-datastore Flag to check_k8s_nodes_esxi_datastore
+
+**Status**: 🔄 In Progress  
+**Date**: 2026-04-10  
+**Branch**: feature/include-datastore-flag
+
+**Goal**: Add optional --include-datastore flag to make datastore review configurable
+
+**Changes Made**:
+- Added `--include-datastore` CLI flag with default=False to check_k8s_nodes_esxi_datastore.py
+- Flag is optional and not included by default (reduces vCenter API calls)
+- Modified JSON output generation to conditionally call get_datastore_info() only when flag is provided
+- Modified text output to conditionally show datastore tables when flag is provided
+- Added logging for flag usage: logger.info("Include datastore information: %s", include_datastore)
+- Added error handling to skip datastore info and continue if fetch fails
+- Updated docstring with example usage including --include-datastore flag
+
+**Implementation Details**:
+- When flag is NOT provided (default):
+  - JSON output: `"datastores": []` (empty list)
+  - Text output: Shows "Datastores: N/A"
+  - No get_datastore_info() calls made
+  - Faster execution with fewer vCenter API calls
+- When flag IS provided:
+  - JSON output: Full datastore details (capacity, free space, type, host mounts)
+  - Text output: Shows datastore names and detailed tables for each datastore
+  - get_datastore_info() called for each datastore
+  - Includes full datastore information as before
+
+**Error Handling**:
+- Try/except blocks around datastore info fetching
+- If fetch fails, logs warning and continues processing
+- Does not fail the entire script if datastore info unavailable
+
+**Testing**:
+- Manual: Code quality checks pending (black, isort, flake8, mypy)
+- Validation: Logic reviewed for correctness
+
+**Logging Added/Verified**:
+- User actions: logger.info("Include datastore information: %s", include_datastore)
+- Flow details: logger.debug() for node processing
+- Exceptions: logger.warning() for datastore fetch failures
+
+**Files Modified**:
+- pyplayground/k8s/check_k8s_nodes_esxi_datastore.py (+45, -15 lines): Added flag, modified JSON/text output, added logging
+
+**Code Quality**:
+- ⏳ Black formatting: Pending
+- ⏳ isort import sorting: Pending
+- ⏳ flake8 linting: Pending
+- ⏳ mypy type checking: Pending
+
+**Next Steps**: Run code quality checks and create git commit

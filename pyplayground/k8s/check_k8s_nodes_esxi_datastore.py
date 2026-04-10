@@ -196,6 +196,12 @@ def process_node_thread(
     is_flag=True,
     help="Enable debug logging to logs directory.",
 )
+@click.option(
+    "--include-datastore",
+    is_flag=True,
+    default=False,
+    help="Include detailed datastore information in output (capacity, free space, type).",
+)
 @click.pass_context
 def check_k8s_nodes_esxi_datastore(
     ctx: click.Context,
@@ -211,6 +217,7 @@ def check_k8s_nodes_esxi_datastore(
     output_format: str,
     output_file: Optional[str],
     debug: bool,
+    include_datastore: bool,
 ) -> None:
     r"""Check Kubernetes nodes and map to ESXi cluster and datastore information.
 
@@ -223,6 +230,11 @@ def check_k8s_nodes_esxi_datastore(
         check_k8s_nodes_esxi_datastore --vcenter_host vcenter.example.com \
             --username administrator@vsphere.local --password password \
             --output-format json --output-file esxi_mapping.json
+
+        # Include detailed datastore information
+        check_k8s_nodes_esxi_datastore --vcenter_host vcenter.example.com \
+            --username administrator@vsphere.local --password password \
+            --include-datastore
 
     Environment variables:
         VCENTER_HOST - vCenter server host
@@ -254,6 +266,7 @@ def check_k8s_nodes_esxi_datastore(
 
     logger.info("Using vCenter host: %s", vcenter_host)
     logger.info("Using username: %s", username)
+    logger.info("Include datastore information: %s", include_datastore)
 
     vcenter_host_str: str = vcenter_host
     username_str: str = username
@@ -368,11 +381,18 @@ def check_k8s_nodes_esxi_datastore(
             json_output[node_name] = {"error": "VM not found or error retrieving ESXi info"}
         else:
             datastore_info_list: List[Dict[str, Any]] = []
-            if node_info.datastores:
-                for ds_entry in node_info.datastores:
-                    ds_mor = ds_entry["datastore_mor"]
-                    ds_info = get_datastore_info(ds_mor)
-                    datastore_info_list.append(ds_info)
+            if include_datastore and node_info.datastores:
+                try:
+                    for ds_entry in node_info.datastores:
+                        ds_mor = ds_entry["datastore_mor"]
+                        ds_info = get_datastore_info(ds_mor)
+                        datastore_info_list.append(ds_info)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to fetch datastore info for node %s: %s",
+                        node_name,
+                        str(e),
+                    )
 
             json_output[node_name] = {
                 "cluster_name": node_info.cluster_name,
@@ -405,7 +425,7 @@ def check_k8s_nodes_esxi_datastore(
             table.add_row("Cluster Name", node_info.cluster_name or "N/A")
             table.add_row("Current ESXi Host", node_info.current_host_name or "N/A")
 
-            if node_info.datastores:
+            if include_datastore and node_info.datastores:
                 table.add_row(
                     "Datastores",
                     ", ".join(ds["datastore_name"] for ds in node_info.datastores),
@@ -415,21 +435,31 @@ def check_k8s_nodes_esxi_datastore(
 
             console.print(table)
 
-            if node_info.datastores:
+            if include_datastore and node_info.datastores:
                 for ds_entry in node_info.datastores:
-                    ds_mor = ds_entry["datastore_mor"]
-                    ds_info = get_datastore_info(ds_mor)
-                    ds_table = Table(title=f"Datastore: {ds_info['name']}")
-                    ds_table.add_column("Property", style="cyan")
-                    ds_table.add_column("Value", style="green")
-                    ds_table.add_row("Type", ds_info.get("type", "N/A"))
-                    ds_table.add_row("Capacity (GB)", f"{ds_info.get('capacity_gb') or 'N/A'}")
-                    ds_table.add_row("Free Space (GB)", f"{ds_info.get('free_space_gb') or 'N/A'}")
-                    ds_table.add_row(
-                        "Usable Space (GB)",
-                        f"{ds_info.get('used_space_gb') or 'N/A'}",
-                    )
-                    console.print(ds_table)
+                    try:
+                        ds_mor = ds_entry["datastore_mor"]
+                        ds_info = get_datastore_info(ds_mor)
+                        ds_table = Table(title=f"Datastore: {ds_info['name']}")
+                        ds_table.add_column("Property", style="cyan")
+                        ds_table.add_column("Value", style="green")
+                        ds_table.add_row("Type", ds_info.get("type", "N/A"))
+                        ds_table.add_row("Capacity (GB)", f"{ds_info.get('capacity_gb') or 'N/A'}")
+                        ds_table.add_row(
+                            "Free Space (GB)",
+                            f"{ds_info.get('free_space_gb') or 'N/A'}",
+                        )
+                        ds_table.add_row(
+                            "Used Space (GB)",
+                            f"{ds_info.get('used_space_gb') or 'N/A'}",
+                        )
+                        console.print(ds_table)
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to fetch datastore info for %s: %s",
+                            ds_entry.get("datastore_name", "unknown"),
+                            str(e),
+                        )
 
     Disconnect(si)
 

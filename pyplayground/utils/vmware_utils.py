@@ -356,7 +356,12 @@ def get_datastore_info(datastore_mor: vim.Datastore) -> Dict[str, Any]:
                     mount_info = host_mount.mountInfo
                     datastore_host_mounts[host_key] = {
                         "host_name": host_mount.key.name,
-                        "mount": mount_info,
+                        "mount": {
+                            "path": getattr(mount_info, "path", None),
+                            "access_mode": getattr(mount_info, "accessMode", None),
+                            "mounted": getattr(mount_info, "mounted", None),
+                            "accessible": getattr(mount_info, "accessible", None),
+                        },
                     }
                 except vmodl.fault.NotFound:
                     pass

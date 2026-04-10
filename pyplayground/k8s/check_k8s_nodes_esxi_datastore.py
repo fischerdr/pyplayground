@@ -268,9 +268,9 @@ def check_k8s_nodes_esxi_datastore(
     logger.info("Using username: %s", username)
     logger.info("Include datastore information: %s", include_datastore)
 
-    vcenter_host_str: str = vcenter_host
-    username_str: str = username
-    password_str: str = password
+    vcenter_host_str: str = str(vcenter_host)
+    username_str: str = str(username)
+    password_str: str = str(password) if password else ""
 
     try:
         if kubeconfig:

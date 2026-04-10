@@ -28,26 +28,32 @@ Examples:
 """
 
 import argparse
-import json
 import logging
 import os
 import re
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from openai import OpenAI, APIConnectionError, APIError, APITimeoutError
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_ENDPOINT = "http://case.modmtrx.net:10000"
-LARGE_FILE_THRESHOLD = 20  # files — above this, switch to stat-only mode
+# TRACE level sits below DEBUG — used for per-token stream logging.
+# Enabled only with --trace; --debug does not activate it.
+TRACE = 5
+logging.addLevelName(TRACE, "TRACE")
+trace_logger = logging.getLogger(f"{__name__}.trace")
+
+DEFAULT_ENDPOINT = "http://case.modmtrx.net:10001"
+LARGE_FILE_THRESHOLD = 20    # files — above this, switch to stat-only mode
 LARGE_DIFF_THRESHOLD = 6000  # characters — above this, switch to stat-only mode
-DEFAULT_MAX_TOKENS = 2048
-REQUEST_TIMEOUT = 180  # seconds — thinking models need more time
+DEFAULT_MAX_TOKENS = 16384   # match Kilo output limit — thinking models need room
+CONNECT_TIMEOUT = 10         # seconds to establish connection
+READ_TIMEOUT = 300           # seconds to wait for streaming to complete
 MAX_RETRIES = 3
 
 
@@ -211,154 +217,162 @@ def infer_scope(files: list[FileChange]) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# LLM client — stdlib urllib only
+# LLM client — openai library with streaming
 # ---------------------------------------------------------------------------
 
 
 class LLMClient:
-    """Minimal OpenAI-compatible HTTP client using urllib."""
+    """OpenAI-compatible streaming client for llama-server."""
 
     def __init__(self, endpoint: str, model: Optional[str], max_tokens: int) -> None:
-        """Store connection config and initialise the verified flag."""
+        """Initialise the OpenAI client pointed at the local llama-server."""
         self.endpoint = endpoint.rstrip("/")
         self.model = model
         self.max_tokens = max_tokens
-        self._verified = False
-
-    # -- internal HTTP helpers -----------------------------------------------
-
-    def _post(self, path: str, payload: dict) -> dict:
-        url = f"{self.endpoint}{path}"
-        body = json.dumps(payload).encode()
-        req = urllib.request.Request(
-            url,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
+        self._client = OpenAI(
+            base_url=f"{self.endpoint}/v1",
+            api_key="sk-no-key-required",
+            timeout=CONNECT_TIMEOUT,
+            max_retries=0,  # we handle retries ourselves
         )
-        logger.debug("POST %s  (%d bytes)", url, len(body))
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-            raw = resp.read().decode()
-            logger.debug("HTTP %d  response: %d bytes", resp.status, len(raw))
-            return json.loads(raw)
-
-    def _get(self, path: str) -> dict:
-        url = f"{self.endpoint}{path}"
-        logger.debug("GET %s", url)
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            return json.loads(resp.read().decode())
-
-    # -- public interface ----------------------------------------------------
 
     def detect_model(self) -> str:
         """Query /v1/models and return the first advertised model ID."""
         try:
-            data = self._get("/v1/models")
-            model_id = data["data"][0]["id"]
-            logger.info("Auto-detected model: %s", model_id)
-            return model_id
+            models = self._client.models.list()
+            if models.data:
+                model_id = models.data[0].id
+                logger.info("Auto-detected model: %s", model_id)
+                return model_id
         except Exception as e:
             logger.debug("Model auto-detection failed: %s", e)
-            return "unknown"
+        return "unknown"
 
-    def verify(self) -> bool:
-        """Return True if the LLM server responds to a models list request."""
-        try:
-            self._get("/v1/models")
-            self._verified = True
-            logger.info("LLM server reachable: %s", self.endpoint)
-            return True
-        except Exception as e:
-            logger.error("LLM server unreachable at %s — %s", self.endpoint, e)
-            return False
+    def complete(self, system: str, user: str) -> str:
+        """Stream a chat completion and return the assembled content string.
 
-    def complete(self, prompt: str) -> str:
-        """Send the prompt and return the model reply, retrying on transient errors."""
+        Uses a system prompt + user message split so the model receives
+        instructions and diff content separately. Streams tokens to avoid
+        timeout issues with thinking models that generate long reasoning chains
+        before producing output. Reasoning tokens (reasoning_content deltas)
+        are discarded; only content deltas are collected.
+
+        Falls back to extracting the commit message from reasoning_content if
+        the content stream is empty (thinking forced on server-side).
+        """
         model = self.model or self.detect_model()
 
-        logger.info("Request — model=%s  max_tokens=%d", model, self.max_tokens)
-        logger.debug("--- PROMPT START (%d chars) ---\n%s\n--- PROMPT END ---", len(prompt), prompt)
+        logger.info("Request — endpoint=%s  model=%s  max_tokens=%d",
+                    self.endpoint, model, self.max_tokens)
+        logger.debug("--- SYSTEM PROMPT ---\n%s\n--- END ---", system)
+        logger.debug("--- USER PROMPT (%d chars) ---\n%s\n--- END ---", len(user), user)
 
-        if not self._verified and not self.verify():
-            return _fallback_message()
-
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": self.max_tokens,
-            "temperature": 0.3,
-            "enable_thinking": False,  # suppress Qwen3 reasoning tokens
-        }
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                t0 = time.monotonic()
-                data = self._post("/v1/chat/completions", payload)
-                elapsed = time.monotonic() - t0
+                content_chunks: list[str] = []
+                reasoning_chunks: list[str] = []
+                token_count = 0
+
+                logger.debug("Opening stream (attempt %d/%d)", attempt, MAX_RETRIES)
+
+                with self._client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=self.max_tokens,
+                    temperature=0.3,
+                    stream=True,
+                    timeout=READ_TIMEOUT,
+                ) as stream:
+                    for chunk in stream:
+                        delta = chunk.choices[0].delta if chunk.choices else None
+                        if delta is None:
+                            continue
+
+                        # Standard content token
+                        if delta.content:
+                            content_chunks.append(delta.content)
+                            token_count += 1
+                            trace_logger.log(TRACE, "content token: %r", delta.content)
+
+                        # Reasoning token — collect separately, don't output
+                        reasoning = getattr(delta, "reasoning_content", None)
+                        if reasoning:
+                            reasoning_chunks.append(reasoning)
+                            trace_logger.log(TRACE, "reasoning token: %r", reasoning)
+
+                content = "".join(content_chunks).strip()
+                reasoning = "".join(reasoning_chunks).strip()
 
                 logger.debug(
-                    "--- RAW JSON (attempt %d, %.2fs) ---\n%s\n--- END ---",
-                    attempt, elapsed, json.dumps(data, indent=2),
-                )
-
-                message = data.get("choices", [{}])[0].get("message", {})
-                # content is empty when thinking mode leaks into reasoning_content
-                content = (message.get("content") or "").strip()
-                reasoning = (message.get("reasoning_content") or "").strip()
-
-                logger.debug(
-                    "content: %d chars  reasoning_content: %d chars",
-                    len(content),
-                    len(reasoning),
+                    "Stream complete — content: %d chars  reasoning: %d chars  tokens: %d",
+                    len(content), len(reasoning), token_count,
                 )
 
                 if content:
-                    logger.info("Response in %.2fs (%d chars)", elapsed, len(content))
-                    return content
+                    answer = _strip_thinking(content)
+                    logger.info("Response complete (%d chars -> %d chars after strip)",
+                                len(content), len(answer))
+                    return answer
 
+                # content empty — thinking was forced on server-side
+                # extract the commit message from the reasoning stream
                 if reasoning:
-                    # The thinking chain precedes the actual answer — find where
-                    # the commit message starts by looking for a conventional
-                    # commit type prefix and discard everything before it.
-                    match = re.search(
-                        r'^(feat|fix|refactor|docs|chore|test|ci)(\(.*?\))?:',
-                        reasoning, re.MULTILINE,
-                    )
-                    answer = reasoning[match.start():].strip() if match else reasoning.strip()
+                    answer = _strip_thinking(reasoning)
                     logger.warning(
-                        "content empty — extracted answer from reasoning_content "
-                        "(%d chars -> %d chars after strip)",
+                        "content stream empty — extracted answer from reasoning "
+                        "(%d chars -> %d chars); thinking is forced on at the server",
                         len(reasoning), len(answer),
                     )
-                    logger.info("Response (reasoning) in %.2fs (%d chars)", elapsed, len(answer))
                     return answer
 
                 logger.warning("Empty response from LLM (attempt %d/%d)", attempt, MAX_RETRIES)
 
-            except urllib.error.HTTPError as e:
-                body = e.read().decode(errors="replace")
-                logger.error("HTTP %d on attempt %d/%d: %s", e.code, attempt, MAX_RETRIES, body)
-                if e.code < 500:
+            except APIConnectionError as e:
+                logger.error("Connection error on attempt %d/%d: %s", attempt, MAX_RETRIES, e)
+            except APITimeoutError as e:
+                logger.error("Timeout on attempt %d/%d: %s", attempt, MAX_RETRIES, e)
+            except APIError as e:
+                logger.error("API error on attempt %d/%d: %s", attempt, MAX_RETRIES, e)
+                if hasattr(e, "status_code") and e.status_code and e.status_code < 500:
                     break  # 4xx — retrying won't help
-            except urllib.error.URLError as e:
-                logger.error("Connection error on attempt %d/%d: %s", attempt, MAX_RETRIES, e.reason)
-            except (KeyError, IndexError, json.JSONDecodeError) as e:
-                logger.error("Parse error on attempt %d/%d: %s", attempt, MAX_RETRIES, e)
-                break
             except Exception as e:
                 logger.error("Unexpected error on attempt %d/%d: %s", attempt, MAX_RETRIES, e)
                 break
 
             if attempt < MAX_RETRIES:
-                wait = 4 * attempt
-                logger.info("Retrying in %ds ...", wait)
-                time.sleep(wait)
+                logger.info("Retrying in 4s ...")
+                time.sleep(4)
 
         return _fallback_message()
 
 
+def _strip_thinking(text: str) -> str:
+    """Strip thinking preamble from model output.
+
+    Some models emit a reasoning chain before the actual answer regardless
+    of whether thinking mode is enabled. We find the first line that looks
+    like a conventional commit subject and return everything from there.
+    If no match is found the full text is returned unchanged.
+    """
+    match = re.search(
+        r'^(feat|fix|refactor|docs|chore|test|ci)(\(.*?\))?:',
+        text, re.MULTILINE,
+    )
+    if match:
+        stripped = text[match.start():].strip()
+        logger.debug("Stripped %d chars of thinking preamble", match.start())
+        return stripped
+    return text.strip()
+
+
 def _fallback_message() -> str:
-    logger.warning("LLM unavailable or returned no usable content — using fallback")
+    """Return a minimal valid commit message when the LLM is unavailable."""
+    logger.warning("LLM unavailable or returned no content — using fallback")
     return (
         "chore: update codebase\n\n"
         "Changes:\n"
@@ -373,8 +387,13 @@ def _fallback_message() -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_prompt(diff: DiffResult) -> str:
-    """Build the LLM prompt from diff data, choosing patch or stat-only context."""
+def build_prompt(diff: DiffResult) -> tuple[str, str]:
+    """Build system and user prompts from diff data.
+
+    Returns a (system, user) tuple. The system prompt carries the format
+    rules; the user message carries the diff content. Splitting them gives
+    the model clearer role separation and tends to produce cleaner output.
+    """
     scope = infer_scope(diff.files)
     scope_str = f"({scope})" if scope else ""
 
@@ -403,27 +422,27 @@ def build_prompt(diff: DiffResult) -> str:
         has_test_files(diff.files),
     )
 
-    return f"""Generate a git commit message for the following staged changes.
+    system = f"""You are a git commit message generator.
+Output ONLY the commit message — no preamble, no explanation, no markdown fences.
 
-Rules:
-- First line: conventional commit format — type{scope_str}: short description (72 chars max)
+Format rules:
+- First line: conventional commit — type{scope_str}: short description (72 chars max)
   Valid types: feat, fix, refactor, docs, chore, test, ci
 - Omit scope if it is not obvious from the file paths.
 - Be concise. One short sentence per bullet. Do not pad or over-explain.
-- Output ONLY the commit message. No preamble, no explanation, no markdown fences.
 
-Format:
+Message format:
 type{scope_str}: short description
 
 Changes:
 - [concise bullet per logical change — what and why]{testing_section}
 
 Files:
-{file_list}
+{file_list}"""
 
----
-{context_block}
-"""
+    user = context_block
+
+    return system, user
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +451,7 @@ Files:
 
 
 def _build_message(args: argparse.Namespace) -> Optional[str]:
+    """Run the full pipeline: diff -> prompt -> LLM -> commit message string."""
     if not is_git_repo():
         print("Error: not a git repository", file=sys.stderr)
         return None
@@ -448,8 +468,8 @@ def _build_message(args: argparse.Namespace) -> Optional[str]:
     logger.info("Config — endpoint=%s  model=%s  max_tokens=%d", endpoint, model or "auto", max_tokens)
 
     client = LLMClient(endpoint, model, max_tokens)
-    prompt = build_prompt(diff)
-    return client.complete(prompt)
+    system, user = build_prompt(diff)
+    return client.complete(system, user)
 
 
 # ---------------------------------------------------------------------------
@@ -545,18 +565,32 @@ Environment Variables:
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Debug-level logging: full prompt, raw LLM response, git commands",
+        help="Debug-level logging: full prompt, system prompt, git commands, stream summary",
+    )
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Trace-level logging: every individual stream token (implies --debug)",
     )
 
     args = parser.parse_args()
 
-    level = logging.DEBUG if args.debug else logging.INFO if args.verbose else logging.WARNING
+    if args.trace:
+        level = TRACE
+    elif args.debug:
+        level = logging.DEBUG
+    elif args.verbose:
+        level = logging.INFO
+    else:
+        level = logging.WARNING
+
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(levelname)-8s %(message)s",
         datefmt="%H:%M:%S",
         stream=sys.stderr,  # logs to stderr; commit message prints to stdout
     )
+    # trace_logger inherits root level; no extra config needed
 
     logger.debug("Args: %s", vars(args))
 

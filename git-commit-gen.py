@@ -31,6 +31,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -45,8 +46,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_ENDPOINT = "http://case.modmtrx.net:10000"
 LARGE_FILE_THRESHOLD = 20  # files — above this, switch to stat-only mode
 LARGE_DIFF_THRESHOLD = 6000  # characters — above this, switch to stat-only mode
-DEFAULT_MAX_TOKENS = 1024
-REQUEST_TIMEOUT = 90  # seconds
+DEFAULT_MAX_TOKENS = 2048
+REQUEST_TIMEOUT = 180  # seconds — thinking models need more time
 MAX_RETRIES = 3
 
 
@@ -295,18 +296,42 @@ class LLMClient:
                 data = self._post("/v1/chat/completions", payload)
                 elapsed = time.monotonic() - t0
 
-                raw = data.get("choices", [{}])[0].get("message", {}).get("content", "")
                 logger.debug(
-                    "--- RAW RESPONSE (attempt %d, %.2fs) ---\n%s\n--- END ---",
-                    attempt,
-                    elapsed,
-                    raw,
+                    "--- RAW JSON (attempt %d, %.2fs) ---\n%s\n--- END ---",
+                    attempt, elapsed, json.dumps(data, indent=2),
                 )
 
-                content = raw.strip()
+                message = data.get("choices", [{}])[0].get("message", {})
+                # content is empty when thinking mode leaks into reasoning_content
+                content = (message.get("content") or "").strip()
+                reasoning = (message.get("reasoning_content") or "").strip()
+
+                logger.debug(
+                    "content: %d chars  reasoning_content: %d chars",
+                    len(content),
+                    len(reasoning),
+                )
+
                 if content:
                     logger.info("Response in %.2fs (%d chars)", elapsed, len(content))
                     return content
+
+                if reasoning:
+                    # The thinking chain precedes the actual answer — find where
+                    # the commit message starts by looking for a conventional
+                    # commit type prefix and discard everything before it.
+                    match = re.search(
+                        r'^(feat|fix|refactor|docs|chore|test|ci)(\(.*?\))?:',
+                        reasoning, re.MULTILINE,
+                    )
+                    answer = reasoning[match.start():].strip() if match else reasoning.strip()
+                    logger.warning(
+                        "content empty — extracted answer from reasoning_content "
+                        "(%d chars -> %d chars after strip)",
+                        len(reasoning), len(answer),
+                    )
+                    logger.info("Response (reasoning) in %.2fs (%d chars)", elapsed, len(answer))
+                    return answer
 
                 logger.warning("Empty response from LLM (attempt %d/%d)", attempt, MAX_RETRIES)
 
@@ -334,7 +359,13 @@ class LLMClient:
 
 def _fallback_message() -> str:
     logger.warning("LLM unavailable or returned no usable content — using fallback")
-    return "chore: update codebase\n\n" "Changes:\n" "- Applied modifications (LLM unavailable; edit manually)\n\n" "Files:\n" "- See diff for details"
+    return (
+        "chore: update codebase\n\n"
+        "Changes:\n"
+        "- Applied modifications (LLM unavailable; edit manually)\n\n"
+        "Files:\n"
+        "- See diff for details"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +390,10 @@ def build_prompt(diff: DiffResult) -> str:
     else:
         context_block = f"Diff:\n{diff.patch}\n\nFiles Modified:\n{file_list}"
 
-    testing_section = "\n\nTesting:\n- [note on test coverage — test files were modified]" if has_test_files(diff.files) else ""
+    testing_section = (
+        "\n\nTesting:\n- [note on test coverage — test files were modified]"
+        if has_test_files(diff.files) else ""
+    )
 
     logger.debug(
         "Prompt context — mode=%s  files=%d  scope=%s  tests=%s",

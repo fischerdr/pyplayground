@@ -270,13 +270,8 @@ python -m py_compile file.py
 **Documentation Requirements** (MANDATORY):
 
 ```bash
-# Update progress.md
-cat >> docs/progress.md << 'EOF'
-[Template showing what to document]
-EOF
-
-# Update debugging.md if issues found
-[Template for issue documentation]
+# Commit message includes all required sections
+# See Section 7.2 for template format
 ```
 
 **Git Commit** (MANDATORY):
@@ -330,7 +325,7 @@ echo "Ready for next task? (Awaiting approval)"
 - ❌ "Low priority, fix later" → Creates technical debt
 - ❌ "Only takes 5 minutes, skip it" → Accumulates
 - ✅ "Fix now, regardless of size" → Prevents accumulation
-- ✅ "Document in debugging.md" → Builds knowledge
+- ✅ "Document in commit message" → Builds knowledge
 
 **Rule 2: Investigation Before Implementation**
 - ❌ Jump straight to fixing
@@ -351,7 +346,7 @@ echo "Ready for next task? (Awaiting approval)"
 - ❌ "Fixed bug, move on"
 - ✅ Document WHY it happened
 - ✅ Document HOW to prevent
-- ✅ Add to debugging.md
+- ✅ Add to commit message
 - ✅ Create test to prevent regression
 
 ### 4.2 Debugging Workflow
@@ -368,29 +363,28 @@ echo "Ready for next task? (Awaiting approval)"
    └─ Check reference implementations
    └─ Document findings
 
-3. Document in debugging.md
-   └─ Symptom
-   └─ Root cause
-   └─ Proposed solution
+3. Document findings
+    └─ Symptom
+    └─ Root cause
+    └─ Proposed solution
 
 4. Create fix with logging
-   └─ Follow code pattern template
-   └─ Add comprehensive logging
-   └─ Include error handling
+    └─ Follow code pattern template
+    └─ Add comprehensive logging
+    └─ Include error handling
 
 5. Test fix thoroughly
-   └─ Automated tests
-   └─ Manual verification
-   └─ Comparison tool (if applicable)
+    └─ Automated tests
+    └─ Manual verification
+    └─ Comparison tool (if applicable)
 
 6. Update documentation
-   └─ progress.md with fix details
-   └─ debugging.md with solution
-   └─ Code comments if complex
+    └─ Commit message with fix details
+    └─ Code comments if complex
 
 7. Git commit
-   └─ Detailed message
-   └─ Reference debugging.md entry
+    └─ Detailed message
+    └─ Include findings and solution
 
 8. STOP for approval
    └─ Show evidence
@@ -551,9 +545,11 @@ grep -c "logger\." src/file.py
 
 ## 6. Documentation Standards
 
-### 6.1 Two Core Documents
+### 6.1 Documentation Requirements
 
-**Every project MUST maintain**:
+**This repo (scripting-focused)**: Documentation tracking (progress.md/debugging.md) is NOT required.
+
+**Enterprise projects**: MUST maintain:
 
 1. `docs/progress.md` - Timeline of what's been done
 2. `docs/debugging.md` - Issues found and solutions
@@ -691,6 +687,8 @@ grep -c "logger\." src/file.py
 - ❌ Obvious changes (use judgment)
 - ❌ Duplicate information (link instead)
 
+**Note for this repo**: progress.md and debugging.md are NOT required for scripting-focused work.
+
 ---
 
 ## 7. Git Workflow
@@ -746,18 +744,12 @@ Logging:
 - [New logger.debug(): technical details]
 - [New logger.error(): exception handling]
 
-Documentation:
-
-- progress.md updated [what was added]
-- debugging.md updated [if applicable]
-- Code comments added [where and why]
-
 Files Modified:
 
 - path/to/file1.py (+X, -Y lines): [what changed]
 - path/to/file2.py (+A, -B lines): [what changed]
 
-Next: Task Y+1 ([brief description of next task])
+Next: [Brief description of next task]
 
 ```
 
@@ -795,8 +787,7 @@ ruff check src/
 mypy src/
 
 # 3. Documentation updated
-git diff docs/progress.md  # Verify entry added
-[ -f docs/debugging.md ] && git diff docs/debugging.md  # If issues found
+# Note: progress.md/debugging.md NOT required for this scripting-focused repo
 
 # 4. Commit message prepared
 # Use template above
@@ -860,8 +851,7 @@ echo "Task-Specific Evidence:"
 echo ""
 
 echo "Documentation Updated:"
-echo "- progress.md: [what was added]"
-[ -f docs/debugging.md ] && echo "- debugging.md: [what was added]"
+# Note: progress.md/debugging.md NOT required for this scripting-focused repo
 echo ""
 
 echo "================================================"
@@ -940,7 +930,7 @@ echo "  4. Change direction"
 4. **Semantic Correctness Over Bytes** - Test data, not layout
 5. **STOP After Every Task** - Show evidence, get approval
 6. **No Print() in Runtime** - Professional logging only
-7. **Document As You Go** - Update progress.md immediately
+7. **Document As You Go** - Update commit messages immediately (NOT required for this scripting-focused repo)
 8. **Test What Can Be Tested** - Use available testing tiers
 9. **Consistent Code Patterns** - Copy proven code
 10. **Complete Error Handling** - All paths, all resources
@@ -968,7 +958,7 @@ echo "  4. Change direction"
 - ✅ All tests passing continuously
 - ✅ No deferred bugs (fixed immediately)
 - ✅ Clean git history (one commit per task)
-- ✅ Current documentation (progress.md up to date)
+- ✅ Current documentation (commit messages up to date)
 - ✅ No whack-a-mole debugging
 - ✅ Predictable velocity
 - ✅ Low regression rate
@@ -989,7 +979,7 @@ echo "  4. Change direction"
 **Customizable elements**:
 
 - Specific logging levels (but keep hierarchy)
-- Documentation file names (but keep two docs)
+- Documentation file names (but keep one doc - commit messages)
 - Branch naming (but keep strategy)
 - Task duration (but keep atomic)
 - Commit frequency (but keep one per task)
@@ -999,7 +989,6 @@ echo "  4. Change direction"
 **Small Projects** (1-2 developers, <6 months):
 
 - Simplify documentation templates
-- Combine progress.md and debugging.md if desired
 - Less formal STOP points (but still do them)
 - Shorter task descriptions (but still complete)
 
@@ -1074,7 +1063,7 @@ echo "  4. Change direction"
 
 - Response: Missing documentation slows us MORE
 - Evidence: Lost context costs (show examples)
-- Compromise: Minimal viable documentation (progress.md only)
+- Compromise: Commit messages serve as documentation for this repo
 
 ### 11.3 Measuring Success
 
@@ -1083,7 +1072,6 @@ echo "  4. Change direction"
 - Task completion rate (should be consistent)
 - Test pass rate (should stay high)
 - Bug recurrence rate (should decrease)
-- Documentation coverage (should be 100% of tasks)
 - Time to onboard new developers (should decrease)
 
 **Before/After comparison**:
@@ -1129,7 +1117,7 @@ echo "  4. Change direction"
 
 - NO "low priority" deferrals (would have become debt)
 - NO whack-a-mole debugging (comparison tool prevented)
-- NO undocumented changes (progress.md prevented context loss)
+- NO undocumented changes (commit messages prevented context loss)
 - NO skipped STOP points (maintained quality)
 
 **Process improvements**:
@@ -1153,12 +1141,6 @@ echo "  4. Change direction"
 - Zero regressions introduced
 - All code review points addressed immediately
 
-**Documentation**:
-
-- 100% of tasks documented in progress.md
-- All issues documented in debugging.md
-- Zero lost context incidents
-
 ---
 
 ## Appendix A: Quick Reference Checklist
@@ -1172,7 +1154,6 @@ echo "  4. Change direction"
 [ ] Verify tests passing
 [ ] Understand logging requirements
 [ ] Understand testing requirements
-[ ] Understand documentation requirements
 [ ] Begin work
 ```
 
@@ -1184,8 +1165,6 @@ echo "  4. Change direction"
 [ ] Error handling added (try/except/finally)
 [ ] Tests run and passing
 [ ] Code quality checks passing
-[ ] progress.md updated
-[ ] debugging.md updated (if issues found)
 [ ] Git commit with complete message
 [ ] STOP point evidence gathered
 [ ] Wait for approval
@@ -1194,7 +1173,6 @@ echo "  4. Change direction"
 ### Daily Review
 
 ```
-[ ] progress.md reflects all work done today
 [ ] All commits have complete messages
 [ ] No uncommitted changes
 [ ] All tests still passing
@@ -1210,13 +1188,9 @@ echo "  4. Change direction"
 
 See Section 3.2 for complete task template.
 
-### B.2 progress.md Entry Template
+### B.2 Commit Message Template
 
-See Section 6.2 for complete progress.md template.
-
-### B.3 debugging.md Entry Template
-
-See Section 6.3 for complete debugging.md template.
+See Section 7.2 for complete commit message template.
 
 ### B.4 Commit Message Template
 

@@ -536,31 +536,19 @@ This applies to all documentation including:
 
 ### Documentation Structure (When Authorized)
 
-**Two Core Documents** (if maintained):
+**This repo (scripting-focused)**: Documentation tracking (progress.md/debugging.md) is NOT required.
+
+**Enterprise projects**: MUST maintain:
 
 1. **`docs/progress.md`** - Timeline of what's been done
 2. **`docs/debugging.md`** - Issues found and solutions
-
-**progress.md Structure**:
-
-- Track chronological progress through tasks
-- Document changes made, tests run, logging added
-- Update after EVERY task completion
-- Include: Status, Date, Branch, Commit, Changes Made, Tests, Logging Added, Issues Found, Files Modified, Next Steps
-
-**debugging.md Structure**:
-
-- Document issues, root causes, and solutions
-- Include: Symptom, Root Cause, Solution, Code Location, Verification, Logs, Prevention, Related Issues
-- Cross-reference from progress.md
 
 **Documentation Principles**:
 
 1. **Update immediately** - Don't defer documentation
 2. **Be specific** - "Fixed bug" is not sufficient
 3. **Include code** - Show before/after when relevant
-4. **Link between docs** - Cross-reference progress.md ↔ debugging.md
-5. **No emojis in professional docs** - Text only (except status indicators)
+4. **No emojis in professional docs** - Text only (except status indicators)
 
 For detailed documentation templates and examples, see `docs/DEVELOPMENT_STANDARDS.md` Section 6.
 
@@ -612,8 +600,7 @@ echo "Task-Specific Evidence:"
 echo ""
 
 echo "Documentation Updated:"
-echo "- progress.md: [what was added]"
-[ -f docs/debugging.md ] && echo "- debugging.md: [what was added]"
+echo "- Commit message: [what was documented]"
 echo ""
 
 echo "================================================"

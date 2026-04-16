@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from openai import OpenAI, APIConnectionError, APIError, APITimeoutError
+from openai import APIConnectionError, APIError, APITimeoutError, OpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +49,11 @@ logging.addLevelName(TRACE, "TRACE")
 trace_logger = logging.getLogger(f"{__name__}.trace")
 
 DEFAULT_ENDPOINT = "http://case.modmtrx.net:10001"
-LARGE_FILE_THRESHOLD = 20    # files — above this, switch to stat-only mode
+LARGE_FILE_THRESHOLD = 20  # files — above this, switch to stat-only mode
 LARGE_DIFF_THRESHOLD = 6000  # characters — above this, switch to stat-only mode
-DEFAULT_MAX_TOKENS = 16384   # match Kilo output limit — thinking models need room
-CONNECT_TIMEOUT = 10         # seconds to establish connection
-READ_TIMEOUT = 300           # seconds to wait for streaming to complete
+DEFAULT_MAX_TOKENS = 16384  # match Kilo output limit — thinking models need room
+CONNECT_TIMEOUT = 10  # seconds to establish connection
+READ_TIMEOUT = 300  # seconds to wait for streaming to complete
 MAX_RETRIES = 3
 
 
@@ -162,12 +162,22 @@ def get_diff(include_unstaged: bool = False) -> DiffResult:
             len(files),
             LARGE_FILE_THRESHOLD,
         )
-        return DiffResult(files=files, total_additions=total_add, total_deletions=total_del, large_mode=True)
+        return DiffResult(
+            files=files,
+            total_additions=total_add,
+            total_deletions=total_del,
+            large_mode=True,
+        )
 
     patch_r = _git("diff", *extra)
     if patch_r.returncode != 0:
         logger.warning("git diff (patch) failed — falling back to stat-only mode")
-        return DiffResult(files=files, total_additions=total_add, total_deletions=total_del, large_mode=True)
+        return DiffResult(
+            files=files,
+            total_additions=total_add,
+            total_deletions=total_del,
+            large_mode=True,
+        )
 
     patch = patch_r.stdout
     logger.debug("Patch size: %d characters", len(patch))
@@ -187,10 +197,21 @@ def get_diff(include_unstaged: bool = False) -> DiffResult:
             len(patch),
             LARGE_DIFF_THRESHOLD,
         )
-        return DiffResult(files=files, total_additions=total_add, total_deletions=total_del, large_mode=True)
+        return DiffResult(
+            files=files,
+            total_additions=total_add,
+            total_deletions=total_del,
+            large_mode=True,
+        )
 
     logger.info("Using patch mode (diff: %d chars)", len(patch))
-    return DiffResult(files=files, total_additions=total_add, total_deletions=total_del, patch=patch, large_mode=False)
+    return DiffResult(
+        files=files,
+        total_additions=total_add,
+        total_deletions=total_del,
+        patch=patch,
+        large_mode=False,
+    )
 
 
 def has_test_files(files: list[FileChange]) -> bool:
@@ -262,8 +283,12 @@ class LLMClient:
         """
         model = self.model or self.detect_model()
 
-        logger.info("Request — endpoint=%s  model=%s  max_tokens=%d",
-                    self.endpoint, model, self.max_tokens)
+        logger.info(
+            "Request — endpoint=%s  model=%s  max_tokens=%d",
+            self.endpoint,
+            model,
+            self.max_tokens,
+        )
         logger.debug("--- SYSTEM PROMPT ---\n%s\n--- END ---", system)
         logger.debug("--- USER PROMPT (%d chars) ---\n%s\n--- END ---", len(user), user)
 
@@ -310,13 +335,18 @@ class LLMClient:
 
                 logger.debug(
                     "Stream complete — content: %d chars  reasoning: %d chars  tokens: %d",
-                    len(content), len(reasoning), token_count,
+                    len(content),
+                    len(reasoning),
+                    token_count,
                 )
 
                 if content:
                     answer = _strip_thinking(content)
-                    logger.info("Response complete (%d chars -> %d chars after strip)",
-                                len(content), len(answer))
+                    logger.info(
+                        "Response complete (%d chars -> %d chars after strip)",
+                        len(content),
+                        len(answer),
+                    )
                     return answer
 
                 # content empty — thinking was forced on server-side
@@ -324,9 +354,9 @@ class LLMClient:
                 if reasoning:
                     answer = _strip_thinking(reasoning)
                     logger.warning(
-                        "content stream empty — extracted answer from reasoning "
-                        "(%d chars -> %d chars); thinking is forced on at the server",
-                        len(reasoning), len(answer),
+                        "content stream empty — extracted answer from reasoning " "(%d chars -> %d chars); thinking is forced on at the server",
+                        len(reasoning),
+                        len(answer),
                     )
                     return answer
 
@@ -360,11 +390,12 @@ def _strip_thinking(text: str) -> str:
     If no match is found the full text is returned unchanged.
     """
     match = re.search(
-        r'^(feat|fix|refactor|docs|chore|test|ci)(\(.*?\))?:',
-        text, re.MULTILINE,
+        r"^(feat|fix|refactor|docs|chore|test|ci)(\(.*?\))?:",
+        text,
+        re.MULTILINE,
     )
     if match:
-        stripped = text[match.start():].strip()
+        stripped = text[match.start() :].strip()
         logger.debug("Stripped %d chars of thinking preamble", match.start())
         return stripped
     return text.strip()
@@ -373,13 +404,7 @@ def _strip_thinking(text: str) -> str:
 def _fallback_message() -> str:
     """Return a minimal valid commit message when the LLM is unavailable."""
     logger.warning("LLM unavailable or returned no content — using fallback")
-    return (
-        "chore: update codebase\n\n"
-        "Changes:\n"
-        "- Applied modifications (LLM unavailable; edit manually)\n\n"
-        "Files:\n"
-        "- See diff for details"
-    )
+    return "chore: update codebase\n\n" "Changes:\n" "- Applied modifications (LLM unavailable; edit manually)\n\n" "Files:\n" "- See diff for details"
 
 
 # ---------------------------------------------------------------------------
@@ -409,10 +434,7 @@ def build_prompt(diff: DiffResult) -> tuple[str, str]:
     else:
         context_block = f"Diff:\n{diff.patch}\n\nFiles Modified:\n{file_list}"
 
-    testing_section = (
-        "\n\nTesting:\n- [note on test coverage — test files were modified]"
-        if has_test_files(diff.files) else ""
-    )
+    testing_section = "\n\nTesting:\n- [note on test coverage — test files were modified]" if has_test_files(diff.files) else ""
 
     logger.debug(
         "Prompt context — mode=%s  files=%d  scope=%s  tests=%s",
@@ -430,14 +452,21 @@ Format rules:
   Valid types: feat, fix, refactor, docs, chore, test, ci
 - Omit scope if it is not obvious from the file paths.
 - Be concise. One short sentence per bullet. Do not pad or over-explain.
+- Sections are optional — only include relevant ones (Changes, Testing, Logging, Modified).
 
 Message format:
 type{scope_str}: short description
 
-Changes:
-- [concise bullet per logical change — what and why]{testing_section}
+[Optional: What changed and WHY - be specific]
+[Optional: Error handling added - pattern used]
+[Optional: Uses shared utilities - which ones]
 
-Files:
+[Optional sections - include only if relevant]:
+
+Testing:
+- [note on test coverage — test files were modified]
+
+Modified:
 {file_list}"""
 
     user = context_block
@@ -465,7 +494,12 @@ def _build_message(args: argparse.Namespace) -> Optional[str]:
     model = os.environ.get("LLAMA_MODEL") or None
     max_tokens = int(os.environ.get("MAX_TOKENS", str(DEFAULT_MAX_TOKENS)))
 
-    logger.info("Config — endpoint=%s  model=%s  max_tokens=%d", endpoint, model or "auto", max_tokens)
+    logger.info(
+        "Config — endpoint=%s  model=%s  max_tokens=%d",
+        endpoint,
+        model or "auto",
+        max_tokens,
+    )
 
     client = LLMClient(endpoint, model, max_tokens)
     system, user = build_prompt(diff)

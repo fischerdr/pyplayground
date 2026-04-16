@@ -115,12 +115,14 @@ source .venv/bin/activate
 **Three-Tier Testing Strategy**:
 
 **Tier 1: Automated Tests** (pytest or equivalent)
+
 - **When**: After EVERY code change
 - **Requirement**: Must remain passing (no tolerance for breaking tests)
 - **Frequency**: Continuous
 - **Command**: `pytest tests/` or equivalent
 
 **Tier 2: Programmatic Validation**
+
 - **When**: GUI/integration testing not available
 - **Methods**:
   - Syntax validation (`python -m py_compile`)
@@ -131,6 +133,7 @@ source .venv/bin/activate
 - **Purpose**: Test what CAN be tested without full environment
 
 **Tier 3: Manual Testing**
+
 - **When**: Full environment available
 - **Requirements**:
   - Structured checklist (not ad-hoc)
@@ -140,18 +143,21 @@ source .venv/bin/activate
 - **Purpose**: User experience validation, visual verification
 
 **Testing Principles**:
+
 1. **Test at highest available tier** - Don't skip testing because ideal environment unavailable
 2. **Never skip Tier 1** - Automated tests always run
 3. **Document test strategy** - Explain which tier used and why
 4. **Validate with lower tiers** - Manual testing should still run automated tests
 
 **Test Coverage Requirements**:
+
 - Critical paths: 100% (must have tests)
 - User-facing features: 90%+ (should have tests)
 - Utility functions: 70%+ (nice to have tests)
 - Legacy code: Test during modification (add as you touch)
 
 **Test-Driven Bug Fixing**:
+
 1. Write test that reproduces bug (if possible)
 2. Verify test fails
 3. Fix bug
@@ -289,6 +295,7 @@ def userAction(self, event):
 **Mandatory Code Elements**:
 
 Every function with user interaction MUST have:
+
 - ✅ Logger initialization at module level
 - ✅ Entry logging (info level) when user triggers action
 - ✅ try/except/finally structure
@@ -297,6 +304,7 @@ Every function with user interaction MUST have:
 - ✅ Resource cleanup in finally block
 
 Every module MUST have:
+
 - ✅ `import logging` at top
 - ✅ `logger = logging.getLogger(__name__)` after imports
 - ✅ Docstrings on all functions/classes
@@ -305,6 +313,7 @@ Every module MUST have:
 ### Forbidden Patterns
 
 **Never use these in production/runtime code**:
+
 - ❌ `print()` statements (except CLI tools and startup checks)
 - ❌ Bare `except:` clauses without logging
 - ❌ Resource allocation without cleanup
@@ -414,6 +423,7 @@ logger.info("Operation started", extra={"operation": "example", "count": 5})
 **Three-Level Hierarchy**:
 
 **DEBUG Level** - Technical details for developers:
+
 ```python
 logger.debug(f"Function called with args: {args}")
 logger.debug(f"Current state: {state}")
@@ -422,6 +432,7 @@ logger.debug("Internal operation completed")
 ```
 
 **INFO Level** - User actions and major events:
+
 ```python
 logger.info("Application started")
 logger.info("User opened file dialog")
@@ -431,6 +442,7 @@ logger.info("Operation completed")
 ```
 
 **WARNING Level** - Potential issues, recoverable problems:
+
 ```python
 logger.warning("Deprecated API used, consider updating")
 logger.warning(f"Retrying operation after failure: {retry_count}")
@@ -438,6 +450,7 @@ logger.warning("Configuration missing, using defaults")
 ```
 
 **ERROR Level** - Exceptions and failures:
+
 ```python
 logger.error(f"Failed to open file: {e}", exc_info=True)
 logger.error(f"Operation failed: {e}", exc_info=True)
@@ -447,22 +460,26 @@ logger.error(f"Unexpected error: {e}", exc_info=True)
 **Mandatory Logging Patterns**:
 
 Every module:
+
 ```python
 import logging
 logger = logging.getLogger(__name__)  # REQUIRED at module level
 ```
 
 Every user action:
+
 ```python
 logger.info("User triggered [action name]")  # REQUIRED when action starts
 ```
 
 Every exception:
+
 ```python
 logger.error(f"Error in [operation]: {e}", exc_info=True)  # REQUIRED - note exc_info
 ```
 
 Every resource operation:
+
 ```python
 logger.debug("Opening resource: {resource}")
 # ... operation ...
@@ -525,17 +542,20 @@ This applies to all documentation including:
 2. **`docs/debugging.md`** - Issues found and solutions
 
 **progress.md Structure**:
+
 - Track chronological progress through tasks
 - Document changes made, tests run, logging added
 - Update after EVERY task completion
 - Include: Status, Date, Branch, Commit, Changes Made, Tests, Logging Added, Issues Found, Files Modified, Next Steps
 
 **debugging.md Structure**:
+
 - Document issues, root causes, and solutions
 - Include: Symptom, Root Cause, Solution, Code Location, Verification, Logs, Prevention, Related Issues
 - Cross-reference from progress.md
 
 **Documentation Principles**:
+
 1. **Update immediately** - Don't defer documentation
 2. **Be specific** - "Fixed bug" is not sufficient
 3. **Include code** - Show before/after when relevant
@@ -558,6 +578,7 @@ For detailed documentation templates and examples, see `docs/DEVELOPMENT_STANDAR
 **CRITICAL**: After completing each task, STOP and await approval before proceeding.
 
 **Purpose**:
+
 - Prevents rushing ahead without review
 - Ensures quality of each task
 - Catches issues early
@@ -601,6 +622,7 @@ echo "================================================"
 ```
 
 **Never acceptable**:
+
 - "Task looks good, proceeding to next" (without approval)
 - "Skipping STOP since it's simple" (no exceptions)
 - "Combining tasks to save time" (breaks discipline)
@@ -670,59 +692,78 @@ This rule is clear, actionable, and includes examples of both correct and incorr
 
 ## Git Workflow
 
-### Commit Message Format
+### Commit Message Format for Scripting Work
 
 **IMPORTANT:** Do NOT add Claude Code attribution or co-authorship to commit messages.
 
-**Standard Format** (all sections required):
+**Scripting Work Format** (flexible, optional sections):
 
 ```text
-Phase X Task Y: [Short description - 50 chars max]
+[Short description - 50 chars max, imperative mood]
 
-Changes:
-- [What changed and WHY - be specific]
-- [Added logging: levels used]
-- [Added error handling: pattern used]
-- [Refactored: what and why]
+[Optional: What changed and WHY - be specific]
+[Optional: Error handling added - pattern used]
+[Optional: Uses shared utilities - which ones]
 
-Testing:
-- Manual: [Specific test performed and result]
-- Automated: [pytest status - X/Y passing]
-- Validation: [comparison tool / other checks]
-
-Logging:
-- [What's now logged - be specific about levels]
-- [New logger.info(): user actions]
-- [New logger.debug(): technical details]
-- [New logger.error(): exception handling]
-
-Documentation:
-- progress.md updated [what was added]
-- debugging.md updated [if applicable]
-- Code comments added [where and why]
-
-Files Modified:
-- path/to/file1.py (+X, -Y lines): [what changed]
-- path/to/file2.py (+A, -B lines): [what changed]
-
-Next: Task Y+1 ([brief description of next task])
+Modified:
+- path/to/file.py (+X, -Y lines): [brief description]
+- path/to/file2.py (+A, -B lines): [brief description]
 ```
 
 **Commit Message Rules**:
-1. First line: 50 characters max, imperative mood
-2. All sections required (even if empty, say "None")
-3. Be specific: "Fixed bug" → "Fixed memory leak in dialog cleanup"
-4. Reference issues: "Closes #123" if applicable
+
+1. First line: always required, 50 chars max, imperative mood
+2. Body: optional, only include relevant sections
+3. Modified section: always include file paths with line counts
+4. Skip sections not applicable (Testing, Logging, Documentation)
 5. No AI attribution (keep professional)
 
+**Examples**:
+
+Quick script:
+```text
+Add ansible inventory search utility
+
+One-off script to search inventory for host patterns.
+Uses config_utils for path handling.
+
+Modified:
+- scripts/inventory_search.py (+87 lines)
+```
+
+Bug fix:
+```text
+Fix vault token expiration handling
+
+Root cause: Token not refreshed before expired.
+Solution: Added retry with token refresh in loop.
+
+Modified:
+- vault/k8s_auth.py (+15, -3)
+- Added retry logic with exponential backoff
+```
+
+Refactor:
+```text
+Refactor config loading to use shared utility
+
+Moved hardcoded paths to config_utils.get_env_var().
+Consistent with other scripts in repo.
+
+Modified:
+- k8s/node_manager.py (-12, +8)
+- vault/secret_fetcher.py (-15, +10)
+```
+
 **Commit Frequency**:
-- **One commit per task** - no more, no less
-- After task completion
-- After all tests passing
-- After documentation updated
+
+- One commit per logical change
+- After tests passing
+- After code quality checks
 - After STOP point approval received
 
 **Pre-Commit Checklist**:
+
 ```bash
 # 1. All tests passing
 pytest tests/
@@ -733,14 +774,10 @@ isort pyplayground/
 flake8 pyplayground/
 mypy pyplayground/
 
-# 3. Documentation updated
-git diff docs/progress.md  # Verify entry added
-[ -f docs/debugging.md ] && git diff docs/debugging.md  # If issues found
-
-# 4. Review changes
+# 3. Review changes
 git diff --staged
 
-# 5. Commit with complete message
+# 4. Commit with message
 git commit -m "[message]"
 ```
 

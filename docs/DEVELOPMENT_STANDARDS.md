@@ -22,7 +22,8 @@ This comprehensive reference document is integrated into the repository's rule f
 - **`CLAUDE.md`** - Tool-specific guidance for Claude Code - Contains actionable development standards and patterns
 - **`AGENTS.md`** - Repository guidelines for contributors - Contains contributor-focused standards and templates
 
-**Usage**: 
+**Usage**:
+
 - For **quick reference** and **enforcement rules**, see the rule files above
 - For **detailed templates**, **workflows**, **case studies**, and **comprehensive examples**, see this document
 
@@ -95,6 +96,7 @@ def userAction(self, event):
 ### 1.3 Mandatory Code Elements
 
 **Every function with user interaction MUST have**:
+
 - ✅ Logger initialization at module level
 - ✅ Entry logging (info level) when user triggers action
 - ✅ try/except/finally structure
@@ -103,6 +105,7 @@ def userAction(self, event):
 - ✅ Resource cleanup in finally block
 
 **Every module MUST have**:
+
 - ✅ `import logging` at top
 - ✅ `logger = logging.getLogger(__name__)` after imports
 - ✅ Docstrings on all functions/classes
@@ -111,6 +114,7 @@ def userAction(self, event):
 ### 1.4 Forbidden Patterns
 
 **Never use these in production/runtime code**:
+
 - ❌ `print()` statements (except CLI tools and startup checks)
 - ❌ Bare `except:` clauses without logging
 - ❌ Resource allocation without cleanup
@@ -125,12 +129,14 @@ def userAction(self, event):
 ### 2.1 Three-Tier Testing Strategy
 
 **Tier 1: Automated Tests** (pytest or equivalent)
+
 - **When**: After EVERY code change
 - **Requirement**: Must remain passing (no tolerance for breaking tests)
 - **Frequency**: Continuous
 - **Command**: `pytest tests/` or equivalent
 
 **Tier 2: Programmatic Validation**
+
 - **When**: GUI/integration testing not available
 - **Methods**:
   - Syntax validation (`python -m py_compile`)
@@ -141,6 +147,7 @@ def userAction(self, event):
 - **Purpose**: Test what CAN be tested without full environment
 
 **Tier 3: Manual Testing**
+
 - **When**: Full environment available
 - **Requirements**:
   - Structured checklist (not ad-hoc)
@@ -152,12 +159,14 @@ def userAction(self, event):
 ### 2.2 Testing Principles
 
 **Key Rules**:
+
 1. **Test at highest available tier** - Don't skip testing because ideal environment unavailable
 2. **Never skip Tier 1** - Automated tests always run
 3. **Document test strategy** - Explain which tier used and why
 4. **Validate with lower tiers** - Manual testing should still run automated tests
 
 **Test Coverage Requirements**:
+
 - Critical paths: 100% (must have tests)
 - User-facing features: 90%+ (should have tests)
 - Utility functions: 70%+ (nice to have tests)
@@ -166,6 +175,7 @@ def userAction(self, event):
 ### 2.3 Test-Driven Bug Fixing
 
 When fixing bugs:
+
 1. Write test that reproduces bug (if possible)
 2. Verify test fails
 3. Fix bug
@@ -181,12 +191,14 @@ When fixing bugs:
 **Phase = Major Goal** with clear deliverable
 
 **Requirements**:
+
 - **Duration**: 2-4 weeks typical (flexible)
 - **Self-contained**: Can merge/pause at phase boundaries
 - **Clear goal**: One sentence description
 - **Measurable success**: Specific completion criteria
 
 **Phase Structure**:
+
 ```markdown
 # Phase X: [Name]
 
@@ -210,6 +222,7 @@ When fixing bugs:
 **Task = Specific Deliverable** completed in one session
 
 **Requirements**:
+
 - **Duration**: 2-8 hours typical
 - **Atomic**: Complete in one sitting
 - **Sequential**: Builds on previous tasks
@@ -246,6 +259,7 @@ logger.error(f"Error: {e}", exc_info=True)
 ```
 
 **Testing Requirements** (MANDATORY):
+
 ```bash
 # Exact commands to run
 pytest tests/
@@ -254,6 +268,7 @@ python -m py_compile file.py
 ```
 
 **Documentation Requirements** (MANDATORY):
+
 ```bash
 # Update progress.md
 cat >> docs/progress.md << 'EOF'
@@ -265,12 +280,14 @@ EOF
 ```
 
 **Git Commit** (MANDATORY):
+
 ```bash
 git add [files]
 git commit -m "[Template showing format]"
 ```
 
 **STOP and Report** (MANDATORY):
+
 ```bash
 echo "=== TASK X.Y COMPLETE ==="
 [Show evidence commands]
@@ -280,11 +297,13 @@ echo "Ready for next task? (Awaiting approval)"
 **STOP HERE. Do not proceed without approval.**
 
 **Success Criteria**:
+
 - ✅ Criterion 1
 - ✅ Criterion 2
 - ✅ Tests passing
 - ✅ Documentation updated
 - ✅ Git committed
+
 ```
 
 ### 3.3 Task Enforcement
@@ -340,6 +359,7 @@ echo "Ready for next task? (Awaiting approval)"
 **Standard Process** (no exceptions):
 
 ```
+
 1. Bug discovered
    └─ STOP - Don't fix yet
 
@@ -375,6 +395,7 @@ echo "Ready for next task? (Awaiting approval)"
 8. STOP for approval
    └─ Show evidence
    └─ Await review
+
 ```
 
 ### 4.3 Comparison Tool Usage
@@ -411,6 +432,7 @@ logger.debug("Internal operation completed")
 ```
 
 **INFO Level** - User actions and major events:
+
 ```python
 logger.info("Application started")
 logger.info("User opened file dialog")
@@ -420,6 +442,7 @@ logger.info("Operation completed")
 ```
 
 **WARNING Level** - Potential issues, recoverable problems:
+
 ```python
 logger.warning("Deprecated API used, consider updating")
 logger.warning(f"Retrying operation after failure: {retry_count}")
@@ -427,6 +450,7 @@ logger.warning("Configuration missing, using defaults")
 ```
 
 **ERROR Level** - Exceptions and failures:
+
 ```python
 logger.error(f"Failed to open file: {e}", exc_info=True)
 logger.error(f"Operation failed: {e}", exc_info=True)
@@ -436,22 +460,26 @@ logger.error(f"Unexpected error: {e}", exc_info=True)
 ### 5.2 Mandatory Logging Patterns
 
 **Every module**:
+
 ```python
 import logging
 logger = logging.getLogger(__name__)  # REQUIRED at module level
 ```
 
 **Every user action**:
+
 ```python
 logger.info("User triggered [action name]")  # REQUIRED when action starts
 ```
 
 **Every exception**:
+
 ```python
 logger.error(f"Error in [operation]: {e}", exc_info=True)  # REQUIRED - note exc_info
 ```
 
 **Every resource operation**:
+
 ```python
 logger.debug("Opening resource: {resource}")
 # ... operation ...
@@ -461,6 +489,7 @@ logger.debug("Closing resource: {resource}")
 ### 5.3 Forbidden Logging Patterns
 
 **Never do these**:
+
 ```python
 # ❌ Using print() in runtime code
 print("Debug info")  # Only acceptable in CLI tools and startup
@@ -511,6 +540,7 @@ grep -c "logger\." src/file.py
 ```
 
 **Acceptable print() uses**:
+
 - CLI tool output in `if __name__ == "__main__":` blocks
 - Startup checks before logging initialized
 - Python version compatibility checks
@@ -524,6 +554,7 @@ grep -c "logger\." src/file.py
 ### 6.1 Two Core Documents
 
 **Every project MUST maintain**:
+
 1. `docs/progress.md` - Timeline of what's been done
 2. `docs/debugging.md` - Issues found and solutions
 
@@ -532,6 +563,7 @@ grep -c "logger\." src/file.py
 **Purpose**: Track chronological progress through tasks
 
 **Template**:
+
 ```markdown
 # Project Progress Tracking
 
@@ -581,6 +613,7 @@ grep -c "logger\." src/file.py
 **Purpose**: Document issues, root causes, and solutions
 
 **Template**:
+
 ```markdown
 # Debugging Log
 
@@ -620,14 +653,17 @@ grep -c "logger\." src/file.py
 
 **Prevention**:
 [How to avoid this issue in future]
+
 - Pattern to follow: [code pattern]
 - Check to add: [automated check if possible]
 - Documentation: [what to document]
 
 **Related Issues**:
+
 - [Link to similar issues if any]
 
 ---
+
 ```
 
 **Update Frequency**: When issues found (as needed)
@@ -663,10 +699,12 @@ grep -c "logger\." src/file.py
 
 **Structure**:
 ```
+
 main (or primary working branch)
   └─ feature/phase-X-name
        └─ One commit per task
        └─ Clean, linear history
+
 ```
 
 **Branch Naming**:
@@ -685,35 +723,42 @@ main (or primary working branch)
 
 **Format** (all sections required):
 ```
+
 Phase X Task Y: [Short description - 50 chars max]
 
 Changes:
+
 - [What changed and WHY - be specific]
 - [Added logging: levels used]
 - [Added error handling: pattern used]
 - [Refactored: what and why]
 
 Testing:
+
 - Manual: [Specific test performed and result]
 - Automated: [pytest status - X/Y passing]
 - Validation: [comparison tool / other checks]
 
 Logging:
+
 - [What's now logged - be specific about levels]
 - [New logger.info(): user actions]
 - [New logger.debug(): technical details]
 - [New logger.error(): exception handling]
 
 Documentation:
+
 - progress.md updated [what was added]
 - debugging.md updated [if applicable]
 - Code comments added [where and why]
 
 Files Modified:
+
 - path/to/file1.py (+X, -Y lines): [what changed]
 - path/to/file2.py (+A, -B lines): [what changed]
 
 Next: Task Y+1 ([brief description of next task])
+
 ```
 
 **Commit Message Rules**:
@@ -773,6 +818,7 @@ git log -1 --stat
 ### 8.1 Purpose of STOP Points
 
 **Why mandatory**:
+
 - ✅ Prevents rushing ahead without review
 - ✅ Ensures quality of each task
 - ✅ Catches issues early
@@ -783,6 +829,7 @@ git log -1 --stat
 ### 8.2 STOP Point Template
 
 **Every task ends with**:
+
 ```bash
 echo "================================================"
 echo "TASK X.Y COMPLETE"
@@ -834,12 +881,14 @@ echo "  4. Change direction"
 **After STOP point, reviewer should**:
 
 **Option 1: Proceed**
+
 ```
 "Proceed with Task Y+1"
 [Paste task Y+1 instructions]
 ```
 
 **Option 2: Fix Issue**
+
 ```
 "Fix [specific issue] first"
 [Explain what needs fixing]
@@ -847,6 +896,7 @@ echo "  4. Change direction"
 ```
 
 **Option 3: Pause**
+
 ```
 "Pause here - good stopping point"
 [Explain why pausing]
@@ -854,6 +904,7 @@ echo "  4. Change direction"
 ```
 
 **Option 4: Course Correct**
+
 ```
 "Change direction: [new approach]"
 [Explain why changing]
@@ -863,12 +914,14 @@ echo "  4. Change direction"
 ### 8.4 STOP Point Violations
 
 **Never acceptable**:
+
 - ❌ "Task looks good, proceeding to next" (without approval)
 - ❌ "Skipping STOP since it's simple" (no exceptions)
 - ❌ "Combining tasks to save time" (breaks discipline)
 - ❌ "Will STOP at next task" (defeats purpose)
 
 **Consequence of violations**:
+
 - Quality degrades
 - Issues accumulate
 - Technical debt increases
@@ -895,6 +948,7 @@ echo "  4. Change direction"
 ### 9.2 Red Flags
 
 **Warning signs process is breaking down**:
+
 - 🚩 "We'll fix that later" (technical debt)
 - 🚩 "It's low priority" (deferred bugs)
 - 🚩 "Just a quick fix" (no documentation)
@@ -909,6 +963,7 @@ echo "  4. Change direction"
 ### 9.3 Success Indicators
 
 **Signs process is working**:
+
 - ✅ All tasks complete with documentation
 - ✅ All tests passing continuously
 - ✅ No deferred bugs (fixed immediately)
@@ -925,12 +980,14 @@ echo "  4. Change direction"
 ### 10.1 Customizing for Your Project
 
 **Core principles are universal** - don't change:
+
 - Fix bugs immediately
 - STOP after tasks
 - Document as you go
 - Test continuously
 
 **Customizable elements**:
+
 - Specific logging levels (but keep hierarchy)
 - Documentation file names (but keep two docs)
 - Branch naming (but keep strategy)
@@ -940,12 +997,14 @@ echo "  4. Change direction"
 ### 10.2 Scaling the Process
 
 **Small Projects** (1-2 developers, <6 months):
+
 - Simplify documentation templates
 - Combine progress.md and debugging.md if desired
 - Less formal STOP points (but still do them)
 - Shorter task descriptions (but still complete)
 
 **Large Projects** (5+ developers, 1+ years):
+
 - More detailed task templates
 - Additional documentation (architecture, API docs)
 - Formal code review process
@@ -953,6 +1012,7 @@ echo "  4. Change direction"
 - More rigorous STOP points
 
 **Critical Projects** (high stakes, regulatory):
+
 - Maximum documentation detail
 - Formal sign-offs at STOP points
 - Additional audits and reviews
@@ -962,6 +1022,7 @@ echo "  4. Change direction"
 ### 10.3 Tool Integration
 
 **Recommended tools** (adapt to your ecosystem):
+
 - **Version Control**: Git (mandatory)
 - **Testing**: pytest, unittest, or equivalent (mandatory)
 - **Code Quality**: black, ruff, mypy, or equivalents (recommended)
@@ -970,6 +1031,7 @@ echo "  4. Change direction"
 - **Issue Tracking**: GitHub Issues, Jira, or equivalent (optional but helpful)
 
 **Tool principles**:
+
 - Documentation lives with code (version controlled)
 - Automated checks in CI/CD (prevent violations)
 - Local tools mirror CI checks (catch issues early)
@@ -981,12 +1043,14 @@ echo "  4. Change direction"
 ### 11.1 Introducing to Team
 
 **Gradual adoption**:
+
 1. **Week 1**: Introduce core principles, run pilot task
 2. **Week 2**: Add logging standards, documentation
 3. **Week 3**: Add STOP points, full process
 4. **Week 4**: Review and refine
 
 **Pilot task selection**:
+
 - Medium complexity
 - Well-understood requirements
 - Low risk if delayed
@@ -995,16 +1059,19 @@ echo "  4. Change direction"
 ### 11.2 Common Resistance
 
 **"Too much overhead"**:
+
 - Response: Overhead prevents rework (show metrics)
 - Evidence: Faster long-term velocity
 - Compromise: Start with core principles, add detail gradually
 
 **"We're agile, this is waterfall"**:
+
 - Response: This IS agile - small iterations with feedback
 - Evidence: STOP points = frequent feedback loops
 - Compromise: Emphasize flexibility within structure
 
 **"Documentation slows us down"**:
+
 - Response: Missing documentation slows us MORE
 - Evidence: Lost context costs (show examples)
 - Compromise: Minimal viable documentation (progress.md only)
@@ -1012,6 +1079,7 @@ echo "  4. Change direction"
 ### 11.3 Measuring Success
 
 **Metrics to track**:
+
 - Task completion rate (should be consistent)
 - Test pass rate (should stay high)
 - Bug recurrence rate (should decrease)
@@ -1019,6 +1087,7 @@ echo "  4. Change direction"
 - Time to onboard new developers (should decrease)
 
 **Before/After comparison**:
+
 - Technical debt accumulation
 - Rework frequency
 - Debug time per bug
@@ -1031,6 +1100,7 @@ echo "  4. Change direction"
 ### 12.1 Project Context
 
 **Challenge**: Modernize 20-year-old Python 2.x codebase to Python 3.11+
+
 - 14,000+ lines of code
 - 70+ Python files
 - Binary file format handling (NWN game files)
@@ -1040,12 +1110,14 @@ echo "  4. Change direction"
 ### 12.2 What Worked
 
 **Early wins**:
+
 - Phase 1-2: Systematic file parser validation (100% success)
 - Task 3.2: All file dialogs fixed in one task
 - Task 3.4: Comprehensive dialog audit found ALL issues
 - Task 3.6: Logging audit found and fixed all violations
 
 **Key successes**:
+
 - 359 automated tests created and maintained passing
 - Zero deprecated API remaining (100% compliance)
 - Complete logging coverage (137 logging statements)
@@ -1054,12 +1126,14 @@ echo "  4. Change direction"
 ### 12.3 What We Learned
 
 **Mistakes avoided**:
+
 - NO "low priority" deferrals (would have become debt)
 - NO whack-a-mole debugging (comparison tool prevented)
 - NO undocumented changes (progress.md prevented context loss)
 - NO skipped STOP points (maintained quality)
 
 **Process improvements**:
+
 - Investigation tasks before fixes (prevented wrong solutions)
 - Semantic comparison over byte comparison (correct testing strategy)
 - Three-tier testing (adapted to environment constraints)
@@ -1068,16 +1142,19 @@ echo "  4. Change direction"
 ### 12.4 Metrics
 
 **Velocity**:
+
 - Phase 3: 6 tasks completed in ~2 weeks
 - Zero rework needed
 - All changes first-time-right
 
 **Quality**:
+
 - Test suite: 359/359 passing maintained throughout
 - Zero regressions introduced
 - All code review points addressed immediately
 
 **Documentation**:
+
 - 100% of tasks documented in progress.md
 - All issues documented in debugging.md
 - Zero lost context incidents

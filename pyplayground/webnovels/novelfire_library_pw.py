@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""
-novelfire_library.py
---------------------
+"""novelfire_library.py.
+
 Scrapes your NovelFire library (bookmarks) and saves:
   - novelfire_library.json   (machine-readable)
   - novelfire_library.md     (human-readable)
@@ -170,10 +169,7 @@ def _dump_response_info(label: str, resp: requests.Response) -> None:
 
 
 def _inspect_soup_structure(label: str, soup: BeautifulSoup) -> None:
-    """
-    Print a structural summary of the parsed HTML to help identify correct
-    CSS selectors when the site layout is unknown (debug mode only).
-    """
+    """Print a structural summary of the parsed HTML to help identify correct CSS selectors when the site layout is unknown (debug mode only)."""
     if not DEBUG_MODE:
         return
 
@@ -292,13 +288,7 @@ def _fetch_with_retry(session: requests.Session, url: str, **kwargs: Any) -> req
 
 
 def _playwright_login(email: str, password: str) -> dict[str, str]:
-    """
-    Use a real Chromium browser via Playwright to:
-      1. Load the homepage — Cloudflare JS challenge runs transparently
-      2. Trigger the login modal and submit credentials via the real UI
-      3. Wait for /loginAjax to return {"status": 200}
-      4. Extract ALL cookies (session + __cf_clearance + XSRF-TOKEN)
-      5. Return them as a dict for injection into requests.Session
+    """Use a real Chromium browser via Playwright to: 1. Load the homepage — Cloudflare JS challenge runs transparently 2. Trigger the login modal and submit credentials via the real UI 3. Wait for /loginAjax to return {"status": 200} 4. Extract ALL cookies (session + __cf_clearance + XSRF-TOKEN) 5. Return them as a dict for injection into requests.Session.
 
     The browser is closed immediately after — requests handles everything else.
 
@@ -450,12 +440,7 @@ def _playwright_login(email: str, password: str) -> dict[str, str]:
 
 
 def login(email: str, password: str) -> requests.Session:
-    """
-    Hybrid auth flow:
-      1. Playwright Chromium handles Cloudflare challenge + modal login
-      2. Cookies extracted and injected into a requests.Session
-      3. All subsequent HTTP is done via requests (fast, lightweight)
-    """
+    """Hybrid auth flow: 1. Playwright Chromium handles Cloudflare challenge + modal login 2. Cookies extracted and injected into a requests.Session 3. All subsequent HTTP is done via requests (fast, lightweight)."""
     # Get cookies from Playwright
     cookies = _playwright_login(email, password)
 
@@ -630,8 +615,7 @@ DETAIL_DELAY = float(os.environ.get("NOVELFIRE_DETAIL_DELAY", "0.4"))
 
 
 def _parse_book_detail(html: str, url: str) -> dict[str, Union[str, list[str]]]:
-    """
-    Parse a /book/<slug> page and return enrichment fields.
+    """Parse a /book/<slug> page and return enrichment fields.
 
     Confirmed selectors (v11.0.9, from live HTML):
       author       div.author a[itemprop=author]   (multiple for CN novels)
@@ -721,8 +705,8 @@ def _parse_book_detail(html: str, url: str) -> dict[str, Union[str, list[str]]]:
 
 
 def enrich_with_details(session: requests.Session, novels: list[dict[str, str]]) -> list[dict[str, str]]:
-    """
-    Fetch each novel's book detail page sequentially and merge enrichment fields.
+    """Fetch each novel's book detail page sequentially and merge enrichment fields.
+
     Skipped entirely if NOVELFIRE_FETCH_DETAILS=0.
     Delay between requests is NOVELFIRE_DETAIL_DELAY (default 0.4s, ~20s for 37 novels).
     """
@@ -767,6 +751,7 @@ def enrich_with_details(session: requests.Session, novels: list[dict[str, str]])
 
 
 def write_json(novels: list[dict[str, str]], output_dir: Path) -> Path:
+    """Write novels to JSON file."""
     path = output_dir / "novelfire_library.json"
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
@@ -780,6 +765,7 @@ def write_json(novels: list[dict[str, str]], output_dir: Path) -> Path:
 
 
 def write_markdown(novels: list[dict[str, str]], output_dir: Path) -> Path:
+    """Write novels to Markdown file."""
     path = output_dir / "novelfire_library.md"
     lines = [
         "# NovelFire Library",
@@ -850,6 +836,7 @@ def write_markdown(novels: list[dict[str, str]], output_dir: Path) -> Path:
 
 
 def _print_config(email: str, max_pages: int, out_dir: Path) -> None:
+    """Print configuration summary."""
     log.info("=" * 62)
     log.info("  NovelFire Library Scraper")
     log.info(
@@ -878,6 +865,7 @@ def _print_config(email: str, max_pages: int, out_dir: Path) -> None:
 
 
 def main() -> None:
+    """Run the NovelFire library scraper."""
     email_str = _get_env("NOVELFIRE_EMAIL")
     password_str = _get_env("NOVELFIRE_PASSWORD")
     max_pages = int(_get_env("NOVELFIRE_MAX_PAGES", required=False) or 10)

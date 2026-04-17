@@ -3,16 +3,17 @@
 __version__ = "0.1.0"
 
 from github_stars.categorizer import (
-    CategoryConfig,
     CategorizationResult,
+    Categorizer,
+    CategoryConfig,
     CategoryConfigLoader,
     CategoryManager,
-    Categorizer,
     categorize_repository,
     load_categories_from_config,
     update_repository_category,
 )
 from github_stars.fetcher import GitHubAPIError, GitHubClient
+from github_stars.logger import JSONFormatter, StructuredLogger
 from github_stars.scheduler import ScheduledSync
 from github_stars.sync import RepoSyncer, SyncStats, sync_starred_repos
 
@@ -44,6 +45,9 @@ __all__ = [
     "app",
     # CLI
     "app as cli_app",
+    # Logging
+    "StructuredLogger",
+    "JSONFormatter",
 ]
 
 from github_stars.api import app

@@ -13,23 +13,21 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+from sqlalchemy import func
+
+from github_stars.alert import AlertManager
 from github_stars.categorizer import Categorizer, categorize_repository
 from github_stars.config_loader import Config
 from github_stars.database import get_db_session, init_database
 from github_stars.environment import validate_environment
 from github_stars.fetcher import GitHubClient
+from github_stars.logger import setup_logging
+from github_stars.monitor import MetricsCollector
 from github_stars.scheduler import ScheduledSync
 from github_stars.sync import RepoSyncer, sync_starred_repos
-from pydantic import BaseModel, Field
-from sqlalchemy import func
 
-try:
-    from scripts.alert import AlertManager
-    from scripts.monitor import MetricsCollector
-
-    MONITORING_AVAILABLE = True
-except ImportError:
-    MONITORING_AVAILABLE = False
+MONITORING_AVAILABLE = True
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +83,12 @@ class SyncStatsResponse(BaseModel):
 class SyncRequest(BaseModel):
     """Sync request model."""
 
-    sync_categories: bool = Field(default=True, description="Whether to sync categories")
-    reset_inactive: bool = Field(default=False, description="Whether to reset inactive flag")
+    sync_categories: bool = Field(
+        default=True, description="Whether to sync categories"
+    )
+    reset_inactive: bool = Field(
+        default=False, description="Whether to reset inactive flag"
+    )
 
 
 class ConfigResponse(BaseModel):
@@ -231,7 +233,11 @@ async def get_scheduler_status():
 
     return {
         "running": scheduler_manager.is_running(),
-        "next_run": (scheduler_manager.get_next_run().isoformat() if scheduler_manager.get_next_run() else None),
+        "next_run": (
+            scheduler_manager.get_next_run().isoformat()
+            if scheduler_manager.get_next_run()
+            else None
+        ),
     }
 
 
@@ -441,7 +447,11 @@ async def check_alerts():
             "timestamp": datetime.utcnow().isoformat(),
             "active_alerts": active_alerts,
             "alerts_count": len(active_alerts),
-            "message": (f"{len(active_alerts)} alert(s) active" if active_alerts else "No active alerts"),
+            "message": (
+                f"{len(active_alerts)} alert(s) active"
+                if active_alerts
+                else "No active alerts"
+            ),
         }
 
     except Exception as e:
@@ -491,7 +501,9 @@ async def add_alert_rule(request: dict):
             severity=request.get("severity", "warning"),
             message_template=message,
         )
-        logger.debug("AlertRule created successfully with metric_name=%s", rule.metric_name)
+        logger.debug(
+            "AlertRule created successfully with metric_name=%s", rule.metric_name
+        )
 
         alert_manager = AlertManager()
         alert_manager.add_rule(rule)
@@ -542,7 +554,12 @@ async def list_repositories(
             if active is not None:
                 query = query.filter(Repository.is_active == active)
 
-            repositories = query.order_by(Repository.stars.desc()).offset(offset).limit(limit).all()
+            repositories = (
+                query.order_by(Repository.stars.desc())
+                .offset(offset)
+                .limit(limit)
+                .all()
+            )
 
             return [RepositoryResponse.model_validate(repo) for repo in repositories]
 
@@ -616,7 +633,9 @@ async def list_stars(
             if repository_id:
                 query = query.filter(Star.repository_id == repository_id)
 
-            stars = query.order_by(Star.starred_at.desc()).offset(offset).limit(limit).all()
+            stars = (
+                query.order_by(Star.starred_at.desc()).offset(offset).limit(limit).all()
+            )
 
             result = []
             for star in stars:
@@ -624,7 +643,9 @@ async def list_stars(
                     StarResponse(
                         id=star.id,
                         repository_id=star.repository_id,
-                        repository_name=(star.repository.full_name if star.repository else "Unknown"),
+                        repository_name=(
+                            star.repository.full_name if star.repository else "Unknown"
+                        ),
                         starred_at=star.starred_at,
                     )
                 )
@@ -649,9 +670,13 @@ async def get_stats():
             total_repositories = session.query(Repository).count()
             total_stars = session.query(Star).count()
 
-            active_count = session.query(Repository).filter(Repository.is_active == True).count()  # noqa: E712
+            active_count = (
+                session.query(Repository).filter(Repository.is_active == True).count()
+            )  # noqa: E712
 
-            inactive_count = session.query(Repository).filter(Repository.is_active == False).count()  # noqa: E712
+            inactive_count = (
+                session.query(Repository).filter(Repository.is_active == False).count()
+            )  # noqa: E712
 
             categories_count = session.query(Category).count()
 
@@ -669,7 +694,9 @@ async def get_stats():
             )
 
             for category_name, count, stars in category_results:
-                categories.append({"name": category_name, "count": count, "total_stars": stars or 0})
+                categories.append(
+                    {"name": category_name, "count": count, "total_stars": stars or 0}
+                )
 
             return {
                 "total_repositories": total_repositories,
@@ -789,7 +816,11 @@ async def create_repository(request: dict):
 
         with get_db_session() as session:
             # Check if repository already exists
-            existing = session.query(Repository).filter(Repository.full_name == full_name).first()
+            existing = (
+                session.query(Repository)
+                .filter(Repository.full_name == full_name)
+                .first()
+            )
 
             if existing:
                 raise HTTPException(
@@ -960,7 +991,13 @@ async def get_recent_activity(
 
             cutoff_date = datetime.utcnow() - timedelta(days=days)
 
-            stars = session.query(Star).filter(Star.starred_at >= cutoff_date).order_by(Star.starred_at.desc()).limit(limit).all()
+            stars = (
+                session.query(Star)
+                .filter(Star.starred_at >= cutoff_date)
+                .order_by(Star.starred_at.desc())
+                .limit(limit)
+                .all()
+            )
 
             result = []
             for star in stars:

@@ -4,38 +4,29 @@ This module provides CLI commands for managing GitHub repositories,
 stars, categories, and synchronization operations using Click.
 """
 
-import logging
 import sys
-from datetime import datetime, timedelta
-from pathlib import Path
+from typing import Optional
 
 import click
 from rich.console import Console
 from rich.table import Table
 from sqlalchemy import func
 
-# Add scripts directory to Python path
-SCRIPTS_DIR = Path(__file__).parent.parent.parent / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
-
+from github_stars.alert import AlertManager, AlertRule
 from github_stars.categorizer import Categorizer
 from github_stars.config_loader import Config
 from github_stars.database import init_database
 from github_stars.fetcher import GitHubClient
+from github_stars.logger import StructuredLogger
+from github_stars.logger import setup_logging as create_logger
+from github_stars.monitor import MetricsCollector
 from github_stars.scheduler import ScheduledSync
 from github_stars.sync import RepoSyncer, SyncStats
 
-try:
-    from scripts.alert import AlertManager, AlertRule
-    from scripts.monitor import MetricsCollector
-
-    MONITORING_AVAILABLE = True
-except ImportError:
-    MONITORING_AVAILABLE = False
+MONITORING_AVAILABLE = True
 
 console = Console()
-logger = logging.getLogger(__name__)
+logger: Optional[StructuredLogger] = None
 
 
 class Color:
@@ -56,10 +47,11 @@ def setup_logging(level: str = "INFO") -> None:
     Args:
         level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
     """
-    logging.basicConfig(
-        level=getattr(logging, level.upper()),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+    global logger
+    logger = create_logger(
+        level=level,
+        output_format="console",
+        logger_name=__name__,
     )
 
 
@@ -117,12 +109,16 @@ def config(
 
         config_obj.save()
 
-        console.print(f"[{Color.GREEN}]✓ Configuration saved successfully[/{Color.GREEN}]")
+        console.print(
+            f"[{Color.GREEN}]✓ Configuration saved successfully[/{Color.GREEN}]"
+        )
 
         # Display current config
         console.print(f"\n[{Color.BOLD}]Current Configuration:[/{Color.BOLD}]")
         console.print(f"  User Login: {config_obj.user_login}")
-        console.print(f"  Update Interval: {config_obj.update_interval_minutes} minutes")
+        console.print(
+            f"  Update Interval: {config_obj.update_interval_minutes} minutes"
+        )
         console.print(f"  Max Repositories: {config_obj.max_repositories}")
         console.print(f"  Log Level: {config_obj.log_level}")
         if config_obj.categories_config_path:
@@ -135,7 +131,9 @@ def config(
 
 @app.command()
 @click.option("--sync-categories", is_flag=True, default=True, help="Sync categories")
-@click.option("--reset-inactive", is_flag=True, default=False, help="Reset inactive flag")
+@click.option(
+    "--reset-inactive", is_flag=True, default=False, help="Reset inactive flag"
+)
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def sync(sync_categories: bool, reset_inactive: bool, verbose: bool) -> None:
     """Sync starred repositories from GitHub."""
@@ -176,9 +174,13 @@ def sync(sync_categories: bool, reset_inactive: bool, verbose: bool) -> None:
         console.print(table)
 
         if stats.errors:
-            console.print(f"\n[{Color.YELLOW}]⚠ Completed with {len(stats.errors)} error(s)[/{Color.YELLOW}]")
+            console.print(
+                f"\n[{Color.YELLOW}]⚠ Completed with {len(stats.errors)} error(s)[/{Color.YELLOW}]"
+            )
         else:
-            console.print(f"\n[{Color.GREEN}]✓ Sync completed successfully[/{Color.GREEN}]")
+            console.print(
+                f"\n[{Color.GREEN}]✓ Sync completed successfully[/{Color.GREEN}]"
+            )
 
     except Exception as e:
         console.print(f"[{Color.RED}]✗ Sync failed: {e}[/{Color.RED}]")
@@ -239,7 +241,9 @@ def repos(category: str | None, active: bool | None, limit: int, sort_by: str) -
                 return
 
             # Display table
-            table = Table(title=f"Repositories (Showing {len(repositories)} of {query.count()})")
+            table = Table(
+                title=f"Repositories (Showing {len(repositories)} of {query.count()})"
+            )
             table.add_column("ID", style=Color.CYAN, justify="right")
             table.add_column("Name", style=Color.GREEN)
             table.add_column("Language", style=Color.YELLOW)
@@ -248,7 +252,11 @@ def repos(category: str | None, active: bool | None, limit: int, sort_by: str) -
             table.add_column("Active", justify="center")
 
             for repo in repositories:
-                active_str = "[{Color.GREEN}]Yes[/{Color.GREEN}]" if repo.is_active else "[{Color.RED}]No[/{Color.RED}]"
+                active_str = (
+                    "[{Color.GREEN}]Yes[/{Color.GREEN}]"
+                    if repo.is_active
+                    else "[{Color.RED}]No[/{Color.RED}]"
+                )
                 table.add_row(
                     str(repo.id),
                     repo.full_name,
@@ -282,7 +290,9 @@ def categorize(repo_id: int) -> None:
             repository = session.get(Repository, repo_id)
 
             if not repository:
-                console.print(f"[{Color.RED}]✗ Repository with ID {repo_id} not found[/{Color.RED}]")
+                console.print(
+                    f"[{Color.RED}]✗ Repository with ID {repo_id} not found[/{Color.RED}]"
+                )
                 sys.exit(1)
 
             config = Config.load()
@@ -298,11 +308,15 @@ def categorize(repo_id: int) -> None:
 
             console.print(f"\n[{Color.BOLD}]Categorization Result:[/{Color.BOLD}]")
             console.print(f"  Repository: {repository.full_name}")
-            console.print(f"  Category: [{Color.GREEN}]{result.category_name}[/{Color.GREEN}]")
+            console.print(
+                f"  Category: [{Color.GREEN}]{result.category_name}[/{Color.GREEN}]"
+            )
             console.print(f"  Confidence: {result.confidence:.2f}")
             console.print(f"  Matched Pattern: {result.matched_pattern}")
 
-            console.print(f"\n[{Color.GREEN}]✓ Repository categorized successfully[/{Color.GREEN}]")
+            console.print(
+                f"\n[{Color.GREEN}]✓ Repository categorized successfully[/{Color.GREEN}]"
+            )
 
     except Exception as e:
         console.print(f"[{Color.RED}]✗ Error: {e}[/{Color.RED}]")
@@ -320,8 +334,12 @@ def stats() -> None:
         with get_db_session() as session:
             total_repositories = session.query(Repository).count()
             total_stars = session.query(Star).count()
-            active_count = session.query(Repository).filter(Repository.is_active == True).count()  # noqa: E712
-            inactive_count = session.query(Repository).filter(Repository.is_active == False).count()  # noqa: E712
+            active_count = (
+                session.query(Repository).filter(Repository.is_active == True).count()
+            )  # noqa: E712
+            inactive_count = (
+                session.query(Repository).filter(Repository.is_active == False).count()
+            )  # noqa: E712
             categories_count = session.query(Category).count()
 
             # Calculate total stars
@@ -360,7 +378,9 @@ def stats() -> None:
 
                 cat_table = Table(show_header=True, header_style=Color.BOLD)
                 cat_table.add_column("Category", style=Color.CYAN)
-                cat_table.add_column("Repositories", justify="right", style=Color.YELLOW)
+                cat_table.add_column(
+                    "Repositories", justify="right", style=Color.YELLOW
+                )
                 cat_table.add_column("Total Stars", justify="right", style=Color.GREEN)
 
                 for category, count, stars in category_stats:
@@ -390,11 +410,15 @@ def delete(repo_id: int) -> None:
             repository = session.get(Repository, repo_id)
 
             if not repository:
-                console.print(f"[{Color.RED}]✗ Repository with ID {repo_id} not found[/{Color.RED}]")
+                console.print(
+                    f"[{Color.RED}]✗ Repository with ID {repo_id} not found[/{Color.RED}]"
+                )
                 sys.exit(1)
 
             # Confirm deletion
-            confirm = click.confirm(f"Are you sure you want to delete '{repository.full_name}'?")
+            confirm = click.confirm(
+                f"Are you sure you want to delete '{repository.full_name}'?"
+            )
 
             if not confirm:
                 console.print("[{Color.YELLOW}]Cancelled[/{Color.YELLOW}]")
@@ -407,7 +431,9 @@ def delete(repo_id: int) -> None:
             session.delete(repository)
             session.commit()
 
-            console.print(f"[{Color.GREEN}]✓ Repository '{repository.full_name}' deleted successfully[/{Color.GREEN}]")
+            console.print(
+                f"[{Color.GREEN}]✓ Repository '{repository.full_name}' deleted successfully[/{Color.GREEN}]"
+            )
 
     except Exception as e:
         console.print(f"[{Color.RED}]✗ Error: {e}[/{Color.RED}]")
@@ -431,7 +457,9 @@ def scheduler_start() -> None:
         console.print(f"[{Color.BLUE}]Starting scheduled sync...[/{Color.BLUE}]")
         scheduler.start()
 
-        console.print(f"[{Color.GREEN}]✓ Scheduler started successfully[/{Color.GREEN}]")
+        console.print(
+            f"[{Color.GREEN}]✓ Scheduler started successfully[/{Color.GREEN}]"
+        )
         console.print(f"  Running: {scheduler.is_running()}")
 
         next_run = scheduler.get_next_run()
@@ -439,7 +467,9 @@ def scheduler_start() -> None:
             console.print(f"  Next run: {next_run}")
 
         # Keep running
-        console.print(f"\n[{Color.YELLOW}]Scheduler running. Press Ctrl+C to stop.[/{Color.YELLOW}]")
+        console.print(
+            f"\n[{Color.YELLOW}]Scheduler running. Press Ctrl+C to stop.[/{Color.YELLOW}]"
+        )
 
         import time
 
@@ -476,7 +506,9 @@ def scheduler_status() -> None:
         if scheduler.is_running():
             console.print(f"\n[{Color.GREEN}]✓ Scheduler is running[/{Color.GREEN}]")
         else:
-            console.print(f"\n[{Color.YELLOW}]⚠ Scheduler is not running[/{Color.YELLOW}]")
+            console.print(
+                f"\n[{Color.YELLOW}]⚠ Scheduler is not running[/{Color.YELLOW}]"
+            )
 
     except Exception as e:
         console.print(f"[{Color.RED}]✗ Error: {e}[/{Color.RED}]")
@@ -494,9 +526,13 @@ def scheduler_stop() -> None:
         if scheduler.is_running():
             console.print(f"[{Color.BLUE}]Stopping scheduler...[/{Color.BLUE}]")
             scheduler.stop()
-            console.print(f"[{Color.GREEN}]✓ Scheduler stopped successfully[/{Color.GREEN}]")
+            console.print(
+                f"[{Color.GREEN}]✓ Scheduler stopped successfully[/{Color.GREEN}]"
+            )
         else:
-            console.print(f"[{Color.YELLOW}]⚠ Scheduler is not running[/{Color.YELLOW}]")
+            console.print(
+                f"[{Color.YELLOW}]⚠ Scheduler is not running[/{Color.YELLOW}]"
+            )
 
     except Exception as e:
         console.print(f"[{Color.RED}]✗ Error: {e}[/{Color.RED}]")
@@ -522,7 +558,9 @@ def metrics(output: str | None, format: str) -> None:
     """Collect and display system metrics."""
     if not MONITORING_AVAILABLE:
         console.print(f"[{Color.RED}]✗ Monitoring scripts not available[/{Color.RED}]")
-        console.print(f"[{Color.YELLOW}]Please ensure scripts/monitor.py exists[/{Color.YELLOW}]")
+        console.print(
+            f"[{Color.YELLOW}]Please ensure scripts/monitor.py exists[/{Color.YELLOW}]"
+        )
         sys.exit(1)
 
     try:
@@ -538,7 +576,9 @@ def metrics(output: str | None, format: str) -> None:
             if output:
                 with open(output, "w") as f:
                     json.dump(metrics_data, f, indent=2, default=str)
-                console.print(f"[{Color.GREEN}]✓ Metrics saved to {output}[/{Color.GREEN}]")
+                console.print(
+                    f"[{Color.GREEN}]✓ Metrics saved to {output}[/{Color.GREEN}]"
+                )
             else:
                 console.print(json.dumps(metrics_data, indent=2, default=str))
         else:
@@ -552,7 +592,12 @@ def metrics(output: str | None, format: str) -> None:
             table.add_column("Status", justify="center")
 
             for metric_name, metric_value in metrics_data.items():
-                status = f"[{Color.GREEN}]✓[/{Color.GREEN}]" if metric_value and metric_value != "error: no such table: repositories" else f"[{Color.YELLOW}]⚠[/{Color.YELLOW}]"
+                status = (
+                    f"[{Color.GREEN}]✓[/{Color.GREEN}]"
+                    if metric_value
+                    and metric_value != "error: no such table: repositories"
+                    else f"[{Color.YELLOW}]⚠[/{Color.YELLOW}]"
+                )
                 table.add_row(
                     "general",
                     metric_name.replace("_", " ").title(),
@@ -562,7 +607,9 @@ def metrics(output: str | None, format: str) -> None:
 
             console.print(table)
 
-        console.print(f"\n[{Color.GREEN}]✓ Metrics collected successfully[/{Color.GREEN}]")
+        console.print(
+            f"\n[{Color.GREEN}]✓ Metrics collected successfully[/{Color.GREEN}]"
+        )
 
     except Exception as e:
         console.print(f"[{Color.RED}]✗ Error collecting metrics: {e}[/{Color.RED}]")
@@ -610,7 +657,9 @@ def alerts(
     """Manage alert rules and check alerts."""
     if not MONITORING_AVAILABLE:
         console.print(f"[{Color.RED}]✗ Monitoring scripts not available[/{Color.RED}]")
-        console.print(f"[{Color.YELLOW}]Please ensure scripts/alert.py exists[/{Color.YELLOW}]")
+        console.print(
+            f"[{Color.YELLOW}]Please ensure scripts/alert.py exists[/{Color.YELLOW}]"
+        )
         sys.exit(1)
 
     try:
@@ -646,7 +695,11 @@ def alerts(
                 table.add_column("Status", justify="center")
 
                 for rule in rules:
-                    status = "[{Color.GREEN}]Active[/{Color.GREEN}]" if rule.get("enabled", True) else "[{Color.RED}]Inactive[/{Color.RED}]"
+                    status = (
+                        "[{Color.GREEN}]Active[/{Color.GREEN}]"
+                        if rule.get("enabled", True)
+                        else "[{Color.RED}]Inactive[/{Color.RED}]"
+                    )
                     table.add_row(
                         str(rule.get("id", "")),
                         rule.get("name", ""),
@@ -660,8 +713,12 @@ def alerts(
 
         elif add:
             if not all([name, metric, condition, threshold]):
-                console.print(f"[{Color.RED}]✗ Missing required parameters for adding rule[/{Color.RED}]")
-                console.print(f"[{Color.YELLOW}]Required: --name, --metric, --condition, --threshold[/{Color.YELLOW}]")
+                console.print(
+                    f"[{Color.RED}]✗ Missing required parameters for adding rule[/{Color.RED}]"
+                )
+                console.print(
+                    f"[{Color.YELLOW}]Required: --name, --metric, --condition, --threshold[/{Color.YELLOW}]"
+                )
                 sys.exit(1)
 
             rule = AlertRule(
@@ -675,7 +732,9 @@ def alerts(
 
             alert_manager.add_rule(rule=rule)
 
-            console.print(f"[{Color.GREEN}]✓ Alert rule '{name}' added successfully[/{Color.GREEN}]")
+            console.print(
+                f"[{Color.GREEN}]✓ Alert rule '{name}' added successfully[/{Color.GREEN}]"
+            )
             console.print(f"  Metric: {metric}")
             console.print(f"  Condition: {condition}")
             console.print(f"  Threshold: {threshold}")
@@ -723,7 +782,9 @@ def alerts(
                     table.add_column("Severity", justify="center")
 
                     for alert in alerts_list:
-                        severity_style = "red" if alert.get("severity") == "critical" else "yellow"
+                        severity_style = (
+                            "red" if alert.get("severity") == "critical" else "yellow"
+                        )
                         table.add_row(
                             alert.get("rule_name", ""),
                             alert.get("metric", ""),
@@ -733,7 +794,9 @@ def alerts(
                         )
 
                     console.print(table)
-                    console.print(f"\n[{Color.RED}]⚠ {len(alerts_list)} alert(s) active[/{Color.RED}]")
+                    console.print(
+                        f"\n[{Color.RED}]⚠ {len(alerts_list)} alert(s) active[/{Color.RED}]"
+                    )
 
                 else:
                     console.print(f"[{Color.GREEN}]✓ No active alerts[/{Color.GREEN}]")

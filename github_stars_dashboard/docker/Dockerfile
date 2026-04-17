@@ -44,6 +44,7 @@ COPY --chown=appuser:appgroup src /app/src
 COPY --chown=appuser:appgroup templates /app/templates
 COPY --chown=appuser:appgroup static /app/static
 COPY --chown=appuser:appgroup config /app/config
+COPY --chown=appuser:appgroup scripts /app/scripts
 COPY --chown=appuser:appgroup pyproject.toml .
 COPY --chown=appuser:appgroup docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

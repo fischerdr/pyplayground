@@ -30,6 +30,8 @@ class EnvironmentValidator:
         """
         self.env_file = env_file or ".env"
         self.environment = self._detect_environment()
+        self.token = os.getenv("GITHUB_TOKEN", "")
+        self.debug = os.getenv("DEBUG", "false").lower() == "true"
 
     def _detect_environment(self) -> str:
         """Detect current environment from env file name.
@@ -75,29 +77,40 @@ class EnvironmentValidator:
         return True
 
     def validate_github_token(self) -> bool:
-        """Validate GitHub token is properly configured.
-
-        Returns:
-            True if token is valid.
-
-        Raises:
-            ValueError: If GitHub token is missing or invalid.
-        """
-        token = os.getenv("GITHUB_TOKEN")
-
-        if not token:
+        """Validate GitHub token configuration."""
+        if not self.token:
             raise ValueError(
                 "GITHUB_TOKEN is not set. Please generate a token from "
-                "https://github.com/settings/tokens and add it to your .env file."
+                "https://github.com/settings/tokens with 'repo' scope."
             )
 
-        if token in ["your_github_token_here", "your_token_here", ""]:
+        if self.token.startswith("your_") or self.token == "placeholder_token":
+            if self.debug:
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    "GITHUB_TOKEN contains placeholder value. "
+                    "Some features may not work in development mode."
+                )
+                return True
+
             raise ValueError(
                 "GITHUB_TOKEN contains placeholder value. Please replace with "
-                "your actual GitHub token in the .env file."
+                "a real token from https://github.com/settings/tokens."
             )
 
-        if not token.startswith("ghp_") and len(token) < 40:
+        if not self.token.startswith("ghp_") or len(self.token) < 40:
+            if self.debug:
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    "GITHUB_TOKEN appears to be invalid. "
+                    "Some features may not work in development mode."
+                )
+                return True
+
             raise ValueError(
                 "GITHUB_TOKEN appears to be invalid. GitHub personal access "
                 "tokens should start with 'ghp_' and be at least 40 characters long."

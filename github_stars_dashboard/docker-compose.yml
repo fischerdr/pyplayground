@@ -19,7 +19,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
     networks:
       - github_stars_network
 
@@ -41,7 +41,9 @@ services:
     networks:
       - github_stars_network
     depends_on:
-      - app
+      app:
+        condition: service_healthy
+    entrypoint: ["/usr/bin/env", "python", "-m", "github_stars.scheduler_runner"]
 
 volumes:
   github_stars_data:

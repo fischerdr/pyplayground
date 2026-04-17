@@ -122,17 +122,31 @@ scheduler_manager: ScheduledSync | None = None
 @app.on_event("startup")
 async def startup_event():
     """Initialize database and scheduler on startup."""
+    from github_stars.connection_retry import retry_on_connection
     from github_stars.database import create_database_engine
 
-    engine = create_database_engine()
-    init_database(engine)
+    @retry_on_connection(max_retries=10, delay=5, backoff=2)
+    def initialize_database():
+        engine = create_database_engine()
+        init_database(engine)
+        logger.info("Database initialized successfully")
+
+    try:
+        initialize_database()
+    except Exception as e:
+        logger.error(f"Failed to initialize database after retries: {e}")
+        raise
 
     config = Config.load()
     global scheduler_manager
     scheduler_manager = ScheduledSync(config)
 
     if config.sync_enabled:
-        scheduler_manager.start()
+        try:
+            scheduler_manager.start()
+            logger.info("Scheduler started successfully")
+        except Exception as e:
+            logger.warning(f"Failed to start scheduler: {e}")
 
     logger.info("GitHub Stars Dashboard API started")
 

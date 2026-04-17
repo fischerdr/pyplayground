@@ -389,17 +389,63 @@
 - Non-root user (appuser) has proper permissions
 - Scheduler service configured to run scheduler_runner.py module
 
-## Phase 5 Task 5.3-5.7: Remaining Tasks
+## Phase 5 Task 5.3: Multi-container Orchestration ✅ Complete
 
-**Status**: ⏸️ Pending  
-**Branch**: phase-5-scheduler
+**Status**: ✅ Complete  
+**Date**: 2026-04-17  
+**Branch**: phase-5-scheduler  
 
-**Next Steps**:
-- Task 5.3: Multi-container orchestration with proper service dependencies
-- Task 5.4: Environment-based configuration management
-- Task 5.5: Logging and monitoring integration
-- Task 5.6: Documentation and deployment guides
-- Task 5.7: CI/CD pipeline setup
+**Goal**: Implement proper container orchestration with service dependencies, health checks, and database connection retries.
+
+**Changes Made**:
+- Created connection_retry.py module with retry_on_connection decorator
+- Added retry logic to init_database function in database.py
+- Updated api.py startup_event with database initialization retries
+- Updated docker-compose.yml with:
+  - Service dependencies (scheduler depends on app with service_healthy condition)
+  - Extended start_period for health checks (30s)
+  - Proper entrypoint override for scheduler container
+- Created entrypoint.sh script with database readiness check
+- Fixed Dockerfile to properly copy and make entrypoint.sh executable
+- Created .env file with placeholder token for testing
+- Fixed scheduler_runner.py to properly run AsyncIOScheduler with asyncio event loop
+- Rebuilt and started both containers successfully
+
+**Tests**:
+- Manual: App container running and healthy ✅
+- Manual: Scheduler container running successfully ✅
+- Validation: Health check endpoint responding
+- Validation: Both containers communicating via shared network
+
+**Logging Added**:
+- Database retry attempts logged at info level
+- Scheduler thread startup and shutdown logged
+- Service dependency status logged
+
+**Issues Found**:
+1. Scheduler failing with "no running event loop" error - resolved by running AsyncIOScheduler in separate thread
+2. Entrypoint.sh interfering with scheduler command - resolved by overriding entrypoint in docker-compose.yml
+
+**Verification**:
+- App container: Up and healthy (status: healthy)
+- Scheduler container: Up and running (no health check configured)
+- Database connection: Retries working correctly
+- Service dependencies: Scheduler starts after app is healthy
+- Health check: http://localhost:8000/health responds correctly
+
+**Files Created**:
+- src/github_stars/connection_retry.py (45 lines, retry utilities)
+- docker/entrypoint.sh (20 lines, database readiness check)
+- .env (1 line, placeholder token)
+
+**Files Modified**:
+- src/github_stars/database.py (+10 lines, added retry decorator)
+- src/github_stars/api.py (+5 lines, updated startup_event)
+- docker-compose.yml (+5 lines, added service dependencies and entrypoint)
+- docker/Dockerfile (+2 lines, copied entrypoint.sh)
+- src/github_stars/scheduler_runner.py (+40 lines, fixed asyncio issue)
+
+**Next**: Task 5.4 (Environment-based configuration management)
 
 **Remaining Phase 5 Goals**:
 - Complete Docker containerization

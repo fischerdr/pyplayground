@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from github_stars.connection_retry import retry_on_connection
 from github_stars.models import Base
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,7 @@ def get_session_factory(engine: Engine) -> sessionmaker[Session]:
         raise
 
 
+@retry_on_connection(max_retries=5, delay=10, backoff=2)
 def init_database(engine: Engine) -> None:
     """Initialize database by creating all tables.
 

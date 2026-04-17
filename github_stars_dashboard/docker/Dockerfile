@@ -45,9 +45,15 @@ COPY --chown=appuser:appgroup templates /app/templates
 COPY --chown=appuser:appgroup static /app/static
 COPY --chown=appuser:appgroup config /app/config
 COPY --chown=appuser:appgroup pyproject.toml .
+COPY --chown=appuser:appgroup docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Create data directory for database after copying app code
 RUN mkdir -p /app/data && chown -R appuser:appgroup /app/data
+
+# Create health check script
+RUN echo '#!/bin/sh\nwhile ! curl -f http://localhost:8000/health; do sleep 1; done\nexit 0' > /usr/local/bin/healthcheck.sh && \
+    chmod +x /usr/local/bin/healthcheck.sh
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -61,8 +67,9 @@ USER appuser
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run the application
+# Run the application with entrypoint
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["uvicorn", "github_stars.api:app", "--host", "0.0.0.0", "--port", "8000"]

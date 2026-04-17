@@ -1,0 +1,79 @@
+{
+  "categories": [
+    {
+      "name": "python",
+      "patterns": ["python", "py"],
+      "priority": 1
+    },
+    {
+      "name": "javascript",
+      "patterns": ["javascript", "js"],
+      "priority": 2
+    },
+    {
+      "name": "go",
+      "patterns": ["go", "golang"],
+      "priority": 3
+    },
+    {
+      "name": "web",
+      "patterns": ["web", "frontend", "react", "vue", "angular"],
+      "priority": 4
+    },
+    {
+      "name": "api",
+      "patterns": ["api", "rest", "graphql"],
+      "priority": 5
+    },
+    {
+      "name": "database",
+      "patterns": ["database", "db", "sql", "nosql"],
+      "priority": 6
+    },
+    {
+      "name": "ml-ai",
+      "patterns": ["ml", "ai", "machine-learning", "deep-learning"],
+      "priority": 7
+    },
+    {
+      "name": "devops",
+      "patterns": ["devops", "docker", "kubernetes", "k8s"],
+      "priority": 8
+    },
+    {
+      "name": "infra",
+      "patterns": ["infra", "infrastructure", "terraform", "ansible"],
+      "priority": 9
+    },
+    {
+      "name": "tools",
+      "patterns": ["tool", "utility", "cli"],
+      "priority": 10
+    },
+    {
+      "name": "framework",
+      "patterns": ["framework", "library", "sdk"],
+      "priority": 11
+    },
+    {
+      "name": "library",
+      "patterns": ["lib", "module", "package"],
+      "priority": 12
+    },
+    {
+      "name": "application",
+      "patterns": ["app", "application", "desktop"],
+      "priority": 13
+    },
+    {
+      "name": "utility",
+      "patterns": ["util", "helper", "common"],
+      "priority": 14
+    },
+    {
+      "name": "other",
+      "patterns": [],
+      "priority": 100
+    }
+  ]
+}

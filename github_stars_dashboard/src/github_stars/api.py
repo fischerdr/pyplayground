@@ -6,11 +6,14 @@ stars, categories, and synchronization operations.
 
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, status
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 
 from github_stars.categorizer import Categorizer, categorize_repository
 from github_stars.config_loader import Config
@@ -98,6 +101,18 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# Mount static files - look in project root
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+STATIC_DIR = PROJECT_ROOT / "static"
+TEMPLATES_DIR = PROJECT_ROOT / "templates"
+
+# Only mount static files if directory exists
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Template directory
+TEMPLATE_DIR = TEMPLATES_DIR
+
 
 # Event handlers
 @app.on_event("startup")
@@ -121,9 +136,17 @@ async def log_requests(request, call_next):
 
 
 # Routes
-@app.get("/", response_model=dict)
-async def root():
-    """Root endpoint with API information."""
+@app.get("/", response_class=JSONResponse)
+async def root(request: Request):
+    """Serve the main dashboard page or API info based on Accept header."""
+    # Check if client wants HTML or JSON
+    accept = request.headers.get("accept", "")
+
+    if "text/html" in accept:
+        # Serve HTML for browser
+        return FileResponse(str(TEMPLATE_DIR / "index.html"))
+
+    # Return JSON for API clients (including tests)
     return {
         "name": "GitHub Stars Dashboard API",
         "version": "0.1.0",
@@ -302,12 +325,31 @@ async def get_stats():
 
             categories_count = session.query(Category).count()
 
+            # Get category breakdown
+            categories = []
+            category_results = (
+                session.query(
+                    Repository.category,
+                    Repository.count(),
+                    func.sum(Repository.stars).label("total_stars"),
+                )
+                .group_by(Repository.category)
+                .filter(Repository.category.isnot(None))
+                .all()
+            )
+
+            for category_name, count, stars in category_results:
+                categories.append(
+                    {"name": category_name, "count": count, "total_stars": stars or 0}
+                )
+
             return {
                 "total_repositories": total_repositories,
                 "total_stars": total_stars,
                 "active_repositories": active_count,
                 "inactive_repositories": inactive_count,
                 "categories_count": categories_count,
+                "categories": categories,
             }
 
     except Exception as e:
@@ -400,6 +442,147 @@ async def categorize_repository_endpoint(repo_id: int):
         )
 
 
+@app.post("/repositories", response_model=RepositoryResponse)
+async def create_repository(request: dict):
+    """Create a new repository entry."""
+    from github_stars.models import Repository
+
+    try:
+        owner = request.get("owner")
+        name = request.get("name")
+
+        if not owner or not name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Owner and name are required",
+            )
+
+        full_name = f"{owner}/{name}"
+
+        with get_db_session() as session:
+            # Check if repository already exists
+            existing = (
+                session.query(Repository)
+                .filter(Repository.full_name == full_name)
+                .first()
+            )
+
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Repository already exists",
+                )
+
+            # Fetch repository info from GitHub
+            config = Config.load()
+            github_client = GitHubClient(config.github_token)
+            repo_data = github_client.get_repository(owner, name)
+
+            # Create new repository
+            new_repo = Repository(
+                full_name=full_name,
+                description=repo_data.get("description"),
+                html_url=repo_data.get("html_url"),
+                language=repo_data.get("language"),
+                stars=repo_data.get("stargazers_count", 0),
+                forks=repo_data.get("forks_count", 0),
+                is_active=True,
+            )
+
+            # Categorize the repository
+            categorizer = Categorizer(config.categories_config_path)
+            category_result = categorizer.categorize_repository(
+                full_name=full_name,
+                description=repo_data.get("description") or "",
+                language=repo_data.get("language") or "",
+            )
+            new_repo.category = category_result.category_name
+
+            session.add(new_repo)
+            session.commit()
+            session.refresh(new_repo)
+
+            logger.info("Created repository: %s", full_name)
+
+            return RepositoryResponse.model_validate(new_repo)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error creating repository: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+
+
+@app.put("/repositories/{repo_id}", response_model=RepositoryResponse)
+async def update_repository(repo_id: int, request: dict):
+    """Update a repository."""
+    from github_stars.models import Repository
+
+    try:
+        owner = request.get("owner")
+        name = request.get("name")
+        category = request.get("category")
+
+        with get_db_session() as session:
+            repository = session.get(Repository, repo_id)
+
+            if not repository:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Repository with ID {repo_id} not found",
+                )
+
+            # Update fields if provided
+            if owner and name:
+                old_full_name = repository.full_name
+                new_full_name = f"{owner}/{name}"
+
+                repository.full_name = new_full_name
+
+                # Re-fetch from GitHub to update stats
+                config = Config.load()
+                github_client = GitHubClient(config.github_token)
+                repo_data = github_client.get_repository(owner, name)
+
+                repository.description = repo_data.get("description")
+                repository.html_url = repo_data.get("html_url")
+                repository.language = repo_data.get("language")
+                repository.stars = repo_data.get("stargazers_count", 0)
+                repository.forks = repo_data.get("forks_count", 0)
+
+                # Update category if provided
+                if category:
+                    repository.category = category
+                elif category is not None:
+                    # Recategorize
+                    categorizer = Categorizer(config.categories_config_path)
+                    result = categorizer.categorize_repository(
+                        full_name=new_full_name,
+                        description=repository.description or "",
+                        language=repository.language or "",
+                    )
+                    repository.category = result.category_name
+
+            session.commit()
+            session.refresh(repository)
+
+            logger.info("Updated repository: %s", repository.full_name)
+
+            return RepositoryResponse.model_validate(repository)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error updating repository %d: %s", repo_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+
+
 @app.delete("/repositories/{repo_id}", response_model=dict)
 async def delete_repository(repo_id: int):
     """Delete a repository and its associated stars."""
@@ -466,10 +649,9 @@ async def get_recent_activity(
                 result.append(
                     {
                         "id": star.id,
-                        "repository": (
-                            star.repository.full_name if star.repository else "Unknown"
-                        ),
-                        "starred_at": star.starred_at.isoformat(),
+                        "type": "star",
+                        "message": f"New star on {star.repository.full_name if star.repository else 'Unknown'}",
+                        "timestamp": star.starred_at.isoformat(),
                     }
                 )
 

@@ -37,6 +37,12 @@ __all__ = [
     "Repository",
     "Star",
     "ActivityLog",
+    # API
+    "app",
+    # CLI
+    "app as cli_app",
 ]
 
+from github_stars.api import app
+from github_stars.cli import app as cli_app
 from github_stars.models import ActivityLog, Category, Repository, Star

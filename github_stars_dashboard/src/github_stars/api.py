@@ -5,6 +5,7 @@ stars, categories, and synchronization operations.
 """
 
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from sqlalchemy import func
 from github_stars.categorizer import Categorizer, categorize_repository
 from github_stars.config_loader import Config
 from github_stars.database import get_db_session, init_database
+from github_stars.environment import validate_environment
 from github_stars.fetcher import GitHubClient
 from github_stars.scheduler import ScheduledSync
 from github_stars.sync import RepoSyncer, sync_starred_repos
@@ -124,6 +126,9 @@ async def startup_event():
     """Initialize database and scheduler on startup."""
     from github_stars.connection_retry import retry_on_connection
     from github_stars.database import create_database_engine
+
+    validate_environment()
+    logger.info(f"Environment validated: {os.getenv('LOG_LEVEL', 'INFO')}")
 
     @retry_on_connection(max_retries=10, delay=5, backoff=2)
     def initialize_database():

@@ -8,9 +8,8 @@ services:
     container_name: github-stars-dashboard
     ports:
       - "8000:8000"
-    environment:
-      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - DATABASE_URL=sqlite:////app/data/github_stars.db
+    env_file:
+      - .env
     volumes:
       - github_stars_data:/app/data
     restart: unless-stopped
@@ -29,12 +28,8 @@ services:
       dockerfile: docker/Dockerfile
     container_name: github-stars-scheduler
     command: ["python", "-m", "github_stars.scheduler_runner"]
-    environment:
-      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - DATABASE_URL=sqlite:////app/data/github_stars.db
-      - SYNC_ENABLED=true
-      - SYNC_INTERVAL_MIN=30
-      - SYNC_INTERVAL_MAX=60
+    env_file:
+      - .env
     volumes:
       - github_stars_data:/app/data
     restart: unless-stopped

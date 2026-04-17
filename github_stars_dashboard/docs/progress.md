@@ -445,7 +445,54 @@
 - docker/Dockerfile (+2 lines, copied entrypoint.sh)
 - src/github_stars/scheduler_runner.py (+40 lines, fixed asyncio issue)
 
-**Next**: Task 5.4 (Environment-based configuration management)
+### Phase 5 Task 5.4: Environment-based Configuration Management
+
+**Status**: ✅ Complete  
+**Date**: 2026-04-17  
+**Branch**: phase-5-scheduler  
+
+**Goal**: Implement environment-specific configuration management for Podman deployments.
+
+**Changes Made**:
+- Created .env.dev for development environment with DEBUG=true, text logging
+- Created .env.prod for production environment with DEBUG=false, JSON logging
+- Updated docker-compose.yml to use env_file for environment-specific configuration
+- Created environment.py module with EnvironmentValidator class
+- Added environment validation to api.py startup_event
+- Added environment detection logic (dev/prod/default)
+- Added GitHub token validation with format checking
+- Added database path validation and extraction
+- Added logging configuration helper
+
+**Testing**:
+- Manual: Environment validation utility tested ✅
+- Manual: Type checking passed (mypy) ✅
+- Validation: Code formatting passed (black, flake8) ✅
+- Validation: Environment detection working correctly
+
+**Logging Added**:
+- Environment validation status logged at startup
+- Log level and format logged from environment config
+
+**Issues Found**:
+None
+
+**Verification**:
+- Dev environment: DEBUG=true, text logging, smaller MAX_REPOSITORIES
+- Prod environment: DEBUG=false, JSON logging, full MAX_REPOSITORIES
+- Environment switching via .env file naming
+- Docker uses env_file directive for environment selection
+
+**Files Created**:
+- .env.dev (28 lines, development config)
+- .env.prod (28 lines, production config)
+- src/github_stars/environment.py (150 lines, environment utilities)
+
+**Files Modified**:
+- docker-compose.yml (replaced environment variables with env_file)
+- src/github_stars/api.py (+5 lines, added environment validation)
+
+**Next**: Task 5.5 (Production deployment setup)
 
 **Remaining Phase 5 Goals**:
 - Complete Docker containerization

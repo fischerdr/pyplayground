@@ -24,6 +24,9 @@ class Config:
         categories: Comma-separated list of default categories.
         update_interval: Update interval in seconds.
         max_repositories: Maximum number of repositories to track.
+        sync_enabled: Whether scheduled sync is enabled.
+        sync_interval_min: Minimum sync interval in minutes.
+        sync_interval_max: Maximum sync interval in minutes.
     """
 
     github_token: str
@@ -38,6 +41,44 @@ class Config:
     )
     update_interval: int = 3600
     max_repositories: int = 100
+    sync_enabled: bool = False
+    sync_interval_min: int = 30
+    sync_interval_max: int = 120
+
+    @classmethod
+    def load(cls) -> "Config":
+        """Load configuration from environment variables.
+
+        Returns:
+            Config instance with validated configuration.
+        """
+        return load_config()
+
+    def save(self) -> None:
+        """Save configuration to environment file.
+
+        This method writes the current configuration to .env file.
+        """
+        from pathlib import Path
+
+        env_path = Path(".env")
+
+        with open(env_path, "w") as f:
+            f.write(f"GITHUB_TOKEN={self.github_token}\n")
+            f.write(f"DATABASE_URL={self.database_url}\n")
+            f.write(f"LOG_LEVEL={self.log_level}\n")
+            f.write(f"LOG_FORMAT={self.log_format}\n")
+            f.write(f"APP_HOST={self.app_host}\n")
+            f.write(f"APP_PORT={self.app_port}\n")
+            f.write(f"DEBUG={str(self.debug).lower()}\n")
+            f.write(f"CATEGORIES={','.join(self.categories)}\n")
+            f.write(f"UPDATE_INTERVAL={self.update_interval}\n")
+            f.write(f"MAX_REPOSITORIES={self.max_repositories}\n")
+            f.write(f"SYNC_ENABLED={str(self.sync_enabled).lower()}\n")
+            f.write(f"SYNC_INTERVAL_MIN={self.sync_interval_min}\n")
+            f.write(f"SYNC_INTERVAL_MAX={self.sync_interval_max}\n")
+
+        logger.info(f"Configuration saved to {env_path}")
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization.
@@ -49,6 +90,7 @@ class Config:
         self._validate_log_level()
         self._validate_update_interval()
         self._validate_max_repositories()
+        self._validate_sync_intervals()
 
     def _validate_github_token(self) -> None:
         """Validate GitHub token is provided.
@@ -103,6 +145,22 @@ class Config:
             logger.error(error_msg)
             raise ValueError(error_msg)
 
+    def _validate_sync_intervals(self) -> None:
+        """Validate sync interval settings.
+
+        Raises:
+            ValueError: If sync intervals are invalid.
+        """
+        if self.sync_interval_min < 1:
+            error_msg = f"Sync interval min must be at least 1 minute, got {self.sync_interval_min}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        if self.sync_interval_max < self.sync_interval_min:
+            error_msg = f"Sync interval max ({self.sync_interval_max}) must be >= min ({self.sync_interval_min})"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
     def to_dict(self) -> dict:
         """Convert configuration to dictionary.
 
@@ -120,6 +178,9 @@ class Config:
             "categories": self.categories,
             "update_interval": self.update_interval,
             "max_repositories": self.max_repositories,
+            "sync_enabled": self.sync_enabled,
+            "sync_interval_min": self.sync_interval_min,
+            "sync_interval_max": self.sync_interval_max,
         }
 
 
@@ -150,12 +211,18 @@ def load_config() -> Config:
         categories_str = os.getenv("CATEGORIES", "python,javascript,go,rust,java")
         update_interval_str = os.getenv("UPDATE_INTERVAL", "3600")
         max_repositories_str = os.getenv("MAX_REPOSITORIES", "100")
+        sync_enabled_str = os.getenv("SYNC_ENABLED", "false").lower()
+        sync_interval_min_str = os.getenv("SYNC_INTERVAL_MIN", "30")
+        sync_interval_max_str = os.getenv("SYNC_INTERVAL_MAX", "120")
 
         app_port = int(app_port_str)
         debug = debug_str in ("true", "1", "yes")
         categories = [c.strip() for c in categories_str.split(",") if c.strip()]
         update_interval = int(update_interval_str)
         max_repositories = int(max_repositories_str)
+        sync_enabled = sync_enabled_str in ("true", "1", "yes")
+        sync_interval_min = int(sync_interval_min_str)
+        sync_interval_max = int(sync_interval_max_str)
 
         config = Config(
             github_token=github_token,
@@ -168,6 +235,9 @@ def load_config() -> Config:
             categories=categories,
             update_interval=update_interval,
             max_repositories=max_repositories,
+            sync_enabled=sync_enabled,
+            sync_interval_min=sync_interval_min,
+            sync_interval_max=sync_interval_max,
         )
 
         logger.info(

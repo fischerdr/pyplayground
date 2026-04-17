@@ -17,6 +17,7 @@ from github_stars.categorizer import Categorizer
 from github_stars.config_loader import Config
 from github_stars.database import init_database
 from github_stars.fetcher import GitHubClient
+from github_stars.scheduler import ScheduledSync
 from github_stars.sync import RepoSyncer, SyncStats
 
 console = Console()
@@ -437,6 +438,99 @@ def delete(repo_id: int) -> None:
 def version() -> None:
     """Show version information."""
     console.print(f"[{Color.BOLD}]GitHub Stars Dashboard v0.1.0[/{Color.BOLD}]")
+
+
+@app.command()
+def scheduler_start() -> None:
+    """Start the scheduled sync scheduler."""
+    try:
+        config = Config.load()
+        scheduler = ScheduledSync(config)
+
+        console.print(f"[{Color.BLUE}]Starting scheduled sync...[/{Color.BLUE}]")
+        scheduler.start()
+
+        console.print(
+            f"[{Color.GREEN}]✓ Scheduler started successfully[/{Color.GREEN}]"
+        )
+        console.print(f"  Running: {scheduler.is_running()}")
+
+        next_run = scheduler.get_next_run()
+        if next_run:
+            console.print(f"  Next run: {next_run}")
+
+        # Keep running
+        console.print(
+            f"\n[{Color.YELLOW}]Scheduler running. Press Ctrl+C to stop.[/{Color.YELLOW}]"
+        )
+
+        import time
+
+        while True:
+            time.sleep(1)
+
+    except KeyboardInterrupt:
+        console.print(f"\n[{Color.YELLOW}]Stopping scheduler...[/{Color.YELLOW}]")
+        if "scheduler" in locals():
+            scheduler.stop()
+        console.print(f"[{Color.GREEN}]✓ Scheduler stopped[/{Color.GREEN}]")
+    except Exception as e:
+        console.print(f"[{Color.RED}]✗ Error: {e}[/{Color.RED}]")
+        logger.exception("Scheduler error")
+        sys.exit(1)
+
+
+@app.command()
+def scheduler_status() -> None:
+    """Check scheduler status."""
+    try:
+        config = Config.load()
+        scheduler = ScheduledSync(config)
+
+        console.print(f"\n[{Color.BOLD}]Scheduler Status:[/{Color.BOLD}]")
+        console.print(f"  Running: {scheduler.is_running()}")
+
+        next_run = scheduler.get_next_run()
+        if next_run:
+            console.print(f"  Next run: {next_run}")
+        else:
+            console.print(f"  Next run: Not scheduled")
+
+        if scheduler.is_running():
+            console.print(f"\n[{Color.GREEN}]✓ Scheduler is running[/{Color.GREEN}]")
+        else:
+            console.print(
+                f"\n[{Color.YELLOW}]⚠ Scheduler is not running[/{Color.YELLOW}]"
+            )
+
+    except Exception as e:
+        console.print(f"[{Color.RED}]✗ Error: {e}[/{Color.RED}]")
+        logger.exception("Scheduler status error")
+        sys.exit(1)
+
+
+@app.command()
+def scheduler_stop() -> None:
+    """Stop the scheduled sync scheduler."""
+    try:
+        config = Config.load()
+        scheduler = ScheduledSync(config)
+
+        if scheduler.is_running():
+            console.print(f"[{Color.BLUE}]Stopping scheduler...[/{Color.BLUE}]")
+            scheduler.stop()
+            console.print(
+                f"[{Color.GREEN}]✓ Scheduler stopped successfully[/{Color.GREEN}]"
+            )
+        else:
+            console.print(
+                f"[{Color.YELLOW}]⚠ Scheduler is not running[/{Color.YELLOW}]"
+            )
+
+    except Exception as e:
+        console.print(f"[{Color.RED}]✗ Error: {e}[/{Color.RED}]")
+        logger.exception("Scheduler stop error")
+        sys.exit(1)
 
 
 # Main entry point

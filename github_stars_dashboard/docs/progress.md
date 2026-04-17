@@ -289,11 +289,56 @@
 **Tests**:
 - Automated: test_frontend.py (33/33 passing)
 
+## Phase 5: Scheduled Synchronization 🔄 In Progress
+
+### Phase 5 Task 5.1: Scheduler Implementation
+
+**Status**: 🔄 In Progress  
+**Date**: 2026-04-17  
+**Branch**: phase-5-scheduler  
+
+**Changes Made**:
+- Created ScheduledSync class with APScheduler integration
+- Added sync_interval_min and sync_interval_max config fields
+- Implemented random interval scheduling with jitter
+- Added scheduler control endpoints (status, start, stop, restart)
+- Added scheduler CLI commands (scheduler_start, scheduler_stop, scheduler_status)
+- Fixed indentation error in __init__.py (line 15)
+- Fixed RandomIntervalTrigger compatibility (using IntervalTrigger with jitter)
+- Added logging for scheduler operations
+- Added load() and save() methods to Config class
+
+**Tests**:
+- Automated: test_scheduler.py (16/16 passing) ✅ NEW
+- Total tests: 149 → 165 (16 new scheduler tests)
+- Passing: 144 → 160 (16 new passing tests)
+
+**Files Created**:
+- tests/test_scheduler.py (207 lines, 16 tests)
+
+**Files Modified**:
+- src/github_stars/scheduler.py (178 lines, created)
+- src/github_stars/config_loader.py (+20 lines)
+- src/github_stars/__init__.py (fixed indentation)
+- src/github_stars/api.py (+80 lines for scheduler endpoints)
+- src/github_stars/cli.py (+60 lines for scheduler commands)
+- pyproject.toml (added apscheduler dependency)
+
+**Issues Found**:
+1. RandomIntervalTrigger removed from APScheduler - resolved by using IntervalTrigger with jitter
+2. Indentation error in __init__.py line 15 - resolved
+
+**Verification**:
+- All 16 scheduler tests passing
+- Existing tests still passing (144/149 pre-existing tests)
+- Scheduler integration verified with API and CLI
+
 ## Test Coverage Summary
 
-**Total Tests**: 149
-**Passing**: 144 (96.6%)
-**Failing**: 5 (pre-existing in test_fetcher.py, unrelated to Phase 4)
+**Total Tests**: 165
+**Passing**: 160 (97.0%)
+**Failing**: 5 (pre-existing in test_fetcher.py, unrelated to scheduler)
+**Errors**: 4 (missing GITHUB_TOKEN for API tests)
 
 **By Module**:
 - test_api.py: 8/8 passing ✅
@@ -303,12 +348,13 @@
 - test_config_loader.py: 4/4 passing ✅
 - test_database.py: 3/3 passing ✅
 - test_models.py: 15/15 passing ✅
-- test_frontend.py: 33/33 passing ✅ NEW
+- test_frontend.py: 33/33 passing ✅
+- test_scheduler.py: 16/16 passing ✅ NEW
 - test_fetcher.py: 11/16 passing (5 pre-existing failures) ⚠️
 
 ## Next Steps
 
 1. Run lint and typecheck commands
-2. Commit Phase 4 changes to git
-3. Test the complete dashboard in browser
-4. Verify all API endpoints work with frontend
+2. Commit Phase 5 Task 5.1 changes to git
+3. Continue with Phase 5 Task 5.2 (Docker containerization)
+4. Continue with Phase 5 Task 5.3-5.7 (deployment, monitoring, logging, docs, CI/CD)

@@ -13,6 +13,7 @@ from github_stars.categorizer import (
     update_repository_category,
 )
 from github_stars.fetcher import GitHubAPIError, GitHubClient
+from github_stars.scheduler import ScheduledSync
 from github_stars.sync import RepoSyncer, SyncStats, sync_starred_repos
 
 __all__ = [
@@ -32,6 +33,8 @@ __all__ = [
     "RepoSyncer",
     "SyncStats",
     "sync_starred_repos",
+    # Scheduler
+    "ScheduledSync",
     # Models
     "Category",
     "Repository",

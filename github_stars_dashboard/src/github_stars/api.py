@@ -19,6 +19,7 @@ from github_stars.categorizer import Categorizer, categorize_repository
 from github_stars.config_loader import Config
 from github_stars.database import get_db_session, init_database
 from github_stars.fetcher import GitHubClient
+from github_stars.scheduler import ScheduledSync
 from github_stars.sync import RepoSyncer, sync_starred_repos
 
 logger = logging.getLogger(__name__)
@@ -113,16 +114,36 @@ if STATIC_DIR.exists():
 # Template directory
 TEMPLATE_DIR = TEMPLATES_DIR
 
+# Global scheduler instance
+scheduler_manager: ScheduledSync | None = None
+
 
 # Event handlers
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database on startup."""
+    """Initialize database and scheduler on startup."""
     from github_stars.database import create_database_engine
 
     engine = create_database_engine()
     init_database(engine)
+
+    config = Config.load()
+    global scheduler_manager
+    scheduler_manager = ScheduledSync(config)
+
+    if config.sync_enabled:
+        scheduler_manager.start()
+
     logger.info("GitHub Stars Dashboard API started")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop scheduler on shutdown."""
+    global scheduler_manager
+    if scheduler_manager:
+        scheduler_manager.stop()
+    logger.info("GitHub Stars Dashboard API stopped")
 
 
 # Middleware for logging
@@ -172,6 +193,81 @@ async def get_config():
         "max_repositories": config.max_repositories,
         "log_level": config.log_level,
         "categories_config_path": config.categories_config_path,
+        "sync_enabled": config.sync_enabled,
+        "sync_interval_min": config.sync_interval_min,
+        "sync_interval_max": config.sync_interval_max,
+    }
+
+
+@app.get("/scheduler/status")
+async def get_scheduler_status():
+    """Get scheduler status."""
+    global scheduler_manager
+
+    if scheduler_manager is None:
+        return {"running": False, "error": "Scheduler not initialized"}
+
+    return {
+        "running": scheduler_manager.is_running(),
+        "next_run": (
+            scheduler_manager.get_next_run().isoformat()
+            if scheduler_manager.get_next_run()
+            else None
+        ),
+    }
+
+
+@app.post("/scheduler/start")
+async def start_scheduler():
+    """Start the scheduler."""
+    global scheduler_manager
+
+    if scheduler_manager is None:
+        config = Config.load()
+        scheduler_manager = ScheduledSync(config)
+
+    scheduler_manager.start()
+
+    return {
+        "status": "success",
+        "message": "Scheduler started",
+        "running": scheduler_manager.is_running(),
+    }
+
+
+@app.post("/scheduler/stop")
+async def stop_scheduler():
+    """Stop the scheduler."""
+    global scheduler_manager
+
+    if scheduler_manager is None:
+        return {"status": "success", "message": "Scheduler was not running"}
+
+    scheduler_manager.stop()
+
+    return {
+        "status": "success",
+        "message": "Scheduler stopped",
+        "running": False,
+    }
+
+
+@app.post("/scheduler/restart")
+async def restart_scheduler():
+    """Restart the scheduler."""
+    global scheduler_manager
+
+    if scheduler_manager:
+        scheduler_manager.stop()
+
+    config = Config.load()
+    scheduler_manager = ScheduledSync(config)
+    scheduler_manager.start()
+
+    return {
+        "status": "success",
+        "message": "Scheduler restarted",
+        "running": scheduler_manager.is_running(),
     }
 
 

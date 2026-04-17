@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: github-stars-dashboard
+    ports:
+      - "8000:8000"
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - DATABASE_URL=sqlite:////app/data/github_stars.db
+    volumes:
+      - github_stars_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - github_stars_network
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: github-stars-scheduler
+    command: ["python", "-m", "github_stars.scheduler_runner"]
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - DATABASE_URL=sqlite:////app/data/github_stars.db
+      - SYNC_ENABLED=true
+      - SYNC_INTERVAL_MIN=30
+      - SYNC_INTERVAL_MAX=60
+    volumes:
+      - github_stars_data:/app/data
+    restart: unless-stopped
+    networks:
+      - github_stars_network
+    depends_on:
+      - app
+
+volumes:
+  github_stars_data:
+    driver: local
+
+networks:
+  github_stars_network:
+    driver: bridge

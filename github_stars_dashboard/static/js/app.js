@@ -8,6 +8,32 @@ let allActivity = [];
 // API base URL
 const API_BASE = '';
 
+// Dark mode functionality
+function initDarkMode() {
+    const themeToggle = document.getElementById('theme-toggle');
+    const themeIcon = themeToggle.querySelector('.theme-icon');
+    
+    // Check for saved theme preference or default to light mode
+    const savedTheme = localStorage.getItem('dashboard-theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    
+    if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+        document.body.classList.add('dark-mode');
+        themeIcon.textContent = '☀️';
+    } else {
+        themeIcon.textContent = '🌙';
+    }
+    
+    // Toggle theme on button click
+    themeToggle.addEventListener('click', () => {
+        document.body.classList.toggle('dark-mode');
+        const isDark = document.body.classList.contains('dark-mode');
+        
+        themeIcon.textContent = isDark ? '☀️' : '🌙';
+        localStorage.setItem('dashboard-theme', isDark ? 'dark' : 'light');
+    });
+}
+
 // Utility functions
 function formatNumber(num) {
     return new Intl.NumberFormat().format(num);

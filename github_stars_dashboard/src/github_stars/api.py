@@ -110,7 +110,15 @@ app = FastAPI(
 )
 
 # Mount static files - look in project root
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+# In container: src is at /app/src, so parent.parent gives /app
+# Local dev: src/github_stars/api.py, parent.parent.parent gives project root
+if Path("/app/src").exists():
+    # Running in container
+    PROJECT_ROOT = Path("/app")
+else:
+    # Running locally
+    PROJECT_ROOT = Path(__file__).parent.parent.parent
+
 STATIC_DIR = PROJECT_ROOT / "static"
 TEMPLATES_DIR = PROJECT_ROOT / "templates"
 

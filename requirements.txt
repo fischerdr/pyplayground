@@ -129,7 +129,7 @@ ptyprocess==0.7.0
     # via pexpect
 pyasn1==0.6.2
     # via pyplayground (pyproject.toml)
-pycparser==2.22
+pycparser==3.0
     # via cffi
 pygments==2.19.2
     # via

@@ -217,7 +217,7 @@ pyasn1==0.6.2
     # via pyplayground (pyproject.toml)
 pycodestyle==2.14.0
     # via flake8
-pycparser==2.22
+pycparser==3.0
     # via cffi
 pydocstyle==6.3.0
     # via flake8-docstrings

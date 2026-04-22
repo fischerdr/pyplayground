@@ -88,7 +88,7 @@ lockfile==0.12.2
     # via python-daemon
 markdown==3.10.2
     # via pyplayground (pyproject.toml)
-markdown-it-py[linkify]==3.0.0
+markdown-it-py[linkify]==4.0.0
     # via
     #   mdit-py-plugins
     #   rich

@@ -117,7 +117,7 @@ pick==2.4.0
     # via pyplayground (pyproject.toml)
 pint==0.25.2
     # via pyplayground (pyproject.toml)
-platformdirs==4.3.7
+platformdirs==4.9.6
     # via
     #   pint
     #   textual

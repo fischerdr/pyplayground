@@ -131,7 +131,7 @@ pyasn1==0.6.2
     # via pyplayground (pyproject.toml)
 pycparser==2.22
     # via cffi
-pygments==2.19.2
+pygments==2.20.0
     # via
     #   rich
     #   textual

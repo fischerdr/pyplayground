@@ -113,7 +113,6 @@ templates/**/rendered/
 # Temporary Files
 tmp/*
 !tmp/.gitkeep
-!tmp/*/
 tmp/cache/*
 !tmp/cache/.gitkeep
 tmp/downloads/*
@@ -176,3 +175,6 @@ vault.txt
 
 # AI Agent plans
 plans/
+
+# test docs
+docs/hydra/*

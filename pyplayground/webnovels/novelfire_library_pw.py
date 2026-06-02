@@ -46,6 +46,8 @@ from typing import Any, Optional, Union
 
 import requests  # type: ignore[import-untyped]
 from bs4 import BeautifulSoup
+from pyplayground.utils.config_utils import get_env_var
+from pyplayground.utils.logging_utils import get_logger, get_project_root, setup_logging
 
 try:
     from playwright.sync_api import TimeoutError as PWTimeoutError
@@ -69,22 +71,9 @@ if not PLAYWRIGHT_AVAILABLE:
 # ---------------------------------------------------------------------------
 # Logging — level controlled by NOVELFIRE_DEBUG env var
 # ---------------------------------------------------------------------------
-DEBUG_MODE = os.environ.get("NOVELFIRE_DEBUG", "0").strip() == "1"
+DEBUG_MODE = get_env_var("NOVELFIRE_DEBUG", default="0", as_type=str) == "1"
 
-logging.basicConfig(
-    level=logging.DEBUG if DEBUG_MODE else logging.INFO,
-    format="%(asctime)s [%(levelname)-8s] %(name)s — %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-log = logging.getLogger("novelfire")
-
-# Silence noisy third-party libs unless in debug mode
-if not DEBUG_MODE:
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("requests").setLevel(logging.WARNING)
-else:
-    # Full HTTP wire-level info from urllib3 in debug mode
-    logging.getLogger("urllib3").setLevel(logging.DEBUG)
+log = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -98,7 +87,6 @@ HEADERS = {
     "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) " "AppleWebKit/537.36 (KHTML, like Gecko) " "Chrome/124.0.0.0 Safari/537.36"),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
     "Referer": BASE_URL,
 }
@@ -108,7 +96,7 @@ RETRY_DELAY = 5  # seconds between retries
 PAGE_DELAY = 1.5  # seconds between library page requests
 
 # HTML dump directory (created only in debug mode)
-DEBUG_DUMP_DIR = Path("./tmp/novelfire_debug_dumps")
+DEBUG_DUMP_DIR = Path(get_project_root()) / "tmp" / "novelfire_debug_dumps"
 
 # Show browser window during Playwright login? Default headless (no window).
 # Set NOVELFIRE_HEADLESS=0 to watch the browser — useful for debugging CF challenges.
@@ -457,7 +445,7 @@ def login(email: str, password: str) -> requests.Session:
     try:
         verify = session.get(
             LIBRARY_URL + "?page=1",
-            headers={**HEADERS, "Accept-Encoding": "identity"},
+            headers=HEADERS,
             timeout=20,
             allow_redirects=True,
         )
@@ -866,6 +854,8 @@ def _print_config(email: str, max_pages: int, out_dir: Path) -> None:
 
 def main() -> None:
     """Run the NovelFire library scraper."""
+    script_name = os.path.basename(__file__).replace(".py", "")
+    setup_logging(level=logging.DEBUG if DEBUG_MODE else logging.INFO, script_name=script_name)
     email_str = _get_env("NOVELFIRE_EMAIL")
     password_str = _get_env("NOVELFIRE_PASSWORD")
     max_pages = int(_get_env("NOVELFIRE_MAX_PAGES", required=False) or 10)

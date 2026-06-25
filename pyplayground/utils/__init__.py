@@ -28,7 +28,7 @@ from .k8s_utils import (  # Zone label utilities
 )
 
 # Logging utilities
-from .logging_utils import get_logger, setup_logging
+from .logging_utils import get_logger, get_project_root, setup_logging
 
 # Migration utilities
 from .migration_utils import (

@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
-"""
-alphapolis_translate.py
-Version 1.0, created 2026-07-22, author dfischer
+"""alphapolis_translate.py - Translate Alphapolis episodes to English.
 
 Fetches an Alphapolis episode page, extracts the episode body text, and
 translates it to English (or another target language) using Google's
-free `gtx` translate endpoint (same one browser extensions use, no API
-key required).
+free `gtx` translate endpoint or a local LLM backend.
 
 Usage:
     pip install requests beautifulsoup4
-    python alphapolis_translate.py "https://www.alphapolis.co.jp/novel/375266002/37695490/episode/7800047"
+    python alphapolis_translate.py "https://www.alphapolis.co.jp/novel/..."
 
 Notes:
 - Alphapolis' robots.txt disallows automated access. This script is meant
@@ -24,12 +21,18 @@ Notes:
   as an anti-scrape measure; this script can't see through that.
 """
 
+import argparse
 import sys
-import textwrap
 import time
 
 import requests
 from bs4 import BeautifulSoup
+
+from pyplayground.utils.logging_utils import get_logger, setup_logging
+from pyplayground.webnovels.llm_translate import BACKEND_GOOGLE, BACKEND_LLM
+from pyplayground.webnovels.llm_translate import translate_lines as llm_translate_lines
+
+logger = get_logger(__name__)
 
 HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"),
@@ -41,6 +44,17 @@ CHUNK_CHARS = 150  # keep encoded URLs well under length limits (see note below)
 
 
 def fetch_html(url: str) -> str:
+    """Fetch page HTML using requests with Alphapolis-like headers.
+
+    Args:
+        url: The episode URL to fetch.
+
+    Returns:
+        The page HTML string.
+
+    Raises:
+        requests.HTTPError: If the response status is not 2xx.
+    """
     resp = requests.get(url, headers=HEADERS, timeout=15)
     resp.raise_for_status()
     return resp.text
@@ -85,6 +99,15 @@ def find_content(soup: BeautifulSoup):
 
 
 def chunk_text(paragraphs, max_chars=CHUNK_CHARS):
+    """Split paragraphs into chunks respecting character limits.
+
+    Args:
+        paragraphs: List of text paragraphs.
+        max_chars: Maximum characters per chunk.
+
+    Returns:
+        List of paragraph lists (chunks).
+    """
     chunks, current, current_len = [], [], 0
     for p in paragraphs:
         if current_len + len(p) > max_chars and current:
@@ -98,6 +121,16 @@ def chunk_text(paragraphs, max_chars=CHUNK_CHARS):
 
 
 def translate_chunk(text: str, target_lang: str = "en", source_lang: str = "ja") -> str:
+    """Translate a single text chunk using Google Translate free endpoint.
+
+    Args:
+        text: The text to translate.
+        target_lang: Target language code (default: en).
+        source_lang: Source language code (default: ja).
+
+    Returns:
+        The translated text string.
+    """
     params = {
         "client": "gtx",
         "sl": source_lang,
@@ -111,24 +144,59 @@ def translate_chunk(text: str, target_lang: str = "en", source_lang: str = "ja")
     return "".join(seg[0] for seg in data[0])
 
 
+def translate_lines(lines, target_lang="en", backend=BACKEND_GOOGLE):
+    """Translate a list of text lines using the selected backend.
+
+    Args:
+        lines: List of text lines to translate.
+        target_lang: Target language code (default: en).
+        backend: Translation backend ('google' or 'llm').
+
+    Returns:
+        List of translated text lines.
+    """
+    if backend == BACKEND_LLM:
+        return llm_translate_lines(lines, target_lang=target_lang)
+
+    chunks = chunk_text(lines)
+    translated_paragraphs = []
+    for i, chunk in enumerate(chunks, 1):
+        joined = "\n\n".join(chunk)
+        try:
+            translated = translate_chunk(joined, target_lang=target_lang)
+        except Exception as e:
+            logger.error(f"chunk {i}/{len(chunks)} failed: {e}")
+            translated = "[translation failed for this section]"
+        translated_paragraphs.append(translated)
+        time.sleep(0.3)  # be polite to the free endpoint
+    return translated_paragraphs
+
+
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python alphapolis_translate.py <episode_url> [target_lang]")
-        sys.exit(1)
+    """Entry point for the Alphapolis translation CLI tool."""
+    setup_logging()
+    parser = argparse.ArgumentParser(description="Translate Alphapolis episode to English")
+    parser.add_argument("url", help="Episode URL to translate")
+    parser.add_argument("target_lang", nargs="?", default="en", help="Target language (default: en)")
+    parser.add_argument(
+        "--backend",
+        choices=[BACKEND_GOOGLE, BACKEND_LLM],
+        default=BACKEND_GOOGLE,
+        help="Translation backend (default: google)",
+    )
+    args = parser.parse_args()
 
-    url = sys.argv[1]
-    target_lang = sys.argv[2] if len(sys.argv) > 2 else "en"
+    url = args.url
+    target_lang = args.target_lang
+    backend = args.backend
 
-    print(f"Fetching {url} ...", file=sys.stderr)
+    print(f"Fetching {url} ...")
     html = fetch_html(url)
     soup = BeautifulSoup(html, "html.parser")
 
     content = find_content(soup)
     if content is None:
-        print(
-            "Could not locate episode text -- the page may be JS-rendered, " "behind a bot-check, or using an anti-scrape technique this " "script can't see through.",
-            file=sys.stderr,
-        )
+        logger.error("Could not locate episode text -- the page may be JS-rendered, " "behind a bot-check, or using an anti-scrape technique this " "script can't see through.")
         sys.exit(2)
 
     paragraphs = [p.get_text(strip=True) for p in content.find_all("p")]
@@ -138,19 +206,9 @@ def main():
         raw = content.get_text(separator="\n", strip=True)
         paragraphs = [p for p in raw.split("\n") if p.strip()]
 
-    print(f"Found {len(paragraphs)} paragraph(s). Translating in chunks...", file=sys.stderr)
+    print(f"Found {len(paragraphs)} paragraph(s). Translating with {backend} backend...")
 
-    chunks = chunk_text(paragraphs)
-    translated_paragraphs = []
-    for i, chunk in enumerate(chunks, 1):
-        joined = "\n\n".join(chunk)
-        try:
-            translated = translate_chunk(joined, target_lang=target_lang)
-        except Exception as e:
-            print(f"  chunk {i}/{len(chunks)} failed: {e}", file=sys.stderr)
-            translated = "[translation failed for this section]"
-        translated_paragraphs.append(translated)
-        time.sleep(0.3)  # be polite to the free endpoint
+    translated_paragraphs = translate_lines(paragraphs, target_lang=target_lang, backend=backend)
 
     print("\n\n".join(translated_paragraphs))
 

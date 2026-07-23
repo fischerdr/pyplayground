@@ -21,15 +21,15 @@ Usage:
     python alphapolis_reader.py "<url>" es      # translate to Spanish instead of English
 """
 
-import sys
+import hashlib
 import json
-import time
 import queue
 import signal
-import hashlib
+import sys
 import threading
-import traceback
+import time
 import tkinter as tk
+import traceback
 from pathlib import Path
 from tkinter import ttk
 
@@ -37,6 +37,11 @@ import requests
 from bs4 import BeautifulSoup
 
 from pyplayground.utils.config_utils import load_json_config, save_json_config
+from pyplayground.utils.logging_utils import get_logger, setup_logging
+from pyplayground.webnovels.llm_translate import BACKEND_GOOGLE, BACKEND_LLM, DEFAULT_BACKEND, check_llm_available
+from pyplayground.webnovels.llm_translate import translate_lines as llm_translate_lines
+
+logger = get_logger(__name__)
 
 """Constants for the Alphapolis reader application."""
 
@@ -224,12 +229,7 @@ class BrowserWorker(threading.Thread):
         try:
             from playwright.sync_api import sync_playwright
         except Exception as e:
-            self.startup_error = RuntimeError(
-                "Playwright isn't installed. Run:\n"
-                "  pip install playwright\n"
-                "  playwright install chromium\n\n"
-                f"Original error: {e}"
-            )
+            self.startup_error = RuntimeError("Playwright isn't installed. Run:\n" "  pip install playwright\n" "  playwright install chromium\n\n" f"Original error: {e}")
             self._ready.set()
             return
 
@@ -237,10 +237,7 @@ class BrowserWorker(threading.Thread):
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(headless=True)
                 context = browser.new_context(
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-                    ),
+                    user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"),
                     locale="ja-JP",
                 )
                 page = context.new_page()
@@ -265,9 +262,7 @@ class BrowserWorker(threading.Thread):
             # chromium at all) -- if _ready was never set, surface it there;
             # otherwise there's nowhere else for it to go but a response.
             if not self._ready.is_set():
-                self.startup_error = RuntimeError(
-                    "Failed to launch Chromium via Playwright:\n" + traceback.format_exc()
-                )
+                self.startup_error = RuntimeError("Failed to launch Chromium via Playwright:\n" + traceback.format_exc())
                 self._ready.set()
             else:
                 self._responses.put(("error", traceback.format_exc()))
@@ -449,17 +444,21 @@ def translate_chunk(text: str, target_lang="en", source_lang="ja") -> str:
     return "".join(seg[0] for seg in data[0])
 
 
-def translate_lines(lines, target_lang="en", progress_cb=None) -> list:
+def translate_lines(lines, target_lang="en", backend=BACKEND_GOOGLE, progress_cb=None) -> list:
     """Translate a list of text lines, chunking to respect API limits.
 
     Args:
         lines: List of text lines to translate.
         target_lang: Target language code (default: en).
+        backend: Translation backend ('google' or 'llm').
         progress_cb: Optional callback(done, total) for progress updates.
 
     Returns:
         List of translated text lines.
     """
+    if backend == BACKEND_LLM:
+        return llm_translate_lines(lines, target_lang=target_lang, progress_cb=progress_cb)
+
     chunks = pack_into_chunks(lines, MAX_CHUNK_CHARS)
     translated_lines = []
     for i, chunk in enumerate(chunks):
@@ -500,6 +499,7 @@ class ReaderApp:
         self.root = root
         self.browser = browser
         self.target_lang = target_lang
+        self.backend = self._load_backend()
         self.episode = None
         self.cache = {}
         self.font_size = 12
@@ -527,9 +527,7 @@ class ReaderApp:
 
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
         for value, label in (("original", "Original"), ("translated", "Translated"), ("both", "Both")):
-            ttk.Radiobutton(
-                toolbar, text=label, value=value, variable=self.view_mode, command=self.render_text
-            ).pack(side="left")
+            ttk.Radiobutton(toolbar, text=label, value=value, variable=self.view_mode, command=self.render_text).pack(side="left")
 
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
         ttk.Button(toolbar, text="A-", width=3, command=self.decrease_font).pack(side="left")
@@ -582,6 +580,23 @@ class ReaderApp:
 
         return set(tkfont.families())
 
+    def _load_backend(self) -> str:
+        """Load the saved translation backend setting."""
+        try:
+            state = load_reader_state()
+            return state.get("backend", DEFAULT_BACKEND)
+        except Exception:
+            return DEFAULT_BACKEND
+
+    def _save_backend(self) -> None:
+        """Save the current backend setting to state."""
+        try:
+            state = load_reader_state()
+            state["backend"] = self.backend
+            save_json_config(state, STATE_FILE, config_dir=STATE_DIR)
+        except Exception as e:
+            logger.debug(f"Failed to save backend setting: {e}")
+
     def apply_appearance(self):
         """Apply current appearance settings (colors, font, spacing) to the GUI."""
         palette = DARK_PALETTE if self.dark_mode else LIGHT_PALETTE
@@ -599,9 +614,7 @@ class ReaderApp:
             fg=palette["fg"],
             insertbackground=palette["fg"],
         )
-        self.text.tag_configure(
-            "heading", font=(self.font_family, self.font_size + 4, "bold"), spacing3=self.paragraph_spacing, foreground=palette["fg"]
-        )
+        self.text.tag_configure("heading", font=(self.font_family, self.font_size + 4, "bold"), spacing3=self.paragraph_spacing, foreground=palette["fg"])
         self.text.tag_configure(
             "original",
             foreground=palette["original"],
@@ -688,6 +701,17 @@ class ReaderApp:
 
         pad = {"padx": 10, "pady": (10, 2)}
 
+        ttk.Label(win, text="Translation Backend").pack(anchor="w", **pad)
+        backend_var = tk.StringVar(value=self.backend)
+        backend_row = ttk.Frame(win)
+        backend_row.pack(anchor="w", padx=10)
+        llm_available = check_llm_available()
+        for value, label in ((BACKEND_GOOGLE, "Google Translate"), (BACKEND_LLM, f"Local LLM ({'available' if llm_available else 'not found'})")):
+            state = "normal" if value != BACKEND_LLM or llm_available else "disabled"
+            ttk.Radiobutton(backend_row, text=label, value=value, variable=backend_var, state=state).pack(side="left")
+        if not llm_available:
+            ttk.Label(backend_row, text="(llama-server not running)", fg="#888").pack(side="left", padx=(4, 0))
+
         ttk.Label(win, text="Font").pack(anchor="w", **pad)
         font_var = tk.StringVar(value=self.font_family)
         font_choices = [f for f in FONT_CANDIDATES if f in self._available_fonts()]
@@ -733,6 +757,8 @@ class ReaderApp:
             self.paragraph_spacing = paragraph_spacing_var.get()
             self.page_width_pct = page_width_var.get()
             self.text_align = align_var.get()
+            self.backend = backend_var.get()
+            self._save_backend()
             win.destroy()
             self.apply_appearance()
             self.render_text()
@@ -774,10 +800,11 @@ class ReaderApp:
         if cached is not None:
             self.cache[url] = cached
             return cached
+        logger.info(f"Fetching and translating episode: {url} (backend={self.backend})")
         html = self.browser.fetch(url)
         ep = parse_episode(html)
-        ep["translated_lines"] = translate_lines(ep["lines"], self.target_lang, progress_cb=progress_cb)
-        title_lines = translate_lines([ep["title"], ep["episode_title"]], self.target_lang)
+        ep["translated_lines"] = translate_lines(ep["lines"], self.target_lang, backend=self.backend, progress_cb=progress_cb)
+        title_lines = translate_lines([ep["title"], ep["episode_title"]], self.target_lang, backend=self.backend)
         ep["translated_title"], ep["translated_episode_title"] = title_lines
         for item in ep["content"]:
             if item["type"] == "image":
@@ -787,6 +814,7 @@ class ReaderApp:
                     print(traceback.format_exc(), file=sys.stderr)
         self.cache[url] = ep
         save_cached_episode(url, ep)
+        logger.info(f"Episode translated successfully: {ep.get('episode_title', 'unknown')}")
         return ep
 
     def load_episode(self, url):
@@ -867,6 +895,7 @@ class ReaderApp:
             return self._photo_images[src]
         try:
             from io import BytesIO
+
             from PIL import Image, ImageTk
 
             data = fetch_image_bytes(src)
@@ -946,6 +975,7 @@ class ReaderApp:
 
 def main():
     """Entry point for the Alphapolis reader application."""
+    setup_logging()
     target_lang = sys.argv[2] if len(sys.argv) > 2 else "en"
 
     if len(sys.argv) < 2:

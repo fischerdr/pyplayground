@@ -29,6 +29,8 @@ import requests
 from bs4 import BeautifulSoup
 
 from pyplayground.utils.logging_utils import get_logger, setup_logging
+from pyplayground.webnovels.alphapolis_reader_v01 import _extract_novel_id
+from pyplayground.webnovels.glossary import format_glossary_for_prompt, load_glossary
 from pyplayground.webnovels.llm_translate import BACKEND_GOOGLE, BACKEND_LLM
 from pyplayground.webnovels.llm_translate import translate_lines as llm_translate_lines
 
@@ -144,19 +146,20 @@ def translate_chunk(text: str, target_lang: str = "en", source_lang: str = "ja")
     return "".join(seg[0] for seg in data[0])
 
 
-def translate_lines(lines, target_lang="en", backend=BACKEND_GOOGLE):
+def translate_lines(lines, target_lang="en", backend=BACKEND_GOOGLE, glossary_text=None):
     """Translate a list of text lines using the selected backend.
 
     Args:
         lines: List of text lines to translate.
         target_lang: Target language code (default: en).
         backend: Translation backend ('google' or 'llm').
+        glossary_text: Optional pre-formatted glossary text (LLM backend only).
 
     Returns:
         List of translated text lines.
     """
     if backend == BACKEND_LLM:
-        return llm_translate_lines(lines, target_lang=target_lang)
+        return llm_translate_lines(lines, target_lang=target_lang, glossary_text=glossary_text)
 
     chunks = chunk_text(lines)
     translated_paragraphs = []
@@ -208,7 +211,13 @@ def main():
 
     print(f"Found {len(paragraphs)} paragraph(s). Translating with {backend} backend...")
 
-    translated_paragraphs = translate_lines(paragraphs, target_lang=target_lang, backend=backend)
+    glossary_text = None
+    if backend == BACKEND_LLM:
+        novel_id = _extract_novel_id(url)
+        if novel_id:
+            glossary_text = format_glossary_for_prompt(load_glossary(novel_id))
+
+    translated_paragraphs = translate_lines(paragraphs, target_lang=target_lang, backend=backend, glossary_text=glossary_text)
 
     print("\n\n".join(translated_paragraphs))
 

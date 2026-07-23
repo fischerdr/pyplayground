@@ -27,9 +27,11 @@ import requests
 from pyplayground.utils.logging_utils import get_logger, setup_logging
 from pyplayground.webnovels.alphapolis_reader_v01 import (
     BrowserWorker,
+    _extract_novel_id,
     load_cached_episode,
     parse_episode,
 )
+from pyplayground.webnovels.glossary import format_glossary_for_prompt, load_glossary
 from pyplayground.webnovels.llm_translate import translate_lines as llm_translate_lines
 
 logger = get_logger(__name__)
@@ -162,9 +164,14 @@ def compare_translations(
     google_time = time.time() - t0
     print(f"Google Translate completed in {google_time:.1f}s")
 
+    glossary_text = None
+    novel_id = _extract_novel_id(url)
+    if novel_id:
+        glossary_text = format_glossary_for_prompt(load_glossary(novel_id))
+
     print(f"Translating {len(lines)} lines with LLM...")
     t0 = time.time()
-    llm_translated = llm_translate_lines(lines, target_lang=target_lang)
+    llm_translated = llm_translate_lines(lines, target_lang=target_lang, glossary_text=glossary_text)
     llm_time = time.time() - t0
     print(f"LLM translation completed in {llm_time:.1f}s")
 

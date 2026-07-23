@@ -31,7 +31,7 @@ Backend constants:
 
 import json
 import time
-from typing import Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
@@ -84,6 +84,13 @@ TRANSLATION_PROMPT = (
 # Sliding window context prompt prefix, inserted before the instruction line.
 CONTEXT_PREFIX = "Here is the context from the previous paragraphs for consistency:\n{context}\n\n"
 
+# Glossary prompt prefix, inserted before the sliding-window context (if any)
+# and the instruction line. Distinct from CONTEXT_PREFIX: the glossary is
+# "translate these specific terms consistently" (persistent, per-novel),
+# while CONTEXT_PREFIX is "here's immediately preceding text" (transient,
+# resets each translate_lines() call).
+GLOSSARY_PREFIX = "{glossary}\n\n"
+
 LANGUAGE_NAMES = {
     "ja": "Japanese",
     "en": "English",
@@ -121,7 +128,7 @@ def _clean_output(text: str) -> str:
     return text.strip()
 
 
-def _log_timing(data: dict) -> None:
+def _log_timing(data: Dict[str, Any]) -> None:
     """Log translation timing statistics from a llama-server /completion response.
 
     Args:
@@ -140,6 +147,7 @@ def translate_chunk(
     target_lang: str = "en",
     source_lang: str = "ja",
     context: Optional[str] = None,
+    glossary_text: Optional[str] = None,
     progress_cb: Optional[Callable[[int, int], None]] = None,
     chunk_idx: int = 0,
     total_chunks: int = 1,
@@ -151,6 +159,9 @@ def translate_chunk(
         target_lang: Target language code (default: en).
         source_lang: Source language code (default: ja).
         context: Optional previous paragraphs for consistency.
+        glossary_text: Optional pre-formatted glossary text (character names/
+            terms and running context notes) to prepend to the prompt, from
+            pyplayground.webnovels.glossary.format_glossary_for_prompt().
         progress_cb: Optional callback(done, total) for progress updates.
         chunk_idx: Current chunk index (0-based).
         total_chunks: Total number of chunks being translated.
@@ -168,6 +179,8 @@ def translate_chunk(
     prompt = TRANSLATION_PROMPT.format(source_lang=source_name, target_lang=target_name, text=text)
     if context:
         prompt = CONTEXT_PREFIX.format(context=context) + prompt
+    if glossary_text:
+        prompt = GLOSSARY_PREFIX.format(glossary=glossary_text) + prompt
 
     # Stop once the model starts a new "<language>:" label or drops into an
     # unrelated blank-line-separated block -- prevents echoing the source
@@ -222,6 +235,7 @@ def translate_lines(
     source_lang: str = "ja",
     max_chunk_chars: int = 400,
     context_window: int = 3,
+    glossary_text: Optional[str] = None,
     progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> List[str]:
     """Translate a list of text lines using LLM with sliding context.
@@ -242,6 +256,9 @@ def translate_lines(
             the fallback below then collapses into a single oversized
             "line" instead of preserving per-paragraph granularity.
         context_window: Number of previous paragraphs to use as context.
+        glossary_text: Optional pre-formatted glossary text (character names/
+            terms and running context notes), prepended to every chunk's
+            prompt for consistency. See pyplayground.webnovels.glossary.
         progress_cb: Optional callback(done, total) for progress updates.
 
     Returns:
@@ -281,6 +298,7 @@ def translate_lines(
                 target_lang=target_lang,
                 source_lang=source_lang,
                 context=context,
+                glossary_text=glossary_text,
                 progress_cb=progress_cb,
                 chunk_idx=i,
                 total_chunks=len(chunks),
@@ -327,7 +345,8 @@ def check_llm_available(endpoint: Optional[str] = None) -> bool:
         data = resp.json()
         models = [m["name"] for m in data.get("models", [])]
         # Check if the model (or a prefix match) is available
-        available = any(LLM_MODEL.startswith(m.split(":")[0]) for m in models)
+        model_name = str(LLM_MODEL)
+        available = any(model_name.startswith(m.split(":")[0]) for m in models)
         if not available:
             logger.warning(f"Model {LLM_MODEL} not found in LLM server. Available: {', '.join(models)}")
         return available

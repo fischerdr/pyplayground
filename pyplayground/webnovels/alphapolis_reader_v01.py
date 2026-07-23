@@ -24,6 +24,7 @@ Usage:
 import hashlib
 import json
 import queue
+import re
 import signal
 import sys
 import threading
@@ -31,13 +32,15 @@ import time
 import tkinter as tk
 import traceback
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
+from typing import Any, Dict, Optional
 
 import requests
 from bs4 import BeautifulSoup
 
 from pyplayground.utils.config_utils import load_json_config, save_json_config
 from pyplayground.utils.logging_utils import get_logger, setup_logging
+from pyplayground.webnovels.glossary import format_glossary_for_prompt, load_glossary
 from pyplayground.webnovels.llm_translate import BACKEND_GOOGLE, BACKEND_LLM, DEFAULT_BACKEND, check_llm_available
 from pyplayground.webnovels.llm_translate import translate_lines as llm_translate_lines
 
@@ -80,7 +83,22 @@ FONT_CANDIDATES = [
 ]
 DEFAULT_FONT_FALLBACK = "TkDefaultFont"
 
-CACHE_SCHEMA_VERSION = 2  # bump whenever the episode dict shape changes
+CACHE_SCHEMA_VERSION = 3  # bump whenever the episode dict shape changes
+
+NOVEL_ID_RE = re.compile(r"/novel/(\d+)/")
+
+
+def _extract_novel_id(url: str) -> Optional[str]:
+    """Extract the Alphapolis novel ID from an episode URL.
+
+    Args:
+        url: An episode URL, e.g. https://www.alphapolis.co.jp/novel/{novel_id}/{volume_id}/episode/{episode_id}.
+
+    Returns:
+        The novel ID string, or None if the URL doesn't match the expected pattern.
+    """
+    match = NOVEL_ID_RE.search(url)
+    return match.group(1) if match else None
 
 
 def _cache_path(url: str) -> Path:
@@ -121,7 +139,7 @@ def save_cached_episode(url: str, episode: dict) -> None:
         url: The episode URL used as cache key.
         episode: The episode data to cache.
     """
-    episode = dict(episode, _cache_schema_version=CACHE_SCHEMA_VERSION)
+    episode = dict(episode, _cache_schema_version=CACHE_SCHEMA_VERSION, url=url, novel_id=_extract_novel_id(url))
     path = _cache_path(url)
     save_json_config(episode, path.stem, config_dir=path.parent)
 
@@ -138,14 +156,19 @@ def load_reader_state() -> dict:
         return {}
 
 
-def save_reader_state(url: str, target_lang: str) -> None:
-    """Save the current URL and target language to the state file.
+def save_reader_state(url: str, target_lang: str, scroll_pos: Optional[float] = None) -> None:
+    """Save the current URL, target language, and scroll position to the state file.
 
     Args:
         url: The current episode URL.
         target_lang: The target translation language code.
+        scroll_pos: Fraction (0.0-1.0) of the way scrolled through the text
+            widget, from Text.yview()[0]. None leaves the field unset.
     """
-    save_json_config({"url": url, "target_lang": target_lang}, STATE_FILE, config_dir=STATE_DIR)
+    state: Dict[str, Any] = {"url": url, "target_lang": target_lang}
+    if scroll_pos is not None:
+        state["scroll_pos"] = scroll_pos
+    save_json_config(state, STATE_FILE, config_dir=STATE_DIR)
 
 
 def _image_cache_path(image_url: str) -> Path:
@@ -444,20 +467,22 @@ def translate_chunk(text: str, target_lang="en", source_lang="ja") -> str:
     return "".join(seg[0] for seg in data[0])
 
 
-def translate_lines(lines, target_lang="en", backend=BACKEND_GOOGLE, progress_cb=None) -> list:
+def translate_lines(lines, target_lang="en", backend=BACKEND_GOOGLE, glossary_text=None, progress_cb=None) -> list:
     """Translate a list of text lines, chunking to respect API limits.
 
     Args:
         lines: List of text lines to translate.
         target_lang: Target language code (default: en).
         backend: Translation backend ('google' or 'llm').
+        glossary_text: Optional pre-formatted glossary text (LLM backend only;
+            ignored for Google, which has no mechanism to honor it).
         progress_cb: Optional callback(done, total) for progress updates.
 
     Returns:
         List of translated text lines.
     """
     if backend == BACKEND_LLM:
-        return llm_translate_lines(lines, target_lang=target_lang, progress_cb=progress_cb)
+        return llm_translate_lines(lines, target_lang=target_lang, glossary_text=glossary_text, progress_cb=progress_cb)
 
     chunks = pack_into_chunks(lines, MAX_CHUNK_CHARS)
     translated_lines = []
@@ -487,7 +512,7 @@ class ReaderApp:
     Provides navigation, translation display, font controls, and dark mode.
     """
 
-    def __init__(self, root, browser, start_url, target_lang="en"):
+    def __init__(self, root, browser, start_url, target_lang="en", restore_scroll_pos=None):
         """Initialize the reader application GUI.
 
         Args:
@@ -495,6 +520,9 @@ class ReaderApp:
             browser: A BrowserWorker instance for fetching pages.
             start_url: The initial episode URL to load.
             target_lang: Target translation language code (default: en).
+            restore_scroll_pos: Fraction (0.0-1.0) to scroll to once start_url
+                finishes loading, if resuming a previous session. None means
+                scroll to the top as usual (a fresh/explicit URL was given).
         """
         self.root = root
         self.browser = browser
@@ -502,6 +530,7 @@ class ReaderApp:
         self.backend = self._load_backend()
         self.episode = None
         self.cache = {}
+        self._restore_scroll_pos = restore_scroll_pos
         self.font_size = 12
         self.image_width = 400
         self.dark_mode = False
@@ -515,7 +544,9 @@ class ReaderApp:
         self._photo_images = {}
 
         root.title("Alphapolis Reader")
-        root.geometry("900x700")
+        # Widened from 900 to fit the Refresh button added to the toolbar
+        # without clipping Settings... off the right edge.
+        root.geometry("990x700")
 
         toolbar = ttk.Frame(root)
         toolbar.pack(fill="x", padx=8, pady=6)
@@ -540,10 +571,8 @@ class ReaderApp:
 
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
         ttk.Button(toolbar, text="Load Novel...", command=self.open_load_url_dialog).pack(side="left")
+        ttk.Button(toolbar, text="Refresh", command=self.refresh_current_episode).pack(side="left", padx=(6, 0))
         ttk.Button(toolbar, text="Settings...", command=self.open_settings_dialog).pack(side="left", padx=(6, 0))
-
-        self.status_label = ttk.Label(toolbar, text="")
-        self.status_label.pack(side="left", padx=12)
 
         url_bar = ttk.Frame(root)
         url_bar.pack(fill="x", padx=8, pady=(0, 6))
@@ -552,8 +581,22 @@ class ReaderApp:
         self.url_entry = ttk.Entry(url_bar, textvariable=self.url_var, state="readonly")
         self.url_entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
 
-        self.text = tk.Text(root, wrap="word", padx=16, pady=12, borderwidth=0, highlightthickness=0)
-        self.text.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        # Status bar docked at the bottom -- packed before the text widget so
+        # it claims its space first; the text widget then fills what remains.
+        status_bar = ttk.Frame(root)
+        status_bar.pack(side="bottom", fill="x", padx=8, pady=(0, 6))
+        self.status_label = ttk.Label(status_bar, text="")
+        self.status_label.pack(side="left")
+
+        text_frame = ttk.Frame(root)
+        text_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        text_scrollbar = ttk.Scrollbar(text_frame, orient="vertical")
+        text_scrollbar.pack(side="right", fill="y")
+
+        self.text = tk.Text(text_frame, wrap="word", padx=16, pady=12, borderwidth=0, highlightthickness=0, yscrollcommand=text_scrollbar.set)
+        self.text.pack(side="left", fill="both", expand=True)
+        text_scrollbar.config(command=self.text.yview)
         self.apply_appearance()
 
         self.prev_btn.state(["disabled"])
@@ -696,7 +739,9 @@ class ReaderApp:
         """Open the settings dialog for font, spacing, and alignment controls."""
         win = tk.Toplevel(self.root)
         win.title("Settings")
-        win.geometry("360x360")
+        # Heightened from 360 to fit the Clear Cache section added below
+        # the existing controls without clipping the Apply/Cancel buttons.
+        win.geometry("360x440")
         win.transient(self.root)
 
         pad = {"padx": 10, "pady": (10, 2)}
@@ -763,6 +808,9 @@ class ReaderApp:
             self.apply_appearance()
             self.render_text()
 
+        ttk.Separator(win, orient="horizontal").pack(fill="x", padx=10, pady=(10, 0))
+        ttk.Button(win, text="Clear Cache...", command=lambda: self._confirm_clear_cache(win)).pack(anchor="w", padx=10, pady=(8, 0))
+
         btns = ttk.Frame(win)
         btns.pack(pady=(14, 10))
         ttk.Button(btns, text="Apply", command=apply_and_close).pack(side="left", padx=4)
@@ -801,10 +849,17 @@ class ReaderApp:
             self.cache[url] = cached
             return cached
         logger.info(f"Fetching and translating episode: {url} (backend={self.backend})")
+
+        glossary_text = None
+        if self.backend == BACKEND_LLM:
+            novel_id = _extract_novel_id(url)
+            if novel_id:
+                glossary_text = format_glossary_for_prompt(load_glossary(novel_id))
+
         html = self.browser.fetch(url)
         ep = parse_episode(html)
-        ep["translated_lines"] = translate_lines(ep["lines"], self.target_lang, backend=self.backend, progress_cb=progress_cb)
-        title_lines = translate_lines([ep["title"], ep["episode_title"]], self.target_lang, backend=self.backend)
+        ep["translated_lines"] = translate_lines(ep["lines"], self.target_lang, backend=self.backend, glossary_text=glossary_text, progress_cb=progress_cb)
+        title_lines = translate_lines([ep["title"], ep["episode_title"]], self.target_lang, backend=self.backend, glossary_text=glossary_text)
         ep["translated_title"], ep["translated_episode_title"] = title_lines
         for item in ep["content"]:
             if item["type"] == "image":
@@ -827,8 +882,16 @@ class ReaderApp:
         self.prev_btn.state(["disabled"])
         self.next_btn.state(["disabled"])
 
+        start_time = time.time()
+
         def progress_cb(done, total):
-            self.root.after(0, lambda: self.set_status(f"Translating... {done}/{total}"))
+            elapsed = time.time() - start_time
+            if done > 0:
+                eta = elapsed / done * (total - done)
+                text = f"Translating... {done}/{total} ({elapsed:.0f}s elapsed, ~{eta:.0f}s left)"
+            else:
+                text = f"Translating... {done}/{total} ({elapsed:.0f}s elapsed)"
+            self.root.after(0, lambda: self.set_status(text))
 
         def worker():
             try:
@@ -841,6 +904,40 @@ class ReaderApp:
                 self.root.after(0, lambda: self.set_status("Error"))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def refresh_current_episode(self):
+        """Discard cached data for the current episode and re-fetch/re-translate it."""
+        if not hasattr(self, "current_url") or not self.current_url:
+            return
+        url = self.current_url
+        self.cache.pop(url, None)
+        _cache_path(url).unlink(missing_ok=True)
+        self.set_status("Refreshing chapter...")
+        self.load_episode(url)
+
+    def _confirm_clear_cache(self, settings_win):
+        """Ask for confirmation, then clear the entire on-disk episode cache.
+
+        Args:
+            settings_win: The Settings dialog window, closed on confirm.
+        """
+        if not messagebox.askyesno(
+            "Clear Cache",
+            "This will delete all cached episode translations and images. " "You'll need to re-translate anything you read again. Continue?",
+            parent=settings_win,
+        ):
+            return
+        self.clear_cache()
+        settings_win.destroy()
+
+    def clear_cache(self):
+        """Clear the in-memory and on-disk episode cache (not reader state)."""
+        self.cache.clear()
+        if CACHE_DIR.exists():
+            for path in CACHE_DIR.rglob("*"):
+                if path.is_file():
+                    path.unlink()
+        self.set_status("Cache cleared")
 
     def prefetch(self, url):
         """Fetch+translate an episode in the background so navigating to it is instant."""
@@ -870,7 +967,12 @@ class ReaderApp:
         self.episode = ep
         self.current_url = url
         self.url_var.set(url)
-        self.render_text()
+        # Only ever applies once, on the very first episode load at startup
+        # when resuming a previous session -- consume it here so any later
+        # navigation (Next/Prev, loading a different URL) scrolls to top as normal.
+        restore_scroll_pos = self._restore_scroll_pos
+        self._restore_scroll_pos = None
+        self.render_text(restore_scroll_pos=restore_scroll_pos)
 
         self.prev_btn.state(["!disabled"] if ep["prev_url"] else ["disabled"])
         self.next_btn.state(["!disabled"] if ep["next_url"] else ["disabled"])
@@ -938,8 +1040,14 @@ class ReaderApp:
                 self.text.insert("end", line + "\n", tag)
                 line_idx += 1
 
-    def render_text(self):
-        """Render the current episode content in the text widget."""
+    def render_text(self, restore_scroll_pos=None):
+        """Render the current episode content in the text widget.
+
+        Args:
+            restore_scroll_pos: Fraction (0.0-1.0) to scroll to after
+                rendering, instead of scrolling to the top. Used only when
+                resuming a previous session to the exact spot left off.
+        """
         ep = self.episode
         if ep is None:
             return
@@ -960,7 +1068,10 @@ class ReaderApp:
             self.text.insert("end", "\n---- Translation ----\n\n", "heading")
         if mode in ("translated", "both"):
             self._render_translated_content(ep, "translated")
-        self.text.see("1.0")
+        if restore_scroll_pos is not None:
+            self.text.yview_moveto(restore_scroll_pos)
+        else:
+            self.text.see("1.0")
 
     def go_prev(self):
         """Navigate to the previous episode if available."""
@@ -978,10 +1089,12 @@ def main():
     setup_logging()
     target_lang = sys.argv[2] if len(sys.argv) > 2 else "en"
 
+    restore_scroll_pos = None
     if len(sys.argv) < 2:
         state = load_reader_state()
         start_url = state.get("url")
         target_lang = state.get("target_lang", target_lang)
+        restore_scroll_pos = state.get("scroll_pos")
         if not start_url:
             print("Usage: python alphapolis_reader.py <episode_url> [target_lang]")
             sys.exit(1)
@@ -1008,9 +1121,12 @@ def main():
         sys.exit(1)
 
     root = tk.Tk()
-    app = ReaderApp(root, browser, start_url, target_lang)
+    app = ReaderApp(root, browser, start_url, target_lang, restore_scroll_pos=restore_scroll_pos)
 
     def on_close():
+        if hasattr(app, "current_url"):
+            scroll_pos = app.text.yview()[0]
+            save_reader_state(app.current_url, app.target_lang, scroll_pos=scroll_pos)
         browser.close()
         root.destroy()
 

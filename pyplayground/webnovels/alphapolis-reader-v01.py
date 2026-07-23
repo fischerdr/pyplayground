@@ -38,13 +38,23 @@ from bs4 import BeautifulSoup
 
 from pyplayground.utils.config_utils import load_json_config, save_json_config
 
+"""Constants for the Alphapolis reader application."""
+
 TRANSLATE_ENDPOINT = "https://translate.googleapis.com/translate_a/single"
+"""Google Translate API endpoint URL."""
+
 MAX_CHUNK_CHARS = 150  # keep encoded URLs well under length limits
 BASE_URL = "https://www.alphapolis.co.jp"
+"""Base URL for Alphapolis website."""
 
 STATE_DIR = Path.home() / ".config" / "alphapolis_reader"
+"""Directory for storing reader state (e.g., last-read URL)."""
+
 STATE_FILE = "state.json"
+"""Filename for the reader state file."""
+
 CACHE_DIR = Path.home() / ".cache" / "alphapolis_reader"
+"""Directory for caching episode data and images."""
 
 LIGHT_PALETTE = {"bg": "#ffffff", "fg": "#000000", "original": "#333333", "translated": "#1a56c4"}
 DARK_PALETTE = {"bg": "#1e1e1e", "fg": "#e0e0e0", "original": "#c9c9c9", "translated": "#7aa2f7"}
@@ -69,11 +79,27 @@ CACHE_SCHEMA_VERSION = 2  # bump whenever the episode dict shape changes
 
 
 def _cache_path(url: str) -> Path:
+    """Return the cache file path for a given episode URL.
+
+    Args:
+        url: The episode URL to cache.
+
+    Returns:
+        Path object pointing to the cache JSON file.
+    """
     digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
     return CACHE_DIR / f"{digest}.json"
 
 
 def load_cached_episode(url: str) -> dict:
+    """Load a cached episode from disk, returning None if not found or stale.
+
+    Args:
+        url: The episode URL to look up.
+
+    Returns:
+        Episode dict if cached and schema matches, else None.
+    """
     path = _cache_path(url)
     if not path.exists():
         return None
@@ -84,12 +110,23 @@ def load_cached_episode(url: str) -> dict:
 
 
 def save_cached_episode(url: str, episode: dict) -> None:
+    """Save an episode dict to the on-disk cache with schema version.
+
+    Args:
+        url: The episode URL used as cache key.
+        episode: The episode data to cache.
+    """
     episode = dict(episode, _cache_schema_version=CACHE_SCHEMA_VERSION)
     path = _cache_path(url)
     save_json_config(episode, path.stem, config_dir=path.parent)
 
 
 def load_reader_state() -> dict:
+    """Load the reader state from the state file.
+
+    Returns:
+        Dict containing saved state (e.g., last URL, target language).
+    """
     try:
         return load_json_config(STATE_FILE, config_dir=STATE_DIR)
     except FileNotFoundError:
@@ -97,16 +134,38 @@ def load_reader_state() -> dict:
 
 
 def save_reader_state(url: str, target_lang: str) -> None:
+    """Save the current URL and target language to the state file.
+
+    Args:
+        url: The current episode URL.
+        target_lang: The target translation language code.
+    """
     save_json_config({"url": url, "target_lang": target_lang}, STATE_FILE, config_dir=STATE_DIR)
 
 
 def _image_cache_path(image_url: str) -> Path:
+    """Return the cache file path for a given image URL.
+
+    Args:
+        image_url: The image URL to cache.
+
+    Returns:
+        Path object pointing to the cached image file.
+    """
     digest = hashlib.sha256(image_url.encode("utf-8")).hexdigest()
     ext = Path(image_url.split("?")[0]).suffix or ".img"
     return CACHE_DIR / "images" / f"{digest}{ext}"
 
 
 def load_cached_image(image_url: str) -> bytes:
+    """Load cached image bytes from disk, returning None if not found.
+
+    Args:
+        image_url: The image URL to look up.
+
+    Returns:
+        Image bytes if cached, else None.
+    """
     path = _image_cache_path(image_url)
     if not path.exists():
         return None
@@ -138,7 +197,14 @@ def fetch_image_bytes(image_url: str) -> bytes:
 # thread for the whole app's lifetime; everything else talks to it through
 # a request/response queue pair.
 class BrowserWorker(threading.Thread):
+    """Playwright browser worker running in a dedicated daemon thread.
+
+    All Playwright calls live in this thread for the app's lifetime;
+    everything else talks to it through a request/response queue pair.
+    """
+
     def __init__(self):
+        """Initialize and start the browser worker thread."""
         super().__init__(daemon=True)
         self._requests = queue.Queue()
         self._responses = queue.Queue()
@@ -150,6 +216,11 @@ class BrowserWorker(threading.Thread):
             raise self.startup_error
 
     def run(self):
+        """Run the Playwright browser loop in this thread.
+
+        Launches Chromium, then processes fetch requests from the queue
+        until a None shutdown signal is received.
+        """
         try:
             from playwright.sync_api import sync_playwright
         except Exception as e:
@@ -202,6 +273,18 @@ class BrowserWorker(threading.Thread):
                 self._responses.put(("error", traceback.format_exc()))
 
     def fetch(self, url: str, timeout: float = 60.0) -> str:
+        """Fetch a page HTML by sending a request to the browser worker thread.
+
+        Args:
+            url: The URL to fetch.
+            timeout: Max seconds to wait for a response.
+
+        Returns:
+            The page HTML string.
+
+        Raises:
+            RuntimeError: If the browser fetch fails.
+        """
         self._requests.put(url)
         status, payload = self._responses.get(timeout=timeout)
         if status == "error":
@@ -209,6 +292,7 @@ class BrowserWorker(threading.Thread):
         return payload
 
     def close(self):
+        """Signal the browser worker to shut down and join the thread."""
         self._requests.put(None)
         self.join(timeout=10)
 
@@ -217,6 +301,14 @@ class BrowserWorker(threading.Thread):
 # Page parsing
 # ---------------------------------------------------------------------------
 def _resolve_image_url(src: str) -> str:
+    """Resolve a relative or protocol-relative image URL to an absolute URL.
+
+    Args:
+        src: The image src attribute value.
+
+    Returns:
+        The resolved absolute URL.
+    """
     if src.startswith("//"):
         return "https:" + src
     if src.startswith("/"):
@@ -225,9 +317,18 @@ def _resolve_image_url(src: str) -> str:
 
 
 def _extract_content(body) -> list:
-    """Walk the novel body in document order, yielding text lines and images
-    as they actually appear, so illustrations stay next to the paragraphs
-    they belong to instead of being flattened away by get_text()."""
+    """Walk the novel body in document order, yielding text lines and images.
+
+    Images are captured as they actually appear, so illustrations stay
+    next to the paragraphs they belong to instead of being flattened
+    away by get_text().
+
+    Args:
+        body: The BeautifulSoup body element to parse.
+
+    Returns:
+        List of dicts with type (text/image) and content fields.
+    """
     content = []
     for node in body.descendants:
         if getattr(node, "name", None) == "img":
@@ -245,6 +346,17 @@ def _extract_content(body) -> list:
 
 
 def parse_episode(html: str) -> dict:
+    """Parse an episode page HTML and extract title, author, content, and navigation.
+
+    Args:
+        html: The raw page HTML string.
+
+    Returns:
+        Dict with title, author, episode_title, lines, content, prev_url, next_url.
+
+    Raises:
+        RuntimeError: If #novelBody is not found in the page markup.
+    """
     soup = BeautifulSoup(html, "html.parser")
 
     body = soup.select_one("#novelBody, .p-novel-episode__text")
@@ -298,6 +410,15 @@ def parse_episode(html: str) -> dict:
 # Translation
 # ---------------------------------------------------------------------------
 def pack_into_chunks(strings, max_chars):
+    """Split a list of strings into chunks that fit within max_chars total length.
+
+    Args:
+        strings: List of strings to chunk.
+        max_chars: Maximum total character count per chunk.
+
+    Returns:
+        List of string lists, each fitting within the size limit.
+    """
     chunks, current, current_len = [], [], 0
     for s in strings:
         if current_len + len(s) > max_chars and current:
@@ -311,6 +432,16 @@ def pack_into_chunks(strings, max_chars):
 
 
 def translate_chunk(text: str, target_lang="en", source_lang="ja") -> str:
+    """Translate a single text chunk using Google Translate free endpoint.
+
+    Args:
+        text: The text to translate.
+        target_lang: Target language code (default: en).
+        source_lang: Source language code (default: ja).
+
+    Returns:
+        The translated text string.
+    """
     params = {"client": "gtx", "sl": source_lang, "tl": target_lang, "dt": "t", "q": text}
     resp = requests.get(TRANSLATE_ENDPOINT, params=params, timeout=15)
     resp.raise_for_status()
@@ -319,6 +450,16 @@ def translate_chunk(text: str, target_lang="en", source_lang="ja") -> str:
 
 
 def translate_lines(lines, target_lang="en", progress_cb=None) -> list:
+    """Translate a list of text lines, chunking to respect API limits.
+
+    Args:
+        lines: List of text lines to translate.
+        target_lang: Target language code (default: en).
+        progress_cb: Optional callback(done, total) for progress updates.
+
+    Returns:
+        List of translated text lines.
+    """
     chunks = pack_into_chunks(lines, MAX_CHUNK_CHARS)
     translated_lines = []
     for i, chunk in enumerate(chunks):
@@ -342,7 +483,20 @@ def translate_lines(lines, target_lang="en", progress_cb=None) -> list:
 # GUI
 # ---------------------------------------------------------------------------
 class ReaderApp:
+    """Tkinter-based desktop reader for Alphapolis novels.
+
+    Provides navigation, translation display, font controls, and dark mode.
+    """
+
     def __init__(self, root, browser, start_url, target_lang="en"):
+        """Initialize the reader application GUI.
+
+        Args:
+            root: The Tkinter root window.
+            browser: A BrowserWorker instance for fetching pages.
+            start_url: The initial episode URL to load.
+            target_lang: Target translation language code (default: en).
+        """
         self.root = root
         self.browser = browser
         self.target_lang = target_lang
@@ -429,6 +583,7 @@ class ReaderApp:
         return set(tkfont.families())
 
     def apply_appearance(self):
+        """Apply current appearance settings (colors, font, spacing) to the GUI."""
         palette = DARK_PALETTE if self.dark_mode else LIGHT_PALETTE
         # line_height is a multiplier on the font's natural line height, the
         # same convention as CSS line-height. 1.0 = tightest (no extra space
@@ -472,28 +627,34 @@ class ReaderApp:
         self.text.configure(padx=max(margin, 8))
 
     def increase_font(self):
+        """Increase the font size by 1, up to a maximum of 32."""
         self.font_size = min(self.font_size + 1, 32)
         self.apply_appearance()
 
     def decrease_font(self):
+        """Decrease the font size by 1, down to a minimum of 8."""
         self.font_size = max(self.font_size - 1, 8)
         self.apply_appearance()
 
     def increase_image_width(self):
+        """Increase the image display width by 100 pixels, up to 1200px."""
         self.image_width = min(self.image_width + 100, 1200)
         self._photo_images.clear()
         self.render_text()
 
     def decrease_image_width(self):
+        """Decrease the image display width by 100 pixels, down to 100px."""
         self.image_width = max(self.image_width - 100, 100)
         self._photo_images.clear()
         self.render_text()
 
     def toggle_dark_mode(self):
+        """Toggle between light and dark color palettes."""
         self.dark_mode = not self.dark_mode
         self.apply_appearance()
 
     def open_load_url_dialog(self):
+        """Open a dialog window for loading a new episode by URL."""
         win = tk.Toplevel(self.root)
         win.title("Load Novel")
         win.geometry("500x110")
@@ -519,6 +680,7 @@ class ReaderApp:
         ttk.Button(btns, text="Cancel", command=win.destroy).pack(side="left", padx=4)
 
     def open_settings_dialog(self):
+        """Open the settings dialog for font, spacing, and alignment controls."""
         win = tk.Toplevel(self.root)
         win.title("Settings")
         win.geometry("360x360")
@@ -581,10 +743,20 @@ class ReaderApp:
         ttk.Button(btns, text="Cancel", command=win.destroy).pack(side="left", padx=4)
 
     def set_status(self, msg):
+        """Update the status bar text and force a GUI refresh.
+
+        Args:
+            msg: The status message to display.
+        """
         self.status_label.config(text=msg)
         self.root.update_idletasks()
 
     def show_error(self, full_trace: str):
+        """Display an error dialog with the full traceback.
+
+        Args:
+            full_trace: The exception traceback string to display.
+        """
         win = tk.Toplevel(self.root)
         win.title("Error")
         win.geometry("700x400")
@@ -618,6 +790,11 @@ class ReaderApp:
         return ep
 
     def load_episode(self, url):
+        """Load and display an episode by URL in a background thread.
+
+        Args:
+            url: The episode URL to load.
+        """
         self.set_status("Loading...")
         self.prev_btn.state(["disabled"])
         self.next_btn.state(["disabled"])
@@ -656,6 +833,12 @@ class ReaderApp:
         threading.Thread(target=worker, daemon=True).start()
 
     def display_episode(self, url, ep):
+        """Display a parsed episode and update navigation buttons.
+
+        Args:
+            url: The episode URL that was loaded.
+            ep: The parsed episode dict.
+        """
         self.episode = ep
         self.current_url = url
         self.url_var.set(url)
@@ -669,9 +852,17 @@ class ReaderApp:
         self.prefetch(ep.get("next_url"))
 
     def _make_photo_image(self, src: str):
-        """Load (from cache/network) and decode an episode image, scaled to
-        fit the text widget's width. Returns None on any failure so a broken
-        image never blocks the rest of the chapter from rendering."""
+        """Load an episode image from cache or network and scale it.
+
+        Returns None on any failure so a broken image never blocks the
+        rest of the chapter from rendering.
+
+        Args:
+            src: The image source URL.
+
+        Returns:
+            A PhotoImage instance, or None on failure.
+        """
         if src in self._photo_images:
             return self._photo_images[src]
         try:
@@ -719,6 +910,7 @@ class ReaderApp:
                 line_idx += 1
 
     def render_text(self):
+        """Render the current episode content in the text widget."""
         ep = self.episode
         if ep is None:
             return
@@ -742,15 +934,18 @@ class ReaderApp:
         self.text.see("1.0")
 
     def go_prev(self):
+        """Navigate to the previous episode if available."""
         if self.episode and self.episode["prev_url"]:
             self.load_episode(self.episode["prev_url"])
 
     def go_next(self):
+        """Navigate to the next episode if available."""
         if self.episode and self.episode["next_url"]:
             self.load_episode(self.episode["next_url"])
 
 
 def main():
+    """Entry point for the Alphapolis reader application."""
     target_lang = sys.argv[2] if len(sys.argv) > 2 else "en"
 
     if len(sys.argv) < 2:

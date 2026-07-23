@@ -41,6 +41,7 @@ dependencies = [
     "pick>=2.4.0",
     "pillow>=11.0.0",
     "pint>=0.25.2",
+    "playwright>=1.48.0",
     "psutil>=7.0.0",
     "psycopg2-binary>=2.9.11",
     "pydub>=0.25.0",

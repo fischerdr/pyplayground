@@ -110,6 +110,8 @@ flexcache==0.3
     # via pint
 flexparser==0.4
     # via pint
+greenlet==3.5.4
+    # via playwright
 h11==0.16.0
     # via httpcore
 httpcore==1.0.9
@@ -242,6 +244,8 @@ platformdirs==4.3.7
     #   pooch
     #   textual
     #   virtualenv
+playwright==1.61.0
+    # via pyplayground (pyproject.toml)
 pluggy==1.5.0
     # via
     #   pytest
@@ -268,6 +272,8 @@ pydocstyle==6.3.0
     # via flake8-docstrings
 pydub==0.25.1
     # via pyplayground (pyproject.toml)
+pyee==13.0.1
+    # via playwright
 pyflakes==3.4.0
     # via flake8
 pygments==2.19.2
@@ -437,6 +443,7 @@ typing-extensions==4.13.2
     #   librosa
     #   mypy
     #   pint
+    #   pyee
     #   pymarkdownlnt
     #   textual
 uc-micro-py==2.0.0

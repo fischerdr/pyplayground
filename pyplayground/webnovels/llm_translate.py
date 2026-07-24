@@ -359,6 +359,119 @@ def translate_chunk(
     return translated
 
 
+# Prompt for the glossary popup's "meaning & alternatives" reference lookup
+# (alphapolis_reader.py's open_word_glossary_popup) -- a different task shape
+# than plain translation, so it gets its own prompt/parsing rather than
+# reusing TRANSLATION_PROMPT. Confirmed via live testing against both a
+# multi-character Chinese term (封禁) and a Japanese pronoun+particle
+# (オレの) that the same translategemma model handles this reasonably well
+# despite being translation-specialized -- it's still a general
+# instruction-tuned model under the hood.
+#
+# "category" (character vs. term) and the surrounding-sentence CONTEXT_LINE
+# are both load-bearing, not decorative: confirmed live that without any
+# sentence context, the model misclassifies invented/ambiguous character
+# names (e.g. 桂名, 仁菜, 音夢 -- not in any dictionary, the same root cause
+# documented in build_glossary.py's extraction prompt) as generic "term"
+# rather than "character", since in isolation they read like ordinary kanji
+# compounds. Passing the sentence the word actually appeared in fixed
+# classification on every case tested -- the model can use grammatical/
+# narrative cues (honorifics, dialogue address, verb agreement) that the
+# bare word alone doesn't carry.
+#
+# Does NOT ask the model to state a character's gender as a bare fact in
+# "meaning" -- confirmed via live testing that it will confidently assert a
+# wrong gender there (音夢 first called "female" despite being addressed
+# with the masculine -kun honorific in its own source sentence). Instead,
+# it's told to USE honorifics/context as evidence when picking alternative
+# romanizations, and explicitly warned off picking one whose connotation
+# fights the evidence (the same 音夢 case: "Otome" is phonetically close but
+# carries 乙女/"maiden" baggage that contradicts a -kun-addressed character).
+# This is a narrower, evidence-grounded ask than "guess the gender" -- it
+# constrains word choice rather than asserting an unverified claim.
+EXPLAIN_TERM_PROMPT = (
+    "You are a translation reference tool for a {source_lang}-to-{target_lang} novel translator. "
+    "For the given {source_lang} term, provide: "
+    '(1) category: is it a person\'s name/character ("character") or a general term/place/object/'
+    'concept ("term")? '
+    "(2) meaning: a literal meaning/etymology, breaking down each character or component if the "
+    "term has more than one. If it is a character's name, describe only what the name literally "
+    "means -- do NOT state the character's gender, age, or other attributes as fact. "
+    "(3) alternatives: 2-4 alternative {target_lang} translations with a short note on tone/"
+    "register for each. For a character's name, use any context clues available (e.g. honorifics "
+    "like -kun/-chan/-san, how other characters address them) to avoid alternatives whose "
+    "connotation conflicts with that evidence -- e.g. do not suggest a stereotypically feminine "
+    "name/spelling for a character addressed with a masculine honorific, or vice versa. "
+    "Output ONLY valid JSON, no other text, no markdown fences, in this exact shape:\n"
+    '{{"category": "character" or "term", "meaning": "...", '
+    '"characters": [{{"char": "X", "meaning": "..."}}], '
+    '"alternatives": [{{"word": "...", "note": "..."}}]}}\n\n'
+    "{context_line}"
+    "Term: {term}\n\n"
+    "JSON:"
+)
+
+CONTEXT_LINE_PREFIX = "The term appears in this sentence for context: {context}\n\n"
+
+
+def explain_term(term: str, source_lang: str = "ja", target_lang: str = "en", context: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Ask the LLM for a term's meaning/etymology and alternative translations.
+
+    Used by the reader's click-to-add-glossary-term popup to show a deeper
+    reference than the plain translate_chunk() guess -- category (character
+    vs. general term), component character breakdown, and tone-noted
+    alternatives, for building a real glossary entry rather than just
+    accepting a first-guess translation.
+
+    Args:
+        term: The source-language word/phrase to explain.
+        source_lang: Source language code (default: ja).
+        target_lang: Target language code (default: en).
+        context: Optional sentence the term appeared in. Strongly
+            recommended when available -- confirmed via live testing that
+            without it, ambiguous/invented character names are often
+            misclassified as a generic "term" rather than "character".
+
+    Returns:
+        Dict with "category" ("character" or "term"), "meaning" (str),
+        "characters" (list of {"char", "meaning"}), and "alternatives"
+        (list of {"word", "note"}), or None if the request failed or the
+        response didn't parse as the expected shape.
+    """
+    context_line = CONTEXT_LINE_PREFIX.format(context=context) if context else ""
+    prompt = EXPLAIN_TERM_PROMPT.format(source_lang=_language_name(source_lang), target_lang=_language_name(target_lang), context_line=context_line, term=term)
+    payload = {"prompt": prompt, "n_predict": 512, "temperature": 0.1}
+    url = f"{LLM_ENDPOINT}/completion"
+
+    try:
+        resp = requests.post(url, json=payload, timeout=LLM_TIMEOUT)
+        resp.raise_for_status()
+        data = resp.json()
+        raw_output = strip_code_fence(data.get("content", ""))
+        parsed = parse_json_response(raw_output)
+    except requests.exceptions.RequestException as e:
+        logger.debug(f"Term explanation request failed for {term!r}: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.debug(f"Term explanation output failed to parse as JSON for {term!r}: {e}")
+        return None
+
+    if not isinstance(parsed, dict) or "meaning" not in parsed:
+        logger.debug(f"Term explanation returned unexpected shape for {term!r}: {type(parsed).__name__}")
+        return None
+
+    category = parsed.get("category")
+    if category not in ("character", "term"):
+        category = "term"
+
+    return {
+        "category": category,
+        "meaning": parsed.get("meaning", ""),
+        "characters": parsed.get("characters", []),
+        "alternatives": parsed.get("alternatives", []),
+    }
+
+
 def translate_lines(
     lines: List[str],
     target_lang: str = "en",

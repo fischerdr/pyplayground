@@ -29,7 +29,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from pyplayground.utils.logging_utils import get_logger, setup_logging
-from pyplayground.webnovels.alphapolis_reader_v01 import _extract_novel_id
+from pyplayground.webnovels.alphapolis_reader import _extract_novel_id
 from pyplayground.webnovels.glossary import format_glossary_for_prompt, load_glossary
 from pyplayground.webnovels.llm_translate import BACKEND_GOOGLE, BACKEND_LLM
 from pyplayground.webnovels.llm_translate import translate_lines as llm_translate_lines

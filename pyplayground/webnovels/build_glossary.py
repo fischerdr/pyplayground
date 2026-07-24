@@ -305,7 +305,7 @@ def build_glossary_for_novel(novel_id: str, max_episodes: int = 20, status_cb: O
     """Extract and merge glossary terms from a novel's cached episodes.
 
     Core logic shared by the CLI (main(), below) and the reader's in-app
-    "Rebuild Glossary" button (alphapolis_reader_v01.ReaderApp -- runs this
+    "Rebuild Glossary" button (alphapolis_reader.ReaderApp -- runs this
     on a background thread so the glossary dialog doesn't freeze while it
     makes one LLM call per episode).
 

@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """alphapolis_reader.py.
 
-Version 2.0, created 2026-07-22, author dfischer
-
 Desktop reader for Alphapolis novels. Fetches episode pages with a real
 headless browser (required -- plain HTTP requests get served an empty
 202 "challenge" response by the site's AWS WAF bot-mitigation, confirmed
 via direct testing), extracts the chapter text via the #novelBody
-selector (confirmed from real page source), translates it with Google's
-free translate endpoint, and displays it in a Tkinter window with
-Previous/Next navigation driven by the episode list embedded in the
-page's own `app-cover-data` JSON script tag.
+selector (confirmed from real page source), and displays it in a Tkinter
+window with Previous/Next navigation driven by the episode list embedded
+in the page's own `app-cover-data` JSON script tag.
+
+Translation runs through either Google's free `gtx` translate endpoint
+or a local LLM backend (see llm_translate.py), selectable in Settings.
+A per-novel glossary (glossary.py, auto-extracted via build_glossary.py
+or hand-edited through the in-app Glossary dialog) is injected into
+every translation call so character names and recurring terms stay
+consistent across chapters; the glossary dialog also supports rebuilding
+from cached episodes and clearing a novel's terms from scratch.
 
 Setup:
     pip install playwright beautifulsoup4 requests pillow
@@ -49,9 +54,12 @@ from pyplayground.webnovels.glossary import (
     TERM_TYPE_GENERAL,
     format_glossary_for_prompt,
     load_glossary,
+    merge_terms,
     save_glossary,
 )
-from pyplayground.webnovels.llm_translate import BACKEND_GOOGLE, BACKEND_LLM, DEFAULT_BACKEND, check_llm_available
+from pyplayground.webnovels.ja_tokenize import find_ja_word_at
+from pyplayground.webnovels.llm_translate import BACKEND_GOOGLE, BACKEND_LLM, DEFAULT_BACKEND, check_llm_available, explain_term
+from pyplayground.webnovels.llm_translate import translate_chunk as llm_translate_chunk
 from pyplayground.webnovels.llm_translate import translate_lines as llm_translate_lines
 
 logger = get_logger(__name__)
@@ -561,6 +569,19 @@ class ReaderApp:
         self.episode = None
         self.cache = {}
         self._restore_scroll_pos = restore_scroll_pos
+        # (start_index, end_index, tag, source_line) per rendered paragraph,
+        # rebuilt on every render_text() call -- lets a right-click resolve
+        # back to which source Japanese line a click/selection came from,
+        # even when the rendered/tagged text is the English translation.
+        self._rendered_spans = []
+        # (word, context) -> (google_guess, llm_guess, explanation),
+        # populated by open_word_glossary_popup()'s background lookup.
+        # Session-only (not persisted) -- avoids repeating a network
+        # round-trip if the user reopens the popup for the same word in
+        # the same sentence (e.g. after Cancel). Keyed with context, not
+        # just the word, since the same surface text can mean different
+        # things (or be a name vs. not) depending on the sentence.
+        self._word_guess_cache = {}
 
         settings = load_reader_state()
         self.font_size = settings.get("font_size", 12)
@@ -642,6 +663,7 @@ class ReaderApp:
         self.text = tk.Text(text_frame, wrap="word", padx=16, pady=12, borderwidth=0, highlightthickness=0, yscrollcommand=text_scrollbar.set)
         self.text.pack(side="left", fill="both", expand=True)
         text_scrollbar.config(command=self.text.yview)
+        self.text.bind("<Button-3>", self._on_text_right_click)
         self.apply_appearance()
 
         self.prev_btn.state(["disabled"])
@@ -1400,7 +1422,9 @@ class ReaderApp:
                     self.text.image_create("end", image=photo)
                     self.text.insert("end", "\n")
             else:
+                start = self.text.index("end")
                 self.text.insert("end", item["text"] + "\n", tag)
+                self._rendered_spans.append((start, self.text.index("end"), tag, item["text"]))
 
     def _render_translated_content(self, ep, tag):
         translated_lines = ep.get("translated_lines", [])
@@ -1427,7 +1451,14 @@ class ReaderApp:
                     self.text.insert("end", "\n")
             else:
                 line = translated_lines[line_idx] if line_idx < len(translated_lines) else item["text"]
+                start = self.text.index("end")
                 self.text.insert("end", line + "\n", tag)
+                # source_line is always the original Japanese text for this
+                # paragraph (item["text"]), even though the rendered/tagged
+                # text here is the translation -- needed so a right-click on
+                # translated text can still surface the Japanese source, e.g.
+                # for the glossary popup's reference context.
+                self._rendered_spans.append((start, self.text.index("end"), tag, item["text"]))
                 line_idx += 1
 
     def _on_view_mode_change(self):
@@ -1448,6 +1479,7 @@ class ReaderApp:
             return
         mode = self.view_mode.get()
         self.text.delete("1.0", "end")
+        self._rendered_spans = []
 
         if mode in ("original", "both"):
             self.text.insert("end", f"{ep['title']} — {ep['episode_title']}\n", "heading")
@@ -1467,6 +1499,308 @@ class ReaderApp:
             self.text.yview_moveto(restore_scroll_pos)
         else:
             self.text.see("1.0")
+
+    def _on_text_right_click(self, event):
+        """Right-click on chapter text: offer to add the word/selection to the glossary.
+
+        Uses the current text selection verbatim if one is active (e.g. the
+        user drag-selected a multi-character name that a single click's
+        word-boundary guess can't resolve on its own -- fugashi's bundled
+        dictionary doesn't recognize invented character names as single
+        tokens, so this is the escape hatch for that case). Otherwise falls
+        back to a single-word guess at the click point: find_ja_word_at()
+        for Japanese text, Tk's wordstart/wordend for English text.
+
+        Args:
+            event: The Tk button-press event.
+        """
+        self.text.mark_set("insert", f"@{event.x},{event.y}")
+
+        sel_ranges = self.text.tag_ranges("sel")
+        if sel_ranges:
+            selected = self.text.get(sel_ranges[0], sel_ranges[1])
+            span = self._span_at_index(sel_ranges[0])
+            tag = span[2] if span else "original"
+            source_line = span[3] if span else ""
+            prefill = self._prefill_for_word(selected, tag)
+        else:
+            idx = self.text.index("insert")
+            span = self._span_at_index(idx)
+            if span is None:
+                return
+            _, _, tag, source_line = span
+            if tag == "translated":
+                word = self.text.get(f"{idx} wordstart", f"{idx} wordend").strip()
+                if not word:
+                    return
+                prefill = self._prefill_for_word(word, tag)
+            else:
+                line_start = self.text.index(f"{idx} linestart")
+                char_offset = len(self.text.get(line_start, idx))
+                found = find_ja_word_at(source_line, char_offset)
+                if found is None:
+                    return
+                word = source_line[found[0] : found[1]]
+                prefill = self._prefill_for_word(word, tag)
+
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Add to Glossary...", command=lambda: self.open_word_glossary_popup(*prefill, context=source_line))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _span_at_index(self, idx):
+        """Find the rendered paragraph span containing a text-widget index.
+
+        Args:
+            idx: A Tk text index (e.g. "12.34").
+
+        Returns:
+            The (start, end, tag, source_line) tuple from self._rendered_spans
+            whose range contains idx, or None if idx falls outside any
+            tracked paragraph (e.g. a heading, the byline, or an image).
+        """
+        for start, end, tag, source_line in self._rendered_spans:
+            if self.text.compare(start, "<=", idx) and self.text.compare(idx, "<", end):
+                return (start, end, tag, source_line)
+        return None
+
+    def _prefill_for_word(self, word, tag):
+        """Build (source_prefill, target_prefill) for the glossary popup.
+
+        Args:
+            word: The clicked/selected text.
+            tag: The text tag it came from ("original" or "translated").
+
+        Returns:
+            A (source_prefill, target_prefill) tuple -- the Japanese side
+            is prefilled when the click/selection was on original text,
+            the English side when it was on translated text, matching how
+            the full glossary editor's Add Term already leaves the other
+            side blank for the user to fill in.
+        """
+        if tag == "translated":
+            return ("", word)
+        return (word, "")
+
+    def open_word_glossary_popup(self, source_prefill, target_prefill, context=None):
+        """Open a small popup to add a glossary term/character from selected text.
+
+        Shows reference translation guesses (Google Translate and, if
+        available, the local LLM) alongside editable Source/Target/Note
+        fields, and saves directly to the current novel's glossary file --
+        independent of whether the full Glossary dialog is open. Takes
+        effect on the next chapter load/Refresh, same as any other
+        glossary edit.
+
+        Args:
+            source_prefill: Initial value for the Source field (Japanese).
+            target_prefill: Initial value for the Target field (English).
+            context: The source sentence the word was clicked/selected in,
+                if available. Passed to explain_term() so the LLM can tell
+                an ambiguous/invented character name apart from an ordinary
+                word -- confirmed via live testing that without it, names
+                like 桂名 get misclassified as a generic term rather than
+                a character, since they carry no dictionary meaning on
+                their own.
+        """
+        if not hasattr(self, "current_url") or not self.current_url:
+            messagebox.showinfo("Add to Glossary", "Load a novel first.")
+            return
+        novel_id = _extract_novel_id(self.current_url)
+        if not novel_id:
+            messagebox.showinfo("Add to Glossary", "Could not determine the novel for this URL.")
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title("Add to Glossary")
+        win.transient(self.root)
+        win.resizable(False, False)
+
+        lookup_word = source_prefill or target_prefill
+
+        # Fetch both reference guesses (blocking network calls) before
+        # building the real form -- building/populating widgets from a
+        # background thread while this window is only a bare shell led to
+        # a Tkinter rendering issue where labels never painted even though
+        # they were present in the widget tree. Fetching first and only
+        # building the form once, fully populated, sidesteps that
+        # entirely and is simpler than mutating a live window. Cached
+        # per session (_word_guess_cache) so re-opening the popup for a
+        # word already looked up -- e.g. the user cancelled and tried
+        # again -- doesn't repeat the network round-trip.
+        status_label = ttk.Label(win, text="Looking up translations..." if lookup_word else "Building form...")
+        status_label.pack(padx=20, pady=20)
+
+        # Keyed on (word, context) rather than just word -- the same surface
+        # text can appear in different sentences with a different intended
+        # meaning/category (e.g. a common word vs. a character's name that
+        # happens to share the same kanji), so caching on word alone could
+        # serve a stale classification for a different occurrence.
+        cache_key = (lookup_word, context)
+
+        def fetch_guesses():
+            if cache_key in self._word_guess_cache:
+                google_guess, llm_guess, explanation = self._word_guess_cache[cache_key]
+                self.root.after(0, lambda: build_form(google_guess, llm_guess, explanation))
+                return
+
+            google_guess = "(nothing selected)"
+            llm_guess = "(nothing selected)"
+            explanation = None
+            if lookup_word:
+                try:
+                    google_guess = translate_chunk(lookup_word, target_lang="en", source_lang="ja")
+                except Exception as e:
+                    logger.debug(f"Google guess lookup failed for {lookup_word!r}: {e}")
+                    google_guess = "(unavailable)"
+
+                if not check_llm_available():
+                    llm_guess = "(not available)"
+                else:
+                    try:
+                        result = llm_translate_chunk([lookup_word])
+                        llm_guess = result[0] if result else "(no result)"
+                    except Exception as e:
+                        logger.debug(f"LLM guess lookup failed for {lookup_word!r}: {e}")
+                        llm_guess = "(unavailable)"
+                    explanation = explain_term(lookup_word, source_lang="ja", target_lang="en", context=context)
+                self._word_guess_cache[cache_key] = (google_guess, llm_guess, explanation)
+            self.root.after(0, lambda: build_form(google_guess, llm_guess, explanation))
+
+        def build_form(google_guess, llm_guess, explanation):
+            status_label.destroy()
+
+            pad = {"padx": 10, "pady": (6, 0)}
+
+            # Pre-select Type from the LLM's category classification when
+            # available (explain_term() with sentence context reliably
+            # tells an invented/ambiguous character name apart from an
+            # ordinary word, confirmed via live testing) -- user can still
+            # override with the radio buttons below.
+            initial_type = TERM_TYPE_CHARACTER if explanation and explanation.get("category") == "character" else TERM_TYPE_GENERAL
+            type_var = tk.StringVar(value=initial_type)
+            type_row = ttk.Frame(win)
+            type_row.pack(fill="x", **pad)
+            ttk.Label(type_row, text="Type:").pack(side="left")
+            ttk.Radiobutton(type_row, text="Term", variable=type_var, value=TERM_TYPE_GENERAL).pack(side="left", padx=(6, 0))
+            ttk.Radiobutton(type_row, text="Character", variable=type_var, value=TERM_TYPE_CHARACTER).pack(side="left", padx=(6, 0))
+
+            source_var = tk.StringVar(value=source_prefill)
+            ttk.Label(win, text="Source (original):").pack(anchor="w", **pad)
+            ttk.Entry(win, textvariable=source_var).pack(fill="x", padx=10)
+
+            target_var = tk.StringVar(value=target_prefill)
+            ttk.Label(win, text="Target (translation):").pack(anchor="w", **pad)
+            ttk.Entry(win, textvariable=target_var).pack(fill="x", padx=10)
+
+            note_var = tk.StringVar(value="")
+            ttk.Label(win, text="Note:").pack(anchor="w", **pad)
+            note_entry = ttk.Entry(win, textvariable=note_var)
+            note_entry.pack(fill="x", padx=10)
+
+            # Character-only fields, matching the full glossary editor's
+            # Add Character fields exactly (gender/pronoun_style/
+            # honorific_override) -- deliberately NOT auto-filled from the
+            # LLM explanation (see EXPLAIN_TERM_PROMPT's comment on why
+            # gender is left for the user to set here rather than guessed).
+            char_fields = ttk.Frame(win)
+            gender_var = tk.StringVar(value="")
+            ttk.Label(char_fields, text="Gender:").pack(anchor="w", padx=10, pady=(6, 0))
+            ttk.Combobox(char_fields, textvariable=gender_var, values=["", "male", "female"], state="readonly", width=20).pack(anchor="w", padx=10)
+            pronoun_var = tk.StringVar(value="")
+            ttk.Label(char_fields, text="Pronoun / voice note:").pack(anchor="w", padx=10, pady=(6, 0))
+            ttk.Entry(char_fields, textvariable=pronoun_var).pack(fill="x", padx=10)
+            honorific_var = tk.StringVar(value="")
+            ttk.Label(char_fields, text="Honorific override:").pack(anchor="w", padx=10, pady=(6, 0))
+            ttk.Combobox(char_fields, textvariable=honorific_var, values=[""] + HONORIFIC_POLICIES, state="readonly", width=20).pack(anchor="w", padx=10)
+
+            def update_char_fields_visibility(*_args):
+                if type_var.get() == TERM_TYPE_CHARACTER:
+                    char_fields.pack(fill="x", after=note_entry, pady=(0, 0))
+                else:
+                    char_fields.pack_forget()
+
+            type_var.trace_add("write", update_char_fields_visibility)
+            update_char_fields_visibility()
+
+            ttk.Separator(win, orient="horizontal").pack(fill="x", padx=10, pady=(10, 4))
+            ttk.Label(win, text="Reference (click to use as Target):", foreground="#888").pack(anchor="w", padx=10)
+            # Real ttk.Buttons (not labels) so a guess can be applied to
+            # Target with one click instead of the user retyping what's
+            # already shown -- only shown when there's an actual guess to
+            # offer, not for the "(unavailable)"/"(nothing selected)" cases.
+            if google_guess not in ("(unavailable)", "(nothing selected)"):
+                ttk.Button(win, text=f"Google: {google_guess}", command=lambda: target_var.set(google_guess)).pack(anchor="w", padx=10, pady=(2, 0))
+            else:
+                ttk.Label(win, text=f"Google: {google_guess}", foreground="#888").pack(anchor="w", padx=10, pady=(2, 0))
+            if llm_guess not in ("(unavailable)", "(not available)", "(nothing selected)", "(no result)"):
+                ttk.Button(win, text=f"LLM: {llm_guess}", command=lambda: target_var.set(llm_guess)).pack(anchor="w", padx=10, pady=(2, 0))
+            else:
+                ttk.Label(win, text=f"LLM: {llm_guess}", foreground="#888").pack(anchor="w", padx=10, pady=(2, 0))
+
+            if explanation and explanation.get("meaning"):
+                ttk.Separator(win, orient="horizontal").pack(fill="x", padx=10, pady=(10, 4))
+                ttk.Label(win, text="Meaning:", foreground="#888").pack(anchor="w", padx=10)
+                ttk.Label(win, text=explanation["meaning"], wraplength=380, justify="left").pack(anchor="w", padx=10)
+
+                characters = explanation.get("characters") or []
+                if len(characters) > 1:
+                    # Only worth showing a per-character breakdown for
+                    # multi-character terms -- a single-character term's
+                    # breakdown would just repeat the overall meaning.
+                    ttk.Label(win, text="Characters:", foreground="#888").pack(anchor="w", padx=10, pady=(6, 0))
+                    for c in characters:
+                        char, char_meaning = c.get("char", ""), c.get("meaning", "")
+                        if char:
+                            ttk.Label(win, text=f"  {char} -- {char_meaning}", wraplength=380, justify="left").pack(anchor="w", padx=10)
+
+                alternatives = explanation.get("alternatives") or []
+                if alternatives:
+                    ttk.Label(win, text="Alternatives (click to use as Target):", foreground="#888").pack(anchor="w", padx=10, pady=(6, 0))
+                    for alt in alternatives:
+                        word, note = alt.get("word", ""), alt.get("note", "")
+                        if not word:
+                            continue
+                        alt_row = ttk.Frame(win)
+                        alt_row.pack(fill="x", padx=10, pady=(1, 0))
+                        ttk.Button(alt_row, text=word, command=lambda w=word: target_var.set(w)).pack(side="left")
+                        if note:
+                            ttk.Label(alt_row, text=note, foreground="#888", wraplength=280, justify="left").pack(side="left", padx=(6, 0))
+
+            ttk.Label(
+                win,
+                text="Note: existing cached/translated chapters won't\nreflect this until you Refresh or reload them.",
+                foreground="#888",
+                justify="left",
+            ).pack(anchor="w", padx=10, pady=(8, 0))
+
+            def save_and_close():
+                source = source_var.get().strip()
+                target = target_var.get().strip()
+                if not source:
+                    messagebox.showinfo("Add to Glossary", "Source is required.", parent=win)
+                    return
+                new_term = {"type": type_var.get(), "source": source, "target": target, "note": note_var.get().strip() or None}
+                if type_var.get() == TERM_TYPE_CHARACTER:
+                    new_term.update(
+                        gender=gender_var.get() or None,
+                        pronoun_style=pronoun_var.get().strip() or None,
+                        honorific_override=honorific_var.get() or None,
+                    )
+
+                glossary = load_glossary(novel_id)
+                glossary["terms"] = merge_terms(glossary.get("terms", []), [new_term])
+                glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
+                save_glossary(novel_id, glossary)
+                logger.info(f"Added glossary term via right-click for novel {novel_id}: {source!r} -> {target!r}")
+                win.destroy()
+                self.set_status("Term added to glossary")
+
+            bottom = ttk.Frame(win)
+            bottom.pack(pady=(10, 10))
+            ttk.Button(bottom, text="Save", command=save_and_close).pack(side="left", padx=4)
+            ttk.Button(bottom, text="Cancel", command=win.destroy).pack(side="left", padx=4)
+
+        threading.Thread(target=fetch_guesses, daemon=True).start()
 
     def go_prev(self):
         """Navigate to the previous episode if available."""

@@ -110,6 +110,8 @@ flexcache==0.3
     # via pint
 flexparser==0.4
     # via pint
+fugashi==1.5.2
+    # via pyplayground (pyproject.toml)
 greenlet==3.5.4
     # via playwright
 h11==0.16.0
@@ -448,6 +450,8 @@ typing-extensions==4.13.2
     #   textual
 uc-micro-py==2.0.0
     # via linkify-it-py
+unidic-lite==1.0.8
+    # via pyplayground (pyproject.toml)
 urllib3==2.6.3
     # via
     #   botocore

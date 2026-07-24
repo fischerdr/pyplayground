@@ -25,7 +25,7 @@ from typing import List, Optional
 import requests
 
 from pyplayground.utils.logging_utils import get_logger, setup_logging
-from pyplayground.webnovels.alphapolis_reader_v01 import (
+from pyplayground.webnovels.alphapolis_reader import (
     BrowserWorker,
     _extract_novel_id,
     load_cached_episode,

@@ -31,6 +31,7 @@ import threading
 import time
 import tkinter as tk
 import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Any, Optional
@@ -40,7 +41,16 @@ from bs4 import BeautifulSoup
 
 from pyplayground.utils.config_utils import load_json_config, save_json_config
 from pyplayground.utils.logging_utils import get_logger, setup_logging
-from pyplayground.webnovels.glossary import format_glossary_for_prompt, load_glossary
+from pyplayground.webnovels.build_glossary import build_glossary_for_novel
+from pyplayground.webnovels.glossary import (
+    DEFAULT_HONORIFIC_POLICY,
+    HONORIFIC_POLICIES,
+    TERM_TYPE_CHARACTER,
+    TERM_TYPE_GENERAL,
+    format_glossary_for_prompt,
+    load_glossary,
+    save_glossary,
+)
 from pyplayground.webnovels.llm_translate import BACKEND_GOOGLE, BACKEND_LLM, DEFAULT_BACKEND, check_llm_available
 from pyplayground.webnovels.llm_translate import translate_lines as llm_translate_lines
 
@@ -578,9 +588,9 @@ class ReaderApp:
         self.font_family = saved_font_family if saved_font_family in available_fonts else self._pick_default_font()
 
         root.title("Alphapolis Reader")
-        # Widened from 900 to fit the Refresh button added to the toolbar
-        # without clipping Settings... off the right edge.
-        root.geometry("990x700")
+        # Widened from 900 -> 990 (Refresh button) -> 1090 (Glossary... button)
+        # to keep the toolbar from clipping Settings... off the right edge.
+        root.geometry("1090x700")
 
         toolbar = ttk.Frame(root)
         toolbar.pack(fill="x", padx=8, pady=6)
@@ -606,6 +616,7 @@ class ReaderApp:
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
         ttk.Button(toolbar, text="Load Novel...", command=self.open_load_url_dialog).pack(side="left")
         ttk.Button(toolbar, text="Refresh", command=self.refresh_current_episode).pack(side="left", padx=(6, 0))
+        ttk.Button(toolbar, text="Glossary...", command=self.open_glossary_dialog).pack(side="left", padx=(6, 0))
         ttk.Button(toolbar, text="Settings...", command=self.open_settings_dialog).pack(side="left", padx=(6, 0))
 
         url_bar = ttk.Frame(root)
@@ -1025,6 +1036,285 @@ class ReaderApp:
                 if path.is_file():
                     path.unlink()
         self.set_status("Cache cleared")
+
+    def open_glossary_dialog(self):
+        """Open the glossary term editor for the current novel.
+
+        Lets the user view, add, edit, and delete glossary terms/characters
+        and the novel-wide honorific policy. Edits take effect on the next
+        chapter load or Refresh (fetch_and_translate() loads the glossary
+        fresh each time, no separate reload needed here).
+        """
+        if not hasattr(self, "current_url") or not self.current_url:
+            messagebox.showinfo("Glossary", "Load a novel first.")
+            return
+        novel_id = _extract_novel_id(self.current_url)
+        if not novel_id:
+            messagebox.showinfo("Glossary", "Could not determine the novel for this URL.")
+            return
+
+        glossary = load_glossary(novel_id)
+        # Work on a local copy of the term list; only written back to the
+        # glossary dict (and disk) on Save, so Cancel discards cleanly.
+        terms = [dict(t) for t in glossary.get("terms", [])]
+        # Mutable container (not a plain bool) so nested handlers below can
+        # flip it without needing `nonlocal` in every one of them. Tracks
+        # unsaved edits so Rebuild Glossary can warn before discarding them
+        # (rebuild always operates on the on-disk glossary, then reloads the
+        # whole dialog from it -- see rebuild_glossary()).
+        dirty = {"value": False}
+
+        win = tk.Toplevel(self.root)
+        win.title(f"Glossary - {glossary.get('title') or novel_id}")
+        win.geometry("700x520")
+        win.transient(self.root)
+
+        top = ttk.Frame(win)
+        top.pack(fill="x", padx=10, pady=(10, 4))
+        ttk.Label(top, text="Honorific handling (default):").pack(side="left")
+        honorific_var = tk.StringVar(value=glossary.get("honorific_policy", HONORIFIC_POLICIES[0]))
+        ttk.Combobox(top, textvariable=honorific_var, values=HONORIFIC_POLICIES, state="readonly", width=12).pack(side="left", padx=(6, 0))
+
+        body = ttk.Frame(win)
+        body.pack(fill="both", expand=True, padx=10, pady=4)
+
+        columns = ("source", "target", "type")
+        tree = ttk.Treeview(body, columns=columns, show="headings", height=12)
+        for col, label, width in (("source", "Source", 140), ("target", "Target", 140), ("type", "Type", 80)):
+            tree.heading(col, text=label)
+            tree.column(col, width=width)
+        tree.pack(side="left", fill="both", expand=True)
+        tree_scroll = ttk.Scrollbar(body, orient="vertical", command=tree.yview)
+        tree_scroll.pack(side="left", fill="y")
+        tree.config(yscrollcommand=tree_scroll.set)
+
+        form = ttk.Frame(body)
+        form.pack(side="left", fill="y", padx=(10, 0))
+
+        def refresh_tree(select_index=None):
+            tree.delete(*tree.get_children())
+            for i, t in enumerate(terms):
+                tree.insert("", "end", iid=str(i), values=(t.get("source", ""), t.get("target", ""), t.get("type", TERM_TYPE_GENERAL)))
+            if select_index is not None and 0 <= select_index < len(terms):
+                tree.selection_set(str(select_index))
+                tree.see(str(select_index))
+
+        # --- Edit form, rebuilt each time the selected term's type changes ---
+        form_vars = {}
+
+        def clear_form():
+            for widget in form.winfo_children():
+                widget.destroy()
+            form_vars.clear()
+
+        def build_form(term, index):
+            clear_form()
+            pad = {"padx": 4, "pady": (6, 0)}
+            term_type = term.get("type", TERM_TYPE_GENERAL)
+
+            ttk.Label(form, text="Type").grid(row=0, column=0, sticky="w", **pad)
+            form_vars["type"] = tk.StringVar(value=term_type)
+            ttk.Combobox(form, textvariable=form_vars["type"], values=[TERM_TYPE_GENERAL, TERM_TYPE_CHARACTER], state="readonly", width=20).grid(row=0, column=1, **pad)
+
+            ttk.Label(form, text="Source").grid(row=1, column=0, sticky="w", **pad)
+            form_vars["source"] = tk.StringVar(value=term.get("source", ""))
+            ttk.Entry(form, textvariable=form_vars["source"], width=22).grid(row=1, column=1, **pad)
+
+            ttk.Label(form, text="Target").grid(row=2, column=0, sticky="w", **pad)
+            form_vars["target"] = tk.StringVar(value=term.get("target", ""))
+            ttk.Entry(form, textvariable=form_vars["target"], width=22).grid(row=2, column=1, **pad)
+
+            ttk.Label(form, text="Note").grid(row=3, column=0, sticky="w", **pad)
+            form_vars["note"] = tk.StringVar(value=term.get("note") or "")
+            ttk.Entry(form, textvariable=form_vars["note"], width=22).grid(row=3, column=1, **pad)
+
+            next_row = 4
+            if term_type == TERM_TYPE_CHARACTER:
+                ttk.Label(form, text="Gender").grid(row=next_row, column=0, sticky="w", **pad)
+                form_vars["gender"] = tk.StringVar(value=term.get("gender") or "")
+                ttk.Combobox(form, textvariable=form_vars["gender"], values=["", "male", "female"], state="readonly", width=20).grid(row=next_row, column=1, **pad)
+                next_row += 1
+
+                ttk.Label(form, text="Pronoun / voice note").grid(row=next_row, column=0, sticky="w", **pad)
+                form_vars["pronoun_style"] = tk.StringVar(value=term.get("pronoun_style") or "")
+                ttk.Entry(form, textvariable=form_vars["pronoun_style"], width=22).grid(row=next_row, column=1, **pad)
+                next_row += 1
+
+                ttk.Label(form, text="Honorific override").grid(row=next_row, column=0, sticky="w", **pad)
+                form_vars["honorific_override"] = tk.StringVar(value=term.get("honorific_override") or "")
+                ttk.Combobox(form, textvariable=form_vars["honorific_override"], values=[""] + HONORIFIC_POLICIES, state="readonly", width=20).grid(row=next_row, column=1, **pad)
+                next_row += 1
+
+            def apply_type_change(_event=None):
+                # Rebuild the form when Type changes so character-only
+                # fields appear/disappear immediately, without losing the
+                # source/target/note the user already typed.
+                if form_vars["type"].get() != term_type:
+                    save_form_to_term(index)
+                    build_form(terms[index], index)
+
+            form.grid_slaves(row=0, column=1)[0].bind("<<ComboboxSelected>>", apply_type_change)
+
+            def save_form_to_term(idx):
+                t = terms[idx]
+                t["type"] = form_vars["type"].get()
+                t["source"] = form_vars["source"].get().strip()
+                t["target"] = form_vars["target"].get().strip()
+                t["note"] = form_vars["note"].get().strip() or None
+                if t["type"] == TERM_TYPE_CHARACTER:
+                    t["gender"] = form_vars["gender"].get() or None
+                    t["pronoun_style"] = form_vars["pronoun_style"].get().strip() or None
+                    t["honorific_override"] = form_vars["honorific_override"].get() or None
+                else:
+                    t.pop("gender", None)
+                    t.pop("pronoun_style", None)
+                    t.pop("honorific_override", None)
+                dirty["value"] = True
+
+            form_vars["_save"] = save_form_to_term
+
+        def on_select(_event=None):
+            selection = tree.selection()
+            if not selection:
+                clear_form()
+                return
+            index = int(selection[0])
+            build_form(terms[index], index)
+
+        def commit_selected_form():
+            # Write whatever's currently in the form back into `terms`
+            # before switching selection, adding, deleting, or saving --
+            # otherwise in-progress edits on the selected row are lost.
+            selection = tree.selection()
+            if selection and "_save" in form_vars:
+                form_vars["_save"](int(selection[0]))
+
+        def on_select_with_commit(event=None):
+            commit_selected_form()
+            on_select(event)
+
+        tree.bind("<<TreeviewSelect>>", on_select_with_commit)
+
+        def add_term(term_type):
+            commit_selected_form()
+            new_term = {"type": term_type, "source": "", "target": "", "note": None}
+            if term_type == TERM_TYPE_CHARACTER:
+                new_term.update(gender=None, pronoun_style=None, honorific_override=None)
+            terms.append(new_term)
+            dirty["value"] = True
+            refresh_tree(select_index=len(terms) - 1)
+            build_form(terms[-1], len(terms) - 1)
+
+        def delete_selected():
+            selection = tree.selection()
+            if not selection:
+                return
+            index = int(selection[0])
+            del terms[index]
+            dirty["value"] = True
+            clear_form()
+            refresh_tree()
+
+        btn_row = ttk.Frame(win)
+        btn_row.pack(fill="x", padx=10, pady=(4, 0))
+        ttk.Button(btn_row, text="Add Term", command=lambda: add_term(TERM_TYPE_GENERAL)).pack(side="left")
+        ttk.Button(btn_row, text="Add Character", command=lambda: add_term(TERM_TYPE_CHARACTER)).pack(side="left", padx=(6, 0))
+        ttk.Button(btn_row, text="Delete", command=delete_selected).pack(side="left", padx=(6, 0))
+
+        rebuild_status = ttk.Label(win, text="", foreground="#888")
+        rebuild_status.pack(fill="x", padx=10, pady=(6, 0))
+
+        rebuild_state = {"running": False}
+
+        def set_dialog_controls_enabled(enabled):
+            state = "normal" if enabled else "disabled"
+            for widget in list(btn_row.winfo_children()) + list(bottom.winfo_children()) + [rebuild_btn]:
+                widget.config(state=state)
+            tree.config(selectmode="extended" if enabled else "none")
+
+        def rebuild_glossary():
+            # Rebuild always operates on the on-disk glossary (not this
+            # dialog's in-memory `terms`), then reloads the whole dialog
+            # from the updated file once done -- see the module-level
+            # comment on `dirty` above for why. Warn first if there are
+            # unsaved edits so a rebuild doesn't silently discard them.
+            if rebuild_state["running"]:
+                return
+            if dirty["value"]:
+                if not messagebox.askyesno(
+                    "Rebuild Glossary",
+                    "You have unsaved changes in this dialog. Rebuilding will discard them and reload from the saved glossary. Continue?",
+                    parent=win,
+                ):
+                    return
+
+            rebuild_state["running"] = True
+            set_dialog_controls_enabled(False)
+            rebuild_status.config(text="Rebuilding...")
+            logger.info(f"User triggered glossary rebuild for novel {novel_id}")
+
+            def status_cb(message):
+                self.root.after(0, lambda: rebuild_status.config(text=message))
+
+            def worker():
+                try:
+                    build_glossary_for_novel(novel_id, status_cb=status_cb)
+                except Exception as e:
+                    full_trace = traceback.format_exc()
+                    logger.error(f"Glossary rebuild failed for novel {novel_id}: {e}", exc_info=True)
+                    print(full_trace, file=sys.stderr)
+                    self.root.after(0, lambda: messagebox.showerror("Rebuild Glossary", f"Rebuild failed:\n{full_trace}", parent=win))
+                finally:
+                    rebuild_state["running"] = False
+
+                    def reload_dialog():
+                        win.destroy()
+                        self.open_glossary_dialog()
+
+                    self.root.after(0, reload_dialog)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        rebuild_btn = ttk.Button(btn_row, text="Rebuild Glossary", command=rebuild_glossary)
+        rebuild_btn.pack(side="left", padx=(12, 0))
+
+        def clear_glossary():
+            if rebuild_state["running"]:
+                return
+            if not messagebox.askyesno(
+                "Clear Glossary",
+                "This will delete all terms and reset honorific handling for this novel. This cannot be undone. Continue?",
+                parent=win,
+            ):
+                return
+            logger.info(f"User cleared glossary for novel {novel_id}")
+            glossary["terms"] = []
+            glossary["honorific_policy"] = DEFAULT_HONORIFIC_POLICY
+            glossary["honorific_policy_user_set"] = False
+            glossary["context_notes"] = ""
+            glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
+            save_glossary(novel_id, glossary)
+            win.destroy()
+            self.open_glossary_dialog()
+            self.set_status("Glossary cleared")
+
+        ttk.Button(btn_row, text="Clear Glossary", command=clear_glossary).pack(side="left", padx=(6, 0))
+
+        def save_and_close():
+            commit_selected_form()
+            glossary["terms"] = [t for t in terms if t.get("source")]
+            glossary["honorific_policy"] = honorific_var.get()
+            glossary["honorific_policy_user_set"] = True
+            save_glossary(novel_id, glossary)
+            win.destroy()
+            self.set_status("Glossary saved")
+
+        bottom = ttk.Frame(win)
+        bottom.pack(pady=(10, 10))
+        ttk.Button(bottom, text="Save", command=save_and_close).pack(side="left", padx=4)
+        ttk.Button(bottom, text="Cancel", command=win.destroy).pack(side="left", padx=4)
+
+        refresh_tree()
 
     def prefetch(self, url):
         """Fetch+translate an episode in the background so navigating to it is instant."""

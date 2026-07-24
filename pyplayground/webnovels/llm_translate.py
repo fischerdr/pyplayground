@@ -95,7 +95,16 @@ TRANSLATION_PROMPT = (
 )
 
 # Sliding window context prompt prefix, inserted before the instruction line.
-CONTEXT_PREFIX = "Here is the context from the previous paragraphs for consistency:\n{context}\n\n"
+# Worded forcefully (BACKGROUND ONLY / do NOT repeat) after a confirmed live
+# failure: a softer "here is context for consistency" phrasing sometimes made
+# the model treat the context as something to account for in its answer,
+# causing it to emit the same translation twice in the output array (e.g. a
+# 1-line request returning a 2-element array with the line duplicated).
+CONTEXT_PREFIX = (
+    "BACKGROUND ONLY -- for tone/terminology consistency. Do NOT translate "
+    "this, do NOT include it in your output, and do NOT repeat your answer "
+    "to account for it:\n{context}\n\n"
+)
 
 # Glossary prompt prefix, inserted before the sliding-window context (if any)
 # and the instruction line. Distinct from CONTEXT_PREFIX: the glossary is
@@ -155,8 +164,11 @@ def _log_timing(data: Dict[str, Any]) -> None:
         logger.debug(f"Translation: {predicted_n} tokens in {predicted_ms / 1000:.1f}s ({speed:.1f} tok/s)")
 
 
-def _strip_code_fence(text: str) -> str:
+def strip_code_fence(text: str) -> str:
     """Strip a markdown code fence the model may wrap JSON output in.
+
+    Public (not module-private) since build_glossary.py's extraction call
+    hits the same model behavior and reuses this rather than duplicating it.
 
     Args:
         text: Raw model output, possibly wrapped in ```json ... ``` or ``` ... ```.
@@ -173,36 +185,58 @@ def _strip_code_fence(text: str) -> str:
     return text.strip()
 
 
-def translate_chunk(
+def parse_json_response(text: str) -> Any:
+    """Parse the first complete JSON value from `text`, ignoring trailing content.
+
+    Confirmed via a live failure: the model sometimes emits a complete, valid
+    JSON array/object and then keeps generating past it (e.g. echoing part of
+    the glossary text back after the closing bracket) instead of stopping.
+    A plain json.loads() rejects the whole response in that case ("Extra
+    data"), even though the JSON itself parsed fine up to that point. Using
+    raw_decode() takes just the leading valid JSON value and discards
+    whatever comes after, which is the actually-wanted behavior here.
+
+    Public (not module-private) since build_glossary.py's extraction call
+    hits the same model behavior and reuses this rather than duplicating it.
+
+    Args:
+        text: Model output, ideally starting with a JSON array or object
+            (after code-fence stripping).
+
+    Returns:
+        The parsed JSON value (list or dict, typically).
+
+    Raises:
+        json.JSONDecodeError: If no valid JSON value starts at the beginning
+            of `text`.
+    """
+    value, _end_index = json.JSONDecoder().raw_decode(text)
+    return value
+
+
+def _translate_chunk_once(
     lines: List[str],
-    target_lang: str = "en",
-    source_lang: str = "ja",
-    context: Optional[str] = None,
-    glossary_text: Optional[str] = None,
-    progress_cb: Optional[Callable[[int, int], None]] = None,
-    chunk_idx: int = 0,
-    total_chunks: int = 1,
-) -> List[str]:
-    """Translate a chunk of source lines as a JSON array using llama-server.
+    target_lang: str,
+    source_lang: str,
+    context: Optional[str],
+    glossary_text: Optional[str],
+    chunk_idx: int,
+    total_chunks: int,
+) -> Optional[List[str]]:
+    """Make a single /completion request for `lines`, no retry.
 
     Args:
         lines: The source lines/paragraphs to translate, in order.
-        target_lang: Target language code (default: en).
-        source_lang: Source language code (default: ja).
+        target_lang: Target language code.
+        source_lang: Source language code.
         context: Optional previous paragraphs for consistency.
-        glossary_text: Optional pre-formatted glossary text (character names/
-            terms) to prepend to the prompt, from
-            pyplayground.webnovels.glossary.format_glossary_for_prompt().
-        progress_cb: Optional callback(done, total) for progress updates.
-        chunk_idx: Current chunk index (0-based).
-        total_chunks: Total number of chunks being translated.
+        glossary_text: Optional pre-formatted glossary text.
+        chunk_idx: Current chunk index (0-based), for log messages only.
+        total_chunks: Total number of chunks, for log messages only.
 
     Returns:
-        List of translated strings, same length and order as `lines` when
-        the model's response parses cleanly. If the response can't be
-        parsed as a JSON array of the expected length, returns a list of
-        `[translation failed: ...]` placeholders of the correct length so
-        callers can rely on the length invariant unconditionally.
+        List of translated strings, same length and order as `lines`, or
+        None if the response didn't parse as a JSON array of that length.
 
     Raises:
         requests.exceptions.ConnectionError: If llama-server is not reachable.
@@ -236,21 +270,88 @@ def translate_chunk(
     resp.raise_for_status()
     data = resp.json()
 
-    raw_output = _strip_code_fence(data.get("content", ""))
+    raw_output = strip_code_fence(data.get("content", ""))
     _log_timing(data)
 
     try:
-        parsed = json.loads(raw_output)
+        parsed = parse_json_response(raw_output)
     except json.JSONDecodeError as e:
         logger.error(f"Chunk {chunk_idx + 1}/{total_chunks}: failed to parse JSON response ({e}): {raw_output[:200]!r}")
-        parsed = None
+        return None
+
+    if isinstance(parsed, list) and len(lines) == 1 and len(parsed) > 1:
+        # Confirmed via live testing: injecting the sliding-context prefix
+        # before a single-line request can make the model echo its answer
+        # more than once instead of respecting the requested array length --
+        # not a real split, the entries are (near-)identical. Collapse
+        # rather than fail, since discarding a duplicated-but-correct
+        # translation is worse than the small risk of collapsing a
+        # legitimately different pair of entries.
+        deduped = [_clean_output(str(item)) for item in parsed]
+        if len(set(deduped)) == 1:
+            logger.warning(f"Chunk {chunk_idx + 1}/{total_chunks}: model duplicated its answer into {len(parsed)} identical entries for a single-line request; collapsing to one")
+            return [deduped[0]]
 
     if not isinstance(parsed, list) or len(parsed) != len(lines):
         got = f"{type(parsed).__name__} of length {len(parsed)}" if isinstance(parsed, list) else type(parsed).__name__
         logger.warning(f"Chunk {chunk_idx + 1}/{total_chunks}: expected a JSON array of {len(lines)} string(s), got {got}")
+        return None
+
+    return [_clean_output(str(item)) for item in parsed]
+
+
+def translate_chunk(
+    lines: List[str],
+    target_lang: str = "en",
+    source_lang: str = "ja",
+    context: Optional[str] = None,
+    glossary_text: Optional[str] = None,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+    chunk_idx: int = 0,
+    total_chunks: int = 1,
+) -> List[str]:
+    """Translate a chunk of source lines as a JSON array using llama-server.
+
+    If the model returns an array of the wrong length (confirmed via live
+    testing: it sometimes splits one multi-sentence source line into two
+    translated entries), retries by translating each line in the chunk
+    individually rather than discarding the whole chunk -- losing one
+    oversized/ambiguous line's worth of translation is a much smaller
+    problem than losing every line in the chunk.
+
+    Args:
+        lines: The source lines/paragraphs to translate, in order.
+        target_lang: Target language code (default: en).
+        source_lang: Source language code (default: ja).
+        context: Optional previous paragraphs for consistency.
+        glossary_text: Optional pre-formatted glossary text (character names/
+            terms) to prepend to the prompt, from
+            pyplayground.webnovels.glossary.format_glossary_for_prompt().
+        progress_cb: Optional callback(done, total) for progress updates.
+        chunk_idx: Current chunk index (0-based).
+        total_chunks: Total number of chunks being translated.
+
+    Returns:
+        List of translated strings, same length and order as `lines`. Any
+        line that still can't be translated after the per-line retry
+        becomes a `[translation failed: ...]` placeholder, so callers can
+        rely on the length invariant unconditionally.
+
+    Raises:
+        requests.exceptions.ConnectionError: If llama-server is not reachable.
+        requests.exceptions.Timeout: If the request times out.
+    """
+    translated = _translate_chunk_once(lines, target_lang, source_lang, context, glossary_text, chunk_idx, total_chunks)
+
+    if translated is None and len(lines) > 1:
+        logger.info(f"Chunk {chunk_idx + 1}/{total_chunks}: retrying as {len(lines)} individual line(s) after length mismatch")
+        translated = []
+        for line in lines:
+            single = _translate_chunk_once([line], target_lang, source_lang, context, glossary_text, chunk_idx, total_chunks)
+            translated.append(single[0] if single else "[translation failed: unparseable response]")
+
+    if translated is None:
         translated = ["[translation failed: unparseable response]" for _ in lines]
-    else:
-        translated = [_clean_output(str(item)) for item in parsed]
 
     if progress_cb:
         progress_cb(chunk_idx + 1, total_chunks)

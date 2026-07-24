@@ -62,23 +62,36 @@ LLM_TIMEOUT = get_env_var("LLM_TIMEOUT", default="120", as_type=int)
 """Per-request timeout in seconds."""
 
 # Prompt template for clean translation output (/completion endpoint).
-# Labeling the source text under "{source_lang}:" and starting the model's
-# turn at "{target_lang}:" (rather than appending the source text after a
-# free-floating instruction) reliably stops the model from echoing the
-# source text or continuing the story past the given input -- confirmed via
-# live testing against the target server. Without this framing the model
-# would generate the source text again before translating it, followed by
-# invented continuation content.
+#
+# Uses a JSON-array request/response format rather than a plain-text
+# "{target_lang}:" label. This was a deliberate fix for a real failure mode:
+# with the label-based prompt, the model would sometimes hallucinate an
+# entire fabricated scene (in {source_lang}, embedded mid-translation)
+# instead of translating the given line -- confirmed to happen even with no
+# glossary present, and made worse when a glossary's character names were
+# in the prompt (the model apparently free-associates from names into
+# invented dialogue). Rewording the instructions or delimiting the glossary
+# more strongly did not fix it. Switching the expected output shape to a
+# JSON array eliminated the hallucination across every case tested (see
+# commit history for the specific failing line this was found on) --
+# JSON doesn't read as "story so far" the way a labeled prose format does,
+# so the model doesn't try to continue it as narrative.
+#
+# A side benefit: JSON arrays inherently preserve element count, so the
+# translate_lines() alignment-retry logic that existed to recover from
+# label-format merges is no longer the primary defense (though still kept
+# as a fallback in case the model returns a wrong-length array).
 TRANSLATION_PROMPT = (
-    "Translate the following {source_lang} text to {target_lang}. Output "
-    "ONLY the {target_lang} translation and nothing else -- do not repeat "
-    "or echo the {source_lang} source text, and do not continue the story "
-    "beyond what is given. Preserve paragraph structure using blank lines "
-    "between paragraphs. If you are unsure about a proper noun (character "
-    "name, place name), transliterate it using standard romanization "
-    "conventions.\n\n"
-    "{source_lang}:\n{text}\n\n"
-    "{target_lang}:"
+    "You are a translation API. You output ONLY a JSON array of strings, "
+    "nothing else -- no notes, no explanations, no markdown code fences.\n\n"
+    "Translate each {source_lang} string in the array below to {target_lang}. "
+    "Preserve order and array length exactly -- one output string per input "
+    "string, even if a string is short or ambiguous. Do not merge, split, "
+    "or add strings, and do not continue the story beyond what is given. "
+    "If you are unsure about a proper noun (character name, place name), "
+    "transliterate it using standard romanization conventions.\n\n"
+    "{source_lang} array: {lines_json}\n\n"
+    "JSON array:"
 )
 
 # Sliding window context prompt prefix, inserted before the instruction line.
@@ -89,7 +102,7 @@ CONTEXT_PREFIX = "Here is the context from the previous paragraphs for consisten
 # "translate these specific terms consistently" (persistent, per-novel),
 # while CONTEXT_PREFIX is "here's immediately preceding text" (transient,
 # resets each translate_lines() call).
-GLOSSARY_PREFIX = "{glossary}\n\n"
+GLOSSARY_PREFIX = "Reference only, for terminology consistency -- not part of the text to translate:\n{glossary}\n\n"
 
 LANGUAGE_NAMES = {
     "ja": "Japanese",
@@ -142,8 +155,26 @@ def _log_timing(data: Dict[str, Any]) -> None:
         logger.debug(f"Translation: {predicted_n} tokens in {predicted_ms / 1000:.1f}s ({speed:.1f} tok/s)")
 
 
+def _strip_code_fence(text: str) -> str:
+    """Strip a markdown code fence the model may wrap JSON output in.
+
+    Args:
+        text: Raw model output, possibly wrapped in ```json ... ``` or ``` ... ```.
+
+    Returns:
+        The text with any wrapping code fence removed.
+    """
+    text = text.strip()
+    if text.startswith("```"):
+        text = text[3:]
+        if text.lower().startswith("json"):
+            text = text[4:]
+        text = text.rsplit("```", 1)[0]
+    return text.strip()
+
+
 def translate_chunk(
-    text: str,
+    lines: List[str],
     target_lang: str = "en",
     source_lang: str = "ja",
     context: Optional[str] = None,
@@ -151,77 +182,75 @@ def translate_chunk(
     progress_cb: Optional[Callable[[int, int], None]] = None,
     chunk_idx: int = 0,
     total_chunks: int = 1,
-) -> str:
-    """Translate a single text chunk using llama-server's /completion endpoint.
+) -> List[str]:
+    """Translate a chunk of source lines as a JSON array using llama-server.
 
     Args:
-        text: The source text to translate.
+        lines: The source lines/paragraphs to translate, in order.
         target_lang: Target language code (default: en).
         source_lang: Source language code (default: ja).
         context: Optional previous paragraphs for consistency.
         glossary_text: Optional pre-formatted glossary text (character names/
-            terms and running context notes) to prepend to the prompt, from
+            terms) to prepend to the prompt, from
             pyplayground.webnovels.glossary.format_glossary_for_prompt().
         progress_cb: Optional callback(done, total) for progress updates.
         chunk_idx: Current chunk index (0-based).
         total_chunks: Total number of chunks being translated.
 
     Returns:
-        The translated text string.
+        List of translated strings, same length and order as `lines` when
+        the model's response parses cleanly. If the response can't be
+        parsed as a JSON array of the expected length, returns a list of
+        `[translation failed: ...]` placeholders of the correct length so
+        callers can rely on the length invariant unconditionally.
 
     Raises:
         requests.exceptions.ConnectionError: If llama-server is not reachable.
-        RuntimeError: If the translation fails.
+        requests.exceptions.Timeout: If the request times out.
     """
     source_name = _language_name(source_lang)
     target_name = _language_name(target_lang)
+    lines_json = json.dumps(lines, ensure_ascii=False)
 
-    prompt = TRANSLATION_PROMPT.format(source_lang=source_name, target_lang=target_name, text=text)
+    prompt = TRANSLATION_PROMPT.format(source_lang=source_name, target_lang=target_name, lines_json=lines_json)
     if context:
         prompt = CONTEXT_PREFIX.format(context=context) + prompt
     if glossary_text:
         prompt = GLOSSARY_PREFIX.format(glossary=glossary_text) + prompt
 
-    # Stop once the model starts a new "<language>:" label or drops into an
-    # unrelated blank-line-separated block -- prevents echoing the source
-    # text or continuing the story past the given input (see TRANSLATION_PROMPT).
-    stop_sequences = [f"\n\n{source_name}:", f"\n\n{target_name}:", "\n\n\n"]
-
-    # Scale the token budget with input size so large chunks (e.g. many
-    # short paragraphs packed together) don't get truncated mid-translation,
-    # which was observed to cause the model to drift/hallucinate rather than
-    # stopping cleanly. ~4 chars/token is a safe margin for English output,
-    # with a floor so short chunks still get enough room.
-    n_predict = max(256, len(text) * 4)
+    # Scale the token budget with input size so large chunks don't get
+    # truncated mid-response (which would also break JSON parsing).
+    n_predict = max(256, sum(len(line) for line in lines) * 4)
 
     payload = {
         "prompt": prompt,
         "n_predict": n_predict,
         "temperature": 0.1,
-        "stop": stop_sequences,
+        "stop": ["\n\n\n"],
     }
 
     url = f"{LLM_ENDPOINT}/completion"
-    logger.debug(f"Translating chunk {chunk_idx + 1}/{total_chunks} with {LLM_MODEL}")
+    logger.debug(f"Translating chunk {chunk_idx + 1}/{total_chunks} ({len(lines)} lines) with {LLM_MODEL}")
+
+    resp = requests.post(url, json=payload, timeout=LLM_TIMEOUT)
+    resp.raise_for_status()
+    data = resp.json()
+
+    raw_output = _strip_code_fence(data.get("content", ""))
+    _log_timing(data)
 
     try:
-        resp = requests.post(url, json=payload, timeout=LLM_TIMEOUT)
-        resp.raise_for_status()
-        data = resp.json()
-    except requests.exceptions.ConnectionError:
-        logger.error(f"Cannot connect to LLM server at {LLM_ENDPOINT}. Is llama-server running?")
-        raise
-    except requests.exceptions.Timeout:
-        logger.error(f"Translation request timed out after {LLM_TIMEOUT}s")
-        raise
-    except (json.JSONDecodeError, KeyError) as e:
-        logger.error(f"Failed to parse LLM response: {e}")
-        raise RuntimeError(f"LLM translation failed: {e}") from e
+        parsed = json.loads(raw_output)
+    except json.JSONDecodeError as e:
+        logger.error(f"Chunk {chunk_idx + 1}/{total_chunks}: failed to parse JSON response ({e}): {raw_output[:200]!r}")
+        parsed = None
 
-    raw_output = data.get("content", "")
-    translated = _clean_output(raw_output)
-
-    _log_timing(data)
+    if not isinstance(parsed, list) or len(parsed) != len(lines):
+        got = f"{type(parsed).__name__} of length {len(parsed)}" if isinstance(parsed, list) else type(parsed).__name__
+        logger.warning(f"Chunk {chunk_idx + 1}/{total_chunks}: expected a JSON array of {len(lines)} string(s), got {got}")
+        translated = ["[translation failed: unparseable response]" for _ in lines]
+    else:
+        translated = [_clean_output(str(item)) for item in parsed]
 
     if progress_cb:
         progress_cb(chunk_idx + 1, total_chunks)
@@ -241,28 +270,24 @@ def translate_lines(
     """Translate a list of text lines using LLM with sliding context.
 
     Groups lines into chunks respecting the max character limit, then
-    translates each chunk. Maintains a sliding window of previously
-    translated paragraphs as context for consistency.
+    translates each chunk as a JSON array (see TRANSLATION_PROMPT), which
+    guarantees translate_chunk() returns exactly one output per input line
+    in order -- there's no paragraph-merging/splitting to recover from like
+    the old label-based prompt format had.
 
     Args:
         lines: List of source text lines/paragraphs to translate.
         target_lang: Target language code (default: en).
         source_lang: Source language code (default: ja).
-        max_chunk_chars: Maximum characters per translation chunk. Kept
-            small (default 400, roughly 3-6 short paragraphs) because
-            translategemma doesn't reliably keep blank-line boundaries
-            between many packed paragraphs in one call -- larger chunks
-            were observed to silently merge paragraphs together, which
-            the fallback below then collapses into a single oversized
-            "line" instead of preserving per-paragraph granularity.
+        max_chunk_chars: Maximum characters per translation chunk.
         context_window: Number of previous paragraphs to use as context.
         glossary_text: Optional pre-formatted glossary text (character names/
-            terms and running context notes), prepended to every chunk's
-            prompt for consistency. See pyplayground.webnovels.glossary.
+            terms), prepended to every chunk's prompt for consistency. See
+            pyplayground.webnovels.glossary.
         progress_cb: Optional callback(done, total) for progress updates.
 
     Returns:
-        List of translated text lines.
+        List of translated text lines, same length as `lines`.
     """
     # Pack lines into chunks respecting size limit
     chunks: List[List[str]] = []
@@ -291,10 +316,9 @@ def translate_lines(
         if context_buffer:
             context = "\n\n".join(context_buffer[-context_window:])
 
-        joined = "\n\n".join(chunk)
         try:
-            translated = translate_chunk(
-                joined,
+            parts = translate_chunk(
+                chunk,
                 target_lang=target_lang,
                 source_lang=source_lang,
                 context=context,
@@ -305,15 +329,9 @@ def translate_lines(
             )
         except Exception as e:
             logger.error(f"Chunk {i + 1}/{len(chunks)} failed: {e}")
-            translated = "\n\n".join(f"[translation failed: {e}]" for _ in chunk)
+            parts = [f"[translation failed: {e}]" for _ in chunk]
 
-        # Split back into per-line translations
-        parts = translated.split("\n\n")
-        if len(parts) == len(chunk):
-            translated_lines.extend(parts)
-        else:
-            # Fallback: treat entire chunk as one block
-            translated_lines.append(translated)
+        translated_lines.extend(parts)
 
         # Update context buffer
         for part in parts:

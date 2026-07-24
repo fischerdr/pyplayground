@@ -33,7 +33,7 @@ import tkinter as tk
 import traceback
 from pathlib import Path
 from tkinter import messagebox, ttk
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import requests
 from bs4 import BeautifulSoup
@@ -159,15 +159,35 @@ def load_reader_state() -> dict:
 def save_reader_state(url: str, target_lang: str, scroll_pos: Optional[float] = None) -> None:
     """Save the current URL, target language, and scroll position to the state file.
 
+    Merges into the existing state rather than overwriting it, so other
+    persisted settings (backend, appearance) written elsewhere aren't lost.
+
     Args:
         url: The current episode URL.
         target_lang: The target translation language code.
         scroll_pos: Fraction (0.0-1.0) of the way scrolled through the text
             widget, from Text.yview()[0]. None leaves the field unset.
     """
-    state: Dict[str, Any] = {"url": url, "target_lang": target_lang}
+    state = load_reader_state()
+    state["url"] = url
+    state["target_lang"] = target_lang
     if scroll_pos is not None:
         state["scroll_pos"] = scroll_pos
+    save_json_config(state, STATE_FILE, config_dir=STATE_DIR)
+
+
+def update_reader_state(**kwargs: Any) -> None:
+    """Merge arbitrary key/value pairs into the persisted reader state.
+
+    Used for display settings (font size, image width, dark mode, view
+    mode, etc.) that don't fit save_reader_state()'s url/target_lang/
+    scroll_pos-specific signature.
+
+    Args:
+        **kwargs: Key/value pairs to merge into state.json.
+    """
+    state = load_reader_state()
+    state.update(kwargs)
     save_json_config(state, STATE_FILE, config_dir=STATE_DIR)
 
 
@@ -531,17 +551,31 @@ class ReaderApp:
         self.episode = None
         self.cache = {}
         self._restore_scroll_pos = restore_scroll_pos
-        self.font_size = 12
-        self.image_width = 400
-        self.dark_mode = False
-        self.font_family = self._pick_default_font()
-        self.line_height = 1.3  # multiplier on font_size, converted to pixel spacing
-        self.paragraph_spacing = 12  # pixels between paragraphs
-        self.page_width_pct = 100  # percent of the text widget's available width
-        self.text_align = "left"  # left, center, right, justify(fallback to left)
-        self.view_mode = tk.StringVar(value="both")
+
+        settings = load_reader_state()
+        self.font_size = settings.get("font_size", 12)
+        self.image_width = settings.get("image_width", 400)
+        self.dark_mode = settings.get("dark_mode", False)
+        saved_font_family = settings.get("font_family")
+        self.line_height = settings.get("line_height", 1.3)  # multiplier on font_size, converted to pixel spacing
+        self.paragraph_spacing = settings.get("paragraph_spacing", 12)  # pixels between paragraphs
+        self.page_width_pct = settings.get("page_width_pct", 100)  # percent of the text widget's available width
+        self.text_align = settings.get("text_align", "left")  # left, center, right, justify(fallback to left)
+        self.view_mode = tk.StringVar(value=settings.get("view_mode", "both"))
         self._prefetching = set()
         self._photo_images = {}
+        # True while a load_episode() worker thread is running. Prevents
+        # overlapping loads -- confirmed possible via rapid clicks on
+        # Previous/Next or the <Left>/<Right> key bindings (keyboard repeat
+        # fires go_prev()/go_next() directly, bypassing the toolbar buttons'
+        # disabled state entirely). Concurrent loads meant multiple
+        # simultaneous LLM translation requests hitting the same
+        # llama-server slots, which is suspected to have contributed to
+        # scrambled/misaligned translated output.
+        self._loading = False
+
+        available_fonts = self._available_fonts()
+        self.font_family = saved_font_family if saved_font_family in available_fonts else self._pick_default_font()
 
         root.title("Alphapolis Reader")
         # Widened from 900 to fit the Refresh button added to the toolbar
@@ -558,7 +592,7 @@ class ReaderApp:
 
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
         for value, label in (("original", "Original"), ("translated", "Translated"), ("both", "Both")):
-            ttk.Radiobutton(toolbar, text=label, value=value, variable=self.view_mode, command=self.render_text).pack(side="left")
+            ttk.Radiobutton(toolbar, text=label, value=value, variable=self.view_mode, command=self._on_view_mode_change).pack(side="left")
 
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
         ttk.Button(toolbar, text="A-", width=3, command=self.decrease_font).pack(side="left")
@@ -634,11 +668,26 @@ class ReaderApp:
     def _save_backend(self) -> None:
         """Save the current backend setting to state."""
         try:
-            state = load_reader_state()
-            state["backend"] = self.backend
-            save_json_config(state, STATE_FILE, config_dir=STATE_DIR)
+            update_reader_state(backend=self.backend)
         except Exception as e:
             logger.debug(f"Failed to save backend setting: {e}")
+
+    def _save_settings(self) -> None:
+        """Persist current display settings (font, sizing, mode) to state."""
+        try:
+            update_reader_state(
+                font_size=self.font_size,
+                image_width=self.image_width,
+                dark_mode=self.dark_mode,
+                font_family=self.font_family,
+                line_height=self.line_height,
+                paragraph_spacing=self.paragraph_spacing,
+                page_width_pct=self.page_width_pct,
+                text_align=self.text_align,
+                view_mode=self.view_mode.get(),
+            )
+        except Exception as e:
+            logger.debug(f"Failed to save display settings: {e}")
 
     def apply_appearance(self):
         """Apply current appearance settings (colors, font, spacing) to the GUI."""
@@ -686,28 +735,33 @@ class ReaderApp:
         """Increase the font size by 1, up to a maximum of 32."""
         self.font_size = min(self.font_size + 1, 32)
         self.apply_appearance()
+        self._save_settings()
 
     def decrease_font(self):
         """Decrease the font size by 1, down to a minimum of 8."""
         self.font_size = max(self.font_size - 1, 8)
         self.apply_appearance()
+        self._save_settings()
 
     def increase_image_width(self):
         """Increase the image display width by 100 pixels, up to 1200px."""
         self.image_width = min(self.image_width + 100, 1200)
         self._photo_images.clear()
         self.render_text()
+        self._save_settings()
 
     def decrease_image_width(self):
         """Decrease the image display width by 100 pixels, down to 100px."""
         self.image_width = max(self.image_width - 100, 100)
         self._photo_images.clear()
         self.render_text()
+        self._save_settings()
 
     def toggle_dark_mode(self):
         """Toggle between light and dark color palettes."""
         self.dark_mode = not self.dark_mode
         self.apply_appearance()
+        self._save_settings()
 
     def open_load_url_dialog(self):
         """Open a dialog window for loading a new episode by URL."""
@@ -804,6 +858,7 @@ class ReaderApp:
             self.text_align = align_var.get()
             self.backend = backend_var.get()
             self._save_backend()
+            self._save_settings()
             win.destroy()
             self.apply_appearance()
             self.render_text()
@@ -857,7 +912,18 @@ class ReaderApp:
                 glossary_text = format_glossary_for_prompt(load_glossary(novel_id))
 
         html = self.browser.fetch(url)
+        logger.debug(f"Fetched {len(html)} bytes of HTML for {url}")
         ep = parse_episode(html)
+        logger.info(f"Parsed {len(ep['lines'])} paragraph(s), {len(ep['content'])} content item(s) from {url}")
+        if len(ep["lines"]) < 5:
+            # A normal chapter runs from a few dozen to over a hundred
+            # paragraphs (confirmed across multiple real episodes); a
+            # handful or fewer usually means the page was a bot-check/
+            # challenge response or genuinely truncated rather than a full
+            # chapter, so flag it instead of silently translating almost nothing.
+            logger.warning(
+                f"Only {len(ep['lines'])} paragraph(s) parsed from {url} -- page may not have fully loaded or loaded a bot-check page instead of the chapter; verify before trusting this translation"
+            )
         ep["translated_lines"] = translate_lines(ep["lines"], self.target_lang, backend=self.backend, glossary_text=glossary_text, progress_cb=progress_cb)
         title_lines = translate_lines([ep["title"], ep["episode_title"]], self.target_lang, backend=self.backend, glossary_text=glossary_text)
         ep["translated_title"], ep["translated_episode_title"] = title_lines
@@ -875,12 +941,31 @@ class ReaderApp:
     def load_episode(self, url):
         """Load and display an episode by URL in a background thread.
 
+        No-ops if a load is already in progress -- guards against
+        overlapping loads from rapid Previous/Next clicks or held-down
+        arrow keys (the <Left>/<Right> bindings call go_prev()/go_next()
+        directly and aren't gated by the toolbar buttons' disabled state).
+        Without this, multiple concurrent LLM translation requests could
+        hit the server at once, which is suspected to have contributed to
+        scrambled/misaligned translated output.
+
         Args:
             url: The episode URL to load.
         """
+        if self._loading:
+            logger.debug(f"Ignoring load_episode({url}) -- a load is already in progress")
+            return
+        self._loading = True
+
         self.set_status("Loading...")
         self.prev_btn.state(["disabled"])
         self.next_btn.state(["disabled"])
+        # Clear the text area immediately rather than leaving the previous
+        # chapter's text sitting there unchanged -- the status bar alone is
+        # easy to miss, so without this a slow LLM translation could look
+        # like nothing is happening rather than a load in progress.
+        self.text.delete("1.0", "end")
+        self.text.insert("1.0", "Loading...", "heading")
 
         start_time = time.time()
 
@@ -902,6 +987,8 @@ class ReaderApp:
                 print(full_trace, file=sys.stderr)  # always visible in the console too
                 self.root.after(0, lambda: self.show_error(full_trace))
                 self.root.after(0, lambda: self.set_status("Error"))
+            finally:
+                self._loading = False
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1027,6 +1114,19 @@ class ReaderApp:
 
     def _render_translated_content(self, ep, tag):
         translated_lines = ep.get("translated_lines", [])
+        expected = sum(1 for item in ep["content"] if item["type"] == "text")
+        if len(translated_lines) != expected:
+            # translated_lines is walked in lockstep with the text items in
+            # ep["content"] below -- if the counts don't match (e.g. a stale
+            # cache entry from before translate_lines() guaranteed alignment),
+            # every paragraph after the point of drift renders against the
+            # wrong translated line instead of its own. Surfacing this in the
+            # log is the only way to tell "wrong text showing" apart from a
+            # fresh translation bug, since the render itself has no way to
+            # detect misalignment from the text alone.
+            logger.warning(
+                f"translated_lines length ({len(translated_lines)}) != expected text item count ({expected}) for {ep.get('episode_title', 'unknown')} -- display will drift; refresh this chapter to retranslate"
+            )
         line_idx = 0
         for item in ep["content"]:
             if item["type"] == "image":
@@ -1039,6 +1139,11 @@ class ReaderApp:
                 line = translated_lines[line_idx] if line_idx < len(translated_lines) else item["text"]
                 self.text.insert("end", line + "\n", tag)
                 line_idx += 1
+
+    def _on_view_mode_change(self):
+        """Handle the Original/Translated/Both radio buttons: re-render and persist."""
+        self.render_text()
+        self._save_settings()
 
     def render_text(self, restore_scroll_pos=None):
         """Render the current episode content in the text widget.

@@ -38,13 +38,33 @@ from pyplayground.webnovels.glossary import (
     merge_terms,
     save_glossary,
 )
-from pyplayground.webnovels.llm_translate import LLM_ENDPOINT, LLM_TIMEOUT, parse_json_response, strip_code_fence
+from pyplayground.webnovels.llm_translate import LLM_ENDPOINT, parse_json_response, strip_code_fence
 
 logger = get_logger(__name__)
 
 CACHE_DIR = Path.home() / ".cache" / "alphapolis_reader"
 
 NOVEL_ID_RE = re.compile(r"/novel/(\d+)/")
+
+# Confirmed via live testing against the real model: sending a full-length
+# episode (60+ lines, 10K+ combined source/translated chars) to the
+# extraction prompt makes it fall back to just re-translating the input as a
+# JSON array again (the same shape used for actual translation calls)
+# instead of extracting terms -- reproduced consistently across multiple
+# episodes that all yielded zero terms. A truncated ~40-line sample stayed
+# on-task in every repro tried (15/20/30/40/50 lines all worked; the full
+# 64-line episode did not), and most character/term introductions happen
+# early in a chapter anyway, so capping here doesn't meaningfully lose
+# glossary coverage.
+MAX_EXTRACTION_LINES = 40
+
+# Extraction competes for the same 2 llama-server slots as live translation
+# and can genuinely queue past the default LLM_TIMEOUT (120s) under load --
+# confirmed via live rebuild logs showing timeouts on episodes that
+# succeeded on a later, less-contended retry. Extraction is a background,
+# manual, one-call-per-episode operation (not blocking live reading), so a
+# longer timeout here is an acceptable trade for fewer spurious failures.
+EXTRACTION_TIMEOUT = 240
 
 # Asks for "character" entries to include gender/pronoun_style so the
 # glossary can preserve voice/tone that a flat name mapping loses --
@@ -167,6 +187,35 @@ def _load_cached_episodes_for_novel(novel_id: str) -> List[Dict[str, Any]]:
     return episodes
 
 
+def _looks_like_repetition_loop(text: str, min_repeats: int = 5) -> bool:
+    """Heuristically detect a degenerate model output stuck repeating one line.
+
+    Confirmed via live testing: this model occasionally gets stuck emitting
+    the same short string (e.g. one JSON array entry) over and over until
+    n_predict cuts it off mid-string, which then fails to parse as JSON.
+    Used only to make the resulting log message more informative (this
+    failure vs. an ordinary malformed response), not to attempt recovery.
+
+    Args:
+        text: Raw model output (post code-fence-stripping).
+        min_repeats: How many consecutive identical lines count as a loop.
+
+    Returns:
+        True if a single non-trivial line repeats at least `min_repeats`
+        times consecutively somewhere in the text.
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    run_value, run_len = None, 0
+    for line in lines:
+        if line == run_value:
+            run_len += 1
+            if run_len >= min_repeats:
+                return True
+        else:
+            run_value, run_len = line, 1
+    return False
+
+
 def extract_glossary_terms(source_lines: List[str], translated_lines: List[str]) -> Dict[str, Any]:
     """Ask the LLM to extract glossary terms from one episode's text.
 
@@ -179,6 +228,11 @@ def extract_glossary_terms(source_lines: List[str], translated_lines: List[str])
         "honorific_policy_suggestion" (str or None), and "context_note"
         (str), or empty/None values if extraction fails.
     """
+    if len(source_lines) > MAX_EXTRACTION_LINES:
+        logger.debug(f"Truncating extraction input from {len(source_lines)} to {MAX_EXTRACTION_LINES} line(s) to keep the model on-task")
+    source_lines = source_lines[:MAX_EXTRACTION_LINES]
+    translated_lines = translated_lines[:MAX_EXTRACTION_LINES]
+
     source_text = "\n\n".join(source_lines)
     translated_text = "\n\n".join(translated_lines)
     prompt = _build_extraction_prompt(source_text, translated_text)
@@ -194,7 +248,7 @@ def extract_glossary_terms(source_lines: List[str], translated_lines: List[str])
     empty_result: Dict[str, Any] = {"terms": [], "honorific_policy_suggestion": None, "context_note": ""}
 
     try:
-        resp = requests.post(url, json=payload, timeout=LLM_TIMEOUT)
+        resp = requests.post(url, json=payload, timeout=EXTRACTION_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
         raw_output = strip_code_fence(data.get("content", ""))
@@ -203,7 +257,19 @@ def extract_glossary_terms(source_lines: List[str], translated_lines: List[str])
         logger.error(f"LLM request failed during glossary extraction: {e}")
         return empty_result
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse LLM glossary extraction output as JSON: {e}")
+        # Confirmed via live testing: this is usually one of two harmless,
+        # unrecoverable-by-retry model failures rather than a real bug --
+        # (a) the translation-shaped fallback below, but missing a comma
+        # between array entries so it doesn't even parse as a list, or
+        # (b) a degenerate repetition loop (the model repeats one line
+        # hundreds of times until n_predict cuts it off mid-string). Both
+        # are "nothing extracted this episode" outcomes, not errors worth
+        # alarming about -- log at DEBUG with enough detail to tell them
+        # apart, and move on.
+        if _looks_like_repetition_loop(raw_output):
+            logger.debug(f"Glossary extraction got stuck in a repetition loop and was truncated mid-response ({e}); skipping.")
+        else:
+            logger.debug(f"Glossary extraction output failed to parse as JSON ({e}); skipping.")
         return empty_result
 
     if isinstance(parsed, list):

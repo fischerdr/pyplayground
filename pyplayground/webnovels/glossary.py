@@ -1,31 +1,39 @@
 #!/usr/bin/env python3
 """glossary.py - Per-novel character/terminology glossary storage.
 
-Stores a persistent list of character names and key terms with their
-canonical target-language translations, plus short running context notes,
-keyed by Alphapolis novel ID. Used to keep names and terminology consistent
-across chunks and episodes when translating with the LLM backend.
+Stores a persistent list of character names and key terms, plus short
+running context notes, keyed by Alphapolis novel ID. Used to keep names and
+terminology consistent across chunks and episodes when translating with the
+LLM backend.
 
-Terms have a "type" of either "character" or "term" (general vocabulary --
-places, magic systems, item names). Character entries carry extra optional
-detail that general terms don't need: gender, pronoun_style (a short note on
-the character's first-person pronoun/voice, since Japanese frequently omits
-subject pronouns and the ones used encode gender/formality/personality that
-a flat name mapping loses), and honorific_override (per-character override
-of the novel-wide honorific_policy -- e.g. keep "-sensei" for a teacher even
-if honorifics are dropped everywhere else). All extra fields are optional;
-older glossary files without them still load fine via .get() defaults.
+Each term carries a ranked candidate list and a status (STATUS_CONFIRMED /
+STATUS_SUGGESTED) rather than a single flat target -- see the STATUS_CONFIRMED
+constant's docstring for the full shape, and DESIGN.md Section 9 for why:
+only human-confirmed terms should steer live translation output, so an
+unreviewed LLM extraction sits in a review queue instead of immediately
+being trusted. Terms have a "type" of either "character" or "term" (general
+vocabulary -- places, magic systems, item names). Character entries carry
+extra optional detail that general terms don't need: gender, pronoun_style
+(a short note on the character's first-person pronoun/voice, since Japanese
+frequently omits subject pronouns and the ones used encode gender/formality/
+personality that a flat name mapping loses), and honorific_override
+(per-character override of the novel-wide honorific_policy -- e.g. keep
+"-sensei" for a teacher even if honorifics are dropped everywhere else).
 
 Glossaries are always injected into the prompt in full (never retrieved via
 embeddings/search) -- a novel's cast and key terms are small enough (a few
 KB at most) to always fit, so retrieval-based selection isn't needed.
 
 Storage location: ~/.config/alphapolis_reader/glossaries/{novel_id}.json
+
+No backward compatibility with the pre-Section-9 flat {source, target, type,
+note} term shape -- this is pre-production, existing glossary files under
+the old shape should be deleted/regenerated rather than migrated.
 """
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pyplayground.utils.logging_utils import get_logger
 
@@ -44,6 +52,92 @@ DEFAULT_TERM_TYPE = TERM_TYPE_GENERAL
 (gender, pronoun_style, honorific_override); "term" entries (the default,
 for backward compatibility with pre-existing flat-shape glossaries) are
 general vocabulary and only use source/target/note."""
+
+STATUS_CONFIRMED = "confirmed"
+STATUS_SUGGESTED = "suggested"
+"""Term review-gate status (see DESIGN.md Section 9). A term's
+confirmed_target is only injected into the translation prompt via
+format_glossary_for_prompt() when status is STATUS_CONFIRMED. STATUS_SUGGESTED
+terms (from LLM extraction, or an unresolved click-pick) sit in a review
+queue instead -- not yet trusted enough to steer translation output.
+
+A term dict's shape (see make_confirmed_term()/make_suggested_term()):
+{
+  "source": str,
+  "type": str (TERM_TYPE_CHARACTER or TERM_TYPE_GENERAL),
+  "candidates": [{"target": str, "count": int, "origin": str}, ...],
+  "confirmed_target": str or None,
+  "status": STATUS_CONFIRMED or STATUS_SUGGESTED,
+  "note": str or None,
+  # character-only, otherwise absent:
+  "gender": str or None,
+  "pronoun_style": str or None,
+  "honorific_override": str or None,
+}
+"""
+
+ORIGIN_USER = "user"
+ORIGIN_LLM = "llm"
+ORIGIN_MT = "mt"
+"""Candidate origin identifiers -- who/what proposed this candidate target,
+shown alongside its usage count in the term editor."""
+
+
+def make_confirmed_term(term_type: str, source: str, target: str, note: Optional[str] = None) -> Dict[str, Any]:
+    """Build a term dict for a manually-entered, immediately-trusted term.
+
+    Used by the "Highlight -> Add Term" path (right-click a word in chapter
+    text, or the glossary editor's Add Term/Add Character buttons): a human
+    typed this deliberately, so it's trusted on entry -- no review queue.
+
+    Args:
+        term_type: TERM_TYPE_CHARACTER or TERM_TYPE_GENERAL.
+        source: Source-language term text.
+        target: The confirmed translation.
+        note: Optional free-form note.
+
+    Returns:
+        A term dict with status=STATUS_CONFIRMED and a single
+        origin="user" candidate at count 1.
+    """
+    return {
+        "type": term_type,
+        "source": source,
+        "candidates": [{"target": target, "count": 1, "origin": ORIGIN_USER}],
+        "confirmed_target": target,
+        "status": STATUS_CONFIRMED,
+        "note": note,
+    }
+
+
+def make_suggested_term(term_type: str, source: str, target: str, note: Optional[str] = None, origin: str = ORIGIN_LLM) -> Dict[str, Any]:
+    """Build a term dict for an unreviewed, machine-proposed term.
+
+    Used by build_glossary.py's LLM extraction: a fresh extraction is a
+    guess, not a confirmed fact, so it lands in the review queue
+    (status=STATUS_SUGGESTED, confirmed_target=None) rather than
+    immediately affecting translation output.
+
+    Args:
+        term_type: TERM_TYPE_CHARACTER or TERM_TYPE_GENERAL.
+        source: Source-language term text.
+        target: The proposed translation.
+        note: Optional free-form note.
+        origin: Candidate origin identifier (default ORIGIN_LLM).
+
+    Returns:
+        A term dict with status=STATUS_SUGGESTED, confirmed_target=None,
+        and a single candidate at count 1.
+    """
+    return {
+        "type": term_type,
+        "source": source,
+        "candidates": [{"target": target, "count": 1, "origin": origin}],
+        "confirmed_target": None,
+        "status": STATUS_SUGGESTED,
+        "note": note,
+    }
+
 
 HONORIFIC_POLICIES = ["keep", "drop", "romanize"]
 DEFAULT_HONORIFIC_POLICY = "drop"
@@ -131,6 +225,12 @@ def save_glossary(novel_id: str, glossary: Dict[str, Any]) -> None:
 def format_glossary_for_prompt(glossary: Dict[str, Any]) -> str:
     """Render a glossary dict into compact text suitable for prompt injection.
 
+    Only status=STATUS_CONFIRMED terms are included -- an unreviewed
+    STATUS_SUGGESTED term (fresh LLM extraction, or an unresolved click-pick)
+    hasn't been vetted, so injecting it as "use this exact translation" would
+    let an unconfirmed guess steer live translation output the same way a
+    human-confirmed term does. See DESIGN.md Section 9.
+
     Only the structured term list is included -- context_notes (a free-form
     narrative summary) is deliberately excluded. Confirmed via a real
     mismatch report: injecting context_notes caused the model to sometimes
@@ -146,19 +246,21 @@ def format_glossary_for_prompt(glossary: Dict[str, Any]) -> str:
         glossary: Glossary dict as returned by load_glossary().
 
     Returns:
-        Formatted glossary text, or an empty string if the glossary has no terms.
+        Formatted glossary text, or an empty string if the glossary has no
+        confirmed terms.
     """
-    terms: List[Dict[str, Any]] = glossary.get("terms", [])[:MAX_TERMS_IN_PROMPT]
+    all_terms: List[Dict[str, Any]] = glossary.get("terms", [])
+    confirmed_terms = [t for t in all_terms if t.get("status") == STATUS_CONFIRMED][:MAX_TERMS_IN_PROMPT]
 
-    if not terms:
+    if not confirmed_terms:
         return ""
 
     honorific_policy = glossary.get("honorific_policy", DEFAULT_HONORIFIC_POLICY)
 
     lines = ["Character names and terms (use these exact translations):"]
-    for term in terms:
+    for term in confirmed_terms:
         source = term.get("source", "")
-        target = term.get("target", "")
+        target = term.get("confirmed_target", "")
         entry = f"- {source} -> {target}"
 
         # Character entries get compact parenthetical detail (gender,
@@ -187,35 +289,34 @@ def format_glossary_for_prompt(glossary: Dict[str, Any]) -> str:
 
 
 def merge_terms(existing: List[Dict[str, Any]], new_terms: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Merge newly extracted terms into an existing term list.
+    """Merge new terms into an existing term list.
 
-    Existing entries win on conflict (a user may have hand-edited target/note
-    or character detail fields via the term editor), so this only appends
-    terms whose (type, source) isn't already present. Deduping on type as
-    well as source means a "character" and a "term" entry could theoretically
-    share the same source text without colliding, though in practice that's
-    unlikely to come up.
+    Existing entries win on conflict (a user may have hand-confirmed/edited
+    a term via the term editor), so this only appends terms whose (type,
+    source) isn't already present. Deduping on type as well as source means
+    a "character" and a "term" entry could theoretically share the same
+    source text without colliding, though in practice that's unlikely to
+    come up.
 
-    An existing entry with no "type" field at all (from a glossary saved
-    before term types existed) matches an incoming term of ANY type with the
-    same source, rather than only DEFAULT_TERM_TYPE -- otherwise re-running
-    extraction on a glossary with old untyped entries would add a duplicate
-    "character"-typed copy of a name that's already present untyped.
+    Callers decide status on the way in (see make_confirmed_term()/
+    make_suggested_term()) -- this function is status-agnostic and just
+    dedupes/appends whatever term dicts it's given. build_glossary.py's LLM
+    extraction should build new_terms with make_suggested_term() (unreviewed
+    guesses land in the review queue); the reader's manual "Add to Glossary"
+    path should use make_confirmed_term() (a human typed it deliberately,
+    trusted on entry). See DESIGN.md Section 9.
 
     Args:
         existing: Current list of term dicts (see module docstring for shape).
-        new_terms: Newly extracted term dicts to merge in.
+        new_terms: New term dicts to merge in.
 
     Returns:
         Merged term list.
     """
     known_keys = {(term.get("type", DEFAULT_TERM_TYPE), term.get("source")) for term in existing}
-    untyped_sources = {term.get("source") for term in existing if "type" not in term}
     merged = list(existing)
     for term in new_terms:
         source = term.get("source")
-        if source in untyped_sources:
-            continue
         key = (term.get("type", DEFAULT_TERM_TYPE), source)
         if key not in known_keys:
             merged.append(term)

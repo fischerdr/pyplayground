@@ -50,10 +50,13 @@ from pyplayground.webnovels.build_glossary import build_glossary_for_novel
 from pyplayground.webnovels.glossary import (
     DEFAULT_HONORIFIC_POLICY,
     HONORIFIC_POLICIES,
+    STATUS_CONFIRMED,
+    STATUS_SUGGESTED,
     TERM_TYPE_CHARACTER,
     TERM_TYPE_GENERAL,
     format_glossary_for_prompt,
     load_glossary,
+    make_confirmed_term,
     merge_terms,
     save_glossary,
 )
@@ -1100,9 +1103,9 @@ class ReaderApp:
         body = ttk.Frame(win)
         body.pack(fill="both", expand=True, padx=10, pady=4)
 
-        columns = ("source", "target", "type")
+        columns = ("source", "target", "type", "status")
         tree = ttk.Treeview(body, columns=columns, show="headings", height=12)
-        for col, label, width in (("source", "Source", 140), ("target", "Target", 140), ("type", "Type", 80)):
+        for col, label, width in (("source", "Source", 130), ("target", "Target", 130), ("type", "Type", 70), ("status", "Status", 80)):
             tree.heading(col, text=label)
             tree.column(col, width=width)
         tree.pack(side="left", fill="both", expand=True)
@@ -1116,7 +1119,12 @@ class ReaderApp:
         def refresh_tree(select_index=None):
             tree.delete(*tree.get_children())
             for i, t in enumerate(terms):
-                tree.insert("", "end", iid=str(i), values=(t.get("source", ""), t.get("target", ""), t.get("type", TERM_TYPE_GENERAL)))
+                tree.insert(
+                    "",
+                    "end",
+                    iid=str(i),
+                    values=(t.get("source", ""), t.get("confirmed_target") or "", t.get("type", TERM_TYPE_GENERAL), t.get("status", STATUS_SUGGESTED)),
+                )
             if select_index is not None and 0 <= select_index < len(terms):
                 tree.selection_set(str(select_index))
                 tree.see(str(select_index))
@@ -1143,7 +1151,7 @@ class ReaderApp:
             ttk.Entry(form, textvariable=form_vars["source"], width=22).grid(row=1, column=1, **pad)
 
             ttk.Label(form, text="Target").grid(row=2, column=0, sticky="w", **pad)
-            form_vars["target"] = tk.StringVar(value=term.get("target", ""))
+            form_vars["target"] = tk.StringVar(value=term.get("confirmed_target") or "")
             ttk.Entry(form, textvariable=form_vars["target"], width=22).grid(row=2, column=1, **pad)
 
             ttk.Label(form, text="Note").grid(row=3, column=0, sticky="w", **pad)
@@ -1181,7 +1189,13 @@ class ReaderApp:
                 t = terms[idx]
                 t["type"] = form_vars["type"].get()
                 t["source"] = form_vars["source"].get().strip()
-                t["target"] = form_vars["target"].get().strip()
+                # Editing a term in this dialog is a deliberate human action,
+                # same trust level as "Highlight -> Add Term" -- confirm it
+                # immediately rather than leaving it in the suggested queue.
+                target = form_vars["target"].get().strip()
+                t["confirmed_target"] = target
+                t["status"] = STATUS_CONFIRMED
+                t["candidates"] = [{"target": target, "count": 1, "origin": "user"}]
                 t["note"] = form_vars["note"].get().strip() or None
                 if t["type"] == TERM_TYPE_CHARACTER:
                     t["gender"] = form_vars["gender"].get() or None
@@ -1219,7 +1233,7 @@ class ReaderApp:
 
         def add_term(term_type):
             commit_selected_form()
-            new_term = {"type": term_type, "source": "", "target": "", "note": None}
+            new_term = make_confirmed_term(term_type=term_type, source="", target="")
             if term_type == TERM_TYPE_CHARACTER:
                 new_term.update(gender=None, pronoun_style=None, honorific_override=None)
             terms.append(new_term)
@@ -1779,7 +1793,7 @@ class ReaderApp:
                 if not source:
                     messagebox.showinfo("Add to Glossary", "Source is required.", parent=win)
                     return
-                new_term = {"type": type_var.get(), "source": source, "target": target, "note": note_var.get().strip() or None}
+                new_term = make_confirmed_term(term_type=type_var.get(), source=source, target=target, note=note_var.get().strip() or None)
                 if type_var.get() == TERM_TYPE_CHARACTER:
                     new_term.update(
                         gender=gender_var.get() or None,

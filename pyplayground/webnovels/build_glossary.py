@@ -35,6 +35,7 @@ from pyplayground.webnovels.glossary import (
     TERM_TYPE_CHARACTER,
     TERM_TYPE_GENERAL,
     load_glossary,
+    make_suggested_term,
     merge_terms,
     save_glossary,
 )
@@ -301,6 +302,41 @@ def extract_glossary_terms(source_lines: List[str], translated_lines: List[str])
     }
 
 
+def _to_suggested_term_dicts(raw_terms: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert raw LLM extraction output into the glossary's suggested-term shape.
+
+    extract_glossary_terms() returns the model's parsed JSON directly (flat
+    type/source/target/note/gender/pronoun_style keys) -- this wraps each one
+    with make_suggested_term() so it lands in the review queue
+    (status=STATUS_SUGGESTED, confirmed_target=None) rather than immediately
+    trusted the way a human-confirmed term is. See DESIGN.md Section 9.
+
+    Args:
+        raw_terms: Term dicts as returned in extract_glossary_terms()'s
+            "terms" list.
+
+    Returns:
+        Term dicts in the make_suggested_term() shape, with character-only
+        fields (gender/pronoun_style/honorific_override) carried over as-is
+        when the source term is type=character.
+    """
+    converted = []
+    for raw in raw_terms:
+        term_type = raw.get("type", TERM_TYPE_GENERAL)
+        term = make_suggested_term(
+            term_type=term_type,
+            source=raw.get("source", ""),
+            target=raw.get("target", ""),
+            note=raw.get("note"),
+        )
+        if term_type == TERM_TYPE_CHARACTER:
+            term["gender"] = raw.get("gender")
+            term["pronoun_style"] = raw.get("pronoun_style")
+            term["honorific_override"] = raw.get("honorific_override")
+        converted.append(term)
+    return converted
+
+
 def build_glossary_for_novel(novel_id: str, max_episodes: int = 20, status_cb: Optional[Callable[[str], None]] = None) -> Optional[Dict[str, Any]]:
     """Extract and merge glossary terms from a novel's cached episodes.
 
@@ -364,8 +400,9 @@ def build_glossary_for_novel(novel_id: str, max_episodes: int = 20, status_cb: O
         result = extract_glossary_terms(source_lines, translated_lines)
         new_terms = result.get("terms", [])
         if new_terms:
+            suggested_terms = _to_suggested_term_dicts(new_terms)
             before = len(glossary.get("terms", []))
-            glossary["terms"] = merge_terms(glossary.get("terms", []), new_terms)
+            glossary["terms"] = merge_terms(glossary.get("terms", []), suggested_terms)
             added = len(glossary["terms"]) - before
             report(f"    Extracted {len(new_terms)} term(s), {added} new after merge: {', '.join(t.get('source', '?') for t in new_terms)}")
         else:

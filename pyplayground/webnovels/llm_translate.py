@@ -30,8 +30,10 @@ Backend constants:
 """
 
 import json
+import re
 import time
-from typing import Any, Callable, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
 
@@ -120,6 +122,111 @@ LANGUAGE_NAMES = {
     "zh": "Chinese",
 }
 """Common source/target language code to display name mapping for prompts."""
+
+# ---------------------------------------------------------------------------
+# Sentinel masking (glossary review-queue splice: mask a term, translate
+# around it, splice the original word back into the output untranslated)
+# ---------------------------------------------------------------------------
+#
+# Format and survival rates validated against translategemma in
+# test_sentinel_survival.py before this was wired in: an opaque placeholder
+# (the model never sees the Japanese word, only ⟦TERM_n⟧) survived 15/15
+# across single/multi-line, chunk-boundary, and 5-sentinel-dense chunks.
+# Two alternative formats that left the word inline (bracket-wrapped,
+# XML-tag) both scored 0/15 -- translategemma treats those as translatable
+# content rather than structure to preserve. Do not switch formats without
+# re-running that script; this is not a stylistic choice.
+
+_SENTINEL_OPEN = "⟦"  # ⟦
+_SENTINEL_CLOSE = "⟧"  # ⟧
+
+# Bracket glyphs to tolerate on splice-back. Confirmed live: translategemma
+# normalized ⟦...⟧ to plain ASCII [...] in at least one response even though
+# the prompt only ever sends the fullwidth math brackets. Fullwidth square
+# brackets are guarded defensively as the same normalization failure class,
+# not yet confirmed to occur.
+_OPEN_BRACKETS = r"⟦【［\["  # ⟦ 【 ［ [
+_CLOSE_BRACKETS = r"⟧】］\]"  # ⟧ 】 ］ ]
+_SENTINEL_DIGIT_NORMALIZE = str.maketrans("０１２３４５６７８９", "0123456789")
+
+
+def _sentinel_pattern(n: int) -> "re.Pattern[str]":
+    return re.compile(rf"[{_OPEN_BRACKETS}]\s*TERM_{n}\s*[{_CLOSE_BRACKETS}]")
+
+
+@dataclass
+class TranslatedLine:
+    """One translated line, with whether it needs human review.
+
+    Attributes:
+        text: The translated (or spliced-back) line text.
+        needs_review: True if a masked term in this line could not be
+            reliably spliced back and the raw source word was substituted
+            unstyled instead -- callers should visually flag this line.
+    """
+
+    text: str
+    needs_review: bool = False
+
+
+def mask_terms(line: str, targets: List[Tuple[str, int]]) -> str:
+    """Replace each (word, id) target in `line` with an opaque sentinel.
+
+    Args:
+        line: Source line to mask.
+        targets: (word, id) pairs; word must appear verbatim in line. id is
+            the sentinel number, unique within the request (not just this
+            line), so callers must number targets across the whole chunk.
+
+    Returns:
+        `line` with each target word replaced by ⟦TERM_id⟧.
+
+    Raises:
+        ValueError: If a target word is not found in `line`.
+    """
+    for word, term_id in targets:
+        if word not in line:
+            raise ValueError(f"{word!r} not found in line {line!r} -- cannot mask")
+        line = line.replace(word, f"{_SENTINEL_OPEN}TERM_{term_id}{_SENTINEL_CLOSE}", 1)
+    return line
+
+
+def splice_terms(translated_line: str, targets: List[Tuple[str, int]]) -> TranslatedLine:
+    """Replace each sentinel in a translated line with its original source word.
+
+    Two distinct recovery paths, matched to what testing showed are two
+    distinct failure classes (see test_sentinel_survival.py results):
+      - Sentinel present (possibly with normalized brackets/digits): spliced
+        back cleanly, not flagged.
+      - Sentinel missing from an otherwise-populated line: the raw source
+        word is substituted at the position where the sentinel should have
+        been -- degrade gracefully rather than silently drop the term -- and
+        the line is flagged needs_review so the reader can highlight it.
+
+    Whole-line-empty (the other confirmed failure class, seen on dense
+    multi-sentinel Qwen3 chunks) is NOT handled here -- callers should retry
+    the request before calling this, since an empty line means the entire
+    line's translation is gone, not just the marker.
+
+    Args:
+        translated_line: One line of model output, potentially containing
+            ⟦TERM_n⟧ sentinels (or a normalized variant).
+        targets: (word, id) pairs in the same numbering used for mask_terms().
+
+    Returns:
+        TranslatedLine with sentinels replaced by their source words.
+    """
+    needs_review = False
+    for word, term_id in targets:
+        normalized = translated_line.translate(_SENTINEL_DIGIT_NORMALIZE)
+        match = _sentinel_pattern(term_id).search(normalized)
+        if not match:
+            logger.warning(f"Sentinel TERM_{term_id} ({word!r}) missing from translated output; substituting raw source word and flagging for review")
+            needs_review = True
+            translated_line = f"{translated_line} {word}".strip() if translated_line else word
+            continue
+        translated_line = translated_line[: match.start()] + word + translated_line[match.end() :]
+    return TranslatedLine(text=translated_line, needs_review=needs_review)
 
 
 def _language_name(lang: str) -> str:
@@ -357,6 +464,84 @@ def translate_chunk(
         progress_cb(chunk_idx + 1, total_chunks)
 
     return translated
+
+
+def translate_chunk_with_masking(
+    lines: List[str],
+    mask_targets: List[Tuple[int, str]],
+    target_lang: str = "en",
+    source_lang: str = "ja",
+    context: Optional[str] = None,
+    glossary_text: Optional[str] = None,
+    chunk_idx: int = 0,
+    total_chunks: int = 1,
+) -> List[TranslatedLine]:
+    """Translate a chunk while masking specific terms with opaque sentinels.
+
+    For the glossary review-queue feature: masks each target word so the
+    model translates around it rather than through it, then splices the
+    original word back into the model's output untranslated. Validated
+    against translategemma via test_sentinel_survival.py (15/15 survival
+    across single/multi-line and 5-sentinel-dense chunks) before being wired
+    in here -- see that script and the comment above _SENTINEL_OPEN for why
+    this is an opaque placeholder rather than an inline-wrapped format.
+
+    Two distinct failure classes, two distinct recoveries:
+      - A sentinel goes missing from an otherwise-populated line (e.g. the
+        model dropped it): the raw source word is spliced in at that
+        position and the line is flagged needs_review.
+      - A whole line comes back empty (confirmed failure mode on dense
+        multi-sentinel chunks against a model without a chat template):
+        retried once as its own single-line request. If the retry is also
+        empty, falls back to the unmasked raw source line rather than
+        retrying indefinitely or leaving it blank.
+
+    Args:
+        lines: The source lines/paragraphs to translate, in order.
+        mask_targets: (line_idx, word) pairs; word must appear verbatim in
+            lines[line_idx]. A line may have multiple targets. Sentinel ids
+            are assigned in the order given, unique across the whole chunk.
+        target_lang: Target language code (default: en).
+        source_lang: Source language code (default: ja).
+        context: Optional previous paragraphs for consistency.
+        glossary_text: Optional pre-formatted glossary text to prepend to
+            the prompt.
+        chunk_idx: Current chunk index (0-based).
+        total_chunks: Total number of chunks being translated.
+
+    Returns:
+        List of TranslatedLine, same length and order as `lines`.
+    """
+    targets_by_line: Dict[int, List[Tuple[str, int]]] = {}
+    for term_id, (line_idx, word) in enumerate(mask_targets, start=1):
+        targets_by_line.setdefault(line_idx, []).append((word, term_id))
+
+    masked_lines = list(lines)
+    for line_idx, targets in targets_by_line.items():
+        masked_lines[line_idx] = mask_terms(masked_lines[line_idx], targets)
+
+    raw_translated = translate_chunk(masked_lines, target_lang, source_lang, context, glossary_text, chunk_idx=chunk_idx, total_chunks=total_chunks)
+
+    result: List[TranslatedLine] = []
+    for line_idx, raw_line in enumerate(raw_translated):
+        line_targets = targets_by_line.get(line_idx)
+        if not line_targets:
+            result.append(TranslatedLine(text=raw_line))
+            continue
+
+        if not raw_line.strip():
+            logger.warning(f"Chunk {chunk_idx + 1}/{total_chunks}: masked line {line_idx} came back empty; retrying once")
+            retry = translate_chunk([masked_lines[line_idx]], target_lang, source_lang, context, glossary_text, chunk_idx=chunk_idx, total_chunks=total_chunks)
+            raw_line = retry[0] if retry else ""
+
+        if not raw_line.strip():
+            logger.warning(f"Chunk {chunk_idx + 1}/{total_chunks}: masked line {line_idx} still empty after retry; falling back to raw source line")
+            result.append(TranslatedLine(text=lines[line_idx], needs_review=True))
+            continue
+
+        result.append(splice_terms(raw_line, line_targets))
+
+    return result
 
 
 # Prompt for the glossary popup's "meaning & alternatives" reference lookup

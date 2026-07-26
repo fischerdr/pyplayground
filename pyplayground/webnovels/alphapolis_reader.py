@@ -63,7 +63,7 @@ from pyplayground.webnovels.glossary import (
     update_candidate_counts,
 )
 from pyplayground.webnovels.ja_tokenize import find_ja_word_at
-from pyplayground.webnovels.llm_translate import BACKEND_GOOGLE, BACKEND_LLM, DEFAULT_BACKEND, TranslatedLine, check_llm_available, explain_term
+from pyplayground.webnovels.llm_translate import BACKEND_GOOGLE, BACKEND_LLM, DEFAULT_BACKEND, TranslatedLine, check_llm_available, explain_term, retranslate_line_with_hint
 from pyplayground.webnovels.llm_translate import translate_chunk as llm_translate_chunk
 from pyplayground.webnovels.llm_translate import translate_lines as llm_translate_lines
 from pyplayground.webnovels.llm_translate import translate_lines_with_masking
@@ -1886,6 +1886,27 @@ class ReaderApp:
 
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Add to Glossary...", command=lambda: self.open_word_glossary_popup(*prefill, context=source_line))
+
+        # Retranslate: only offered on original-language text, and only in
+        # Interleaved mode (RETRANSLATION_DESIGN.md phase 3) -- Interleaved
+        # is the only mode where _rendered_spans holds an original span
+        # immediately followed by its paired translated span (see
+        # _render_interleaved_content()), which _translated_span_after()
+        # relies on to resolve "the current translation of this line"
+        # without adding a second span-tracking structure. "Original" and
+        # "Both" modes both render original text but never pair it with a
+        # translated span at a resolvable position, so retranslate isn't
+        # offered there for now -- a possible future extension, not
+        # something this phase needs to solve.
+        if tag == "original" and self.view_mode.get() == "interleaved" and span is not None:
+            hint_word = (selected.strip() if sel_ranges else prefill[0]) or ""
+            translated_span = self._translated_span_after(span)
+            if translated_span is not None and hint_word:
+                menu.add_command(
+                    label="Retranslate this line...",
+                    command=lambda: self.open_retranslate_popup(source_line, translated_span, hint_word),
+                )
+
         menu.tk_popup(event.x_root, event.y_root)
 
     def _span_at_index(self, idx):
@@ -1903,6 +1924,35 @@ class ReaderApp:
             if self.text.compare(start, "<=", idx) and self.text.compare(idx, "<", end):
                 return (start, end, tag, source_line)
         return None
+
+    def _translated_span_after(self, original_span):
+        """Find the translated-line span immediately following an original-line span in _rendered_spans.
+
+        RETRANSLATION_DESIGN.md phase 3: _render_interleaved_content()
+        appends spans in strict (original, translated) pairs, one pair per
+        source line -- see its implementation. That ordering, not a tag
+        lookup, is what lets this resolve "the current translation of this
+        line" from an original-tagged span without a second tracking
+        structure (mirroring how _review_terms_by_span is a *separate*
+        dict built only in the needs_review-aware translated path, not
+        reused here since Interleaved mode doesn't populate it).
+
+        Args:
+            original_span: A (start, end, tag, source_line) tuple from
+                self._rendered_spans, expected to have tag == "original".
+
+        Returns:
+            The (start, end, tag, source_line) tuple for the very next
+            entry in self._rendered_spans, or None if original_span isn't
+            found or has no following entry (e.g. malformed input).
+        """
+        try:
+            idx = self._rendered_spans.index(original_span)
+        except ValueError:
+            return None
+        if idx + 1 >= len(self._rendered_spans):
+            return None
+        return self._rendered_spans[idx + 1]
 
     def _prefill_for_word(self, word, tag):
         """Build (source_prefill, target_prefill) for the glossary popup.
@@ -2142,6 +2192,149 @@ class ReaderApp:
             ttk.Button(bottom, text="Cancel", command=win.destroy).pack(side="left", padx=4)
 
         threading.Thread(target=fetch_guesses, daemon=True).start()
+
+    def open_retranslate_popup(self, source_line, translated_span, hint_word):
+        """Open a popup offering a hint-guided retranslation candidate for one line (RETRANSLATION_DESIGN.md phase 3).
+
+        Same dialog pattern as open_word_glossary_popup() (a bare
+        tk.Toplevel, blocking network/LLM call done in a background
+        thread, form built only once the result is in) -- per the design
+        doc's own locked-in decision to reuse that pattern rather than
+        invent a new one. Calls the phase-2 engine,
+        retranslate_line_with_hint(), which is used as-is: this task wires
+        it, it doesn't change it.
+
+        Accept is **session-only, not persisted**: it overwrites the
+        translated_span's rendered text in the live tk.Text widget (and
+        updates self._rendered_spans so a later click on that line
+        resolves consistently) for the remainder of this reading session.
+        Reloading the chapter or restarting the app reverts it, since
+        there is no line_overrides cache field yet -- that's phase 4. This
+        is deliberately more than a no-op (a pure no-op would make Accept
+        indistinguishable from Discard when clicked, which seemed like a
+        worse interim experience than "it visibly sticks until you leave
+        the chapter"), but it is explicitly not persistence.
+
+        Args:
+            source_line: The Japanese source line being retranslated.
+            translated_span: The (start, end, tag, source_line) tuple from
+                self._rendered_spans for this line's current translated
+                text -- see _translated_span_after().
+            hint_word: The word/phrase the user selected in the original
+                line, passed to the engine as the retranslation hint.
+        """
+        _, _, translated_tag, _ = translated_span
+        current_translation = self.text.get(translated_span[0], translated_span[1]).rstrip("\n")
+
+        win = tk.Toplevel(self.root)
+        win.title("Retranslate Line")
+        win.transient(self.root)
+        win.resizable(False, False)
+
+        status_label = ttk.Label(win, text=f"Retranslating with hint {hint_word!r}...")
+        status_label.pack(padx=20, pady=20)
+
+        novel_id = _extract_novel_id(self.current_url) if getattr(self, "current_url", None) else None
+
+        def fetch_candidate():
+            glossary_text = None
+            if novel_id:
+                glossary_text = format_glossary_for_prompt(load_glossary(novel_id))
+            try:
+                candidate = retranslate_line_with_hint(
+                    source_line,
+                    current_translation,
+                    hint_word,
+                    source_lang="ja",
+                    target_lang=self.target_lang,
+                    glossary_text=glossary_text,
+                )
+            except Exception as e:
+                logger.error(f"Retranslation request errored for hint {hint_word!r}: {e}", exc_info=True)
+                candidate = None
+            self.root.after(0, lambda: build_form(candidate))
+
+        def build_form(candidate):
+            status_label.destroy()
+
+            pad = {"padx": 10, "pady": (6, 0)}
+
+            ttk.Label(win, text="Source:", foreground="#888").pack(anchor="w", **pad)
+            ttk.Label(win, text=source_line, wraplength=420, justify="left").pack(anchor="w", padx=10)
+
+            ttk.Label(win, text="Current translation:", foreground="#888").pack(anchor="w", **pad)
+            ttk.Label(win, text=current_translation, wraplength=420, justify="left").pack(anchor="w", padx=10)
+
+            ttk.Separator(win, orient="horizontal").pack(fill="x", padx=10, pady=(10, 4))
+
+            if candidate is None:
+                # retranslate_line_with_hint() returning None is a real,
+                # documented outcome (empty/whitespace model output, or a
+                # request failure) -- shown as an explicit inline error,
+                # not silently left blank and not a crash, so the user
+                # knows to retry rather than wondering if anything happened.
+                ttk.Label(
+                    win,
+                    text="Retranslation failed -- no candidate was returned. Try again.",
+                    foreground="#a00000",
+                    wraplength=420,
+                    justify="left",
+                ).pack(anchor="w", padx=10, pady=(0, 4))
+                bottom = ttk.Frame(win)
+                bottom.pack(pady=(10, 10))
+                ttk.Button(bottom, text="Retry", command=lambda: retry()).pack(side="left", padx=4)
+                ttk.Button(bottom, text="Close", command=win.destroy).pack(side="left", padx=4)
+
+                def retry():
+                    for child in list(win.winfo_children()):
+                        child.destroy()
+                    retry_status = ttk.Label(win, text=f"Retranslating with hint {hint_word!r}...")
+                    retry_status.pack(padx=20, pady=20)
+                    nonlocal status_label
+                    status_label = retry_status
+                    threading.Thread(target=fetch_candidate, daemon=True).start()
+
+                return
+
+            ttk.Label(win, text=f"Candidate (hint: {hint_word}):", foreground="#888").pack(anchor="w", **pad)
+            ttk.Label(win, text=candidate, wraplength=420, justify="left", foreground="#1a7a1a").pack(anchor="w", padx=10)
+
+            remember_var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(win, text="Also remember this for next time", variable=remember_var).pack(anchor="w", padx=10, pady=(10, 0))
+
+            ttk.Label(
+                win,
+                text="Note: Accept applies only to this reading session\nand is lost on reload -- persistence isn't built yet.",
+                foreground="#888",
+                justify="left",
+            ).pack(anchor="w", padx=10, pady=(8, 0))
+
+            def accept_and_close():
+                if remember_var.get():
+                    # TODO: phase 5 -- write hint_word/candidate to the
+                    # global vocabulary-notes store once it exists. Inert
+                    # for now: the checkbox is offered (per the design
+                    # doc's explicit instruction not to omit it and need
+                    # to re-add it later), but nothing is written yet.
+                    logger.debug(f"'Remember this' checked for hint {hint_word!r} -- no-op, vocabulary-notes store is phase 5")
+
+                start, end, _, _ = translated_span
+                self.text.config(state="normal")
+                self.text.delete(start, end)
+                self.text.insert(start, candidate + "\n", translated_tag)
+                new_end = self.text.index(f"{start}+{len(candidate) + 1}c")
+                idx = self._rendered_spans.index(translated_span)
+                self._rendered_spans[idx] = (start, new_end, translated_tag, source_line)
+                logger.info(f"Retranslation accepted (session-only, not persisted) for line: {source_line!r} -> {candidate!r}")
+                win.destroy()
+                self.set_status("Retranslation applied for this session (not saved)")
+
+            bottom = ttk.Frame(win)
+            bottom.pack(pady=(10, 10))
+            ttk.Button(bottom, text="Accept", command=accept_and_close).pack(side="left", padx=4)
+            ttk.Button(bottom, text="Discard", command=win.destroy).pack(side="left", padx=4)
+
+        threading.Thread(target=fetch_candidate, daemon=True).start()
 
     def go_prev(self):
         """Navigate to the previous episode if available."""

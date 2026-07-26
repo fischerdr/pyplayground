@@ -9,7 +9,7 @@ words the model got wrong), not about per-novel proper-noun/term
 consistency. Conflating the two would repeat the same flag-means-two-
 things mistake `DESIGN.md` §11 already caught once for `needs_review`.
 
-Last updated: 2026-07-25
+Last updated: 2026-07-26
 
 ---
 
@@ -139,7 +139,8 @@ depends on.
 
 - **Phase 1**: complete (2026-07-26, see dated entry below).
 - **Phase 2**: complete (2026-07-26, see dated entry below).
-- **Phases 3–5**: not started.
+- **Phase 3**: complete (2026-07-26, see dated entry below).
+- **Phases 4–5**: not started.
 
 ### 2026-07-26: Phase 1 (layout + default view) — implemented
 
@@ -408,3 +409,195 @@ four-mode toggle, or anything from phase 1. No changes to
 masking-path code -- confirmed via `git diff` scope check that this
 task's changes are isolated to the new function, its prompt constant,
 and its tests.
+
+### 2026-07-26: Phase 3 (dialog + accept/discard wiring) -- implemented
+
+**Trigger and mode-availability decision, stated plainly: Interleaved-only,
+not offered from Original or Both.** Retranslation is offered as a new
+"Retranslate this line..." item on the *existing* right-click context menu
+(`_on_text_right_click()`), alongside "Add to Glossary...", rather than a
+new binding -- reuses the same menu, same selection-vs-click-word
+resolution logic, same dialog-opening pattern already established. It only
+appears when `tag == "original"` (the click/selection was on source text,
+per the design doc's locked-in trigger) **and** `self.view_mode.get() ==
+"interleaved"`. Reasoning: `_render_interleaved_content()` (phase 1) is
+the only renderer that appends `_rendered_spans` entries in strict
+(original, translated) pairs, one pair per source line -- see its
+implementation. That ordering is what a new helper,
+`_translated_span_after(original_span)`, relies on to resolve "the
+current translation of this line" from a clicked original-tagged span,
+without adding a second span-tracking structure (mirroring how
+`_review_terms_by_span` is a *separate*, purpose-built dict for its own
+narrower case, not something to generalize here). "Original" and "Both"
+modes both render original text, but neither pairs it with a translated
+span at a resolvable list position -- "Original" renders no translated
+text at all, and "Both" renders a full original pass followed by a full
+translated pass with a heading in between, not per-line pairing. Extending
+retranslate to those modes would need a different resolution mechanism
+(most likely: reuse `build_interleaved_pairs()` against the episode data
+directly rather than walking `_rendered_spans`), which is a reasonable
+future extension but out of scope for "wire it, don't build blind."
+
+**`_translated_span_after()`**: a small pure-ish helper -- only reads
+`self._rendered_spans`, no other Tk state needed -- that finds the very
+next `_rendered_spans` entry after a given original-tagged span. Returns
+`None` if the span isn't found or has no following entry, so a malformed
+call fails closed (menu item simply isn't added) rather than crashing.
+Fully unit tested against a fake list, no Tk widget required.
+
+**Engine call**: `open_retranslate_popup()` calls
+`retranslate_line_with_hint()` (phase 2) unchanged, exactly as it exists
+today -- confirmed the real signature before wiring
+(`source_line, current_translation, hint, source_lang="ja",
+target_lang="en", glossary_text=None`) rather than assuming it from the
+task brief. `glossary_text` is built the same way
+`open_word_glossary_popup()` builds its own glossary-touching calls:
+`format_glossary_for_prompt(load_glossary(novel_id))`, called fresh
+inside the background thread (not cached), so a glossary edit made
+earlier in the session is picked up. `target_lang` is threaded through as
+`self.target_lang` (the reader's actual configured target language, not
+hardcoded `"en"`) -- a small correctness detail the task brief's
+signature sketch didn't call out but the real function signature exposes.
+
+**Dialog pattern**: same `tk.Toplevel` / background-thread-then-build-form
+pattern as `open_word_glossary_popup()`, reused deliberately (per the
+design doc's own locked-in decision), not reinvented. Shows Source,
+Current translation, and (once the engine call returns) the Candidate
+with the hint word labeled, side by side top-to-bottom rather than
+left-right columns -- simpler layout, matches the existing popup's
+vertical field stacking, and the design doc left exact field layout as an
+open question ("Exact popup dialog field layout/wording beyond 'old vs.
+new, Accept/Discard, optional remember checkbox'" -- still open beyond
+this specific choice).
+
+**"Also remember this for next time" checkbox: included and checked by
+default, wired to a no-op, per the task's explicit instruction not to
+omit it.** `accept_and_close()` reads the checkbox state and, if checked,
+logs a debug line and does nothing else -- a `# TODO: phase 5` comment
+sits directly on the no-op branch pointing at the global vocabulary-notes
+store that doesn't exist yet. This was a deliberate choice stated here
+explicitly, not a silent default: the alternative (omitting the control
+entirely until phase 5) would have meant redesigning the dialog layout
+later just to insert it, for no benefit now.
+
+**`None`-handling, live-verified, not just unit tested.** A `None` from
+`retranslate_line_with_hint()` (empty/whitespace output, or a request
+failure -- both real, documented outcomes from phase 2) is shown as an
+explicit inline message ("Retranslation failed -- no candidate was
+returned. Try again.") in red, with **Retry** (re-runs the fetch in a new
+background thread, replacing the dialog's contents in place) and
+**Close** buttons -- never a silently blank dialog, never an uncaught
+exception. `fetch_candidate()` wraps the engine call in a bare
+`except Exception` (logged with `exc_info=True`) in addition to the
+engine's own internal `RequestException` handling, since the dialog's
+own glossary-loading/formatting code runs in the same background thread
+and isn't otherwise guarded -- an unexpected error there degrades to the
+same "no candidate" UI rather than killing the background thread
+silently. Live-verified (see below) by forcing the call to raise, and
+confirmed on a real rendered screen: red error text, Retry/Close both
+present, no crash.
+
+**Accept: session-only, not persisted -- explicitly not a no-op, and
+explicitly not phase 4.** Stated plainly per the task's request: Accept
+overwrites the specific translated line's text directly in the live
+`tk.Text` widget (`self.text.delete`/`self.text.insert` over the stored
+`translated_span` range) and updates the matching entry in
+`self._rendered_spans` in place, so a later click on that same line
+resolves consistently against the *new* text for the rest of the
+session. Nothing is written to the episode dict, the on-disk cache, or
+any new field -- reloading the chapter (a fresh process reading
+`load_cached_episode()`) shows the original, unedited translation, since
+there is no `line_overrides` field yet (that's phase 4, confirmed
+untouched). This was a deliberate choice over a pure no-op: a no-op
+button would make Accept and Discard visually and functionally
+indistinguishable in this pass, which seemed like a worse interim
+experience than "the correction visibly sticks until you leave the
+chapter," while still being honest that it is not persistence.
+
+**Live verification, via the same `xdotool`/real-display setup used for
+phases 1 and prior `DESIGN.md` visual checks:**
+
+- Seeded a synthetic cached episode (two lines, including the real
+  `彼は醤油顔でモテる。` case from phase 2's own live testing) plus a
+  confirmed glossary term (`ケイト` -> `"Kate"`) for a throwaway novel ID,
+  and launched the real, unmodified app against it (real `BrowserWorker`,
+  cache-hit short-circuits before any network access -- same pattern as
+  phase 1's verification).
+- Drag-selected `醤油顔` in the source line (Interleaved mode, which was
+  already the default per phase 1), right-clicked, and confirmed
+  "Retranslate this line..." appears on the context menu alongside "Add
+  to Glossary...".
+- Clicked it: the dialog opened against the real, live translategemma
+  server (`http://flyyn:10001`, confirmed reachable first) and rendered
+  correctly -- Source, Current translation ("...dark complexion."), and
+  Candidate ("...tanned complexion.", the same output phase 2's entry
+  already documented for this exact case), hint label, the "remember"
+  checkbox checked by default, the session-only note, and Accept/Discard
+  buttons all present and correctly laid out, confirmed via screenshot.
+- Clicked Accept: the dialog closed, the status bar showed "Retranslation
+  applied for this session (not saved)", and the rendered line in the
+  main window visibly updated from "dark" to "tanned complexion" --
+  confirmed via screenshot, not just inferred. The app's log file
+  confirmed the expected `INFO` line: `Retranslation accepted
+  (session-only, not persisted) for line: ... -> ...`.
+- Confirmed session-only, not persisted: after Accept, read the on-disk
+  cache file directly (`load_cached_episode()`) while the app was still
+  running -- it still showed the original, un-retranslated text. Accept
+  never touches the cache; only the live widget/`_rendered_spans` are
+  mutated.
+- Live-verified the `None` case by monkeypatching
+  `retranslate_line_with_hint()` to raise inside a minimal Tk harness
+  driving the real `open_retranslate_popup()` method (not a synthetic
+  invocation of the branch in isolation) and screenshotting the result:
+  the red "Retranslation failed" message and Retry/Close buttons rendered
+  correctly, matching the design.
+- One real mistake made and caught during this verification, worth
+  recording honestly rather than omitting: an early attempt to automate
+  clicking "Accept" via a second `xdotool` right-click-and-select sequence
+  (intended as a retry after a screenshot-timing miss) actually landed on
+  a *second* "Retranslate this line..." invocation instead of dismissing
+  the first, producing two stacked dialogs on screen simultaneously. Both
+  were showing correct, independent content (not a shared-state bug --
+  each was its own `tk.Toplevel` with its own closures), but the
+  duplication itself was an artifact of imprecise xdotool retry sequencing
+  during verification, not a defect in the dialog code. Killed and
+  restarted the app cleanly before continuing, per the user's direction,
+  and completed verification against a single clean session afterward.
+
+**Test coverage**: 7 new tests in `tests/webnovels/test_retranslation_dialog.py`
+(new file, same "tracked separately" precedent as phases 1/2):
+`TestTranslatedSpanAfter` (4): correct next-span resolution for the
+first and a later pair, not-found returns `None`, last-entry-with-no-
+successor returns `None` rather than raising. `TestRetranslateMenuGating`
+(3): "Retranslate this line..." is offered on original text in
+Interleaved mode, is *not* offered when right-clicking the translated
+half of the same pair, and is *not* offered in a non-Interleaved mode
+even on original text -- directly exercising the mode-availability
+decision above, not just asserting it in prose. The full popup flow
+(background thread, engine call, Accept/Discard button wiring) is
+live-verified above rather than re-verified as an automated test, same
+reasoning phase 2 gave for not writing an automated test against the
+live server. `black`/`isort`/`flake8` clean on both the new file and
+`alphapolis_reader.py`. `mypy`: 32 new "missing type annotation" errors
+(352 total, up from 320), consistent with this file's existing
+untyped-method convention -- not fixed here, same treatment as every
+prior session touching this file. Full project test suite re-run: no
+regressions (88 tests total in `tests/webnovels/`, up from 81 before this
+task).
+
+**Not anticipated going in, found during this task**: none of substance
+in the production code -- the existing right-click/dialog/span-tracking
+machinery was exactly as documented, once actually read
+(`_on_text_right_click()`, `open_word_glossary_popup()`,
+`_span_at_index()`, `_rendered_spans`) rather than assumed. The one
+process-level snag (the duplicate-dialog verification mistake above) was
+caught during live testing itself, not left in the record as a silent
+retry.
+
+**Not done in this pass** (phases 4-5, unchanged): no `line_overrides`
+cache field, no persistence surviving a reload or app restart -- verified
+above, not just asserted. No global vocabulary-notes store; the "remember
+this" checkbox is inert, wired to a logged no-op with a `# TODO: phase 5`
+marker, not functional. No changes to `retranslate_line_with_hint()`,
+`translate_chunk_with_masking()`, `build_mask_targets()`, or phase 1's
+display/mode code -- confirmed via `git diff` scope check.

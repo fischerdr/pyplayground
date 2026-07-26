@@ -13,7 +13,7 @@ real model. Live verification against a real server is covered separately
 
 import json as json_module
 
-from pyplayground.webnovels.llm_translate import TranslatedLine, translate_lines_with_masking
+from pyplayground.webnovels.llm_translate import TranslatedLine, splice_terms, translate_lines_with_masking
 
 
 def _mock_completion_response(mocker, line_batches):
@@ -44,8 +44,12 @@ class TestTranslateLinesWithMasking:
         assert len(result) == 2
         assert all(isinstance(r, TranslatedLine) for r in result)
         assert result[0].text == "ケイト turned around."
-        assert result[0].needs_review is False
+        # A clean sentinel splice still leaves raw source text in place --
+        # splicing never translates a masked term either way -- so this is
+        # needs_review=True too, not just the missing-sentinel fallback.
+        assert result[0].needs_review is True
         assert result[1].text == "Ruri smiled."
+        assert result[1].needs_review is False
 
     def test_mask_targets_reindexed_correctly_across_chunk_boundary(self, mocker):
         """A mask target on a line in the second chunk must be translated to chunk-relative index."""
@@ -67,8 +71,9 @@ class TestTranslateLinesWithMasking:
 
         assert len(result) == 2
         assert result[0].text == "A short sentence."
+        assert result[0].needs_review is False
         assert result[1].text == "維多教授 asked."
-        assert result[1].needs_review is False
+        assert result[1].needs_review is True
 
     def test_no_mask_targets_behaves_like_plain_translation(self, mocker):
         lines = ["こんにちは。"]
@@ -104,3 +109,41 @@ class TestTranslateLinesWithMasking:
         assert len(result) == 1
         assert isinstance(result[0], TranslatedLine)
         assert "translation failed" in result[0].text
+
+
+class TestSpliceTerms:
+    """Direct tests for splice_terms(), the function actually responsible for setting needs_review.
+
+    Found via a real production run (DESIGN.md's dated entry): the
+    clean-splice path -- sentinel present, spliced back with no warning --
+    was not flagged needs_review, even though it substitutes the same raw,
+    untranslated source word as the missing-sentinel path. Both paths leave
+    identical raw-Japanese-in-English-text results for the reader, so both
+    must set needs_review=True.
+    """
+
+    def test_clean_sentinel_splice_still_sets_needs_review_true(self):
+        """The sentinel survived and spliced cleanly, but the result is still raw source text -- must be flagged."""
+        result = splice_terms("⟦TERM_1⟧ turned around.", [("ケイト", 1)])
+
+        assert result.text == "ケイト turned around."
+        assert result.needs_review is True
+
+    def test_missing_sentinel_still_sets_needs_review_true(self):
+        result = splice_terms("She turned around.", [("ケイト", 1)])
+
+        assert "ケイト" in result.text
+        assert result.needs_review is True
+
+    def test_no_targets_leaves_needs_review_false(self):
+        """A line with nothing to splice was never masked -- nothing to flag."""
+        result = splice_terms("Kate turned around.", [])
+
+        assert result.text == "Kate turned around."
+        assert result.needs_review is False
+
+    def test_multiple_targets_all_clean_still_flagged(self):
+        result = splice_terms("⟦TERM_1⟧ and ⟦TERM_2⟧ talked.", [("ケイト", 1), ("ルリ", 2)])
+
+        assert result.text == "ケイト and ルリ talked."
+        assert result.needs_review is True

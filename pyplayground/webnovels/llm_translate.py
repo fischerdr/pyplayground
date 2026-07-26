@@ -160,9 +160,13 @@ class TranslatedLine:
 
     Attributes:
         text: The translated (or spliced-back) line text.
-        needs_review: True if a masked term in this line could not be
-            reliably spliced back and the raw source word was substituted
-            unstyled instead -- callers should visually flag this line.
+        needs_review: True if this line had at least one masked term
+            spliced back in -- whether the sentinel survived cleanly or
+            had to be recovered by substitution -- since either path
+            leaves the raw, untranslated source word in the output.
+            Masking never asks the model to translate a masked term, so
+            "spliced" and "translated" are never the same thing; callers
+            should visually flag any line where this is True.
     """
 
     text: str
@@ -197,11 +201,23 @@ def splice_terms(translated_line: str, targets: List[Tuple[str, int]]) -> Transl
     Two distinct recovery paths, matched to what testing showed are two
     distinct failure classes (see test_sentinel_survival.py results):
       - Sentinel present (possibly with normalized brackets/digits): spliced
-        back cleanly, not flagged.
+        back cleanly.
       - Sentinel missing from an otherwise-populated line: the raw source
         word is substituted at the position where the sentinel should have
-        been -- degrade gracefully rather than silently drop the term -- and
-        the line is flagged needs_review so the reader can highlight it.
+        been -- degrade gracefully rather than silently drop the term.
+
+    needs_review=True whenever `targets` is non-empty, regardless of which
+    path handled each individual term. Originally this only covered the
+    missing-sentinel path (the mechanism-survival failure); the clean-splice
+    path was treated as a non-issue since the sentinel round-tripped
+    correctly. But splicing never translates a masked term either way --
+    both paths substitute the same raw, untranslated source word into the
+    output, so both produce identical raw-Japanese-in-English-text results
+    for the reader. Confirmed via a real production run (DESIGN.md's dated
+    entry): the large majority of masked terms in one real episode hit the
+    clean-splice path and were, before this fix, invisible to needs_review
+    entirely -- rendered as plain "translated" text despite containing raw
+    source-language fragments.
 
     Whole-line-empty (the other confirmed failure class, seen on dense
     multi-sentinel Qwen3 chunks) is NOT handled here -- callers should retry
@@ -216,17 +232,15 @@ def splice_terms(translated_line: str, targets: List[Tuple[str, int]]) -> Transl
     Returns:
         TranslatedLine with sentinels replaced by their source words.
     """
-    needs_review = False
     for word, term_id in targets:
         normalized = translated_line.translate(_SENTINEL_DIGIT_NORMALIZE)
         match = _sentinel_pattern(term_id).search(normalized)
         if not match:
             logger.warning(f"Sentinel TERM_{term_id} ({word!r}) missing from translated output; substituting raw source word and flagging for review")
-            needs_review = True
             translated_line = f"{translated_line} {word}".strip() if translated_line else word
             continue
         translated_line = translated_line[: match.start()] + word + translated_line[match.end() :]
-    return TranslatedLine(text=translated_line, needs_review=needs_review)
+    return TranslatedLine(text=translated_line, needs_review=bool(targets))
 
 
 def _language_name(lang: str) -> str:

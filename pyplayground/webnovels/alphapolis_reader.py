@@ -578,9 +578,12 @@ def build_review_term_map(translated_lines: List[TranslatedLine], mask_targets: 
     Returns:
         Dict of line_idx -> list of source words masked on that line, but
         only for indices where translated_lines[line_idx].needs_review is
-        True. A line with mask_targets but needs_review=False (the term
-        spliced back in cleanly) is intentionally excluded -- nothing to
-        review there.
+        True. In practice this is every masked line -- splice_terms() sets
+        needs_review whenever a line has any mask targets at all, since
+        splicing never translates a term either way (see its docstring) --
+        but the filter is kept rather than trusting mask_targets alone, so
+        a future needs_review producer with narrower semantics doesn't
+        silently over-include here.
     """
     words_by_line: Dict[int, List[str]] = {}
     for line_idx, word in mask_targets:

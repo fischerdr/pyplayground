@@ -4,7 +4,7 @@ Living record of decisions for the glossary/term-consistency rework and the
 Tkinter → web migration. Update this alongside code changes, not after —
 chat history is not the system of record.
 
-Last updated: 2026-07-25
+Last updated: 2026-07-26
 
 ---
 
@@ -1196,6 +1196,156 @@ error count unchanged from §11 (317) — the `fetch_and_translate()` edit
 added no new errors since that method was already untyped. Full project
 test suite re-run: no regressions (60 tests total in `tests/webnovels/`,
 up from 50 after §11).
+
+### 2026-07-26: `needs_review` scope gap found and fixed on genuine live content — first real production confirmation of masking
+
+**Found via real, non-synthetic reading, not a test run.** A screenshot of
+Translated mode against a genuinely-read episode
+(`.../375266002/37695490/episode/7799961`) showed several terms (`オレ`,
+`ハードキャッチ`, `鉄パイプ`, `ダンジョン能力者`, `ヤンチャボーイズ`) rendering as raw
+Japanese fragments spliced into otherwise-English lines, with **no**
+amber/underline `needs_review` styling — plain blue `translated` text
+throughout. Two explanations were possible before investigating: a real
+rendering bug in Translated mode specifically, or an ordinary translation-
+quality artifact unrelated to masking. Diagnosed from the actual data
+before assuming either way, per this doc's own standing discipline.
+
+**Confirmed this is masking working correctly, twice over, independently.**
+Pulled the real cache file for the episode and the real on-disk glossary
+for novel `375266002`: schema version confirmed current (`v4`, ruling out
+a stale-cache explanation), `needs_review_flags` present and length-
+correct, and all 6 terms in question present in the glossary with
+`status: None` — i.e. genuinely unconfirmed, genuinely correct
+`build_mask_targets()` mask targets (§9's `status != STATUS_CONFIRMED`
+rule). Separately, the user surfaced a real run's own log
+(`app_log_20260726_152648.log`, a different episode of the same novel,
+`.../episode/7799899`) showing `splice_terms()`'s own warning messages
+firing live for the same handful of terms — the mechanism caught directly
+in the act on genuine reading, not reconstructed after the fact. **This is
+the first confirmation in this project's history that masking/needs_review
+works end-to-end against real, non-synthetic content** — every prior
+verification (this doc's own §10/§11 entries, `RETRANSLATION_DESIGN.md`'s
+phases) used synthetic fixtures or scoped live tests, not organic reading.
+
+**The same log also confirmed a second mechanism working correctly, found
+incidentally while reading it for the above**: one real JSON-parse failure
+(`Chunk 8/9: failed to parse JSON response (Invalid control character...)`)
+— the exact "unescaped control character" failure class §4/§5 document
+extensively for this model — was immediately followed by
+`translate_chunk()`'s documented per-line-retry fallback firing
+(`Chunk 8/9: retrying as 10 individual line(s)...`), and every one of the
+10 lines recovered successfully (no `"translation failed"` placeholder
+anywhere in the log; `Translation complete: 63 lines` logged clean right
+after). Not a bug — the existing graceful-degradation path working
+exactly as designed on a real live failure, not just its originally-
+documented synthetic case.
+
+**But the styling absence was real — a genuine scope gap, not a false
+alarm, found by tracing it rather than assuming a rendering bug.** Cross-
+checked the specific flagged line: `needs_review_flags[1] == False` for
+`"Due to オレ's ハードキャッチ, the two were crushed."`, despite visibly
+containing raw spliced Japanese. Root cause, in `splice_terms()`
+(`llm_translate.py`): the function has always had two recovery paths for
+a masked sentinel — sentinel found (spliced back cleanly) vs. sentinel
+missing (raw word substituted as fallback) — but only set
+`needs_review=True` on the missing-sentinel path. The clean-splice path
+was originally treated as a non-issue (§9/§10: "spliced back cleanly,
+`needs_review=False`" was the documented, intended behavior at the time).
+**That framing conflated "the sentinel mechanically survived transmission"
+with "the user sees translated text" — they are never the same thing.**
+Splicing a masked term back in, on either path, always substitutes the
+raw, untranslated source word; masking never asks the model to translate
+a masked term at all. A cleanly-spliced term is exactly as unreadable to
+the reader as a missing-sentinel one.
+
+**Quantified the real scope directly against this episode's actual cache
+data, not estimated**: of 64 lines, 24 contain raw spliced Japanese.
+Before the fix, only 5 of those 24 were flagged (the missing-sentinel
+cases) — **19 of 24, the large majority, were completely invisible to
+`needs_review`**, indistinguishable from a normal, fully-translated line.
+
+**Fix**: `splice_terms()` now sets `needs_review=True` whenever `targets`
+(the term list for that line) is non-empty, regardless of which of the
+two paths handled each individual term — not only on the missing-sentinel
+path. The per-term missing-sentinel warning log line is unchanged (still
+useful for diagnosing sentinel-survival specifically); only the returned
+`needs_review` value's scope changed. `TranslatedLine.needs_review`'s
+docstring and `splice_terms()`'s own docstring updated to describe the
+corrected semantics. `build_review_term_map()`'s docstring (in
+`alphapolis_reader.py`) also updated — it previously documented "a line
+with mask_targets but needs_review=False is intentionally excluded" as a
+real case; after this fix that case essentially never occurs from
+`splice_terms()` output, so the comment now describes the filter as a
+safety net rather than an expected exclusion. The filter logic itself is
+unchanged and still correct either way.
+
+**Cache/schema decision, stated explicitly rather than assumed**: existing
+cached episodes' `needs_review_flags` were computed under the old,
+narrower rule and will not retroactively show the newly-covered
+clean-splice lines until re-translated. **Not bumping `CACHE_SCHEMA_VERSION`** —
+the flag's shape is unchanged (`List[bool]`, same length/order), only the
+policy that computes its values changed, and `RETRANSLATION_DESIGN.md`'s
+own precedent treats schema bumps as warranted for shape changes, not
+policy changes. Anyone wanting the fix applied to an already-cached
+episode needs to hit Refresh manually (which re-fetches and re-translates,
+discarding the stale cache entry) — this is not automatic.
+
+**Live verification, not just the code diff or unit tests.** Triggered a
+real Refresh (delete-cache-and-retranslate) against the exact episode from
+the screenshot, through the real, unmodified app and the real
+translategemma server. Confirmed via the on-disk cache file directly:
+`needs_review_flags` now has 24 `True` entries, exactly matching the 24
+lines independently identified as containing spliced Japanese (same index
+set, both before and after — the fix changed which lines get flagged, not
+which lines contain spliced content). Confirmed via `xdotool` screenshot
+in **Translated mode** (the mode from the original screenshot): every
+previously-plain-blue spliced line (`オレ's ハードキャッチ`, `鉄パイプ`,
+`ダンジョン能力者`, `ヤンチャボーイズ`) now renders in the amber/underline
+`needs_review` style, correctly distinguished from genuinely-clean lines
+(`Gah...!!`, `My... fingers!...`) which remain plain blue. Also confirmed
+in **Both** mode's Interleaved half via a second `xdotool` screenshot —
+the translated half of each flagged pair shows the same amber/underline
+styling, unflagged pairs stay plain, matching Translated mode's result
+exactly (both modes share the same `_render_translated_view()` dispatch,
+confirmed via code read, not just inferred from the shared call site).
+
+**Test coverage**: updated two existing tests in
+`tests/webnovels/test_llm_translate.py`
+(`TestTranslateLinesWithMasking.test_single_chunk_passes_through_unmodified_mask_targets`,
+`test_mask_targets_reindexed_correctly_across_chunk_boundary`) that had
+asserted `needs_review is False` on a clean splice — now correctly assert
+`True`, with an explanation comment rather than a silent flip. Added a
+new `TestSpliceTerms` class (4 tests) directly exercising `splice_terms()`
+for the first time (previously only tested indirectly through
+`translate_lines_with_masking()`): clean-splice sets `needs_review=True`,
+missing-sentinel still sets it `True`, no-targets-at-all stays `False`,
+multiple-clean-targets-on-one-line still sets `True`. `black`/`isort`/
+`flake8` clean on `llm_translate.py`, `alphapolis_reader.py`, and the
+test file. `mypy` clean on `llm_translate.py` (unchanged, docstring-only
+change to a fully-typed function); `alphapolis_reader.py` unchanged at
+352 errors (docstring-only edit there too, no new untyped code). Full
+project test suite re-run: no regressions (92 tests total in
+`tests/webnovels/`, up from 88 before this fix).
+
+**Not done in this pass**: no `CACHE_SCHEMA_VERSION` bump (see reasoning
+above). No changes to `build_mask_targets()`, `mask_terms()`, the sentinel
+pattern/normalization logic, or either display mode's rendering/dispatch
+code — the bug was entirely in what `needs_review` gets set to, not in
+how it's rendered once set, confirmed by both modes producing identical,
+correct styling once the upstream flag was fixed. No changes to
+`retranslate_line_with_hint()` or any `RETRANSLATION_DESIGN.md`-phase
+code — this fix is squarely masking/needs_review territory (§6/§9/§11),
+not the separate retranslation-quality feature; see
+`RETRANSLATION_DESIGN.md`'s Status section for a one-line pointer back
+to this entry.
+
+**Not anticipated going in, found during this task**: the scope gap
+itself — the task began as "is this a rendering bug or working as
+designed," and the actual answer ("working as designed, but the design
+had an under-scoped `needs_review` rule") was neither of the two original
+hypotheses. Also not anticipated: the JSON-parse-failure recovery
+confirmation, found only because the user's log happened to contain one,
+not because it was being specifically looked for.
 
 **Not done in this pass** (see the three excluded items above, and §8):
 promotion/threshold logic, suggested-term recurrence tracking, new-

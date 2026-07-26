@@ -141,6 +141,13 @@ depends on.
 - **Phase 2**: complete (2026-07-26, see dated entry below).
 - **Phase 3**: complete (2026-07-26, see dated entry below).
 - **Phases 4–5**: not started.
+- **2026-07-26**: a real `needs_review` scope gap in `splice_terms()` was
+  found and fixed on genuine (non-synthetic) reading -- unrelated to this
+  feature, belongs to and is documented in `DESIGN.md`'s dated entry of
+  the same date. Noted here only as a pointer, since the symptom (raw
+  Japanese visible in Translated/Interleaved mode with no visual flag)
+  could otherwise be mistaken for a phase 1-3 rendering bug by a reader
+  of this doc.
 
 ### 2026-07-26: Phase 1 (layout + default view) — implemented
 

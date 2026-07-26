@@ -589,6 +589,40 @@ def build_review_term_map(translated_lines: List[TranslatedLine], mask_targets: 
     return {line_idx: words for line_idx, words in words_by_line.items() if line_idx < len(translated_lines) and translated_lines[line_idx].needs_review}
 
 
+def build_interleaved_pairs(source_lines: List[str], translated_lines: List[str]) -> Optional[List[Tuple[str, str]]]:
+    """Pair each source line with its corresponding translated line, for the interleaved view.
+
+    RETRANSLATION_DESIGN.md's phase 1: the interleaved display needs no new
+    data or alignment computation, since source_lines[i] and
+    translated_lines[i] already correspond 1:1 by construction --
+    grep-confirmed against parse_episode(): ep["lines"] is built as
+    `[item["text"] for item in content if item["type"] == "text"]`, and
+    translate_lines()/translate_chunk() (see llm_translate.py) preserve
+    input order/length by contract, so translated_lines[i] is the
+    translation of ep["lines"][i] for the same i, not something this
+    function needs to verify per-call -- it only needs to detect when that
+    contract has been violated (a stale/corrupted cache entry) and refuse
+    to pair mismatched data rather than silently misattributing a
+    translation to the wrong source line.
+
+    Args:
+        source_lines: ep["lines"] -- text-only, images already excluded.
+        translated_lines: ep["translated_lines"] -- same shape.
+
+    Returns:
+        List of (source_line, translated_line) tuples, same length/order
+        as the inputs, or None if the lengths don't match -- callers
+        should fall back to the existing non-interleaved translated view
+        in that case rather than pairing lines that don't actually
+        correspond (e.g. a cache entry from before translate_lines()
+        guaranteed alignment; see _render_translated_content()'s same
+        length check for the non-interleaved path).
+    """
+    if len(source_lines) != len(translated_lines):
+        return None
+    return list(zip(source_lines, translated_lines))
+
+
 # ---------------------------------------------------------------------------
 # GUI
 # ---------------------------------------------------------------------------
@@ -648,7 +682,10 @@ class ReaderApp:
         self.paragraph_spacing = settings.get("paragraph_spacing", 12)  # pixels between paragraphs
         self.page_width_pct = settings.get("page_width_pct", 100)  # percent of the text widget's available width
         self.text_align = settings.get("text_align", "left")  # left, center, right, justify(fallback to left)
-        self.view_mode = tk.StringVar(value=settings.get("view_mode", "both"))
+        # Default changed to "translated" (was "both") per
+        # RETRANSLATION_DESIGN.md's phase 1 design decision -- confirmed
+        # the prior default before changing it, not assumed.
+        self.view_mode = tk.StringVar(value=settings.get("view_mode", "translated"))
         self._prefetching = set()
         self._photo_images = {}
         # True while a load_episode() worker thread is running. Prevents
@@ -678,7 +715,7 @@ class ReaderApp:
         self.next_btn.pack(side="left", padx=(6, 0))
 
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
-        for value, label in (("original", "Original"), ("translated", "Translated"), ("both", "Both")):
+        for value, label in (("original", "Original"), ("translated", "Translated"), ("both", "Both"), ("interleaved", "Interleaved")):
             ttk.Radiobutton(toolbar, text=label, value=value, variable=self.view_mode, command=self._on_view_mode_change).pack(side="left")
 
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
@@ -1552,6 +1589,65 @@ class ReaderApp:
                 self.text.insert("end", item["text"] + "\n", tag)
                 self._rendered_spans.append((start, self.text.index("end-1c"), tag, item["text"]))
 
+    def _render_interleaved_content(self, ep, original_tag, translated_tag):
+        """Render each source line immediately followed by its translated line, repeating (RETRANSLATION_DESIGN.md phase 1).
+
+        Walks ep["content"] the same way _render_content()/
+        _render_translated_content() do (a mixed text/image list, with a
+        separate line_idx counter that only advances on text items) rather
+        than zipping ep["lines"] against ep["content"] directly, since
+        ep["content"] also contains image items that ep["lines"] excludes
+        -- naive zipping would misalign every line after the first image.
+
+        Falls back to the plain (translated-only) rendering path -- via
+        _render_translated_view(), so needs_review-aware rendering still
+        applies there -- when build_interleaved_pairs() detects a length
+        mismatch, rather than pairing lines that don't actually
+        correspond. Reuses the existing "original"/"translated" tags
+        (and, for the translated half, "needs_review" when that data is
+        available) -- no new rendering path, no new tag.
+
+        Args:
+            ep: Episode dict.
+            original_tag: Tag for the source-language half of each pair
+                (normally "original").
+            translated_tag: Tag for the translated half of each pair
+                (normally "translated").
+        """
+        pairs = build_interleaved_pairs(ep.get("lines", []), ep.get("translated_lines", []))
+        if pairs is None:
+            logger.warning(
+                f"Interleaved view: source_lines ({len(ep.get('lines', []))}) and translated_lines ({len(ep.get('translated_lines', []))}) length mismatch for {ep.get('episode_title', 'unknown')} -- falling back to translated-only view; refresh this chapter to retranslate"
+            )
+            self._render_translated_view(ep, translated_tag)
+            return
+
+        needs_review_flags = ep.get("needs_review_flags")
+        review_aware = bool(needs_review_flags) and len(needs_review_flags) == len(pairs)
+
+        line_idx = 0
+        for item in ep["content"]:
+            if item["type"] == "image":
+                photo = self._make_photo_image(item["src"])
+                if photo is not None:
+                    self.text.insert("end", "\n")
+                    self.text.image_create("end", image=photo)
+                    self.text.insert("end", "\n")
+                continue
+
+            source_line, translated_line = pairs[line_idx]
+
+            start = self.text.index("end-1c")
+            self.text.insert("end", source_line + "\n", original_tag)
+            self._rendered_spans.append((start, self.text.index("end-1c"), original_tag, source_line))
+
+            line_tag = "needs_review" if review_aware and needs_review_flags[line_idx] else translated_tag
+            start = self.text.index("end-1c")
+            self.text.insert("end", translated_line + "\n", line_tag)
+            self._rendered_spans.append((start, self.text.index("end-1c"), line_tag, source_line))
+
+            line_idx += 1
+
     def _render_translated_view(self, ep, tag):
         """Dispatch to the needs_review-aware renderer when the cached episode has that data, else the plain one.
 
@@ -1724,7 +1820,7 @@ class ReaderApp:
         self._rendered_spans = []
         self._review_terms_by_span = {}
 
-        if mode in ("original", "both"):
+        if mode in ("original", "both", "interleaved"):
             self.text.insert("end", f"{ep['title']} — {ep['episode_title']}\n", "heading")
         if mode in ("translated", "both"):
             title = ep.get("translated_title", ep["title"])
@@ -1738,6 +1834,8 @@ class ReaderApp:
             self.text.insert("end", "\n---- Translation ----\n\n", "heading")
         if mode in ("translated", "both"):
             self._render_translated_view(ep, "translated")
+        if mode == "interleaved":
+            self._render_interleaved_content(ep, "original", "translated")
         if restore_scroll_pos is not None:
             self.text.yview_moveto(restore_scroll_pos)
         else:

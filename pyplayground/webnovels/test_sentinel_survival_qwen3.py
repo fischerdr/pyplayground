@@ -203,6 +203,13 @@ def call_llm_chat(endpoint: str, model: str, source_lines: List[str], enable_thi
         "messages": [{"role": "user", "content": user_content}],
         "temperature": 0.1,
         "chat_template_kwargs": {"enable_thinking": enable_thinking},
+        # A repetition/runaway-generation failure has no natural stop token
+        # to end on -- without a cap this can consume a shared llama-server
+        # slot for the full context window instead of failing fast. These
+        # test cases are 1-2 short translated lines; generous headroom
+        # still catches a genuine loop quickly rather than let it run to
+        # the context ceiling.
+        "max_tokens": 512,
     }
     try:
         resp = requests.post(f"{endpoint}/v1/chat/completions", json=payload, timeout=timeout)
@@ -302,7 +309,9 @@ def main() -> None:
     parser.add_argument("--model", default="qwen3-14b", help="Label only -- llama-server serves whatever's currently loaded")
     parser.add_argument("--thinking", choices=["on", "off", "both"], default="off", help="Default 'off' matches the DESIGN.md decision for structured-extraction-style tasks")
     parser.add_argument("--format", choices=list(SENTINEL_FORMATS) + ["all"], default="all")
-    parser.add_argument("--timeout", type=int, default=180, help="Higher default than the /completion script -- thinking mode, even when nominally disabled, can be slower to first token")
+    parser.add_argument(
+        "--timeout", type=int, default=180, help="Higher default than the /completion script -- thinking mode, even when nominally disabled, can be slower to first token"
+    )
     parser.add_argument("--json-out", help="Optional path to dump raw request/response pairs for manual inspection")
     args = parser.parse_args()
 

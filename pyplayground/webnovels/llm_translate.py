@@ -657,6 +657,114 @@ def explain_term(term: str, source_lang: str = "ja", target_lang: str = "en", co
     }
 
 
+# RETRANSLATION_DESIGN.md phase 2: single-line retranslation with a hint,
+# for correcting a specific vocabulary/idiom mistranslation (not a proper
+# noun/glossary-term issue -- that's the masking path in this same file;
+# this is a different failure class, tracked in a separate doc on purpose,
+# per that doc's own framing).
+#
+# Output format decided empirically, not assumed, per RETRANSLATION_DESIGN.md's
+# explicit instruction -- tried plain-text-in/plain-text-out first (skips the
+# JSON-array wrapper's entire class of escaping/malformation failures
+# documented in DESIGN.md Sections 4/5 for this same model): 4 live calls
+# against translategemma (3 repeats of one case, 1 different case) all
+# returned clean plain text with no quotes/commentary/markdown fences, just
+# incidental leading/trailing whitespace (stripped below). No fallback to a
+# JSON-array wrapper was needed -- plain text held up across every real call
+# tried. See RETRANSLATION_DESIGN.md's phase 2 status entry for the actual
+# before/after examples this was validated against.
+RETRANSLATE_LINE_PROMPT = (
+    "You are a translation correction tool. Given a {source_lang} source line, its current "
+    "{target_lang} translation, and a word/phrase to focus on, output ONLY the corrected "
+    "{target_lang} translation of the full line -- no notes, no explanations, no quotes around "
+    "the answer, no markdown.\n\n"
+    "Pay particular attention to accurately translating this word/phrase: {hint}\n\n"
+    "{source_lang} source line: {source_line}\n"
+    "Current (possibly incorrect) translation: {current_translation}\n\n"
+    "{glossary_prefix}"
+    "Corrected translation:"
+)
+
+
+def retranslate_line_with_hint(
+    source_line: str,
+    current_translation: str,
+    hint: str,
+    source_lang: str = "ja",
+    target_lang: str = "en",
+    glossary_text: Optional[str] = None,
+) -> Optional[str]:
+    """Ask the LLM to retranslate one line, focusing on a specific word/phrase the user flagged.
+
+    RETRANSLATION_DESIGN.md phase 2: the retranslation engine. Sees only
+    the single line (source + its current translation), not surrounding
+    context -- the documented v1 simplification, not an oversight (see
+    that doc's "Explicitly deferred" section). This is a genuinely
+    different call shape from translate_chunk_with_masking() (which masks
+    proper nouns/glossary terms before translating a whole chunk) -- this
+    corrects one already-translated line's ordinary-vocabulary/idiom
+    mistranslation, hinted by a user-selected word/phrase. Does not call,
+    and is not called by, any masking-path function.
+
+    Takes glossary_text (pre-formatted), not a raw glossary dict, matching
+    every other function in this module (translate_chunk(),
+    translate_chunk_with_masking(), etc.) -- this module never imports
+    glossary.py; callers format the glossary themselves via
+    glossary.format_glossary_for_prompt() before passing it in.
+
+    Args:
+        source_line: The original-language line being corrected.
+        current_translation: The existing (possibly wrong) translation of
+            that line.
+        hint: The word/phrase the user selected in the original line,
+            passed to the model as "pay particular attention to this."
+        source_lang: Source language code (default: ja).
+        target_lang: Target language code (default: en).
+        glossary_text: Optional pre-formatted glossary text (confirmed
+            terms only -- see glossary.format_glossary_for_prompt()), for
+            terminology consistency in the corrected line.
+
+    Returns:
+        The corrected translation string, or None if the request failed
+        or the response was empty after stripping.
+    """
+    glossary_prefix = GLOSSARY_PREFIX.format(glossary=glossary_text) if glossary_text else ""
+    prompt = RETRANSLATE_LINE_PROMPT.format(
+        source_lang=_language_name(source_lang),
+        target_lang=_language_name(target_lang),
+        hint=hint,
+        source_line=source_line,
+        current_translation=current_translation,
+        glossary_prefix=glossary_prefix,
+    )
+    payload = {"prompt": prompt, "n_predict": max(128, len(source_line) * 4), "temperature": 0.1}
+    url = f"{LLM_ENDPOINT}/completion"
+
+    try:
+        resp = requests.post(url, json=payload, timeout=LLM_TIMEOUT)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.RequestException as e:
+        logger.debug(f"Retranslation request failed for hint {hint!r}: {e}")
+        return None
+
+    corrected = strip_code_fence(data.get("content", "")).strip()
+    # Plain-text output, not JSON -- strip_code_fence() is still reused in
+    # case the model wraps the answer in a code fence despite being asked
+    # not to (not observed in live testing, but a cheap, already-existing
+    # safeguard). A stray pair of surrounding quotes is also common enough
+    # in free-text LLM output generally (not observed for this specific
+    # prompt in testing, but plausible) to strip defensively.
+    if len(corrected) >= 2 and corrected[0] == '"' and corrected[-1] == '"':
+        corrected = corrected[1:-1].strip()
+
+    if not corrected:
+        logger.debug(f"Retranslation returned empty output for hint {hint!r}")
+        return None
+
+    return corrected
+
+
 def translate_lines(
     lines: List[str],
     target_lang: str = "en",

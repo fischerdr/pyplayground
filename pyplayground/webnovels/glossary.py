@@ -33,7 +33,7 @@ the old shape should be deleted/regenerated rather than migrated.
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from pyplayground.utils.logging_utils import get_logger
 
@@ -286,6 +286,76 @@ def format_glossary_for_prompt(glossary: Dict[str, Any]) -> str:
         lines.append(entry)
 
     return "\n".join(lines)
+
+
+def build_mask_targets(lines: List[str], glossary: Dict[str, Any]) -> List[Tuple[int, str]]:
+    """Decide which term occurrences in `lines` should be masked before translation.
+
+    v1 trigger rule (decided in DESIGN.md Section 9, implemented here):
+    mask every occurrence of every term whose status is not
+    STATUS_CONFIRMED. An unreviewed STATUS_SUGGESTED term hasn't been
+    vetted, so it shouldn't be translated through -- masking it lets the
+    model translate around it and leaves the original word in place,
+    flagged for review, instead of the model guessing at (and possibly
+    corrupting) a term nobody has confirmed yet. Feeds directly into
+    llm_translate.translate_chunk_with_masking()'s `mask_targets` parameter,
+    which expects exactly this (line_idx, word) shape.
+
+    Deliberately narrow: this only decides *which* spans to mask. It does
+    not call translate_chunk_with_masking() itself, does not change how
+    translate_lines() is called in production, and does not touch
+    needs_review handling -- those are separate, not-yet-made decisions
+    (see DESIGN.md Section 6/8).
+
+    Matching is exact-substring, case-sensitive, one entry per literal
+    occurrence -- if a term's source text appears twice in one line, this
+    returns two (line_idx, word) tuples for that line, matching how
+    mask_terms() consumes its targets list (one masked occurrence per
+    tuple, via a single-count str.replace() each). Longer term sources are
+    matched before shorter ones so a term that's a substring of another
+    (e.g. "音夢" inside "音夢くん") doesn't fragment the longer match's
+    first occurrence out from under it.
+
+    Args:
+        lines: Source lines/paragraphs about to be translated, in order.
+        glossary: Glossary dict as returned by load_glossary().
+
+    Returns:
+        (line_idx, word) pairs, one per literal term occurrence found,
+        ordered by line then by position within the line. Empty list if
+        the glossary has no non-confirmed terms or none of them appear in
+        `lines`.
+    """
+    unconfirmed_sources = sorted(
+        {term.get("source", "") for term in glossary.get("terms", []) if term.get("status") != STATUS_CONFIRMED and term.get("source")},
+        key=len,
+        reverse=True,
+    )
+    if not unconfirmed_sources:
+        return []
+
+    targets: List[Tuple[int, str]] = []
+    for line_idx, line in enumerate(lines):
+        # Collect (start, end, word) matches with longer sources scanned
+        # first so a longer match claims its span before a shorter
+        # substring term can; then re-sort by position for a deterministic,
+        # line-order-following result independent of term length/set order.
+        covered: List[Tuple[int, int]] = []
+        matches: List[Tuple[int, int, str]] = []
+        for source in unconfirmed_sources:
+            search_from = 0
+            while True:
+                pos = line.find(source, search_from)
+                if pos == -1:
+                    break
+                end = pos + len(source)
+                if not any(pos < c_end and end > c_start for c_start, c_end in covered):
+                    matches.append((pos, end, source))
+                    covered.append((pos, end))
+                search_from = pos + 1
+        matches.sort(key=lambda m: m[0])
+        targets.extend((line_idx, word) for _pos, _end, word in matches)
+    return targets
 
 
 def merge_terms(existing: List[Dict[str, Any]], new_terms: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

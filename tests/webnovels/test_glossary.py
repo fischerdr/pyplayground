@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Tests for glossary.py's term data model (DESIGN.md Section 9)."""
+"""Tests for glossary.py's term data model (DESIGN.md Section 9) and mask_targets producer (DESIGN.md Section 9's trigger rule)."""
 
 from pyplayground.webnovels.glossary import (
     ORIGIN_LLM,
@@ -10,6 +10,7 @@ from pyplayground.webnovels.glossary import (
     TERM_TYPE_CHARACTER,
     TERM_TYPE_GENERAL,
     _empty_glossary,
+    build_mask_targets,
     format_glossary_for_prompt,
     make_confirmed_term,
     make_suggested_term,
@@ -178,3 +179,111 @@ class TestMergeTerms:
         merged = merge_terms(existing, new_terms)
 
         assert len(merged) == 2
+
+
+class TestBuildMaskTargets:
+    """Tests for build_mask_targets() -- the mask_targets producer (DESIGN.md Section 9's v1 rule: status != confirmed)."""
+
+    def test_confirmed_term_not_masked(self):
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_confirmed_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")]
+
+        targets = build_mask_targets(["ケイトが振り返った。"], glossary)
+
+        assert targets == []
+
+    def test_suggested_term_is_masked(self):
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_suggested_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")]
+
+        targets = build_mask_targets(["ケイトが振り返った。"], glossary)
+
+        assert targets == [(0, "ケイト")]
+
+    def test_mixed_glossary_only_masks_unconfirmed(self):
+        """Reproduces the 5-sentinel stress case from the sentinel-masking test suite (DESIGN.md Section 4), now driven by real glossary status instead of a hand-picked target list."""
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [
+            make_suggested_term(TERM_TYPE_CHARACTER, "音夢くん", "Otomu-kun"),
+            make_confirmed_term(TERM_TYPE_CHARACTER, "ケイト", "Kate"),
+            make_suggested_term(TERM_TYPE_GENERAL, "維多教授", "Professor Vito"),
+        ]
+        lines = [
+            "「ケイト、ルリ、音夢くん、みんな揃った?」と維多教授が尋ねた。",
+            "ケイトは頷き、ルリは笑顔で答えた。「はい、揃いました」",
+            "音夢くんだけは少し遅れて到着した。",
+        ]
+
+        targets = build_mask_targets(lines, glossary)
+
+        assert targets == [(0, "音夢くん"), (0, "維多教授"), (2, "音夢くん")]
+
+    def test_empty_glossary_returns_no_targets(self):
+        glossary = _empty_glossary("1")
+
+        assert build_mask_targets(["何かの文章。"], glossary) == []
+
+    def test_term_not_present_in_lines_returns_no_targets(self):
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_suggested_term(TERM_TYPE_CHARACTER, "音夢くん", "Otomu-kun")]
+
+        targets = build_mask_targets(["この文には出てこない。"], glossary)
+
+        assert targets == []
+
+    def test_repeated_occurrence_in_one_line_produces_one_target_per_occurrence(self):
+        """mask_terms() consumes one tuple per literal occurrence (single-count str.replace() each) -- the producer must match that shape, not just report presence once per line."""
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_suggested_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")]
+
+        targets = build_mask_targets(["ケイトとケイトは似ている。"], glossary)
+
+        assert targets == [(0, "ケイト"), (0, "ケイト")]
+
+    def test_same_term_across_multiple_lines(self):
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_suggested_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")]
+        lines = ["ケイトとルリは、幼い頃からの親友だった。", "「ルリ、今日は付き合ってくれてありがとう」とケイトが言った。"]
+
+        targets = build_mask_targets(lines, glossary)
+
+        assert targets == [(0, "ケイト"), (1, "ケイト")]
+
+    def test_longer_term_wins_over_overlapping_shorter_substring(self):
+        """If a shorter unconfirmed term's source text is a substring of a longer unconfirmed term's source text, only the longer match should be emitted -- masking both would produce overlapping spans that break mask_terms()'s sequential single-count replace()."""
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [
+            make_suggested_term(TERM_TYPE_CHARACTER, "音夢", "Otomu"),
+            make_suggested_term(TERM_TYPE_CHARACTER, "音夢くん", "Otomu-kun"),
+        ]
+
+        targets = build_mask_targets(["音夢くんが到着した。"], glossary)
+
+        assert targets == [(0, "音夢くん")]
+
+    def test_shorter_term_still_matched_when_not_overlapping_a_longer_one(self):
+        """The longer-match-wins rule should only suppress genuinely overlapping spans, not every occurrence of a shorter term elsewhere in the same line."""
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [
+            make_suggested_term(TERM_TYPE_CHARACTER, "音夢", "Otomu"),
+            make_suggested_term(TERM_TYPE_CHARACTER, "音夢くん", "Otomu-kun"),
+        ]
+        # "音夢くん" (longer) appears first; a standalone "音夢" appears later, not overlapping.
+        targets = build_mask_targets(["音夢くんと音夢は別の呼び方だ。"], glossary)
+
+        assert targets == [(0, "音夢くん"), (0, "音夢")]
+
+    def test_output_shape_feeds_directly_into_translate_chunk_with_masking(self):
+        """Contract check: build_mask_targets()'s return shape must match translate_chunk_with_masking()'s mask_targets parameter with no adapter needed."""
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_suggested_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")]
+
+        targets = build_mask_targets(["ケイトが振り返った。"], glossary)
+
+        assert isinstance(targets, list)
+        for entry in targets:
+            assert isinstance(entry, tuple)
+            assert len(entry) == 2
+            line_idx, word = entry
+            assert isinstance(line_idx, int)
+            assert isinstance(word, str)

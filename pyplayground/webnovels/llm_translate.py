@@ -746,6 +746,112 @@ def translate_lines(
     return translated_lines
 
 
+def translate_lines_with_masking(
+    lines: List[str],
+    mask_targets: List[Tuple[int, str]],
+    target_lang: str = "en",
+    source_lang: str = "ja",
+    max_chunk_chars: int = 400,
+    context_window: int = 3,
+    glossary_text: Optional[str] = None,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+) -> List[TranslatedLine]:
+    """Translate a list of text lines with sliding context, masking unconfirmed glossary terms.
+
+    Sibling to translate_lines() (kept separate, not a parameter on it, to
+    avoid a conditional-return-type function -- same pattern as
+    translate_chunk_with_masking() being a sibling of translate_chunk()
+    rather than a flag on it). Returns List[TranslatedLine] instead of
+    List[str] -- callers that don't need masking should keep using
+    translate_lines(), which is unchanged.
+
+    Args:
+        lines: List of source text lines/paragraphs to translate.
+        mask_targets: (line_idx, word) pairs, indices relative to `lines`
+            as a whole (e.g. from glossary.build_mask_targets(lines, glossary)) --
+            NOT chunk-relative. This function re-indexes each target to be
+            relative to whichever chunk it falls in before calling
+            translate_chunk_with_masking(), since chunking is internal to
+            this function and mask_targets is expressed against the full
+            input.
+        target_lang: Target language code (default: en).
+        source_lang: Source language code (default: ja).
+        max_chunk_chars: Maximum characters per translation chunk.
+        context_window: Number of previous paragraphs to use as context.
+        glossary_text: Optional pre-formatted glossary text, prepended to
+            every chunk's prompt for consistency.
+        progress_cb: Optional callback(done, total) for progress updates.
+
+    Returns:
+        List of TranslatedLine, same length as `lines`.
+    """
+    # Pack lines into chunks respecting size limit -- identical logic to
+    # translate_lines(), but also tracking each chunk's starting offset
+    # into `lines` so mask_targets (expressed against the full input) can
+    # be re-indexed to be chunk-relative below.
+    chunks: List[List[str]] = []
+    chunk_offsets: List[int] = []
+    current_chunk: List[str] = []
+    current_len = 0
+    offset = 0
+
+    for i, line in enumerate(lines):
+        if current_len + len(line) > max_chunk_chars and current_chunk:
+            chunks.append(current_chunk)
+            chunk_offsets.append(offset)
+            current_chunk = []
+            current_len = 0
+            offset = i
+        current_chunk.append(line)
+        current_len += len(line) + 2
+    if current_chunk:
+        chunks.append(current_chunk)
+        chunk_offsets.append(offset)
+
+    logger.info(f"Translating {len(lines)} lines in {len(chunks)} chunks (masking {len(mask_targets)} term occurrence(s)) using {LLM_MODEL}")
+
+    translated_lines: List[TranslatedLine] = []
+    context_buffer: List[str] = []
+
+    for i, (chunk, chunk_offset) in enumerate(zip(chunks, chunk_offsets)):
+        context = ""
+        if context_buffer:
+            context = "\n\n".join(context_buffer[-context_window:])
+
+        chunk_end = chunk_offset + len(chunk)
+        chunk_mask_targets = [(line_idx - chunk_offset, word) for line_idx, word in mask_targets if chunk_offset <= line_idx < chunk_end]
+
+        try:
+            parts = translate_chunk_with_masking(
+                chunk,
+                chunk_mask_targets,
+                target_lang=target_lang,
+                source_lang=source_lang,
+                context=context,
+                glossary_text=glossary_text,
+                chunk_idx=i,
+                total_chunks=len(chunks),
+            )
+        except Exception as e:
+            logger.error(f"Chunk {i + 1}/{len(chunks)} failed: {e}")
+            parts = [TranslatedLine(text=f"[translation failed: {e}]") for _ in chunk]
+
+        translated_lines.extend(parts)
+
+        for part in parts:
+            context_buffer.append(part.text)
+            if len(context_buffer) > context_window * 2:
+                context_buffer = context_buffer[-context_window * 2 :]
+
+        if progress_cb:
+            progress_cb(i + 1, len(chunks))
+
+        time.sleep(0.1)
+
+    logger.info(f"Translation complete: {len(translated_lines)} lines")
+    return translated_lines
+
+
 def check_llm_available(endpoint: Optional[str] = None) -> bool:
     """Check if the LLM server is reachable and has the configured model.
 

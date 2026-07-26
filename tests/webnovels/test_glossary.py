@@ -15,6 +15,7 @@ from pyplayground.webnovels.glossary import (
     make_confirmed_term,
     make_suggested_term,
     merge_terms,
+    update_candidate_counts,
 )
 
 
@@ -287,3 +288,121 @@ class TestBuildMaskTargets:
             line_idx, word = entry
             assert isinstance(line_idx, int)
             assert isinstance(word, str)
+
+
+class TestUpdateCandidateCounts:
+    """Tests for update_candidate_counts() -- the count-building loop (DESIGN.md Section 12)."""
+
+    def test_confirmed_term_match_increments_count(self):
+        glossary = _empty_glossary("1")
+        term = make_confirmed_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")
+        term["candidates"][0]["count"] = 5
+        glossary["terms"] = [term]
+
+        updated = update_candidate_counts(["ケイトが振り返った。"], ["Kate turned around."], glossary)
+
+        assert updated["terms"][0]["candidates"][0]["count"] == 6
+
+    def test_suggested_terms_are_never_counted(self):
+        """A suggested/masked term's line contains the raw source word, not a model translation -- no candidate string to match against, per Section 12's scope."""
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_suggested_term(TERM_TYPE_CHARACTER, "音夢くん", "Otomu-kun")]
+
+        updated = update_candidate_counts(["音夢くんが手を振った。"], ["音夢くん waved."], glossary)
+
+        assert updated["terms"][0]["candidates"][0]["count"] == 1  # unchanged from make_suggested_term()'s initial count
+
+    def test_needs_review_line_excluded_from_counting(self):
+        """A line whose translation attempt needed the fallback isn't evidence of anything the model successfully did -- must not count."""
+        glossary = _empty_glossary("1")
+        term = make_confirmed_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")
+        glossary["terms"] = [term]
+
+        updated = update_candidate_counts(
+            ["ケイトが振り返った。"],
+            ["Kate turned around."],
+            glossary,
+            needs_review_flags=[True],
+        )
+
+        assert updated["terms"][0]["candidates"][0]["count"] == 1  # unchanged
+
+    def test_no_match_in_chunk_leaves_count_unchanged(self):
+        glossary = _empty_glossary("1")
+        term = make_confirmed_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")
+        glossary["terms"] = [term]
+
+        updated = update_candidate_counts(["ルリが微笑んだ。"], ["Ruri smiled."], glossary)
+
+        assert updated["terms"][0]["candidates"][0]["count"] == 1  # unchanged
+
+    def test_source_present_but_target_not_translated_as_expected_leaves_count_unchanged(self):
+        """Source term appears in the chunk, but the translated line doesn't contain the confirmed_target string -- e.g. the model used different phrasing. Not a match, no increment."""
+        glossary = _empty_glossary("1")
+        term = make_confirmed_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")
+        glossary["terms"] = [term]
+
+        updated = update_candidate_counts(["ケイトが振り返った。"], ["She turned around."], glossary)
+
+        assert updated["terms"][0]["candidates"][0]["count"] == 1  # unchanged
+
+    def test_only_the_matching_candidate_is_incremented_not_others(self):
+        glossary = _empty_glossary("1")
+        term = make_confirmed_term(TERM_TYPE_CHARACTER, "维多教授", "Professor Victor")
+        term["candidates"] = [
+            {"target": "Professor Victor", "count": 23, "origin": "user"},
+            {"target": "Professor Vito", "count": 4, "origin": "mt"},
+        ]
+        term["confirmed_target"] = "Professor Victor"
+        glossary["terms"] = [term]
+
+        updated = update_candidate_counts(["维多教授が尋ねた。"], ["Professor Victor asked."], glossary)
+
+        candidates = {c["target"]: c["count"] for c in updated["terms"][0]["candidates"]}
+        assert candidates["Professor Victor"] == 24
+        assert candidates["Professor Vito"] == 4  # unchanged
+
+    def test_multiple_lines_in_chunk_only_counts_once_per_chunk_per_term(self):
+        """A term appearing twice within the same translate call still only gets one increment -- matches "which candidate won for this chunk," not a per-occurrence tally."""
+        glossary = _empty_glossary("1")
+        term = make_confirmed_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")
+        glossary["terms"] = [term]
+
+        updated = update_candidate_counts(
+            ["ケイトが振り返った。", "ケイトは頷いた。"],
+            ["Kate turned around.", "Kate nodded."],
+            glossary,
+        )
+
+        assert updated["terms"][0]["candidates"][0]["count"] == 2
+
+    def test_unrelated_confirmed_terms_untouched(self):
+        glossary = _empty_glossary("1")
+        matched = make_confirmed_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")
+        unrelated = make_confirmed_term(TERM_TYPE_CHARACTER, "ルリ", "Ruri")
+        glossary["terms"] = [matched, unrelated]
+
+        updated = update_candidate_counts(["ケイトが振り返った。"], ["Kate turned around."], glossary)
+
+        by_source = {t["source"]: t for t in updated["terms"]}
+        assert by_source["ケイト"]["candidates"][0]["count"] == 2
+        assert by_source["ルリ"]["candidates"][0]["count"] == 1  # unchanged
+
+    def test_original_glossary_not_mutated(self):
+        """update_candidate_counts() returns a new glossary, matching merge_terms()'s convention -- the caller's original dict must be unaffected."""
+        glossary = _empty_glossary("1")
+        term = make_confirmed_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")
+        glossary["terms"] = [term]
+
+        update_candidate_counts(["ケイトが振り返った。"], ["Kate turned around."], glossary)
+
+        assert glossary["terms"][0]["candidates"][0]["count"] == 1  # original untouched
+
+    def test_empty_source_lines_leaves_glossary_unchanged(self):
+        glossary = _empty_glossary("1")
+        term = make_confirmed_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")
+        glossary["terms"] = [term]
+
+        updated = update_candidate_counts([], [], glossary)
+
+        assert updated["terms"][0]["candidates"][0]["count"] == 1

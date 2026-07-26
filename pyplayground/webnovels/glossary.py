@@ -358,6 +358,101 @@ def build_mask_targets(lines: List[str], glossary: Dict[str, Any]) -> List[Tuple
     return targets
 
 
+def update_candidate_counts(
+    source_lines: List[str],
+    translated_lines: List[str],
+    glossary: Dict[str, Any],
+    needs_review_flags: Optional[List[bool]] = None,
+) -> Dict[str, Any]:
+    """Increment a confirmed term's winning candidate's count for each chunk it actually appears in.
+
+    The count-building loop from DESIGN.md Section 3/6: for every
+    STATUS_CONFIRMED term whose source string appears in `source_lines`,
+    checks whether the corresponding `translated_lines` entry contains that
+    term's `confirmed_target` string, and if so increments that candidate's
+    count -- lets consistency reinforce a candidate organically, without
+    requiring a human to confirm every occurrence.
+
+    Deliberately narrow, matching the DESIGN.md Section 12 scoping (three
+    things named there as separate, later work, not attempted here):
+
+    - STATUS_SUGGESTED terms are not counted. A suggested/masked term's
+      line contains the raw source word (splice_terms()'s fallback), not a
+      model-generated translation -- there's no translated candidate
+      string to substring-match against for those. Recurrence tracking for
+      suggested terms is a real, different idea (count how often the term
+      itself appears, not which candidate translation wins) -- not
+      attempted here; see DESIGN.md Section 12 for why conflating the two
+      under one mechanism would repeat the flag-means-two-things mistake
+      needs_review's design already caught once.
+    - Discovering a *new* candidate translation not already in a term's
+      `candidates` list is out of scope -- only existing candidate strings
+      are matched against. Attributing an arbitrary span of translated
+      text to a specific source term with no positional/masking anchor is
+      a real alignment problem, not solved incidentally here.
+    - A source line whose corresponding translated_lines entry came from a
+      needs_review=True translation attempt is excluded from counting --
+      that attempt failed and was recovered via fallback, so it's not
+      evidence the model successfully produced (or avoided) any candidate
+      translation. Only relevant when `needs_review_flags` is passed
+      (confirmed terms are never masked, so this mainly guards against a
+      line failing for an unrelated reason in the same chunk).
+
+    Args:
+        source_lines: Source-language lines from the chunk just translated.
+        translated_lines: Corresponding translated lines, same length/order.
+        glossary: Glossary dict as returned by load_glossary().
+        needs_review_flags: Optional, same length/order as source_lines --
+            True for a line whose translation attempt needed the
+            missing-sentinel/empty-line fallback (see
+            llm_translate.translate_chunk_with_masking()). Lines flagged
+            True are skipped. If omitted, no lines are excluded on this
+            basis (matches callers that only ever pass unmasked/confirmed
+            content, where the flag doesn't apply).
+
+    Returns:
+        A new glossary dict (shallow copy at the top level and the terms
+        list; individual term dicts that had a count incremented are
+        replaced with new dicts, not mutated in place -- unmodified term
+        dicts are shared by reference, same convention as merge_terms()).
+    """
+    flags = needs_review_flags if needs_review_flags is not None else [False] * len(source_lines)
+
+    updated_terms = []
+    for term in glossary.get("terms", []):
+        if term.get("status") != STATUS_CONFIRMED:
+            updated_terms.append(term)
+            continue
+
+        source = term.get("source", "")
+        confirmed_target = term.get("confirmed_target")
+        if not source or not confirmed_target:
+            updated_terms.append(term)
+            continue
+
+        matched = False
+        for src_line, tgt_line, flagged in zip(source_lines, translated_lines, flags):
+            if flagged:
+                continue
+            if source in src_line and confirmed_target in tgt_line:
+                matched = True
+                break
+
+        if not matched:
+            updated_terms.append(term)
+            continue
+
+        new_candidates = []
+        for candidate in term.get("candidates", []):
+            if candidate.get("target") == confirmed_target:
+                new_candidates.append({**candidate, "count": candidate.get("count", 0) + 1})
+            else:
+                new_candidates.append(candidate)
+        updated_terms.append({**term, "candidates": new_candidates})
+
+    return {**glossary, "terms": updated_terms}
+
+
 def merge_terms(existing: List[Dict[str, Any]], new_terms: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Merge new terms into an existing term list.
 

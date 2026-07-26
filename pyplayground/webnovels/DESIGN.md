@@ -393,20 +393,255 @@ regardless of the unresolved root-cause question above.
   `glossary.py` as a pure function per the §9 trigger rule
   (`status != confirmed`). Still not wired into any live translation
   call site — that remains open, see §10.
-- Reader UI: consume `needs_review` — distinct highlight style from
-  confirmed terms, click opens the term editor pre-filled (reuses the
-  existing Add-to-Glossary dialog shape).
-- Recurrence/promotion logic: no term currently gets auto-promoted from
-  `suggested` to `confirmed` based on repeated appearance; count-building
-  loop (§3) accumulates counts but promotion threshold is undecided.
+- ~~Reader UI: consume `needs_review` — distinct highlight style from
+  confirmed terms, click opens the term editor pre-filled~~ —
+  **resolved, see the 2026-07-25 entry below**: rendering + click handler
+  implemented in `alphapolis_reader.py`. Tested against synthetic
+  `TranslatedLine` data only — live/end-to-end verification is blocked on
+  wiring `translate_chunk_with_masking()` into `translate_lines()`'s call
+  sites, a separate, later task (not this one).
+- ~~Recurrence/promotion logic~~ — **split, per the same separable-things
+  pattern as every prior step here**: the count-building loop half is
+  **resolved, see §12**. The promotion-threshold half (§8: "how many
+  appearances... or is promotion always manual?") remains genuinely open
+  — not answered by §12, not attempted there. No term currently gets
+  auto-promoted from `suggested` to `confirmed`; §12 only makes counts
+  accurate, it doesn't act on them.
+
+### 2026-07-25: Reader UI consumption of `needs_review` — implemented (step 1 of 3)
+
+Step 1 of the sequence named in §10's "not something to default into"
+close: reader UI for `needs_review` first, wiring second, count-building/
+promotion third. Steps 2 and 3 are separate, later tasks — not started
+here.
+
+**No live data path exists yet.** `translate_chunk_with_masking()` still
+has zero production callers (§10 unchanged on that point), so there is no
+real `List[TranslatedLine]` this feature can be exercised against
+end-to-end. Everything below was built and tested against
+hand-constructed synthetic `TranslatedLine` data. Live verification
+(actually seeing a needs-review span appear from a real masked-translation
+run) is blocked on step 2.
+
+**Implemented, in `alphapolis_reader.py`:**
+- `build_review_term_map(translated_lines, mask_targets)` (module-level,
+  pure): reconstructs which source word(s) triggered `needs_review` on
+  each flagged line. Necessary because `TranslatedLine` itself carries no
+  positional/source-word data — just `text` and a whole-line
+  `needs_review` bool (see `splice_terms()`'s docstring) — so a click
+  handler can't recover "which term" from a `TranslatedLine` alone; this
+  reconstructs that association from the same `mask_targets` list passed
+  to `translate_chunk_with_masking()`.
+- `_render_translated_content_from_translated_lines()`: sibling to the
+  existing `_render_translated_content()` (which reads
+  `ep["translated_lines"]` as plain strings) — takes
+  `List[TranslatedLine]` directly and applies a new `"needs_review"` Tk
+  tag (amber/orange + underline, distinct in both hue and decoration from
+  `"translated"`'s blue, not just a shade difference) instead of the plain
+  tag when a line is flagged. Reuses the same tag-over-character-range
+  mechanism as every other span, per §7's existing approach — no separate
+  rendering path. Not called from `render_text()` yet (no data to feed it;
+  see above).
+- `_on_needs_review_click()`: left-click handler (`tag_bind`, not the
+  existing right-click menu) on `needs_review` spans specifically, opening
+  the **existing** `open_word_glossary_popup()` dialog — no new dialog
+  built. Pre-fills `Source` with the masked term; `Target` is left blank
+  (the raw source word was a splice-back fallback, not a translation
+  guess — prefilling `Target` with it would misrepresent an untranslated
+  placeholder as a proposed English target); `context` is the term's
+  actual Japanese source sentence (from `ep["content"]`, not the rendered
+  English line), matching what the existing right-click flow passes for
+  `explain_term()`'s disambiguation. A line with multiple flagged terms
+  opens the dialog for the first one, consistent with the existing
+  right-click flow's single-word-per-click behavior.
+
+**Bug found and fixed in pre-existing code, not just the new path.**
+While building headless-Tk tests for the above, `self.text.index("end")`
+was found to always report one line *past* where `.insert("end", ...)`
+actually places new text (Tk's mandatory trailing newline makes `"end"`
+perpetually "one ahead" of the real insertion point). This wasn't a
+theoretical concern — confirmed live against the real, unmodified
+`_render_content()`: **the first paragraph of every rendered episode
+never resolved via `_span_at_index()`, so right-click → Add to Glossary
+silently did nothing on it**, and every subsequent paragraph's tracked
+span was shifted by one line versus where its tag actually landed. Fixed
+by using `"end-1c"` (the actual insertion point) in all four capture
+sites: the two pre-existing ones in `_render_content()`/
+`_render_translated_content()`, and the two new ones in
+`_render_translated_content_from_translated_lines()`, which had copied
+the same (broken) pattern. Regression-tested specifically (see below) so
+the fix is demonstrated on the old code path, not just assumed from the
+new path working.
+
+**Verification**: 14 tests in `tests/webnovels/test_alphapolis_reader.py`
+(new file — no prior test coverage existed for this module):
+
+- `TestBuildReviewTermMap` (7): the pure function, fully unit tested.
+- `TestRenderAndClick` (4): tag application and click-to-term resolution
+  against a real (headless, but not `withdraw()`'d — a withdrawn window
+  never gets real geometry in this environment, which breaks
+  `bbox()`/`dlineinfo()`) `tk.Text` widget, via a minimal stand-in object
+  exposing only what the methods touch on `self` (not a full `ReaderApp`,
+  which requires a live browser/Playwright object to construct). Bound
+  methods pulled directly off `ReaderApp`, not reimplemented, so this
+  tests the actual code.
+- `TestRightClickRegression` (3): the pre-existing right-click flow
+  specifically, proving the `end-1c` fix resolved the first-paragraph bug
+  rather than just happening to not trigger it in the needs-review tests.
+
+`black`/`isort`/`flake8` clean. `mypy`: 4 new "missing type annotation"
+errors on the two new methods, consistent with the file's existing
+untyped-method convention (72 such errors already present file-wide) —
+not fixed here, matching how this codebase's `mypy` baseline has been
+treated in prior sessions rather than introducing inconsistent typing
+discipline on 2 of ~70+ methods. Full project test suite re-run: no
+regressions (55 tests total in `tests/webnovels/`, up from 41 before this
+task).
+
+**Not verified**: actual visual rendering on screen (color/underline
+distinguishability as a human would see it) — no interactive display
+session available in this environment. Programmatically confirmed
+instead: `text.tag_config()` reports `needs_review` as
+`foreground="#b45309" underline=1` versus `translated`'s
+`foreground="#1a56c4"` no underline, applied to the correct, distinct
+line ranges — as close to verification as is possible without a real
+screen, but not the same as a human confirming the two are actually easy
+to tell apart at a glance.
+
+**Not done in this pass** (steps 2/3, explicitly out of scope): no
+changes to `translate_lines()` or its call sites (the reader's live
+translation invocation, `alphapolis_translate.py`,
+`compare_translations.py`) beyond what was needed to render/handle
+`TranslatedLine` data if passed in — nothing was made to actually call
+`translate_chunk_with_masking()` in production. No count-building or
+promotion logic — if a needs-review term is added via the pre-filled
+dialog, it lands as an ordinary `suggested`-status term via the existing
+`make_suggested_term()`/dialog-save path, same as any other manual add,
+nothing more. No changes to `build_mask_targets()`, `glossary.py`'s
+schema, or anything in §9/§10.
+
+### 2026-07-26: Visual/click verification of `needs_review` — closes the gap flagged above and in §11
+
+Closes the specific, repeatedly-flagged gap from this section and §11:
+`needs_review` distinguishability was previously confirmed only
+programmatically (`text.tag_config()` inspection); never actually seen on
+a rendered screen, never clicked through the real widget via real
+mouse-event handling. This task did both, under this environment's
+existing `xdotool`/virtual-display setup (`DISPLAY=:0`, confirmed live and
+usable — `xdotool getdisplaygeometry` → `1920x1080`, a real Tk window
+gets real, non-1×1 geometry once mapped).
+
+**⚠️ Provenance, stated plainly so it can't be conflated with §11's
+result on a later skim**: the data rendered and clicked here is
+**reconstructed input run through real production code — not a replay of
+§11's actual live LLM call.** §11's exact original model-output text for
+this chunk was never saved to disk (only summarized: "1 of 3 sentinels
+dropped, line 6"), and re-running a fresh live translation was explicitly
+out of scope for this task (the point was isolating "does the UI
+correctly handle already-proven data" from "does the translation
+pipeline work" — collapsing them back together would defeat that). So:
+the Japanese source lines are the real, unmodified lines from
+`178ca2c7...eead.json` (lines 29-36, same chunk §4/§11 used); the English
+wording of the 7 clean lines is hand-written prose, not the model's
+actual output; but the `needs_review=True` line 6 was produced by
+running that hand-written response through the **real, unmodified**
+`mask_terms()`/`build_mask_targets()`/`splice_terms()` functions with the
+sentinel deliberately omitted on line 6 only — genuinely exercising the
+real missing-sentinel fallback code path, not a hardcoded flag. What's
+verified here is "does the real rendering/click code handle a real
+`needs_review=True` `TranslatedLine` correctly" — not "does translategemma
+reproduce this specific failure again."
+
+**Setup**: a synthetic novel (`novel_id=999999999`, a numeric ID that
+satisfies `NOVEL_ID_RE` but won't collide with any real Alphapolis
+novel), a matching `suggested`-status glossary
+(`タチバナさん`/`橘` → `make_suggested_term()`, matching §11's real
+glossary shape), and a pre-populated on-disk cache entry (correct
+`_cache_schema_version: 4`, `translated_lines` + `needs_review_flags`
+pair, matching §11's real storage shape) written directly via
+`save_glossary()`/the same JSON shape `save_cached_episode()` produces.
+The real app (`python alphapolis_reader.py <url>`, unmodified — not a
+stand-in object, not a headless-without-display run) was launched
+pointed at that URL; `fetch_and_translate()`'s existing cache-hit check
+(`if cached is not None: return cached`) short-circuits before any
+browser/network access, so `BrowserWorker`'s real Playwright/Chromium
+launch happens (matching real app startup) but is never actually used
+for a fetch on this run.
+
+**Visual result — plain judgment, not just "the tag exists"**: **yes,
+clearly and unambiguously visually distinguishable at a glance.**
+Screenshot of the rendered episode (before any interaction) shows line 6
+in a distinct amber/orange color with an underline, standing out
+immediately against the surrounding lines' blue, non-underlined
+`translated` styling — this was not a subtle or borderline call.
+
+**Click-through result**: `xdotool` clicked the needs-review span at its
+real on-screen pixel coordinates (window-relative `mousemove`/`click`
+through the real widget — not `tag_bind()` invoked synthetically, not
+`_on_needs_review_click()` called directly in Python). The real
+Add-to-Glossary dialog opened (after its existing background
+translation-guess lookup completed) with **`Source (original)` =
+"タチバナさん"** — an exact match to §11's already-proven
+`_on_needs_review_click()` result
+(`("タチバナさん", "", "「なに言ってんすか。...")`). `Target
+(translation)` correctly blank (per the existing fallback-not-a-guess
+design decided in §6's original entry), `Type` correctly defaulted to
+`Character`. The `context` parameter (the real Japanese source sentence)
+isn't a visible dialog field, but the populated "Meaning"/"Alternatives"
+reference sections (a real `explain_term()` LLM call using that context)
+confirm it was passed through and produced coherent output, consistent
+with the correct sentence having been used.
+
+**Unexpected, worth recording for future UI verification, not just this
+one:**
+
+- A completely fresh single-process launch reliably produces **two**
+  window IDs matching `xdotool search --name "Alphapolis Reader"`. Root
+  cause identified, not left as a mystery: one ID (`getwindowpid` →
+  `mutter-x11-frame`) is the Mutter window manager's decoration/frame
+  window, not a second app instance — the real client window is the
+  other ID. `xwininfo`/`xdotool getwindowpid` cross-checked to tell them
+  apart; screenshotting both confirmed only one behavioral difference (a
+  frame vs. content), not divergent app state.
+- `xdotool mousemove <absolute-x> <absolute-y>` followed by
+  `getmouselocation` repeatedly reported a fixed, unrelated position on
+  first attempts. Root cause: **this is a real, shared display, not an
+  isolated headless one** — the user's own actual mouse/keyboard activity
+  (switching focus to answer clarifying questions during this task) was
+  contending for the same pointer. Resolved by chaining
+  `windowactivate --sync` immediately before `mousemove --window
+  <id> ... click` in a single `xdotool` invocation, rather than issuing
+  focus and click as separate commands with a gap between them where
+  focus could be stolen back.
+- A first attempt to construct the synthetic episode dict was missing
+  `prev_url`/`next_url` keys, surfacing a real (if trivial) `KeyError` in
+  `display_episode()` — not a bug in the app, a gap in the reconstructed
+  test fixture; fixed by adding both keys (`None` is a valid, handled
+  value; confirmed via `parse_episode()`'s real output shape before
+  patching).
+
+**No changes made to `needs_review` styling, the click handler, or any
+rendering logic** — nothing this verification surfaced rose to "genuinely
+broken," only fixture-construction gaps in the test setup itself, so
+§6/§11's original implementation stands unmodified.
 
 ## 7. Web migration plan
 
-**Current state**: Tkinter desktop app (`alphapolis_reader.py`). Term
-highlighting is Tk text-widget tags over character ranges — the
-span-mapping logic (given text + glossary, produce styled spans) is pure
-data transformation with no Tkinter dependency once separated from the
-render call.
+**Current state**: Tkinter desktop app (`alphapolis_reader.py`). Paragraph-
+level tags exist (`original`, `translated`, and now `needs_review` as of
+2026-07-25 — see §6) — all Tk text-widget tags over character ranges, so
+the tag-based rendering approach ported cleanly to a new visual state
+(needs-review) without inventing a separate mechanism, some evidence this
+generalizes. **Correction to an earlier version of this doc**: "confirmed-
+term highlighting" was previously described here as existing already — it
+does not. There is no per-term (as opposed to per-paragraph) span tagging
+in the Tkinter app at all; `original`/`translated`/`needs_review` each tag
+a whole rendered paragraph, not individual glossary terms within it. A
+confirmed-term highlight (bold/colored individual words, per §2's
+reference UX) has not been built in Tkinter, in this task or any prior
+one. Phase 2 below still describes it as something to build in the web
+version — that's accurate; it was never a "port," since there's nothing
+to port for that specific piece.
 
 **Target**: reachable on home network, not just localhost — this means the
 backend holds Alphapolis/Novelfire session cookies and must not be treated
@@ -423,10 +658,31 @@ hardening pass.
 3. **Term interaction** — click-to-add via a `find_ja_word_at()` endpoint,
    right-click Add-to-Glossary, editor modal (parity with current Tkinter
    dialog).
-4. **Review-queue UI (new)** — candidate picker, confirmed vs. suggested
-   styling, consumes `needs_review` from masking output. This doesn't exist
-   in Tkinter at all; build it web-native here rather than porting a
-   Tkinter version that was never built.
+4. **Review-queue UI** — candidate picker, confirmed vs. suggested
+   styling, consumes `needs_review` from masking output. Revised as of
+   2026-07-25 with an itemized split (grep-verified against the current
+   `alphapolis_reader.py`, not assumed) of what step 1 (§6) delivered vs.
+   what's still missing, since "partially exists" on its own isn't
+   actionable for whoever picks this phase up later:
+   - **Now exists in Tkinter, portable as "port the working pattern"**:
+     `needs_review` line-level highlighting (a distinct Tk tag, amber +
+     underline) and a click handler that opens the term-add dialog
+     pre-filled with the flagged term. Both are `needs_review`-only —
+     neither implements any part of "confirmed vs. suggested styling."
+   - **Still doesn't exist anywhere, remains build-new-here**: (a)
+     confirmed-term highlighting itself — grep-confirmed zero per-term
+     span tagging anywhere in `alphapolis_reader.py`; the file's only
+     rendering tags are the paragraph-level `heading`/`original`/
+     `translated`/`needs_review`, none of which single out an individual
+     glossary term within a line. (b) Any "suggested" visual styling
+     distinct from confirmed. (c) The candidate picker itself (ranked
+     `candidates` list, count badges per §2/§3's reference UX). (d) Any
+     promotion UI (`suggested` → `confirmed`).
+   Also still true regardless of the above split: the Tkinter needs-review
+   feature has never been exercised against live data (§6's caveat) — the
+   web version's parity target is therefore "the tested behavior"
+   (synthetic-data-verified tag/click logic), not "field-proven behavior,"
+   until step 2's wiring lands and gets used for real.
 5. **Config/styling panel** — CSS custom properties in place of the
    Tkinter theme system.
 
@@ -623,3 +879,325 @@ deliberate decision on sequencing relative to §6's reader-UI item (wire
 translation first and surface `needs_review` later, vs. build the reader
 UI first so the wiring has somewhere real to show up immediately) — not
 something to default into.
+
+## 11. Wiring `translate_chunk_with_masking()` into production — implemented (2026-07-25, step 2 of 3)
+
+Step 2 of the sequence named in §10/§6: reader UI first (§6, done), wiring
+second (this), count-building/promotion third (not started). `mask_targets`
+production, `mask_terms()`/`splice_terms()`, and the glossary schema were
+not touched — called, not modified.
+
+**Call sites, checked individually rather than assumed identical:**
+
+- **`alphapolis_reader.py`'s `fetch_and_translate()`** — the real one that
+  matters, wired. This is where the glossary is already loaded (for
+  `glossary_text`) before this task, so the glossary dict was already
+  in-hand; `build_mask_targets(ep["lines"], glossary)` is called
+  immediately after, and `translate_lines_with_masking()` is used instead
+  of `translate_lines()` only for the LLM backend and only when
+  `mask_targets` is non-empty (Google Translate has no sentinel-survival
+  mechanism at all — masking it would just corrupt its output, not review-
+  flag anything). The title/episode_title translation (a separate,
+  2-line `translate_lines()` call) was deliberately left unmasked — rare
+  for a title to contain an unconfirmed glossary term, and there's no
+  natural place in the UI to review-flag a title.
+- **`alphapolis_translate.py`** (standalone CLI, prints translated text and
+  exits) and **`compare_translations.py`** (Google-vs-LLM quality
+  comparison, writes structured comparison JSON) — **left unmasked,
+  deliberately, not by oversight.** Neither has any place for a
+  `needs_review` signal to go: `alphapolis_translate.py` has no UI beyond
+  stdout, and `compare_translations.py`'s entire purpose is measuring the
+  LLM's *own* translation quality — masking would change what's being
+  measured, not just how it's displayed. Neither writes to the reader's
+  on-disk cache (`grep`-confirmed: no `save_cached_episode`/
+  `CACHE_SCHEMA_VERSION` reference in either file), so the cache-shape
+  change below doesn't affect them either.
+- **`llm_translate.py`**: `translate_lines()` itself is **unchanged** —
+  new sibling function `translate_lines_with_masking()` added instead,
+  same pattern as `translate_chunk_with_masking()` being a sibling of
+  `translate_chunk()` (§4) rather than a parameter on it. A conditional-
+  return-type function (`List[str]` vs `List[TranslatedLine]` depending on
+  an argument) was considered and rejected as a worse shape than two
+  functions with one job each.
+
+**The re-indexing detail that would have been a silent bug**:
+`translate_lines_with_masking()` chunks its input internally (same size-
+based packing as `translate_lines()`), but `mask_targets` is expressed in
+line indices relative to the *whole* input, not per-chunk.
+`translate_chunk_with_masking()` expects chunk-relative indices. Missing
+this would either mask the wrong line in a later chunk, or raise inside
+`mask_terms()` ("word not found in line") whenever a masked term fell past
+the first chunk. Fixed by tracking each chunk's starting offset during
+packing and re-indexing (`line_idx - chunk_offset`) before calling
+`translate_chunk_with_masking()` per chunk — covered by
+`test_mask_targets_reindexed_correctly_across_chunk_boundary`, which
+specifically forces a chunk split so a masked term lands in the second
+chunk.
+
+**Cache storage shape — the actual design decision, not mechanical
+plumbing:**
+
+`episode["translated_lines"]` is read as plain `List[str]` in three places
+outside the reader's own rendering (grep-confirmed before deciding, not
+assumed): `build_glossary.py`'s extraction (`"\n\n".join(translated_lines)`),
+`test_qwen3_extraction_validation.py`, and the reader's own pre-existing
+`_render_translated_content()`. Storing `TranslatedLine` objects/dicts
+there directly would break all of them. Two options considered:
+
+1. **Keep `translated_lines` as plain strings; don't persist `needs_review`
+   at all — recompute via `build_mask_targets()` against the current
+   glossary on every render.** Simpler, no cache shape change. Rejected:
+   this conflates two different questions under one flag name.
+   `needs_review` as originally defined (§4) records a fact about a
+   specific translation attempt — the model dropped a sentinel, or a line
+   came back empty and got retried, *on that run*. Recomputing instead
+   answers "does this term look unconfirmed *right now*, per current
+   glossary state" — a different, live signal. Those diverge the moment a
+   term gets manually confirmed after an episode was cached: the original
+   translation-time failure (the surrounding sentence may still read
+   awkwardly around a spliced-in raw word) becomes invisible, silently
+   replaced by "nothing to flag" once the glossary catches up. A line
+   where the term spliced back in cleanly and a line where it failed and
+   was recovered would become indistinguishable on reload under this
+   option — both just contain the raw word in English-adjacent context.
+2. **Keep `translated_lines` as plain strings (unchanged, so the three
+   external readers above are untouched); add a new parallel
+   `episode["needs_review_flags"]: List[bool]`, same length/order.**
+   Preserves the actual fact per line across reloads. Chosen.
+
+**Implemented**: option 2. `CACHE_SCHEMA_VERSION` bumped 3 → 4 (the
+existing, purpose-built mechanism for exactly this — `load_cached_episode()`
+already returns `None` on a version mismatch, causing a refetch/
+retranslate). **No migration/dual-read shim written**, per the established
+§9/§10 precedent — old-shape cache files are simply treated as uncached,
+not read-and-upgraded. `fetch_and_translate()` now stores
+`ep["needs_review_flags"] = [t.needs_review for t in translated]`
+alongside `ep["translated_lines"] = [t.text for t in translated]`
+(or an all-`False` list when masking didn't apply, e.g. Google backend or
+no unconfirmed terms present) — same length, same order, always both
+present together going forward.
+
+**Reader rendering wired**: `render_text()` now calls a new
+`_render_translated_view(ep, tag)` (replacing the direct
+`_render_translated_content(ep, "translated")` call) that reconstructs
+`TranslatedLine` objects from the cached `(translated_lines,
+needs_review_flags)` pair and dispatches to
+`_render_translated_content_from_translated_lines()` (built, unused, in
+§6) when that data is present and length-consistent, falling back to the
+original plain-string `_render_translated_content()` otherwise (an episode
+cached before this change, or the Google backend, or any length mismatch
+— defensive, not just the happy path). `mask_targets` for the needs-review
+click-to-add pre-fill is recomputed fresh via `build_mask_targets()` at
+render time against the *current* glossary — safe to recompute here
+specifically, unlike `needs_review_flags` above, since `mask_targets` in
+this context is only used to resolve "which word" for the dialog, not as a
+record of translation-time truth.
+
+**Live end-to-end verification — the actual point of this task, run
+against the real translategemma server, not synthetic fixtures:**
+
+- Real episode text (`c574a6...eead.json`, lines 1-5, containing 鉄パイプ
+  twice) with a real `suggested`-status glossary term for 鉄パイプ, through
+  the actual `translate_lines_with_masking()` production function: both
+  occurrences spliced back correctly, `needs_review=False` throughout.
+- A denser real chunk (same episode, lines 24-31, containing 音夢くん x3,
+  桂名, 仁菜) with 3 real `suggested` terms: all 4 mask targets spliced
+  cleanly on this run.
+- **The case that actually exercised `needs_review=True` live**: the
+  `タチバナさん`/`橘` chunk (`178ca2c7...eead.json`, lines 29-36 — the
+  same real chunk used in §4's original real-content verification) with
+  both name variants as `suggested` terms. First run: 1 of 3 sentinels
+  dropped (`タチバナさん` on line 6), correctly caught, flagged
+  `needs_review=True`. A second run against the same chunk hit a
+  *different* real failure — a JSON escaping error on the second chunk
+  (`Invalid \escape`, the model emitting a literal backslash) — which
+  triggered the existing empty-line retry-then-fallback path and produced
+  2 flagged lines instead of 1. Confirms the two-tier fallback (§4) is
+  still live and firing correctly through the new wiring, not just in
+  isolation.
+- **Rendered through the actual Tk code**, not just inspected as data: the
+  real `TranslatedLine` results from the `タチバナさん` run were fed into
+  `_render_translated_content_from_translated_lines()` — the `needs_review`
+  tag applied to exactly the flagged lines, `translated` to the rest, and
+  a simulated click on the flagged span resolved via
+  `_on_needs_review_click()` to the correct source term
+  (`("タチバナさん", "", "「なに言ってんすか。...")`) — the full
+  click-to-dialog-prefill path working end-to-end on real data.
+- **Full cache round-trip verified**: the real `TranslatedLine` results
+  were shaped into the actual `fetch_and_translate()` storage format
+  (`translated_lines` + `needs_review_flags`), serialized through
+  `json.dumps`/`json.loads` (simulating the real
+  `save_json_config`/`load_json_config` disk round-trip), then rendered
+  via the real `_render_translated_view()` dispatch — `needs_review_flags`
+  survived serialization intact, and the reconstructed `TranslatedLine`
+  objects produced the identical correct tag placement as the pre-cache
+  version.
+
+**Not anticipated going in, found during this task:**
+
+- The chunk-relative re-indexing requirement (above) — the original task
+  brief didn't call this out specifically; it was implicit in
+  "`mask_targets` is chunk-agnostic, chunking is internal," and would have
+  been a real, silent correctness bug (wrong line masked, or a raise) if
+  missed.
+- The `alphapolis_translate.py`/`compare_translations.py` "leave unmasked"
+  decision required actually reading both files' output-consumption code
+  to confirm neither has anywhere for `needs_review` to surface, rather
+  than assuming symmetry with the reader.
+- A second, distinct real failure mode surfaced during live verification
+  (the JSON `\escape` parse error) beyond the missing-sentinel case the
+  fallback was originally designed around — not a new bug, since
+  `parse_json_response()`/the retry path already handles it as "chunk
+  failed, retry," but worth noting as evidence the two-tier fallback (§4)
+  covers more real failure shapes than the ones it was named after.
+
+**Verification summary**: 10 new tests (5 in new
+`tests/webnovels/test_llm_translate.py` for
+`translate_lines_with_masking()`'s chunking/re-indexing/failure-handling,
+mocked HTTP — deterministic, no live server needed for these; 5 in
+`test_alphapolis_reader.py`'s new `TestRenderTranslatedView` for the
+cache-shape reconstruction/dispatch logic). Plus the live end-to-end runs
+above, which are not automated tests (would require a live llama-server in
+CI) but are the actual bar this task set out to clear. `black`/`isort`/
+`flake8` clean on both modified files; `mypy` clean on `llm_translate.py`
+(unchanged from before); `alphapolis_reader.py` at 317 errors (up from
+314), all the same pre-existing "missing type annotation" class on the 3
+new/modified methods, consistent with the file's untyped-method
+convention — not fixed here, same treatment as prior sessions. Full
+project test suite re-run: no regressions (50 tests total in
+`tests/webnovels/`, up from 41 before this task).
+
+**Not done in this pass** (step 3, explicitly out of scope): no count-
+building or promotion logic. A `needs_review` term added via the
+pre-filled dialog still lands as an ordinary `suggested`-status term via
+the existing `make_suggested_term()`/dialog-save path — nothing more.
+
+## 12. Count-building loop — implemented (2026-07-25)
+
+The count-building half of §6's "Recurrence/promotion logic" bullet, split
+out from the promotion-threshold half the same way every prior step here
+has split a mechanical piece from a policy decision (§4's format-vs-
+fallback, §9's schema-vs-promotion, §10's producer-vs-wiring). §8's
+promotion-threshold question ("how many appearances... or is promotion
+always manual?") is **not answered here** — this task makes counts
+accurate; it doesn't act on them. No auto-promotion behavior was written,
+even a minimal default — if a threshold check had started getting written,
+that would have been a scope violation, and none was.
+
+**Checked current state before assuming §11's live-verification terms were
+still around**: they weren't. §11's runs used `suggested`-status terms
+(masking only applies to those), so none of `鉄パイプ`/`音夢くん`/`桂名`/
+`仁菜`/`タチバナさん`/`橘` ever went through `save_glossary()`. The one
+real glossary file that exists on disk
+(`~/.config/alphapolis_reader/glossaries/375266002.json`) is still the
+original pre-§9 flat `{source, target, type, note}` shape from §1 —
+`format_glossary_for_prompt()` correctly treats every term in it as
+un-confirmed (no `status` key at all), so it has zero terms this loop
+could act on as-is. Live verification below therefore constructs a
+minimal but real confirmed-status glossary in memory rather than reusing
+that file, since a term with no `status` field can't exercise a function
+that specifically requires `status == STATUS_CONFIRMED`.
+
+**Implemented**: `update_candidate_counts(source_lines, translated_lines,
+glossary, needs_review_flags=None)` in `glossary.py`. For each
+`STATUS_CONFIRMED` term whose `source` string appears anywhere in
+`source_lines`, checks whether the corresponding `translated_lines` entry
+(same index) contains that term's `confirmed_target` string as a
+substring, and if so increments that specific candidate's `count` by 1 —
+once per chunk per term, not once per occurrence (a term appearing twice
+in one chunk still only gets a single increment, matching "which
+candidate won for this translation call" rather than a raw occurrence
+tally). Returns a new glossary dict — top-level dict and the `terms` list
+are copied, individual term dicts that had a count change are replaced
+with new dicts; unmodified term dicts are shared by reference — matching
+`merge_terms()`'s existing shallow-copy convention rather than inventing a
+new one.
+
+**The three things deliberately excluded, named as real open items rather
+than silently done or silently dropped:**
+
+- **`STATUS_SUGGESTED` terms are never counted here.** A masked/suggested
+  term's translated line contains the raw source word (`splice_terms()`'s
+  fallback), not a model-generated translation — there is no translated
+  candidate string to substring-match for those; the mechanism this
+  function implements structurally doesn't apply. **Open item**: recurrence
+  tracking for suggested terms (how often the term itself appears across
+  chunks, independent of any candidate translation) is a real, different
+  signal that could inform a future promotion policy — not attempted here.
+  Deliberately not folded into this same function: doing so would have
+  meant `count` meaning two different things depending on a term's status
+  (occurrences-of-term vs. occurrences-of-winning-candidate), the exact
+  flag-means-two-things mistake §11 caught and corrected for `needs_review`
+  before it shipped. Better to leave a clean gap than repeat that.
+- **Discovering a new candidate not already in a term's `candidates` list
+  is out of scope.** Only pre-existing candidate strings are matched
+  against; if the model produces some other phrasing entirely, nothing
+  happens (silently, by design — not a bug). **Open item**: this is a real
+  alignment problem (attributing an arbitrary span of translated text to a
+  specific source term, with no positional/masking anchor to work from,
+  since confirmed terms aren't masked) and deserves its own design pass,
+  not a heuristic bolted on here.
+- **`needs_review=True` lines are excluded from matching.** That
+  translation attempt failed and was recovered via the missing-sentinel/
+  empty-line fallback — not evidence the model successfully produced (or
+  chose not to produce) any candidate translation, so it must not
+  contribute to a count that exists to measure exactly that. Only matters
+  in practice when a chunk mixes a masked (suggested) term's fallback-
+  triggered line with an unrelated confirmed term's line in the same
+  translate call; guarded via an optional `needs_review_flags` parameter
+  so callers that only ever pass unmasked content (there are none yet
+  besides the reader) aren't forced to thread a meaningless all-`False`
+  list through.
+
+**Wiring**: `fetch_and_translate()` calls `update_candidate_counts()`
+immediately after `ep["translated_lines"]`/`ep["needs_review_flags"]` are
+set, then persists via the existing `save_glossary()` path — same
+integration point step 2 (§11) used. Guarded by the same precedent step 2
+established for `needs_review_flags`, not decided fresh: only runs when
+`glossary is not None` (i.e. LLM backend and `novel_id` resolved).
+Google-backend translations never consult a glossary at all, so there's
+nothing to count against and nothing new to persist.
+
+**Verification**: 10 new tests in `tests/webnovels/test_glossary.py`
+(`TestUpdateCandidateCounts` — confirmed-match increments, suggested terms
+untouched, `needs_review=True` exclusion, no-match-leaves-unchanged,
+target-not-found-leaves-unchanged, only-the-matching-candidate-increments
+[a second, non-matching candidate on the same term stays untouched],
+once-per-chunk-not-per-occurrence, unrelated-terms-untouched, original-
+glossary-not-mutated, empty-input handling).
+
+Live end-to-end verification against the real translategemma server (not
+just synthetic fixtures), using the same real episode chunk as §11's
+`鉄パイプ` example (`c574a6...eead.json`, lines 1-5) with a real, freshly-
+constructed `confirmed`-status term for `鉄パイプ` → `"iron pipe"`:
+
+- In-memory run: count `1` → `2` after one real translation call (the
+  model produced "...crushed their hands along with the iron pipes." and
+  "...docking with the iron pipes..." — both real occurrences in the
+  chunk collapsed to the single expected increment, confirmed against the
+  actual model output text, not assumed).
+- **Full persisted-file verification**, the part synthetic tests can't
+  cover: `save_glossary()` → `load_glossary()` → real translation →
+  `update_candidate_counts()` → `save_glossary()` → `load_glossary()`,
+  reading the actual on-disk JSON file at each step. Confirmed
+  `"count": 2` in the literal file content on disk, not just the returned
+  dict in memory.
+- The test glossary file (`novel_id` `live_count_test`) was written to
+  the real `~/.config/alphapolis_reader/glossaries/` directory as a
+  necessary side effect of testing the real `save_glossary()` path (not
+  a temp directory) — flagged to the user for cleanup rather than
+  deleted unilaterally, since file deletion outside the repo wasn't
+  pre-authorized for this task and the sandbox's own permission layer
+  declined the delete when attempted.
+
+`black`/`isort`/`flake8` clean on `glossary.py` and `alphapolis_reader.py`.
+`mypy` clean on `glossary.py` (unchanged). `alphapolis_reader.py` mypy
+error count unchanged from §11 (317) — the `fetch_and_translate()` edit
+added no new errors since that method was already untyped. Full project
+test suite re-run: no regressions (60 tests total in `tests/webnovels/`,
+up from 50 after §11).
+
+**Not done in this pass** (see the three excluded items above, and §8):
+promotion/threshold logic, suggested-term recurrence tracking, new-
+candidate discovery. `build_mask_targets()`, `mask_terms()`/
+`splice_terms()`, and the core glossary schema were not touched.

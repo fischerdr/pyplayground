@@ -39,7 +39,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from tkinter import messagebox, ttk
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from bs4 import BeautifulSoup
@@ -54,16 +54,19 @@ from pyplayground.webnovels.glossary import (
     STATUS_SUGGESTED,
     TERM_TYPE_CHARACTER,
     TERM_TYPE_GENERAL,
+    build_mask_targets,
     format_glossary_for_prompt,
     load_glossary,
     make_confirmed_term,
     merge_terms,
     save_glossary,
+    update_candidate_counts,
 )
 from pyplayground.webnovels.ja_tokenize import find_ja_word_at
-from pyplayground.webnovels.llm_translate import BACKEND_GOOGLE, BACKEND_LLM, DEFAULT_BACKEND, check_llm_available, explain_term
+from pyplayground.webnovels.llm_translate import BACKEND_GOOGLE, BACKEND_LLM, DEFAULT_BACKEND, TranslatedLine, check_llm_available, explain_term
 from pyplayground.webnovels.llm_translate import translate_chunk as llm_translate_chunk
 from pyplayground.webnovels.llm_translate import translate_lines as llm_translate_lines
+from pyplayground.webnovels.llm_translate import translate_lines_with_masking
 
 logger = get_logger(__name__)
 
@@ -85,8 +88,13 @@ STATE_FILE = "state.json"
 CACHE_DIR = Path.home() / ".cache" / "alphapolis_reader"
 """Directory for caching episode data and images."""
 
-LIGHT_PALETTE = {"bg": "#ffffff", "fg": "#000000", "original": "#333333", "translated": "#1a56c4"}
-DARK_PALETTE = {"bg": "#1e1e1e", "fg": "#e0e0e0", "original": "#c9c9c9", "translated": "#7aa2f7"}
+LIGHT_PALETTE = {"bg": "#ffffff", "fg": "#000000", "original": "#333333", "translated": "#1a56c4", "needs_review": "#b45309"}
+DARK_PALETTE = {"bg": "#1e1e1e", "fg": "#e0e0e0", "original": "#c9c9c9", "translated": "#7aa2f7", "needs_review": "#f0a742"}
+"""needs_review is an amber/orange, deliberately distinct in hue (not just
+shade) from "translated"'s blue -- a shade difference alone risks reading
+as "same category, slightly different" rather than "different category,"
+which matters here since confirmed vs. needs-review must not be
+confusable at a glance."""
 
 # Candidate reading fonts, in preference order. Not all are installed on
 # every system, so the actual choice is filtered against tkinter's available
@@ -104,7 +112,13 @@ FONT_CANDIDATES = [
 ]
 DEFAULT_FONT_FALLBACK = "TkDefaultFont"
 
-CACHE_SCHEMA_VERSION = 3  # bump whenever the episode dict shape changes
+CACHE_SCHEMA_VERSION = 4  # bump whenever the episode dict shape changes
+"""v4 (2026-07-25, DESIGN.md Section 11): added needs_review_flags -- a
+parallel List[bool], same length/order as translated_lines. Bumping this
+invalidates old-shape cache files (load_cached_episode() returns None for
+a version mismatch, so the episode gets refetched/retranslated) rather
+than migrating them in place -- no real cached data worth preserving,
+same no-backward-compat precedent as Sections 9/10."""
 
 NOVEL_ID_RE = re.compile(r"/novel/(\d+)/")
 
@@ -544,6 +558,37 @@ def translate_lines(lines, target_lang="en", backend=BACKEND_GOOGLE, glossary_te
     return translated_lines
 
 
+def build_review_term_map(translated_lines: List[TranslatedLine], mask_targets: List[Tuple[int, str]]) -> Dict[int, List[str]]:
+    """Map each needs_review line index to the source word(s) masked for it.
+
+    TranslatedLine itself carries no positional/source-word information --
+    just text and a whole-line needs_review bool (see llm_translate.py's
+    TranslatedLine/splice_terms() docstrings) -- so a click handler on a
+    needs-review line can't recover which glossary term triggered the flag
+    from the TranslatedLine alone. This reconstructs that association from
+    `mask_targets`, the same (line_idx, word) list passed to
+    translate_chunk_with_masking() to produce `translated_lines` in the
+    first place -- both must come from the same call for this to be
+    meaningful.
+
+    Args:
+        translated_lines: Output of translate_chunk_with_masking().
+        mask_targets: The (line_idx, word) list passed to that same call.
+
+    Returns:
+        Dict of line_idx -> list of source words masked on that line, but
+        only for indices where translated_lines[line_idx].needs_review is
+        True. A line with mask_targets but needs_review=False (the term
+        spliced back in cleanly) is intentionally excluded -- nothing to
+        review there.
+    """
+    words_by_line: Dict[int, List[str]] = {}
+    for line_idx, word in mask_targets:
+        words_by_line.setdefault(line_idx, []).append(word)
+
+    return {line_idx: words for line_idx, words in words_by_line.items() if line_idx < len(translated_lines) and translated_lines[line_idx].needs_review}
+
+
 # ---------------------------------------------------------------------------
 # GUI
 # ---------------------------------------------------------------------------
@@ -577,6 +622,14 @@ class ReaderApp:
         # back to which source Japanese line a click/selection came from,
         # even when the rendered/tagged text is the English translation.
         self._rendered_spans = []
+        # (start_index, end_index) -> ([masked source word(s)], source_line),
+        # populated only by _render_translated_content_from_translated_lines()
+        # for needs_review=True lines -- lets _on_needs_review_click() resolve
+        # a click to the specific term (and its Japanese source sentence, for
+        # explain_term() context) to pre-fill in the Add-to-Glossary dialog.
+        # Rebuilt on every render_text() call, same lifecycle as
+        # _rendered_spans.
+        self._review_terms_by_span = {}
         # (word, context) -> (google_guess, llm_guess, explanation),
         # populated by open_word_glossary_popup()'s background lookup.
         # Session-only (not persisted) -- avoids repeating a network
@@ -667,6 +720,12 @@ class ReaderApp:
         self.text.pack(side="left", fill="both", expand=True)
         text_scrollbar.config(command=self.text.yview)
         self.text.bind("<Button-3>", self._on_text_right_click)
+        # Left-click specifically on a needs_review span (tag_bind, not the
+        # widget-wide right-click handler) opens Add-to-Glossary pre-filled
+        # with the flagged term -- a lower-friction path than "right-click,
+        # then pick Add to Glossary from a menu" for the specific case of a
+        # term the pipeline already flagged as needing attention.
+        self.text.tag_bind("needs_review", "<Button-1>", self._on_needs_review_click)
         self.apply_appearance()
 
         self.prev_btn.state(["disabled"])
@@ -754,6 +813,21 @@ class ReaderApp:
         self.text.tag_configure(
             "translated",
             foreground=palette["translated"],
+            spacing1=line_spacing,
+            spacing2=line_spacing,
+            spacing3=self.paragraph_spacing,
+            justify=justify,
+        )
+        # needs_review lines (DESIGN.md Section 6): distinct in both color
+        # AND underline from "translated" -- color alone is a weaker signal
+        # (unreliable for colorblind users, easy to miss at a glance) and
+        # confirmed-vs-needs-review must not be confusable. Reuses the same
+        # Tk tag-over-character-range mechanism as "original"/"translated"
+        # rather than a separate rendering path, per DESIGN.md Section 7.
+        self.text.tag_configure(
+            "needs_review",
+            foreground=palette["needs_review"],
+            underline=True,
             spacing1=line_spacing,
             spacing2=line_spacing,
             spacing3=self.paragraph_spacing,
@@ -942,10 +1016,13 @@ class ReaderApp:
         logger.info(f"Fetching and translating episode: {url} (backend={self.backend})")
 
         glossary_text = None
+        glossary = None
+        novel_id = None
         if self.backend == BACKEND_LLM:
             novel_id = _extract_novel_id(url)
             if novel_id:
-                glossary_text = format_glossary_for_prompt(load_glossary(novel_id))
+                glossary = load_glossary(novel_id)
+                glossary_text = format_glossary_for_prompt(glossary)
 
         html = self.browser.fetch(url)
         logger.debug(f"Fetched {len(html)} bytes of HTML for {url}")
@@ -960,7 +1037,33 @@ class ReaderApp:
             logger.warning(
                 f"Only {len(ep['lines'])} paragraph(s) parsed from {url} -- page may not have fully loaded or loaded a bot-check page instead of the chapter; verify before trusting this translation"
             )
-        ep["translated_lines"] = translate_lines(ep["lines"], self.target_lang, backend=self.backend, glossary_text=glossary_text, progress_cb=progress_cb)
+
+        # Masking (DESIGN.md Section 4/10/11) only applies to the LLM
+        # backend -- Google Translate has no sentinel-survival mechanism at
+        # all, masking would just corrupt its output. mask_targets only
+        # covers ep["lines"] (the chapter body); title/episode_title are a
+        # separate, unmasked translate_lines() call below -- glossary terms
+        # in a title are rare enough, and the review-queue UX doesn't have
+        # a natural place to flag a title, that masking titles wasn't worth
+        # the added complexity here.
+        mask_targets = build_mask_targets(ep["lines"], glossary) if glossary is not None else []
+        if mask_targets:
+            translated = translate_lines_with_masking(ep["lines"], mask_targets, self.target_lang, glossary_text=glossary_text, progress_cb=progress_cb)
+            ep["translated_lines"] = [t.text for t in translated]
+            ep["needs_review_flags"] = [t.needs_review for t in translated]
+        else:
+            ep["translated_lines"] = translate_lines(ep["lines"], self.target_lang, backend=self.backend, glossary_text=glossary_text, progress_cb=progress_cb)
+            ep["needs_review_flags"] = [False] * len(ep["translated_lines"])
+
+        # Count-building loop (DESIGN.md Section 12): same guard as masking
+        # above -- only when the LLM backend actually loaded a glossary.
+        # Google Translate never produces a "candidate" to count against
+        # (no glossary was even consulted for it), and there's nothing to
+        # persist if novel_id never resolved.
+        if glossary is not None and novel_id is not None:
+            updated_glossary = update_candidate_counts(ep["lines"], ep["translated_lines"], glossary, needs_review_flags=ep["needs_review_flags"])
+            save_glossary(novel_id, updated_glossary)
+
         title_lines = translate_lines([ep["title"], ep["episode_title"]], self.target_lang, backend=self.backend, glossary_text=glossary_text)
         ep["translated_title"], ep["translated_episode_title"] = title_lines
         for item in ep["content"]:
@@ -1436,9 +1539,44 @@ class ReaderApp:
                     self.text.image_create("end", image=photo)
                     self.text.insert("end", "\n")
             else:
-                start = self.text.index("end")
+                # "end" (not "end-1c") always refers to the position AFTER
+                # Tk's mandatory trailing newline, one line past where
+                # .insert("end", ...) actually places new text -- confirmed
+                # live: on a widget with nothing yet on the line being
+                # written, text.index("end") reports one line further than
+                # where the text lands, which silently broke
+                # _span_at_index() for the first paragraph of every episode
+                # (right-click-to-add-glossary-term did nothing there).
+                # "end-1c" is the real insertion point.
+                start = self.text.index("end-1c")
                 self.text.insert("end", item["text"] + "\n", tag)
-                self._rendered_spans.append((start, self.text.index("end"), tag, item["text"]))
+                self._rendered_spans.append((start, self.text.index("end-1c"), tag, item["text"]))
+
+    def _render_translated_view(self, ep, tag):
+        """Dispatch to the needs_review-aware renderer when the cached episode has that data, else the plain one.
+
+        The on-disk cache (DESIGN.md Section 11) stores translated_lines as
+        plain List[str] plus a parallel needs_review_flags: List[bool] --
+        not TranslatedLine objects directly, since build_glossary.py's
+        extraction and other readers of ep["translated_lines"] need plain
+        joinable strings (see Section 11 for the full reasoning). This
+        reconstructs TranslatedLine objects from that pair, and recomputes
+        mask_targets fresh from the current glossary (via
+        build_mask_targets()) for the needs-review click-to-add pre-fill --
+        safe to recompute since mask_targets is only used here to resolve
+        "which word" for the dialog, not as a record of what happened at
+        translation time (that fact is needs_review_flags, which IS
+        persisted as-is, not recomputed).
+        """
+        needs_review_flags = ep.get("needs_review_flags")
+        translated_strs = ep.get("translated_lines", [])
+        if needs_review_flags and len(needs_review_flags) == len(translated_strs):
+            translated_lines = [TranslatedLine(text=t, needs_review=r) for t, r in zip(translated_strs, needs_review_flags)]
+            novel_id = _extract_novel_id(self.current_url) if getattr(self, "current_url", None) else None
+            mask_targets = build_mask_targets(ep.get("lines", []), load_glossary(novel_id)) if novel_id else []
+            self._render_translated_content_from_translated_lines(ep, tag, translated_lines, mask_targets)
+        else:
+            self._render_translated_content(ep, tag)
 
     def _render_translated_content(self, ep, tag):
         translated_lines = ep.get("translated_lines", [])
@@ -1465,15 +1603,105 @@ class ReaderApp:
                     self.text.insert("end", "\n")
             else:
                 line = translated_lines[line_idx] if line_idx < len(translated_lines) else item["text"]
-                start = self.text.index("end")
+                # "end-1c", not "end" -- see _render_content()'s comment on
+                # the same pattern for why.
+                start = self.text.index("end-1c")
                 self.text.insert("end", line + "\n", tag)
                 # source_line is always the original Japanese text for this
                 # paragraph (item["text"]), even though the rendered/tagged
                 # text here is the translation -- needed so a right-click on
                 # translated text can still surface the Japanese source, e.g.
                 # for the glossary popup's reference context.
-                self._rendered_spans.append((start, self.text.index("end"), tag, item["text"]))
+                self._rendered_spans.append((start, self.text.index("end-1c"), tag, item["text"]))
                 line_idx += 1
+
+    def _render_translated_content_from_translated_lines(self, ep, tag, translated_lines, mask_targets):
+        """Render content using TranslatedLine output (needs_review-aware) instead of plain strings.
+
+        Sibling to _render_translated_content(), which reads
+        ep["translated_lines"] (plain List[str]) -- this instead takes the
+        List[TranslatedLine] that translate_chunk_with_masking() produces
+        directly, so a needs_review=True line gets a distinct "needs_review"
+        tag (see apply_appearance()) instead of the plain "translated" tag,
+        reusing the same Tk tag-over-character-range mechanism as every
+        other span (DESIGN.md Section 7) rather than a separate rendering
+        path.
+
+        Not currently called from render_text() -- there is no production
+        code path that produces List[TranslatedLine] yet
+        (translate_chunk_with_masking() has no live callers; see DESIGN.md
+        Section 10). This exists so the rendering logic is ready and
+        testable once that wiring (a separate, later task) lands, and so
+        it can be exercised directly against synthetic TranslatedLine data
+        in the meantime.
+
+        Args:
+            ep: Episode dict, for ep["content"] (paragraph/image structure)
+                and the source Japanese text of each paragraph.
+            tag: Base tag for non-flagged lines (normally "translated").
+            translated_lines: List[TranslatedLine], same length/order as
+                the text items in ep["content"].
+            mask_targets: The (line_idx, word) list that produced
+                translated_lines, for needs-review click pre-fill lookup
+                (see build_review_term_map()).
+        """
+        review_terms = build_review_term_map(translated_lines, mask_targets)
+        line_idx = 0
+        for item in ep["content"]:
+            if item["type"] == "image":
+                photo = self._make_photo_image(item["src"])
+                if photo is not None:
+                    self.text.insert("end", "\n")
+                    self.text.image_create("end", image=photo)
+                    self.text.insert("end", "\n")
+            else:
+                if line_idx < len(translated_lines):
+                    translated = translated_lines[line_idx]
+                    line_text = translated.text
+                    line_tag = "needs_review" if translated.needs_review else tag
+                else:
+                    line_text = item["text"]
+                    line_tag = tag
+                # "end-1c", not "end" -- see _render_content()'s comment on
+                # the same pattern for why.
+                start = self.text.index("end-1c")
+                self.text.insert("end", line_text + "\n", line_tag)
+                end = self.text.index("end-1c")
+                self._rendered_spans.append((start, end, line_tag, item["text"]))
+                if line_idx in review_terms:
+                    # item["text"] (the Japanese source), not line_text (the
+                    # rendered/translated line) -- open_word_glossary_popup()'s
+                    # context param needs the source sentence for
+                    # explain_term()'s disambiguation, same as the existing
+                    # right-click flow's source_line (see _span_at_index()).
+                    self._review_terms_by_span[(start, end)] = (review_terms[line_idx], item["text"])
+                line_idx += 1
+
+    def _on_needs_review_click(self, event):
+        """Click on a needs_review-tagged span: open Add-to-Glossary pre-filled with the flagged term.
+
+        Reuses the existing open_word_glossary_popup() dialog (the same
+        one used by the right-click flow) rather than a new one, per
+        DESIGN.md Section 6. Pre-fills Source with the masked term that
+        triggered needs_review on this line; Target is left blank -- the
+        raw source word was spliced back into the line as a fallback (see
+        llm_translate.splice_terms()), not offered as a translation guess,
+        so prefilling Target with it would misrepresent an untranslated
+        placeholder as a proposed English target.
+
+        A needs-review line can have more than one flagged term (multiple
+        masked words on the same line); this opens the dialog for the
+        first one -- consistent with the existing right-click flow, which
+        also resolves to a single word per click, not a batch action.
+
+        Args:
+            event: The Tk button-press event.
+        """
+        idx = self.text.index(f"@{event.x},{event.y}")
+        for (start, end), (words, source_line) in self._review_terms_by_span.items():
+            if self.text.compare(start, "<=", idx) and self.text.compare(idx, "<", end):
+                self.open_word_glossary_popup(words[0], "", context=source_line)
+                return
 
     def _on_view_mode_change(self):
         """Handle the Original/Translated/Both radio buttons: re-render and persist."""
@@ -1494,6 +1722,7 @@ class ReaderApp:
         mode = self.view_mode.get()
         self.text.delete("1.0", "end")
         self._rendered_spans = []
+        self._review_terms_by_span = {}
 
         if mode in ("original", "both"):
             self.text.insert("end", f"{ep['title']} — {ep['episode_title']}\n", "heading")
@@ -1508,7 +1737,7 @@ class ReaderApp:
         if mode == "both":
             self.text.insert("end", "\n---- Translation ----\n\n", "heading")
         if mode in ("translated", "both"):
-            self._render_translated_content(ep, "translated")
+            self._render_translated_view(ep, "translated")
         if restore_scroll_pos is not None:
             self.text.yview_moveto(restore_scroll_pos)
         else:

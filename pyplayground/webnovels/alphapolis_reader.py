@@ -58,9 +58,9 @@ from pyplayground.webnovels.glossary import (
     format_glossary_for_prompt,
     load_glossary,
     make_confirmed_term,
-    merge_terms,
     save_glossary,
     update_candidate_counts,
+    upsert_confirmed_term,
 )
 from pyplayground.webnovels.ja_tokenize import find_ja_word_at
 from pyplayground.webnovels.llm_translate import BACKEND_GOOGLE, BACKEND_LLM, DEFAULT_BACKEND, TranslatedLine, check_llm_available, explain_term, retranslate_line_with_hint
@@ -2182,7 +2182,12 @@ class ReaderApp:
                     )
 
                 glossary = load_glossary(novel_id)
-                glossary["terms"] = merge_terms(glossary.get("terms", []), [new_term])
+                # upsert, not merge_terms() -- a human confirming this
+                # source word via this dialog should replace any existing
+                # entry for it (regardless of that entry's type), not
+                # coexist alongside it. See upsert_confirmed_term()'s
+                # docstring for the bug this fixes.
+                glossary["terms"] = upsert_confirmed_term(glossary.get("terms", []), new_term)
                 glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
                 save_glossary(novel_id, glossary)
                 logger.info(f"Added glossary term via right-click for novel {novel_id}: {source!r} -> {target!r}")

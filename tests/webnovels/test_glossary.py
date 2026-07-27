@@ -16,6 +16,7 @@ from pyplayground.webnovels.glossary import (
     make_suggested_term,
     merge_terms,
     update_candidate_counts,
+    upsert_confirmed_term,
 )
 
 
@@ -180,6 +181,94 @@ class TestMergeTerms:
         merged = merge_terms(existing, new_terms)
 
         assert len(merged) == 2
+
+
+class TestUpsertConfirmedTerm:
+    """Tests for upsert_confirmed_term() -- the manual dialog-save path, distinct from merge_terms()."""
+
+    def test_no_existing_entry_appends(self):
+        existing = [make_confirmed_term(TERM_TYPE_GENERAL, "ルリ", "Ruri")]
+        new_term = make_confirmed_term(TERM_TYPE_CHARACTER, "オレ", "Me")
+
+        result = upsert_confirmed_term(existing, new_term)
+
+        assert len(result) == 2
+
+    def test_same_type_same_source_replaces_existing(self):
+        existing = [make_suggested_term(TERM_TYPE_GENERAL, "オレ", "I")]
+        new_term = make_confirmed_term(TERM_TYPE_GENERAL, "オレ", "Me")
+
+        result = upsert_confirmed_term(existing, new_term)
+
+        assert len(result) == 1
+        assert result[0]["status"] == STATUS_CONFIRMED
+        assert result[0]["confirmed_target"] == "Me"
+
+    def test_reproduces_and_fixes_the_live_bug_mismatched_type_replaces_not_duplicates(self):
+        """The exact live bug: a character-typed extraction, then a human confirms the same source as type=term.
+
+        merge_terms() would keep both (different (type, source) keys --
+        see TestMergeTerms.test_same_source_different_type_both_kept, which
+        documents that as merge_terms()'s own intentional behavior). This
+        function must not: a human confirming a source word is confirming
+        that word, not "that word only as this specific type."
+        """
+        existing = [make_confirmed_term(TERM_TYPE_CHARACTER, "オレ", "I/Me")]
+        # Simulate the old-shape entry actually seen in the live bug: no
+        # status field at all (pre-Section-9 schema, never migrated).
+        existing[0].pop("status", None)
+        existing[0].pop("confirmed_target", None)
+        existing[0].pop("candidates", None)
+        existing[0]["target"] = "I/Me"
+
+        new_term = make_confirmed_term(TERM_TYPE_GENERAL, "オレ", "Me")
+
+        result = upsert_confirmed_term(existing, new_term)
+
+        assert len(result) == 1
+        assert result[0]["type"] == TERM_TYPE_GENERAL
+        assert result[0]["status"] == STATUS_CONFIRMED
+        assert result[0]["confirmed_target"] == "Me"
+
+    def test_new_confirmed_entry_no_longer_masked(self):
+        """The actual thing the live bug was breaking: build_mask_targets() must not mask a source a human just confirmed."""
+        glossary = _empty_glossary("1")
+        old_shape_entry = make_confirmed_term(TERM_TYPE_CHARACTER, "オレ", "I/Me")
+        old_shape_entry.pop("status", None)
+        glossary["terms"] = [old_shape_entry]
+
+        new_term = make_confirmed_term(TERM_TYPE_GENERAL, "オレ", "Me")
+        glossary["terms"] = upsert_confirmed_term(glossary["terms"], new_term)
+
+        targets = build_mask_targets(["オレは彼を見た。"], glossary)
+
+        assert targets == []
+
+    def test_multiple_stale_duplicates_all_replaced_by_one(self):
+        """Defensive: even if more than one stale entry somehow exists for a source, upsert collapses to exactly one."""
+        existing = [
+            make_confirmed_term(TERM_TYPE_CHARACTER, "オレ", "I"),
+            make_suggested_term(TERM_TYPE_GENERAL, "オレ", "Me (guess)"),
+        ]
+        new_term = make_confirmed_term(TERM_TYPE_GENERAL, "オレ", "Me")
+
+        result = upsert_confirmed_term(existing, new_term)
+
+        assert len(result) == 1
+        assert result[0]["confirmed_target"] == "Me"
+
+    def test_unrelated_sources_untouched(self):
+        existing = [
+            make_confirmed_term(TERM_TYPE_CHARACTER, "ケイト", "Kate"),
+            make_confirmed_term(TERM_TYPE_GENERAL, "魔法", "magic"),
+        ]
+        new_term = make_confirmed_term(TERM_TYPE_CHARACTER, "オレ", "Me")
+
+        result = upsert_confirmed_term(existing, new_term)
+
+        assert len(result) == 3
+        sources = {t["source"] for t in result}
+        assert sources == {"ケイト", "魔法", "オレ"}
 
 
 class TestBuildMaskTargets:

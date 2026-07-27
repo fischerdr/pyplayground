@@ -487,3 +487,53 @@ def merge_terms(existing: List[Dict[str, Any]], new_terms: List[Dict[str, Any]])
             merged.append(term)
             known_keys.add(key)
     return merged
+
+
+def upsert_confirmed_term(existing: List[Dict[str, Any]], new_term: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Insert or replace a single manually-confirmed term, deduping on source alone.
+
+    Distinct from merge_terms(), which dedupes on (type, source) and is
+    documented (see its own docstring, DESIGN.md Section 9) as a
+    deliberate tradeoff for its actual use case: bulk-merging fresh LLM
+    extraction results, where a "character" and a "term" entry
+    coincidentally sharing source text are allowed to coexist as
+    different things nobody has looked at yet.
+
+    This function is for a different call site with unambiguous human
+    intent -- the reader's "Add to Glossary" dialog, where a person just
+    looked at a specific source word and confirmed a translation for it.
+    A human confirming a term is confirming *that word*, not "that word
+    considered as a character" specifically as opposed to "that word
+    considered as a general term" -- the type is just a field on the one
+    entry they mean, not part of what makes it a distinct thing. Found via
+    a real live bug: build_glossary.py's LLM extraction had already saved
+    an entry for a source word under one type (e.g. "character"); a human
+    later confirmed the same word via the dialog with a different type
+    selected (e.g. "term", since explain_term()'s live classification
+    doesn't necessarily agree with the original extraction's guess) --
+    merge_terms()'s (type, source) key didn't match the existing entry, so
+    a second, redundant entry was appended instead of the first being
+    updated. Left one source with two entries, one still unconfirmed,
+    which still caused build_mask_targets() to mask a term a human had
+    already confirmed.
+
+    On a source collision, the new (freshly human-confirmed) entry always
+    wins and replaces every existing entry for that source, regardless of
+    those entries' type or status -- same trust principle make_confirmed_term()
+    already documents ("a human typed this deliberately, trusted on
+    entry"), extended to also override a stale, possibly-differently-typed
+    prior entry rather than merely coexisting with it.
+
+    Args:
+        existing: Current list of term dicts.
+        new_term: A single term dict, normally from make_confirmed_term(),
+            to insert or use to replace any existing entry(ies) with the
+            same source.
+
+    Returns:
+        New term list with exactly one entry for new_term's source.
+    """
+    source = new_term.get("source")
+    result = [term for term in existing if term.get("source") != source]
+    result.append(new_term)
+    return result

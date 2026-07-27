@@ -4,7 +4,7 @@ Living record of decisions for the glossary/term-consistency rework and the
 Tkinter → web migration. Update this alongside code changes, not after —
 chat history is not the system of record.
 
-Last updated: 2026-07-26
+Last updated: 2026-07-27
 
 ---
 
@@ -1351,3 +1351,125 @@ not because it was being specifically looked for.
 promotion/threshold logic, suggested-term recurrence tracking, new-
 candidate discovery. `build_mask_targets()`, `mask_terms()`/
 `splice_terms()`, and the core glossary schema were not touched.
+
+### 2026-07-27: Dedup bug in the manual "Add to Glossary" save path found and fixed — currently-live, blocking a confirmed term
+
+**Found**, following directly from the previous entry's `needs_review` fix
+(which is what surfaced the live `オレ` glossary state in the first place):
+`オレ` existed twice in novel 375266002's real glossary — once as
+`character`-typed (the original `build_glossary.py` LLM extraction, old
+pre-Section-9 schema shape, no `status` field), once as `term`-typed,
+`status: confirmed`, `confirmed_target: "Me"` (a later manual save via the
+"Add to Glossary" dialog). The leftover unconfirmed duplicate was still
+causing `build_mask_targets()` to mask `オレ` on every translation despite
+the human having explicitly confirmed a translation for it — not a
+cosmetic data-shape issue, a live, currently-active masking bug.
+
+**Root cause, confirmed by tracing the actual code path, not assumed.**
+`open_word_glossary_popup()`'s `save_and_close()` (the single save
+function behind both the right-click "Add to Glossary..." menu item and
+`_on_needs_review_click()` — both call `open_word_glossary_popup()`, there
+is no second dialog/save path) always builds a fresh term via
+`make_confirmed_term()` and hands it to `merge_terms()`. `merge_terms()`
+dedupes on `(type, source)` (§9), a deliberate, documented tradeoff for
+its actual use case (bulk-merging fresh LLM extraction results, where a
+`character` and a `term` entry coincidentally sharing source text are
+allowed to coexist as different things nobody has reviewed yet — see
+`TestMergeTerms.test_same_source_different_type_both_kept`, which already
+covers and locks in exactly this `オレ` case as *intended* behavior for
+that function). The dialog itself carries **no reference to any existing
+glossary entry** — confirmed via reading `open_word_glossary_popup()` in
+full — only the `source_prefill`/`target_prefill` text strings that
+seeded the form. `type_var`'s pre-selection comes from `explain_term()`'s
+live classification each time the dialog opens, which doesn't necessarily
+agree with whatever type the original LLM extraction guessed (`オレ` is an
+ordinary pronoun; `explain_term()` reasonably classifies it as a general
+term, not a character, even though the original extraction had guessed
+`character`). So a human opening the dialog for an already-extracted term,
+seeing "Term" pre-selected, and saving — completely ordinary usage, no
+mistake on the human's part — silently created a second, differently-typed
+entry instead of updating the first, because `merge_terms()`'s dedup key
+never matched.
+
+**Fix location: the manual dialog-save path only.** Per the task's own
+explicit instruction and this doc's established precedent of not touching
+a function's documented, deliberate behavior for a use case it wasn't
+designed for — `merge_terms()`'s `(type, source)` key and its bulk-LLM-
+extraction behavior are unchanged, still correct for that call site
+(`build_glossary.py`'s extraction still uses it, still needs "character"
+and "term" entries with the same source text to be allowed to coexist as
+unreviewed candidates). Added `upsert_confirmed_term(existing, new_term)`
+to `glossary.py` instead: dedupes on `source` alone (ignoring `type`
+entirely) and, on a collision, **replaces every existing entry for that
+source** with the new one — not just the first found, not merged
+field-by-field. `open_word_glossary_popup()`'s `save_and_close()` now
+calls this instead of `merge_terms()`.
+
+**Reconciliation rule, stated explicitly**: on save, the newly-confirmed
+entry always wins over any existing entry(ies) for the same source,
+regardless of the existing entry's type or status. Same trust principle
+`make_confirmed_term()` already documents ("a human typed this
+deliberately, trusted on entry"), extended to mean this also overrides a
+stale prior entry rather than merely coexisting with it — a human
+confirming a source word is confirming *that word*, not "that word
+considered as a character specifically, as opposed to as a general term."
+
+**One-time data cleanup, performed as part of this task, not a schema
+migration**: reconciled novel 375266002's real on-disk glossary directly.
+Confirmed via a full scan that `オレ` was the *only* duplicated source in
+that file (12 other terms, all still old-shape/unconfirmed — no other
+live conflicts exist yet). Ran the actual reconciliation
+(`upsert_confirmed_term()` against the real file, keeping the one
+`status: confirmed` entry and discarding the stale `character`-typed
+one), verified via `load_glossary()` immediately after: exactly one `オレ`
+entry remains (`type: term`, `status: confirmed`,
+`confirmed_target: "Me"`), term count 13 → 12. This is fixing genuinely
+duplicated data under the *current* schema, not a schema-shape migration
+— no `CACHE_SCHEMA_VERSION`/glossary-shape change involved, unlike §9-§11's
+established no-backward-compat-shim precedent for old *shapes*.
+
+**Live/practical verification, not just data-shape verification** — the
+actual thing this bug was breaking: ran `build_mask_targets(["オレは彼を見た。"],
+glossary)` against the real, now-reconciled on-disk glossary file.
+Before the fix: `[(0, "オレ")]` (still masked, despite being confirmed).
+After: `[]` — `オレ` no longer masked, matching a human's actual confirmed
+choice for the first time.
+
+**Test coverage**: 6 new tests in `tests/webnovels/test_glossary.py`
+(`TestUpsertConfirmedTerm`): no-existing-entry appends normally,
+same-type collision replaces, **the exact live bug reproduced directly**
+(character-typed old-shape entry with no `status` field + a `term`-typed
+confirmed save → single resulting entry with the new type/status/target,
+not two), the practical `build_mask_targets()` consequence (source no
+longer masked after upsert), a defensive multiple-stale-duplicates case
+(collapses to one even if more than one somehow existed), and an
+unrelated-sources-untouched case. `TestMergeTerms`'s existing
+`test_same_source_different_type_both_kept` — which documents and locks
+in `merge_terms()`'s own, unchanged, intentional behavior for this same
+`オレ` scenario — was left as-is, confirming `merge_terms()` itself was
+correctly not touched. `black`/`isort`/`flake8` clean (a resulting unused
+`merge_terms` import in `alphapolis_reader.py`, no longer called anywhere
+in that file, was removed rather than left as dead-but-harmless). `mypy`
+clean on `glossary.py`; `alphapolis_reader.py` unchanged at 352 errors
+(no new untyped code). Full project test suite re-run: no regressions
+(98 tests total in `tests/webnovels/`, up from 92 before this fix).
+
+**Not done in this pass**: no changes to `merge_terms()` itself, its
+`(type, source)` dedup key, or `build_glossary.py`'s extraction path,
+which still uses `merge_terms()` unchanged and correctly. No changes to
+the full glossary editor dialog (`open_glossary_dialog()`'s
+`save_and_close()`) — traced and confirmed unaffected: it edits an
+in-memory term list by index directly (`commit_selected_form()`,
+`terms.append()`/`del terms[index]`), never calls `merge_terms()` or any
+dedup-key logic, so this bug class isn't reachable from that path. No
+`CACHE_SCHEMA_VERSION` bump (see reasoning above — this is a data fix,
+not a shape migration).
+
+**Not anticipated going in, found during this task**: the trigger
+mechanism specifically — the task brief anticipated "a manual save should
+have updated the first entry, not created a second" as the general shape
+of the bug, but the *reason* a type mismatch occurred at all
+(`explain_term()`'s live re-classification not necessarily agreeing with
+`build_glossary.py`'s original extraction-time classification for the
+same word) wasn't something either doc had previously called out as a
+source of drift between the two pipelines.

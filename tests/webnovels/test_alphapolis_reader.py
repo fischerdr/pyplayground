@@ -31,8 +31,10 @@ Coverage tiers:
 """
 
 import tkinter as tk
+from tkinter import ttk
 
 from pyplayground.webnovels.alphapolis_reader import ReaderApp, build_review_term_map
+from pyplayground.webnovels.glossary import TERM_TYPE_GENERAL, make_confirmed_term
 from pyplayground.webnovels.llm_translate import TranslatedLine
 
 
@@ -504,5 +506,248 @@ class TestRenderTranslatedView:
 
             kind, call_ep, tag, translated_lines, glossary = harness.render_calls[0]
             assert glossary == {"terms": []}
+        finally:
+            root.destroy()
+
+
+class _GlossaryDialogHarness:
+    """Minimal stand-in for open_glossary_dialog()'s self-dependencies.
+
+    open_glossary_dialog() only touches self.current_url, self.root, and
+    self.set_status() (grep-confirmed) -- not a full ReaderApp, which
+    requires a live browser/Playwright object to construct. The dialog's
+    actual selection/form/save/delete logic runs unmodified, since
+    open_glossary_dialog is bound straight off ReaderApp.
+    """
+
+    def __init__(self, root, current_url):
+        self.root = root
+        self.current_url = current_url
+        self.status_calls = []
+
+    def set_status(self, msg):
+        self.status_calls.append(msg)
+
+    open_glossary_dialog = ReaderApp.open_glossary_dialog
+
+
+class TestGlossaryDialogSelection:
+    """Regression coverage for the stale-form-on-row-switch bug (DESIGN.md, 2026-07-27).
+
+    Root cause: on_select_with_commit() ran commit_selected_form() (to save
+    in-progress form edits before switching rows) using a fresh
+    tree.selection() read. But <<TreeviewSelect>> fires *after* Tk has
+    already updated tree.selection() to the newly clicked row -- so
+    commit_selected_form() was saving the still-on-screen PREVIOUS term's
+    field values into the NEWLY selected row's term dict, corrupting it,
+    before build_form() ever ran. The form then displayed that
+    just-corrupted term, which looked identical to "the form didn't
+    refresh." Fixed by tracking which row's data the form was actually
+    built from (`displayed_index`) instead of re-deriving it from
+    tree.selection() at commit time.
+
+    These tests drive the dialog through real Tk widgets and real
+    <<TreeviewSelect>> events (tree.selection_set() triggers the same
+    virtual event a real click does -- confirmed against Tk directly before
+    writing these), not by calling the closures' Python names directly
+    (they're not attributes of anything reachable from outside
+    open_glossary_dialog()).
+    """
+
+    def _make_glossary(self):
+        return {
+            "title": "Test Novel",
+            "honorific_policy": "keep",
+            "terms": [
+                make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="ハードキャッチ", target="demanding catch"),
+                make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="オレ", target="Me"),
+                make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="鉄パイプ", target="iron pipe"),
+            ],
+        }
+
+    def _open_dialog(self, mocker, glossary):
+        mocker.patch("pyplayground.webnovels.alphapolis_reader.load_glossary", return_value=glossary)
+        save_calls = []
+        mocker.patch(
+            "pyplayground.webnovels.alphapolis_reader.save_glossary",
+            side_effect=lambda novel_id, g: save_calls.append((novel_id, dict(g, terms=[dict(t) for t in g["terms"]]))),
+        )
+        mocker.patch("pyplayground.webnovels.alphapolis_reader._extract_novel_id", return_value="375266002")
+
+        root = tk.Tk()
+        harness = _GlossaryDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/375266002/x/episode/1")
+        harness.open_glossary_dialog()
+        root.update()
+
+        win = root.winfo_children()[0]
+        tree = None
+        form_container = None
+        for body in win.winfo_children():
+            for child in body.winfo_children():
+                if isinstance(child, ttk.Treeview):
+                    tree = child
+                elif isinstance(child, ttk.Frame):
+                    form_container = child
+        assert tree is not None, "Treeview not found in dialog"
+        assert form_container is not None, "form Frame not found in dialog"
+        return root, win, tree, form_container, save_calls
+
+    def _form_values(self, form_container):
+        """Read the current Source/Target/Note entry widgets' text, in grid order."""
+        values = {}
+        for widget in form_container.winfo_children():
+            info = widget.grid_info()
+            row = info.get("row")
+            if isinstance(widget, ttk.Entry) and row in (1, 2, 3):
+                label = {1: "source", 2: "target", 3: "note"}[row]
+                values[label] = widget.get()
+        return values
+
+    def test_selecting_a_row_populates_form_with_its_own_data(self, mocker):
+        root, win, tree, form_container, _ = self._open_dialog(mocker, self._make_glossary())
+        try:
+            tree.selection_set("0")
+            root.update()
+            values = self._form_values(form_container)
+            assert values["source"] == "ハードキャッチ"
+            assert values["target"] == "demanding catch"
+        finally:
+            root.destroy()
+
+    def test_switching_selection_refreshes_form_to_new_row(self, mocker):
+        """The bug: after selecting row 0 then row 1, the form kept showing row 0's data."""
+        root, win, tree, form_container, _ = self._open_dialog(mocker, self._make_glossary())
+        try:
+            tree.selection_set("0")
+            root.update()
+            assert self._form_values(form_container)["source"] == "ハードキャッチ"
+
+            tree.selection_set("1")
+            root.update()
+            values = self._form_values(form_container)
+            assert values["source"] == "オレ", f"form still showing stale previous row's data: {values}"
+            assert values["target"] == "Me"
+        finally:
+            root.destroy()
+
+    def test_multiple_sequential_selections_each_refresh_correctly(self, mocker):
+        """Selecting several rows in a row -- not just a single before/after pair."""
+        root, win, tree, form_container, _ = self._open_dialog(mocker, self._make_glossary())
+        try:
+            expected = [
+                ("0", "ハードキャッチ", "demanding catch"),
+                ("1", "オレ", "Me"),
+                ("2", "鉄パイプ", "iron pipe"),
+                ("0", "ハードキャッチ", "demanding catch"),
+                ("2", "鉄パイプ", "iron pipe"),
+            ]
+            for iid, expected_source, expected_target in expected:
+                tree.selection_set(iid)
+                root.update()
+                values = self._form_values(form_container)
+                assert values["source"] == expected_source, f"selecting iid={iid}: got {values}"
+                assert values["target"] == expected_target
+        finally:
+            root.destroy()
+
+    def test_select_a_then_b_then_edit_then_save_writes_to_b_not_a(self, mocker):
+        """The exact data-corruption scenario this bug enabled.
+
+        Select row A (ハードキャッチ), select row B (オレ) -- triggering the
+        stale-form bug pre-fix -- then edit the form and Save. Before the
+        fix, B's term dict would already have been corrupted with A's data
+        by the selection-change handler itself, and the edit would land on
+        top of that corruption rather than on B's real data.
+        """
+        root, win, tree, form_container, save_calls = self._open_dialog(mocker, self._make_glossary())
+        try:
+            tree.selection_set("0")
+            root.update()
+
+            tree.selection_set("1")
+            root.update()
+
+            values_before_edit = self._form_values(form_container)
+            assert values_before_edit["source"] == "オレ"
+            assert values_before_edit["target"] == "Me"
+
+            for widget in form_container.winfo_children():
+                info = widget.grid_info()
+                if isinstance(widget, ttk.Entry) and info.get("row") == 2:
+                    widget.delete(0, "end")
+                    widget.insert(0, "I")
+
+            for child in win.winfo_children():
+                for btn in child.winfo_children():
+                    if isinstance(btn, ttk.Button) and btn.cget("text") == "Save":
+                        btn.invoke()
+                        break
+
+            assert len(save_calls) == 1
+            _novel_id, saved_glossary = save_calls[0]
+            saved_terms = {t["source"]: t for t in saved_glossary["terms"]}
+
+            assert "オレ" in saved_terms
+            assert saved_terms["オレ"]["confirmed_target"] == "I", "edit should have landed on row B (オレ), not row A"
+            assert "ハードキャッチ" in saved_terms
+            assert saved_terms["ハードキャッチ"]["confirmed_target"] == "demanding catch", "row A must be unaffected by the edit made after switching to row B"
+        finally:
+            root.destroy()
+
+    def test_fast_sequential_selection_no_pause_still_refreshes_correctly(self, mocker):
+        """Race-hypothesis check: select A then immediately B with no intervening idle time.
+
+        build_form()/on_select() do no threaded/background work (grep-
+        confirmed -- no threading.Thread() call in this code path, unlike
+        rebuild_glossary()'s worker thread elsewhere in the same dialog), so
+        there's no slow work for a later selection's callback to race
+        against. This test exercises that directly: two selection_set()
+        calls back-to-back before any root.update() runs, then a single
+        update() flushes both queued virtual events.
+        """
+        root, win, tree, form_container, _ = self._open_dialog(mocker, self._make_glossary())
+        try:
+            tree.selection_set("0")
+            tree.selection_set("1")
+            tree.selection_set("2")
+            root.update()
+
+            values = self._form_values(form_container)
+            assert values["source"] == "鉄パイプ", f"fast sequential selection landed on stale data: {values}"
+            assert values["target"] == "iron pipe"
+        finally:
+            root.destroy()
+
+    def test_delete_removes_the_currently_selected_row_not_a_stale_one(self, mocker):
+        """Delete-selected-row check (task step 5): verify it deletes the actually-selected row.
+
+        delete_selected() reads tree.selection() directly from a button
+        click (not from the <<TreeviewSelect>> handler), so it is not
+        subject to the same "event fires after Tk already advanced the
+        selection" race that broke commit_selected_form() -- a button click
+        is a separate event from the selection change that preceded it, and
+        tree.selection() at click time already correctly reflects the
+        clicked row. This test verifies that behavior directly rather than
+        assuming it from the code-reading argument alone.
+        """
+        root, win, tree, form_container, _ = self._open_dialog(mocker, self._make_glossary())
+        try:
+            tree.selection_set("0")
+            root.update()
+            tree.selection_set("1")
+            root.update()
+
+            for child in win.winfo_children():
+                for btn in child.winfo_children():
+                    if isinstance(btn, ttk.Button) and btn.cget("text") == "Delete":
+                        btn.invoke()
+                        break
+
+            remaining_iids = tree.get_children()
+            remaining_sources = [tree.item(iid, "values")[0] for iid in remaining_iids]
+
+            assert "オレ" not in remaining_sources, "Delete should have removed the selected row (オレ)"
+            assert "ハードキャッチ" in remaining_sources
+            assert "鉄パイプ" in remaining_sources
         finally:
             root.destroy()

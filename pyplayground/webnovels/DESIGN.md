@@ -4,7 +4,7 @@ Living record of decisions for the glossary/term-consistency rework and the
 Tkinter → web migration. Update this alongside code changes, not after —
 chat history is not the system of record.
 
-Last updated: 2026-07-27
+Last updated: 2026-07-27 (glossary-dialog stale-form-on-selection bug)
 
 ---
 
@@ -2135,3 +2135,166 @@ includes the `[<log_context>]` prefix when provided, and omitting
 message's exact prior format). `black`/`isort`/`flake8` clean. Full
 project test suite re-run: no regressions (224 tests total in
 `tests/webnovels/`, up from 222 before this addition).
+
+### 2026-07-27: `open_glossary_dialog()` stale-form-on-row-switch bug -- found and fixed, live-verified
+
+A glossary rebuild session on novel 375266002 surfaced a live,
+screenshot-confirmed bug in the plain term-list editor opened via
+"Glossary..." (`open_glossary_dialog()`): selecting a different row in the
+Treeview did not refresh the side form's Source/Target/Type/Note fields --
+the form kept showing the previously-selected term's values (e.g.
+`ハードキャッチ` selected with correct form data, then `オレ` selected
+with the form still showing `ハードキャッチ`'s values). Not cosmetic: if a
+user selected row A, didn't notice the form was stale, edited a field, and
+hit Save, row A's field values could be committed under row B's identity
+-- silent data corruption in the on-disk glossary. Zero prior test
+coverage existed for `open_glossary_dialog()`.
+
+**Step 0 (git history check, done before any live reproduction) --
+not already fixed.** `git log -L1252,1420:pyplayground/webnovels/alphapolis_reader.py`
+showed the last commit touching this dialog's selection-handling lines was
+`7aa6e31` ("Add candidate/status term data model to glossary"), which
+predates every commit made earlier today (span-level highlighting, the
+fallback-to-best-candidate change, the bulk term-review dialog,
+`log_context` threading). Nothing in that range had been touched since,
+so "already fixed by a later commit" was ruled out cheaply and the bug
+needed live reproduction and a real fix, not just reconfirmation.
+
+**Root cause: hypothesis 2 (fires, but repopulates via a stale-index
+commit that corrupts the wrong row), not hypothesis 1 (missing binding)
+or hypothesis 3 (async/threaded race).** A static read of `on_select` /
+`on_select_with_commit` / `commit_selected_form` / `build_form` didn't
+show an obvious defect -- `on_select` does call `build_form(terms[index],
+index)` on every `<<TreeviewSelect>>`, and no exception was ever printed
+to stderr during live reproduction, ruling out a silently-failing/missing
+binding (hypothesis 1). `build_form()` and everything it calls are
+synchronous -- grep-confirmed no `threading.Thread()` call anywhere in
+this code path, unlike `rebuild_glossary()`'s worker thread elsewhere in
+the same dialog -- so a background-thread race (hypothesis 3, the
+popup-stacking bug's symptom class) was not the mechanism either, and was
+confirmed absent via a dedicated fast-sequential-selection test (see
+below) rather than assumed absent from the code shape alone.
+
+The actual defect: `commit_selected_form()` (called first, inside
+`on_select_with_commit`, to save any in-progress form edits before the
+form gets rebuilt for the new row) read `tree.selection()` to determine
+which row to save into. Verified directly against a minimal Tk harness
+(two-row Treeview, a bound `<<TreeviewSelect>>` handler logging
+`tree.selection()`): **by the time `<<TreeviewSelect>>` fires, Tk has
+already updated `tree.selection()` to the newly clicked row.** So
+`commit_selected_form()` was saving the still-on-screen *previous* term's
+field values into the *newly selected* row's `terms[index]` dict --
+corrupting it -- before `build_form()` ever ran to rebuild the form from
+that (now-corrupted) row. `build_form()` then displayed the just-corrupted
+term, which looked from the outside identical to "the form didn't
+refresh," but was actually two bugs compounding: a wrong-target commit
+followed by a correctly-functioning rebuild off bad data.
+
+**Fix**: added `displayed_index: Dict[str, Optional[int]] = {"value":
+None}`, a mutable container (same pattern as the existing `dirty`/
+`rebuild_state` trackers in this dialog) recording which row's data the
+form currently on screen was actually built from. `build_form()` sets it;
+`clear_form()` resets it to `None`. `commit_selected_form()` now commits
+against `displayed_index["value"]` instead of a freshly re-read
+`tree.selection()`, so it always targets the row the on-screen values
+actually belong to, regardless of what the Treeview's selection has
+already moved to by the time the event fires. `on_select()` itself is
+unchanged -- it still correctly reads the (now-current) `tree.selection()`
+to decide which row to build the form *from*; only the *commit* side was
+wrong.
+
+**Delete checked directly, not assumed safe.** `delete_selected()` reads
+`tree.selection()` from a button-click handler, not from
+`<<TreeviewSelect>>` -- a button click is a separate event from the
+selection change that precedes it, so by click time `tree.selection()`
+already correctly reflects the clicked row with no analogous race.
+Verified directly (not just reasoned about) via
+`test_delete_removes_the_currently_selected_row_not_a_stale_one`: selects
+row A then row B, clicks Delete, confirms row B (not A) is the one
+removed. No fix needed here -- same root-cause class checked and found not
+to apply, per the task's explicit instruction not to assume it's fine
+just because it wasn't in the original report.
+
+**Test coverage**: 6 new tests in `tests/webnovels/test_alphapolis_reader.py`'s
+new `TestGlossaryDialogSelection` class, via a new `_GlossaryDialogHarness`
+stand-in (only `self.current_url`/`self.root`/`self.set_status()`, grep-
+confirmed as everything `open_glossary_dialog()` touches on `self` --
+not a full `ReaderApp`, matching the existing harness pattern in this
+file). `open_glossary_dialog` is bound straight off `ReaderApp`, so this
+exercises the real, unmodified method; selection changes are driven via
+real `tree.selection_set()` calls (confirmed to trigger the same virtual
+`<<TreeviewSelect>>` event a real click does, not a synthetic shortcut)
+against a real Tk `Treeview`/`Entry` widgets, not withdrawn:
+
+- Single selection populates the form correctly.
+- Switching selection (A then B) refreshes the form to B's data -- the
+  exact bug scenario. **Verified this test actually catches the bug**:
+  reverted the fix (`git stash` on just the source file) and reran --
+  3 of the 6 new tests failed with the form showing A's data after
+  selecting B, confirming the tests are load-bearing, not just
+  incidentally passing.
+- Multiple sequential selections (5 selections across 3 rows, not just
+  one before/after pair) each refresh correctly.
+- The exact corruption scenario from the bug report: select A
+  (`ハードキャッチ`), select B (`オレ`), edit B's Target field, Save --
+  asserts via the mocked `save_glossary()` call that B's `confirmed_target`
+  reflects the edit and A's is unchanged.
+- Fast-sequential selection with no intervening `root.update()` between
+  `selection_set()` calls (per the race hypothesis, tested explicitly
+  rather than only via slow deliberate single selections) -- final
+  selection's data lands correctly, no staleness.
+- Delete-safety regression, per the paragraph above.
+
+`black`/`isort`/`flake8` clean. `mypy`: fixed one new error the change
+introduced rather than accepting it -- `displayed_index = {"value": None}`
+without an explicit annotation made mypy infer `Dict[str, None]`, which in
+turn made it treat `index is not None` as always-false and flag the
+`commit_selected_form()` body as unreachable code; adding the explicit
+`Dict[str, Optional[int]]` annotation resolved it cleanly. Net result:
+403 errors before and after on `alphapolis_reader.py` (baseline
+unaffected, zero new errors), matching how this file's pre-existing
+untyped-method mypy baseline has been treated in every prior session
+rather than introducing inconsistent typing discipline on 2 of ~70+
+methods. Full project test suite re-run: no regressions (230 tests total
+in `tests/webnovels/`, up from 224 before this task; the 4 pre-existing
+`test_term_review_dialog.py` thread-cleanup warnings are unrelated and
+predate this change, confirmed via `git stash`).
+
+**Live verification**, per this doc's established `xdotool`/`DISPLAY=:0`
+pattern (real, unmodified `python -m pyplayground.webnovels.alphapolis_reader
+<url>`, pointed at a cache-hit episode URL for novel 375266002 so
+`fetch_and_translate()`'s cache check short-circuits before any
+browser/network access is actually used):
+
+- Slow, deliberate single selections: selected `ハードキャッチ`
+  (screenshot: form correctly shows "ハードキャッチ" / "demanding
+  catch"), then selected `オレ` (screenshot: form correctly updates to
+  "オレ" / "Me" -- the exact sequence from the original bug report,
+  previously broken, now correct).
+- Fast-sequential selection pass (per the race hypothesis, not skipped):
+  three rows clicked back-to-back with minimal delay
+  (`鉄パイプ`→`オレ`→`ハードキャッチ`) -- final screenshot shows the form
+  correctly matching the last-clicked row, no staleness or
+  cross-contamination from the earlier clicks in the sequence.
+- Full select-A/select-B/edit/Save scenario against the real,
+  production on-disk glossary for novel 375266002: selected
+  `ハードキャッチ`, selected `オレ`, edited `オレ`'s Target field to
+  "I", clicked Save, then read the on-disk glossary JSON directly
+  (equivalent to `load_glossary()`) -- confirmed `オレ` -> `"I"` and
+  `ハードキャッチ` -> `"demanding catch"` (unchanged). The production
+  glossary was restored to its original values (`オレ` -> `"Me"`)
+  immediately after this check, since this was real data, not a
+  synthetic fixture.
+- Both windows involved (`Alphapolis Reader` main window, `Glossary`
+  dialog) hit the same two-window-ID gotcha this doc's 2026-07-26 entry
+  documented (a `mutter-x11-frames`-owned decoration window alongside the
+  real client window) -- resolved the same way, cross-checking
+  `xdotool getwindowpid`/`xwininfo` geometry to identify the real content
+  window before clicking/screenshotting it.
+
+**Not touched, per explicit task scope**: `open_term_review_dialog()`
+(a separate dialog with its own, already-batch-vs-immediate-write
+inconsistency tracked as a distinct future item, not this bug's root
+cause), the batch-vs-immediate-write inconsistency between the two
+dialogs itself, and no candidate-display additions to
+`open_glossary_dialog()`.

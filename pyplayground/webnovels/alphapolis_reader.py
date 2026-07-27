@@ -1318,14 +1318,25 @@ class ReaderApp:
 
         # --- Edit form, rebuilt each time the selected term's type changes ---
         form_vars = {}
+        # Index of the term the form currently on screen was built for.
+        # Mutable container (see `dirty` above) so `<<TreeviewSelect>>`'s
+        # handler can read the *previous* selection before committing it --
+        # by the time that event fires, tree.selection() already reflects
+        # the *new* row, so committing against a freshly re-read
+        # tree.selection() would silently save the still-displayed old
+        # form values into the newly selected row's term dict instead of
+        # the row the form was actually showing. See on_select_with_commit.
+        displayed_index: Dict[str, Optional[int]] = {"value": None}
 
         def clear_form():
             for widget in form.winfo_children():
                 widget.destroy()
             form_vars.clear()
+            displayed_index["value"] = None
 
         def build_form(term, index):
             clear_form()
+            displayed_index["value"] = index
             pad = {"padx": 4, "pady": (6, 0)}
             term_type = term.get("type", TERM_TYPE_GENERAL)
 
@@ -1408,9 +1419,21 @@ class ReaderApp:
             # Write whatever's currently in the form back into `terms`
             # before switching selection, adding, deleting, or saving --
             # otherwise in-progress edits on the selected row are lost.
-            selection = tree.selection()
-            if selection and "_save" in form_vars:
-                form_vars["_save"](int(selection[0]))
+            #
+            # Deliberately commits against `displayed_index` (the row
+            # build_form() actually populated the form from), NOT a fresh
+            # tree.selection() read. When this runs from the
+            # <<TreeviewSelect>> handler (on_select_with_commit), Tk has
+            # already updated tree.selection() to the *newly* clicked row
+            # by the time the event fires -- re-reading it here would save
+            # the still-on-screen previous term's field values into the
+            # newly selected row's term dict, corrupting it before
+            # build_form() even runs. displayed_index always identifies the
+            # row the on-screen values actually belong to, regardless of
+            # what the Treeview's selection has already moved to.
+            index = displayed_index["value"]
+            if index is not None and "_save" in form_vars:
+                form_vars["_save"](index)
 
         def on_select_with_commit(event=None):
             commit_selected_form()

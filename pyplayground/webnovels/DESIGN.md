@@ -4,7 +4,7 @@ Living record of decisions for the glossary/term-consistency rework and the
 Tkinter → web migration. Update this alongside code changes, not after —
 chat history is not the system of record.
 
-Last updated: 2026-07-27 (glossary-dialog stale-form-on-selection bug)
+Last updated: 2026-07-27 (all per-novel glossary/cache data wiped, clean slate)
 
 ---
 
@@ -2298,3 +2298,19 @@ inconsistency tracked as a distinct future item, not this bug's root
 cause), the batch-vs-immediate-write inconsistency between the two
 dialogs itself, and no candidate-display additions to
 `open_glossary_dialog()`.
+
+### 2026-07-27: all per-novel glossary files and cached episodes deleted at the user's request
+
+`~/.config/alphapolis_reader/glossaries/*.json` and
+`~/.cache/alphapolis_reader/*.json` deleted (app confirmed not running
+first). Accumulated schema/dedup artifacts and test/verification
+residue across a long session — no data worth preserving. All findings
+documented above (the `オレ`/`鉄パイプ` extraction errors, the
+Lanchester's-Law hallucination, the stale-form bug's live verification
+against novel 375266002's real glossary, etc.) remain valid as written;
+only the underlying on-disk files are gone. Novel 375266002 (and any
+other novel previously loaded) will regenerate its glossary and episode
+cache from scratch — fresh scrape, fresh `build_glossary.py` extraction
+— on next read, now running under the fixed `open_glossary_dialog()`
+code above and with none of this session's prior data or bugs carried
+forward.

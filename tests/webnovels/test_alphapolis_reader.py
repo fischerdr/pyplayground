@@ -114,6 +114,7 @@ class _RenderHarness:
         self.popup_calls.append((source_prefill, target_prefill, context))
 
     _render_translated_content_from_translated_lines = ReaderApp._render_translated_content_from_translated_lines
+    _apply_needs_review_spans = ReaderApp._apply_needs_review_spans
     _on_needs_review_click = ReaderApp._on_needs_review_click
 
 
@@ -154,19 +155,66 @@ class TestRenderAndClick:
         return root, text
 
     def test_needs_review_line_gets_needs_review_tag(self):
-        """Checks via tag_ranges() rather than tag_names(start) -- see class docstring's note on the pre-existing index-offset quirk this surfaced; tag_ranges() reports what's actually tagged in the widget regardless of it."""
+        """Checks via tag_ranges() rather than tag_names(start) -- see class docstring's note on the pre-existing index-offset quirk this surfaced; tag_ranges() reports what's actually tagged in the widget regardless of it.
+
+        Span-level, not line-level (DESIGN.md's span-level highlighting
+        entry): only the matched term text ("ケイト") gets tagged, not the
+        whole line -- confirmed by checking the tagged text directly.
+        """
         root, text = self._make_widget()
         try:
             harness = _RenderHarness(text)
             ep = {"content": [{"type": "text", "text": "ケイトが振り返った。"}]}
             translated_lines = [TranslatedLine(text="Look, ケイト! So big!", needs_review=True)]
+            glossary = {"terms": [{"source": "ケイト", "type": "character", "status": "suggested"}]}
 
-            harness._render_translated_content_from_translated_lines(ep, "translated", translated_lines, [(0, "ケイト")])
+            harness._render_translated_content_from_translated_lines(ep, "translated", translated_lines, glossary)
 
             start, end, tag, source = harness._rendered_spans[0]
-            assert tag == "needs_review"
+            assert tag == "translated"
             assert text.tag_ranges("needs_review") != ()
-            assert text.get(*text.tag_ranges("needs_review")[:2]).rstrip("\n") == "Look, ケイト! So big!"
+            assert text.get(*text.tag_ranges("needs_review")[:2]) == "ケイト"
+        finally:
+            root.destroy()
+
+    def test_needs_review_span_resolves_even_after_term_confirmed_post_caching(self):
+        """Critical correctness requirement: a term confirmed AFTER an episode was cached with it spliced in must still resolve for span highlighting and click on that already-cached episode.
+
+        needs_review_flags[i]=True is a historical fact about translation
+        time (DESIGN.md Section 11) -- the term's current status must not
+        gate whether its span is found, unlike build_mask_targets() which
+        deliberately does filter by status for its own (translation-time,
+        forward-looking) purpose. See find_glossary_term_spans()'s
+        docstring.
+        """
+        root, text = self._make_widget()
+        try:
+            harness = _RenderHarness(text)
+            ep = {"content": [{"type": "text", "text": "ケイトが振り返った。"}]}
+            translated_lines = [TranslatedLine(text="Look, ケイト! So big!", needs_review=True)]
+            # The term is now STATUS_CONFIRMED -- simulating a human
+            # confirming it sometime after this episode was cached with
+            # the raw spliced "ケイト" still sitting in the line.
+            glossary = {"terms": [{"source": "ケイト", "type": "character", "status": "confirmed", "confirmed_target": "Kate"}]}
+
+            harness._render_translated_content_from_translated_lines(ep, "translated", translated_lines, glossary)
+
+            assert text.tag_ranges("needs_review") != ()
+            assert text.get(*text.tag_ranges("needs_review")[:2]) == "ケイト"
+
+            root.update_idletasks()
+            review_start = text.tag_ranges("needs_review")[0]
+            bbox = text.bbox(review_start)
+            assert bbox is not None
+
+            class _FakeEvent:
+                pass
+
+            event = _FakeEvent()
+            event.x, event.y = bbox[0] + 1, bbox[1] + 1
+            harness._on_needs_review_click(event)
+
+            assert harness.popup_calls == [("ケイト", "", "ケイトが振り返った。")]
         finally:
             root.destroy()
 
@@ -177,7 +225,7 @@ class TestRenderAndClick:
             ep = {"content": [{"type": "text", "text": "ケイトが振り返った。"}]}
             translated_lines = [TranslatedLine(text="Kate turned around.", needs_review=False)]
 
-            harness._render_translated_content_from_translated_lines(ep, "translated", translated_lines, [])
+            harness._render_translated_content_from_translated_lines(ep, "translated", translated_lines, {"terms": []})
 
             start, end, tag, source = harness._rendered_spans[0]
             assert tag == "translated"
@@ -200,9 +248,9 @@ class TestRenderAndClick:
                 TranslatedLine(text="Kate turned around.", needs_review=False),
                 TranslatedLine(text="Ruri smiled. ルリ", needs_review=True),
             ]
-            mask_targets = [(1, "ルリ")]
+            glossary = {"terms": [{"source": "ルリ", "type": "character", "status": "suggested"}]}
 
-            harness._render_translated_content_from_translated_lines(ep, "translated", translated_lines, mask_targets)
+            harness._render_translated_content_from_translated_lines(ep, "translated", translated_lines, glossary)
 
             root.update_idletasks()
             review_start = text.tag_ranges("needs_review")[0]
@@ -228,7 +276,7 @@ class TestRenderAndClick:
             ep = {"content": [{"type": "text", "text": "ケイトが振り返った。"}]}
             translated_lines = [TranslatedLine(text="Kate turned around.", needs_review=False)]
 
-            harness._render_translated_content_from_translated_lines(ep, "translated", translated_lines, [])
+            harness._render_translated_content_from_translated_lines(ep, "translated", translated_lines, {"terms": []})
 
             root.update_idletasks()
             start, end, tag, source = harness._rendered_spans[0]
@@ -366,8 +414,8 @@ class _DispatchHarness:
     def _render_translated_content(self, ep, tag):
         self.render_calls.append(("plain", ep, tag))
 
-    def _render_translated_content_from_translated_lines(self, ep, tag, translated_lines, mask_targets):
-        self.render_calls.append(("needs_review_aware", ep, tag, translated_lines, mask_targets))
+    def _render_translated_content_from_translated_lines(self, ep, tag, translated_lines, glossary):
+        self.render_calls.append(("needs_review_aware", ep, tag, translated_lines, glossary))
 
     _render_translated_view = ReaderApp._render_translated_view
 
@@ -410,11 +458,15 @@ class TestRenderTranslatedView:
             root.destroy()
 
     def test_reconstructs_translated_line_objects_from_cache_shape(self, mocker):
-        """Plain strings + parallel bool flags reconstruct into the same TranslatedLine objects translate_chunk_with_masking() would have produced directly."""
+        """Plain strings + parallel bool flags reconstruct into the same TranslatedLine objects translate_chunk_with_masking() would have produced directly.
+
+        Passes the full glossary dict through (not build_mask_targets()'s
+        filtered/unconfirmed-only list) -- find_glossary_term_spans() needs
+        every term regardless of status, see its docstring.
+        """
         root, text = self._make_widget()
         try:
-            mocker.patch("pyplayground.webnovels.alphapolis_reader.load_glossary", return_value={"terms": []})
-            mocker.patch("pyplayground.webnovels.alphapolis_reader.build_mask_targets", return_value=[(1, "音夢くん")])
+            mocker.patch("pyplayground.webnovels.alphapolis_reader.load_glossary", return_value={"terms": [{"source": "音夢くん", "status": "suggested"}]})
             mocker.patch("pyplayground.webnovels.alphapolis_reader._extract_novel_id", return_value="12345")
 
             harness = _DispatchHarness(text, current_url="https://example.com/novel/12345/x/episode/1")
@@ -427,22 +479,20 @@ class TestRenderTranslatedView:
             harness._render_translated_view(ep, "translated")
 
             assert len(harness.render_calls) == 1
-            kind, call_ep, tag, translated_lines, mask_targets = harness.render_calls[0]
+            kind, call_ep, tag, translated_lines, glossary = harness.render_calls[0]
             assert kind == "needs_review_aware"
             assert translated_lines == [
                 TranslatedLine(text="Kate turned around.", needs_review=False),
                 TranslatedLine(text="音夢くん waved.", needs_review=True),
             ]
-            assert mask_targets == [(1, "音夢くん")]
+            assert glossary == {"terms": [{"source": "音夢くん", "status": "suggested"}]}
         finally:
             root.destroy()
 
-    def test_no_current_url_falls_back_to_empty_mask_targets(self, mocker):
-        """No current_url set means mask_targets is empty rather than raising -- needs_review tagging still works from persisted flags, just without click-to-add pre-fill data."""
+    def test_no_current_url_falls_back_to_empty_glossary(self):
+        """No current_url set means an empty glossary is passed rather than raising -- needs_review tagging still works from persisted flags, just without any term spans to highlight."""
         root, text = self._make_widget()
         try:
-            build_mask_targets_spy = mocker.patch("pyplayground.webnovels.alphapolis_reader.build_mask_targets")
-
             harness = _DispatchHarness(text, current_url=None)
             ep = {
                 "translated_lines": ["Hello."],
@@ -452,8 +502,7 @@ class TestRenderTranslatedView:
 
             harness._render_translated_view(ep, "translated")
 
-            kind, call_ep, tag, translated_lines, mask_targets = harness.render_calls[0]
-            assert mask_targets == []
-            build_mask_targets_spy.assert_not_called()
+            kind, call_ep, tag, translated_lines, glossary = harness.render_calls[0]
+            assert glossary == {"terms": []}
         finally:
             root.destroy()

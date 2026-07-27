@@ -358,6 +358,73 @@ def build_mask_targets(lines: List[str], glossary: Dict[str, Any]) -> List[Tuple
     return targets
 
 
+def find_glossary_term_spans(translated_line: str, glossary: Dict[str, Any]) -> List[Tuple[int, int, str]]:
+    """Find the character spans of glossary source terms as they appear (spliced, untranslated) in a translated line.
+
+    Distinct from build_mask_targets(), which decides which terms to mask
+    in the *source*-language line before translation, filtered to
+    status != STATUS_CONFIRMED. This function is different data and a
+    different question: given a line already flagged needs_review=True
+    (a historical fact about that translation attempt, recorded in
+    needs_review_flags -- see DESIGN.md Section 11), which of this
+    novel's glossary source terms actually appear as raw, spliced
+    substrings in the *translated* line's text right now, for span-level
+    highlighting/click resolution.
+
+    Critical: this does NOT filter by current glossary status. A term's
+    status can legitimately change after an episode was cached (e.g. a
+    suggested term gets manually confirmed later) -- needs_review=True on
+    an already-cached line means "this line had raw spliced content in it
+    as of translation time," which is unaffected by the term's current
+    status. Filtering to unconfirmed-only here would silently stop
+    highlighting/resolving a term the moment it's confirmed, even though
+    the exact same raw Japanese substring is still sitting in the exact
+    same already-cached English line. Searches every term's source string,
+    regardless of status.
+
+    Same overlap/ordering discipline as build_mask_targets() (longer
+    sources matched first so a term that's a substring of another, e.g.
+    "音夢" inside "音夢くん", doesn't fragment the longer match's first
+    occurrence out from under it; results returned in line-position order)
+    -- but this is new logic operating on different input (one already-
+    translated line's text, not a list of pre-translation source lines),
+    not a call into build_mask_targets() itself.
+
+    Args:
+        translated_line: One line of already-translated (and, for a
+            needs_review=True line, partially spliced-back) text.
+        glossary: Glossary dict as returned by load_glossary().
+
+    Returns:
+        (start, end, word) tuples, one per literal term occurrence found
+        in translated_line, ordered by position. Empty list if no glossary
+        term's source string appears in the line.
+    """
+    all_sources = sorted(
+        {term.get("source", "") for term in glossary.get("terms", []) if term.get("source")},
+        key=len,
+        reverse=True,
+    )
+    if not all_sources:
+        return []
+
+    covered: List[Tuple[int, int]] = []
+    matches: List[Tuple[int, int, str]] = []
+    for source in all_sources:
+        search_from = 0
+        while True:
+            pos = translated_line.find(source, search_from)
+            if pos == -1:
+                break
+            end = pos + len(source)
+            if not any(pos < c_end and end > c_start for c_start, c_end in covered):
+                matches.append((pos, end, source))
+                covered.append((pos, end))
+            search_from = pos + 1
+    matches.sort(key=lambda m: m[0])
+    return matches
+
+
 def update_candidate_counts(
     source_lines: List[str],
     translated_lines: List[str],

@@ -11,6 +11,7 @@ from pyplayground.webnovels.glossary import (
     TERM_TYPE_GENERAL,
     _empty_glossary,
     build_mask_targets,
+    find_glossary_term_spans,
     format_glossary_for_prompt,
     make_confirmed_term,
     make_suggested_term,
@@ -329,6 +330,78 @@ class TestBuildMaskTargets:
         targets = build_mask_targets(["ケイトとケイトは似ている。"], glossary)
 
         assert targets == [(0, "ケイト"), (0, "ケイト")]
+
+
+class TestFindGlossaryTermSpans:
+    """Tests for find_glossary_term_spans() -- span-level needs_review highlighting/click resolution."""
+
+    def test_single_term_span_located(self):
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_suggested_term(TERM_TYPE_CHARACTER, "オレ", "Me")]
+
+        spans = find_glossary_term_spans("Because of オレ's hard catch, they were crushed.", glossary)
+
+        assert spans == [(11, 13, "オレ")]
+
+    def test_multiple_occurrences_of_same_term_found_separately_no_overlap(self):
+        """The オレ オレ splice-fallback case (DESIGN.md's 2026-07-26 needs_review fix entry) -- each occurrence must resolve to its own span, not just the first."""
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_suggested_term(TERM_TYPE_CHARACTER, "オレ", "Me")]
+
+        spans = find_glossary_term_spans("...than them. オレ オレ", glossary)
+
+        assert spans == [(14, 16, "オレ"), (17, 19, "オレ")]
+
+    def test_confirmed_status_does_not_exclude_a_term_from_span_search(self):
+        """Critical requirement: this must NOT filter by status, unlike build_mask_targets().
+
+        A term confirmed after an episode was cached must still resolve for
+        span highlighting/click on that already-cached episode -- the raw
+        spliced text is still sitting in the line regardless of the term's
+        current status.
+        """
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_confirmed_term(TERM_TYPE_GENERAL, "オレ", "Me")]
+
+        spans = find_glossary_term_spans("Because of オレ's hard catch, they were crushed.", glossary)
+
+        assert spans == [(11, 13, "オレ")]
+
+    def test_no_matching_term_returns_empty(self):
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_suggested_term(TERM_TYPE_CHARACTER, "オレ", "Me")]
+
+        spans = find_glossary_term_spans("A perfectly ordinary translated line.", glossary)
+
+        assert spans == []
+
+    def test_empty_glossary_returns_empty(self):
+        glossary = _empty_glossary("1")
+
+        assert find_glossary_term_spans("Some line with オレ in it.", glossary) == []
+
+    def test_longer_source_matched_before_shorter_substring(self):
+        """Same overlap discipline as build_mask_targets(): 音夢くん must claim its span before 音夢 fragments it."""
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [
+            make_suggested_term(TERM_TYPE_CHARACTER, "音夢くん", "Otomu-kun"),
+            make_suggested_term(TERM_TYPE_CHARACTER, "音夢", "Otomu"),
+        ]
+
+        spans = find_glossary_term_spans("Only 音夢くん arrived late.", glossary)
+
+        assert spans == [(5, 9, "音夢くん")]
+
+    def test_different_terms_on_same_line_both_found_in_position_order(self):
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [
+            make_suggested_term(TERM_TYPE_CHARACTER, "オレ", "Me"),
+            make_suggested_term(TERM_TYPE_GENERAL, "鉄パイプ", "iron pipe"),
+        ]
+
+        spans = find_glossary_term_spans("オレ crushed their hands along with 鉄パイプ.", glossary)
+
+        assert spans == [(0, 2, "オレ"), (34, 38, "鉄パイプ")]
 
     def test_same_term_across_multiple_lines(self):
         glossary = _empty_glossary("1")

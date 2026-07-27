@@ -213,3 +213,182 @@ class TestRetranslateMenuGating:
             assert "Retranslate this line..." not in self.last_menu.labels
         finally:
             root.destroy()
+
+
+class _NeedsReviewAndRetranslateHarness:
+    """Real _render_interleaved_content() + _translated_span_after(), for the required needs_review/retranslate interaction regression test."""
+
+    def __init__(self, text_widget, current_url):
+        self.text = text_widget
+        self._rendered_spans = []
+        self._review_terms_by_span = {}
+        self.current_url = current_url
+
+    def _make_photo_image(self, src):
+        return None
+
+    def _render_translated_view(self, ep, tag):
+        raise AssertionError("fallback should not fire -- pairs must be length-consistent in this test")
+
+    _render_interleaved_content = ReaderApp._render_interleaved_content
+    _apply_needs_review_spans = ReaderApp._apply_needs_review_spans
+    _translated_span_after = ReaderApp._translated_span_after
+
+
+class TestNeedsReviewLineAlsoRetranslateTarget:
+    """Required regression test: a line that is both a needs_review span-highlight target AND a valid retranslation click target must still resolve correctly on both paths after span-level highlighting was added."""
+
+    def _make_widget(self):
+        root = tk.Tk()
+        text = tk.Text(root, width=80, height=24)
+        text.pack()
+        text.tag_configure("original", foreground="#333333")
+        text.tag_configure("translated", foreground="#1a56c4")
+        text.tag_configure("needs_review", foreground="#b45309", underline=True)
+        root.update()
+        return root, text
+
+    def test_translated_span_after_and_needs_review_span_both_resolve_on_same_line(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(
+            reader_module,
+            "load_glossary",
+            lambda novel_id: {"terms": [{"source": "オレ", "type": "character", "status": "suggested"}]},
+        )
+
+        root, text = self._make_widget()
+        try:
+            harness = _NeedsReviewAndRetranslateHarness(text, current_url="https://www.alphapolis.co.jp/novel/12345/1/episode/1")
+            ep = {
+                "content": [{"type": "text", "text": "オレは彼を見た。"}],
+                "lines": ["オレは彼を見た。"],
+                "translated_lines": ["Because of オレ, he was seen."],
+                "needs_review_flags": [True],
+            }
+
+            harness._render_interleaved_content(ep, "original", "translated")
+
+            # _rendered_spans' one-pair-per-line (original, translated)
+            # invariant must be intact -- RETRANSLATION_DESIGN.md's
+            # _translated_span_after() depends on it directly.
+            assert len(harness._rendered_spans) == 2
+            original_span = harness._rendered_spans[0]
+            translated_span = harness._rendered_spans[1]
+            assert original_span[2] == "original"
+            assert translated_span[2] == "translated"
+
+            # Retranslation's span-pairing lookup still resolves correctly.
+            resolved = harness._translated_span_after(original_span)
+            assert resolved == translated_span
+
+            # needs_review span-level highlighting also resolved correctly
+            # on the very same line, independently.
+            assert len(harness._review_terms_by_span) == 1
+            (start, end), (word, source_line) = next(iter(harness._review_terms_by_span.items()))
+            assert word == "オレ"
+            assert source_line == "オレは彼を見た。"
+            assert text.get(start, end) == "オレ"
+            assert "needs_review" in text.tag_names(start)
+        finally:
+            root.destroy()
+
+
+class _PopupGuardHarness:
+    """Minimal stand-in exposing exactly what open_word_glossary_popup()/open_retranslate_popup() touch on self, for testing the single-popup-at-a-time guard found live during this task's xdotool verification."""
+
+    def __init__(self, root, text_widget, current_url):
+        self.root = root
+        self.text = text_widget
+        self.current_url = current_url
+        self._glossary_popup = None
+        self._retranslate_popup = None
+        self._word_guess_cache = {}
+        self.target_lang = "en"
+
+    def set_status(self, msg):
+        pass
+
+    open_word_glossary_popup = ReaderApp.open_word_glossary_popup
+    open_retranslate_popup = ReaderApp.open_retranslate_popup
+
+
+class TestPopupSingleInstanceGuard:
+    """A second call to open the same popup kind while one is already open must not stack a duplicate -- found live: repeated clicks during xdotool verification opened multiple independent dialogs."""
+
+    def _make_widget(self):
+        root = tk.Tk()
+        text = tk.Text(root, width=80, height=24)
+        text.pack()
+        root.update()
+        return root, text
+
+    def test_second_glossary_popup_call_reuses_existing_window(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "12345")
+        monkeypatch.setattr(reader_module, "check_llm_available", lambda: False)
+        monkeypatch.setattr(reader_module, "translate_chunk", lambda *a, **k: "translated")
+
+        root, text = self._make_widget()
+        try:
+            harness = _PopupGuardHarness(root, text, current_url="https://www.alphapolis.co.jp/novel/12345/1/episode/1")
+
+            harness.open_word_glossary_popup("ケイト", "", context="ケイトが振り返った。")
+            first_popup = harness._glossary_popup
+            assert first_popup is not None
+
+            harness.open_word_glossary_popup("ルリ", "", context="ルリが微笑んだ。")
+
+            # Still the same window -- no second Toplevel was created.
+            assert harness._glossary_popup is first_popup
+        finally:
+            root.destroy()
+
+    def test_glossary_popup_guard_clears_after_close(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "12345")
+        monkeypatch.setattr(reader_module, "check_llm_available", lambda: False)
+        monkeypatch.setattr(reader_module, "translate_chunk", lambda *a, **k: "translated")
+
+        root, text = self._make_widget()
+        try:
+            harness = _PopupGuardHarness(root, text, current_url="https://www.alphapolis.co.jp/novel/12345/1/episode/1")
+
+            harness.open_word_glossary_popup("ケイト", "", context="ケイトが振り返った。")
+            first_popup = harness._glossary_popup
+            first_popup.destroy()
+            root.update()
+
+            assert harness._glossary_popup is None
+
+            harness.open_word_glossary_popup("ルリ", "", context="ルリが微笑んだ。")
+
+            assert harness._glossary_popup is not None
+            assert harness._glossary_popup is not first_popup
+        finally:
+            root.destroy()
+
+    def test_second_retranslate_popup_call_reuses_existing_window(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(reader_module, "retranslate_line_with_hint", lambda *a, **k: "candidate")
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: {"terms": []})
+        monkeypatch.setattr(reader_module, "format_glossary_for_prompt", lambda glossary: "")
+
+        root, text = self._make_widget()
+        try:
+            harness = _PopupGuardHarness(root, text, current_url="https://www.alphapolis.co.jp/novel/12345/1/episode/1")
+            text.insert("1.0", "Kate turned around.\n", "translated")
+            translated_span = ("1.0", "1.19", "translated", "ケイトが振り返った。")
+
+            harness.open_retranslate_popup("ケイトが振り返った。", translated_span, "ケイト")
+            first_popup = harness._retranslate_popup
+            assert first_popup is not None
+
+            harness.open_retranslate_popup("ケイトが振り返った。", translated_span, "ケイト")
+
+            assert harness._retranslate_popup is first_popup
+        finally:
+            root.destroy()

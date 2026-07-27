@@ -724,6 +724,18 @@ hardening pass.
   `translategemma`-based extraction reliability (or a different
   model/quant entirely, tried fresh rather than patched) are the remaining
   paths if a second model is still wanted for this role.
+- **Classification drift between `explain_term()` and `build_glossary.py`'s
+  extraction**: found via the 2026-07-27 dedup fix — the two code paths
+  can independently assign different `type` values to the same source
+  word (e.g. `オレ` classified as `character` at extraction time, `term`
+  when `explain_term()` re-evaluates it live), with no shared source of
+  truth. `upsert_confirmed_term()` neutralizes the specific consequence
+  this caused (a duplicate entry on manual save), but the underlying
+  disagreement itself is unresolved and untouched — it could plausibly
+  surface in a different shape elsewhere (e.g. if any future code path
+  trusts `type` as stable/consistent across a term's lifetime). Not
+  urgent, no known live instance beyond the one just fixed — tracked here
+  so it isn't lost once that specific bug is filed away as closed.
 
 ## 9. Term data model migration — scope (2026-07-25)
 
@@ -1473,3 +1485,193 @@ of the bug, but the *reason* a type mismatch occurred at all
 `build_glossary.py`'s original extraction-time classification for the
 same word) wasn't something either doc had previously called out as a
 source of drift between the two pipelines.
+
+### 2026-07-27: `needs_review` span-level highlighting and click resolution — implemented
+
+Changes `needs_review` from line-level to span-level, per §6/§11's
+original implementation: both visual highlighting (only the exact
+masked-term text gets amber/underline, not the whole line) and click
+resolution (clicking a specific highlighted term opens the dialog for
+*that* term, not always the line's first one).
+
+**Confirmed current (pre-change) behavior directly in code before
+starting, not assumed from the docs alone**: grep/read-confirmed
+`_render_translated_content_from_translated_lines()` applied
+`"needs_review"` as the tag for the entire inserted line
+(`line_tag = "needs_review" if translated.needs_review else tag`, then
+`self.text.insert("end", line_text + "\n", line_tag)`), and
+`_on_needs_review_click()` always resolved to `words[0]` from
+`build_review_term_map()`'s per-line word list, "consistent with...
+always resolves to a single word per click, not a batch action" (its own
+prior docstring, now out of date). Both confirmed as real, current
+behavior, not inferred.
+
+**New function**: `find_glossary_term_spans(translated_line, glossary)` in
+`glossary.py`, right after `build_mask_targets()`. Locates the character
+span(s) of each glossary term's source string as they literally appear in
+an already-translated/spliced line. New logic, not a call into
+`build_mask_targets()` -- different input shape (one already-translated
+line's text, not a list of pre-translation source lines) and, critically,
+a different filtering rule.
+
+**The critical correctness requirement, implemented and specifically
+tested**: `find_glossary_term_spans()` does **not** filter by glossary
+`status`, unlike `build_mask_targets()`. `needs_review_flags[i] == True`
+is a historical fact about translation time (§11) -- a term's status can
+legitimately change afterward (e.g. confirmed later), and the exact same
+raw spliced substring is still sitting in the exact same already-cached
+line regardless. Filtering to unconfirmed-only here would silently stop
+highlighting/resolving a term the moment it's confirmed. Verified directly
+with a dedicated test
+(`test_needs_review_span_resolves_even_after_term_confirmed_post_caching`
+in `test_alphapolis_reader.py`, plus
+`test_confirmed_status_does_not_exclude_a_term_from_span_search` in
+`test_glossary.py`): a `STATUS_CONFIRMED` term still resolves for both
+span highlighting and click, through the real render + click path, not
+just the pure function in isolation.
+
+Same overlap/ordering discipline as `build_mask_targets()` (longer
+sources matched first so a term that's a substring of another doesn't get
+fragmented; results returned in line-position order) -- reused as a
+*model*, not called directly, per the task's explicit instruction, since
+the input shape and filtering rule are both different.
+
+**Rendering changes**: both
+`_render_translated_content_from_translated_lines()` and
+`_render_interleaved_content()` now insert a needs_review=True line's text
+with the ordinary base tag (`"translated"`) first, then call a new shared
+helper, `_apply_needs_review_spans(line_start, line_text, source_line,
+glossary)`, which locates the term span(s) via
+`find_glossary_term_spans()` and layers `"needs_review"` on top of only
+those spans via `self.text.tag_add()` -- not by re-inserting the text
+with a different tag. Confirmed directly (not assumed) that Tk gives the
+later-added tag priority for conflicting display attributes: a small
+isolated check (`tag_add()` after `insert()`'s tag) showed
+`tag_names()` returning `('translated', 'needs_review')` in that order,
+and Tk's own rule is that the later tag in the list wins -- so
+`needs_review`'s amber/underline correctly overrides `translated`'s blue
+over just the matched span, with the rest of the line unaffected.
+
+**Click resolution**: `_review_terms_by_span` (previously line-level:
+`(start, end) -> ([masked words], source_line)`, one entry per flagged
+*line*) is now span-level: `(start, end) -> (word, source_line)`, one
+entry per individual matched-term *span*, populated by
+`_apply_needs_review_spans()` using each span's own Tk indices (not the
+whole line's). `_on_needs_review_click()` now resolves to whichever
+span's range contains the click position -- naturally correct per-term
+resolution, not a special case, since the dict key is already the exact
+span. `build_review_term_map()` (the old line-level pure function) was
+left in place, unused by the renderer now but still a valid, independently
+tested public function -- not deleted, since removing a tested function is
+outside this task's scope and wasn't traced for other callers.
+
+**`_rendered_spans`' one-pair-per-line invariant preserved, confirmed by
+inspection and by a dedicated test, not just by not touching the code that
+builds it.** `RETRANSLATION_DESIGN.md`'s `_translated_span_after()`
+depends on `_render_interleaved_content()` appending exactly one
+`(original, translated)` pair per source line to `_rendered_spans`, in
+that strict order. `_apply_needs_review_spans()` never appends to
+`_rendered_spans` -- only to the separate `_review_terms_by_span` dict
+(same purpose-built-dict precedent as before, not multiplied into
+`_rendered_spans`) -- so the invariant holds structurally, not just by
+convention. Required regression test added
+(`TestNeedsReviewLineAlsoRetranslateTarget` in
+`test_retranslation_dialog.py`): a line that is both a needs_review
+span-highlight target *and* a valid retranslation click target, run
+through the real `_render_interleaved_content()`, confirming
+`_translated_span_after()` still resolves the correct translated span
+*and* `_review_terms_by_span` resolves the correct term span,
+independently, on the same line.
+
+**A real, separate bug found live during this task's own xdotool
+verification, fixed as found-not-planned**: repeated clicks on two
+different highlighted terms on the same line -- while diagnosing an
+initial coordinate-targeting miss during verification -- opened two
+independent `Add to Glossary` popups stacked on screen simultaneously,
+each with its own background lookup thread. Not scoped to span-level
+highlighting specifically (the same class of bug applies to
+`open_retranslate_popup()` too, and would have existed before this task
+via any repeated click), but directly interfered with verifying this
+task's own change and was fixed with the same rigor as planned work, per
+this project's standing rule. Added `self._glossary_popup`/
+`self._retranslate_popup` tracking attributes (`None` when no popup of
+that kind is open); both `open_word_glossary_popup()` and
+`open_retranslate_popup()` now check for an existing, still-alive
+(`winfo_exists()`) popup of their own kind at the top and `lift()`/
+`focus_force()` it instead of creating a duplicate. Cleared via a
+`<Destroy>` binding on the `Toplevel` itself (guarded with
+`e.widget is win`, since Tk's `<Destroy>` bubbles from every destroyed
+child widget, not just the window) rather than patching every exit path
+(Save, Cancel, Accept, Discard, window-manager close) individually --
+fires correctly regardless of how the window closes. Verified live: two
+clicks on two different terms on the same line, without closing the
+first dialog, correctly left exactly one popup open, still showing the
+*first* click's term unchanged. 3 new tests in
+`test_retranslation_dialog.py` (`TestPopupSingleInstanceGuard`): a second
+call reuses the existing glossary popup, the guard clears after the
+popup is destroyed (a fresh call then opens a new one), and the same
+reuse behavior for the retranslate popup.
+
+**Live verification, via the same `xdotool`/real-display setup used for
+every prior visual claim in both docs:**
+
+- Seeded a synthetic cached episode (`novel_id=888888`) with a single
+  line containing two distinct masked terms (`オレ` and `鉄パイプ`, both
+  `suggested`-status) and `needs_review_flags=[True, False]`, launched the
+  real, unmodified app against it in **Translated mode**.
+- Screenshot confirmed: only the exact substrings `オレ` and `鉄パイプ` show
+  amber/underline styling; every other word in the same line ("Because
+  of", "he was holding a") and the entire second, unflagged line ("Kate
+  turned around.") render in plain blue -- span-level, not line-level,
+  confirmed visually, not just via `tag_ranges()` inspection.
+- Clicked `鉄パイプ`'s highlighted span: the real `Add to Glossary` dialog
+  opened with **`Source (original): 鉄パイプ`**.
+- Closed it, then clicked `オレ`'s highlighted span on the *same line*:
+  opened with **`Source (original): オレ`** -- a different, correct term
+  from a different click position on the same line, the core claim this
+  task needed to demonstrate on a real rendered screen.
+- Clicked both spans again without closing the first popup: confirmed via
+  `xdotool search` that only one `Add to Glossary` window existed, still
+  showing the first click's term (`オレ`) -- the popup-dedup fix verified
+  live, not just via its unit tests.
+
+**Test coverage**: 7 new tests in `test_glossary.py`
+(`TestFindGlossaryTermSpans`): single-term span location, multiple
+occurrences of the same term found separately with no overlap corruption
+(the `オレ オレ` splice-fallback case), the critical confirmed-status
+requirement, no-match, empty-glossary, longer-source-before-shorter-
+substring overlap discipline, and multiple different terms on one line in
+position order. 3 new/updated tests in `test_alphapolis_reader.py`
+(needs_review tag now confirmed span-level not line-level, the
+confirmed-after-caching regression test, plus updated `TestRenderTranslatedView`
+tests reflecting the `glossary`-not-`mask_targets` parameter change). 1
+new test in `test_retranslation_display.py`
+(`test_needs_review_span_only_covers_matched_term_text`). 1 new test in
+`test_retranslation_dialog.py`
+(`TestNeedsReviewLineAlsoRetranslateTarget`, the required
+needs_review/retranslate interaction regression) plus the 3
+`TestPopupSingleInstanceGuard` tests for the found-live popup-dedup fix.
+`black`/`isort`/`flake8` clean on all touched files. `mypy` clean on
+`glossary.py` (unchanged, fully typed); `alphapolis_reader.py` at 355
+errors (up from 352), consistent with the file's existing untyped-method
+convention -- the 3 new/changed methods (`_apply_needs_review_spans()`
+plus the popup-guard additions to two existing methods) account for the
+delta, not fixed here, same treatment as every prior session touching
+this file. Full project test suite re-run: no regressions (111 tests
+total in `tests/webnovels/`, up from 98 before this task).
+
+**Not anticipated going in, found during this task**: the popup-dedup bug
+above -- surfaced only because live click-verification happened to
+involve retrying a coordinate miss, not something the task brief called
+out. Otherwise, the actual implementation matched the task brief closely:
+the dependency check, the critical-correctness requirement, the
+`_rendered_spans` isolation constraint, and the required regression test
+were all exactly as scoped, no surprises in the core logic itself.
+
+**Not done in this pass**: no changes to `merge_terms()`,
+`upsert_confirmed_term()`, or the dedup bug (closed, prior entry). No
+changes to the classification-drift open item added to §8 (untouched, as
+instructed). `build_review_term_map()` was not deleted, only left unused
+by the renderer -- a possible future cleanup, not attempted here since it
+wasn't traced for other callers and deleting a tested public function is
+outside this task's scope.

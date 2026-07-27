@@ -63,11 +63,12 @@ class TestBuildInterleavedPairs:
 class _InterleaveHarness:
     """Minimal stand-in for testing _render_interleaved_content(), matching test_alphapolis_reader.py's _DispatchHarness pattern."""
 
-    def __init__(self, text_widget):
+    def __init__(self, text_widget, current_url=None):
         self.text = text_widget
         self._rendered_spans = []
         self._review_terms_by_span = {}
         self.fallback_calls = []
+        self.current_url = current_url
 
     def _make_photo_image(self, src):
         return None
@@ -76,6 +77,7 @@ class _InterleaveHarness:
         self.fallback_calls.append((ep, tag))
 
     _render_interleaved_content = ReaderApp._render_interleaved_content
+    _apply_needs_review_spans = ReaderApp._apply_needs_review_spans
 
 
 class TestRenderInterleavedContent:
@@ -142,7 +144,15 @@ class TestRenderInterleavedContent:
             root.destroy()
 
     def test_needs_review_flag_applies_needs_review_tag_to_translated_half_only(self):
-        """The translated half of a flagged pair gets "needs_review"; the source half stays "original" -- the flag is about translation-attempt quality, not the source text."""
+        """The translated half of a flagged pair gets span-level "needs_review" over the matched term text; _rendered_spans' base tag stays "translated" -- see DESIGN.md's span-level highlighting entry.
+
+        No glossary term matches this line's translated text ("Kate ケイト"
+        contains no glossary source string here since no glossary is
+        seeded), so needs_review_flags[0]=True still records the fact but
+        find_glossary_term_spans() finds nothing to highlight -- covered
+        separately by test_needs_review_span_only_covers_matched_term_text
+        below, which seeds a matching glossary term.
+        """
         root, text = self._make_widget()
         try:
             harness = _InterleaveHarness(text)
@@ -156,7 +166,40 @@ class TestRenderInterleavedContent:
             harness._render_interleaved_content(ep, "original", "translated")
 
             tags = [tag for _start, _end, tag, _src in harness._rendered_spans]
-            assert tags == ["original", "needs_review"]
+            assert tags == ["original", "translated"]
+        finally:
+            root.destroy()
+
+    def test_needs_review_span_only_covers_matched_term_text(self, monkeypatch):
+        """Span-level highlighting: only the exact masked-term text gets "needs_review" tagged, not the whole translated line."""
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(
+            reader_module,
+            "load_glossary",
+            lambda novel_id: {"terms": [{"source": "ケイト", "type": "character", "status": "confirmed"}]},
+        )
+
+        root, text = self._make_widget()
+        try:
+            harness = _InterleaveHarness(text, current_url="https://www.alphapolis.co.jp/novel/12345/1/episode/1")
+            ep = {
+                "content": [{"type": "text", "text": "ケイトが振り返った。"}],
+                "lines": ["ケイトが振り返った。"],
+                "translated_lines": ["Because of ケイト, they were shocked."],
+                "needs_review_flags": [True],
+            }
+
+            harness._render_interleaved_content(ep, "original", "translated")
+
+            (start, end), (word, source_line) = next(iter(harness._review_terms_by_span.items()))
+            assert word == "ケイト"
+            assert source_line == "ケイトが振り返った。"
+            assert text.get(start, end) == "ケイト"
+            assert "needs_review" in text.tag_names(start)
+            # The surrounding text must NOT carry needs_review -- confirms
+            # span-level, not line-level, highlighting.
+            assert "needs_review" not in text.tag_names("2.0")
         finally:
             root.destroy()
 

@@ -55,6 +55,7 @@ from pyplayground.webnovels.glossary import (
     TERM_TYPE_CHARACTER,
     TERM_TYPE_GENERAL,
     build_mask_targets,
+    find_glossary_term_spans,
     format_glossary_for_prompt,
     load_glossary,
     make_confirmed_term,
@@ -654,18 +655,39 @@ class ReaderApp:
         self.episode = None
         self.cache = {}
         self._restore_scroll_pos = restore_scroll_pos
+        # Tracks the currently-open Add-to-Glossary / Retranslate popup (at
+        # most one of each kind at a time), so a second click while one is
+        # already open raises/focuses it instead of opening a duplicate --
+        # found live: repeated clicks (e.g. during xdotool verification, or
+        # an impatient double-click) could otherwise stack multiple
+        # independent Toplevel windows, each with its own background
+        # lookup thread, confusing rather than just redundant. None when no
+        # popup of that kind is open; cleared via a <Destroy> binding on
+        # the Toplevel itself so it's reset regardless of how the window
+        # closed (Save, Cancel, Accept/Discard, or the window manager's
+        # close button).
+        self._glossary_popup = None
+        self._retranslate_popup = None
         # (start_index, end_index, tag, source_line) per rendered paragraph,
         # rebuilt on every render_text() call -- lets a right-click resolve
         # back to which source Japanese line a click/selection came from,
         # even when the rendered/tagged text is the English translation.
         self._rendered_spans = []
-        # (start_index, end_index) -> ([masked source word(s)], source_line),
-        # populated only by _render_translated_content_from_translated_lines()
-        # for needs_review=True lines -- lets _on_needs_review_click() resolve
-        # a click to the specific term (and its Japanese source sentence, for
-        # explain_term() context) to pre-fill in the Add-to-Glossary dialog.
-        # Rebuilt on every render_text() call, same lifecycle as
-        # _rendered_spans.
+        # (start_index, end_index) -> (word, source_line), one entry per
+        # individual masked-term span within a needs_review=True line (not
+        # one entry per line) -- populated by both
+        # _render_translated_content_from_translated_lines() and
+        # _render_interleaved_content() via find_glossary_term_spans().
+        # Lets _on_needs_review_click() resolve a click to the *specific*
+        # term at that click position (and its Japanese source sentence,
+        # for explain_term() context) to pre-fill in the Add-to-Glossary
+        # dialog, rather than always the line's first flagged term.
+        # Deliberately kept separate from _rendered_spans (a purpose-built
+        # dict for its own narrower case, same as before) -- RETRANSLATION_
+        # DESIGN.md's _translated_span_after() depends on _rendered_spans'
+        # exact one-pair-per-line (original, translated) shape, which this
+        # must not disturb. Rebuilt on every render_text() call, same
+        # lifecycle as _rendered_spans.
         self._review_terms_by_span = {}
         # (word, context) -> (google_guess, llm_guess, explanation),
         # populated by open_word_glossary_popup()'s background lookup.
@@ -1606,9 +1628,11 @@ class ReaderApp:
         _render_translated_view(), so needs_review-aware rendering still
         applies there -- when build_interleaved_pairs() detects a length
         mismatch, rather than pairing lines that don't actually
-        correspond. Reuses the existing "original"/"translated" tags
-        (and, for the translated half, "needs_review" when that data is
-        available) -- no new rendering path, no new tag.
+        correspond. Reuses the existing "original"/"translated" tags; the
+        translated half of a needs_review=True pair gets "needs_review"
+        applied span-level (only the exact masked-term text, via
+        _apply_needs_review_spans()), not over the whole line -- no new
+        rendering path, no new tag.
 
         Args:
             ep: Episode dict.
@@ -1627,6 +1651,11 @@ class ReaderApp:
 
         needs_review_flags = ep.get("needs_review_flags")
         review_aware = bool(needs_review_flags) and len(needs_review_flags) == len(pairs)
+        novel_id = _extract_novel_id(self.current_url) if getattr(self, "current_url", None) else None
+        # Full glossary, not build_mask_targets()'s unconfirmed-only
+        # filter -- see find_glossary_term_spans()'s docstring for why
+        # status must not gate span lookup here.
+        glossary = load_glossary(novel_id) if (review_aware and novel_id) else {"terms": []}
 
         line_idx = 0
         for item in ep["content"]:
@@ -1644,10 +1673,11 @@ class ReaderApp:
             self.text.insert("end", source_line + "\n", original_tag)
             self._rendered_spans.append((start, self.text.index("end-1c"), original_tag, source_line))
 
-            line_tag = "needs_review" if review_aware and needs_review_flags[line_idx] else translated_tag
             start = self.text.index("end-1c")
-            self.text.insert("end", translated_line + "\n", line_tag)
-            self._rendered_spans.append((start, self.text.index("end-1c"), line_tag, source_line))
+            self.text.insert("end", translated_line + "\n", translated_tag)
+            self._rendered_spans.append((start, self.text.index("end-1c"), translated_tag, source_line))
+            if review_aware and needs_review_flags[line_idx]:
+                self._apply_needs_review_spans(start, translated_line, source_line, glossary)
 
             line_idx += 1
 
@@ -1672,8 +1702,14 @@ class ReaderApp:
         if needs_review_flags and len(needs_review_flags) == len(translated_strs):
             translated_lines = [TranslatedLine(text=t, needs_review=r) for t, r in zip(translated_strs, needs_review_flags)]
             novel_id = _extract_novel_id(self.current_url) if getattr(self, "current_url", None) else None
-            mask_targets = build_mask_targets(ep.get("lines", []), load_glossary(novel_id)) if novel_id else []
-            self._render_translated_content_from_translated_lines(ep, tag, translated_lines, mask_targets)
+            # The full glossary, not build_mask_targets()'s filtered
+            # unconfirmed-only list -- find_glossary_term_spans() (span-
+            # level highlighting/click resolution) deliberately searches
+            # every term regardless of current status, since needs_review
+            # is a historical fact about translation time, not current
+            # glossary state. See find_glossary_term_spans()'s docstring.
+            glossary = load_glossary(novel_id) if novel_id else {"terms": []}
+            self._render_translated_content_from_translated_lines(ep, tag, translated_lines, glossary)
         else:
             self._render_translated_content(ep, tag)
 
@@ -1714,17 +1750,22 @@ class ReaderApp:
                 self._rendered_spans.append((start, self.text.index("end-1c"), tag, item["text"]))
                 line_idx += 1
 
-    def _render_translated_content_from_translated_lines(self, ep, tag, translated_lines, mask_targets):
-        """Render content using TranslatedLine output (needs_review-aware) instead of plain strings.
+    def _render_translated_content_from_translated_lines(self, ep, tag, translated_lines, glossary):
+        """Render content using TranslatedLine output, span-level needs_review-aware.
 
         Sibling to _render_translated_content(), which reads
         ep["translated_lines"] (plain List[str]) -- this instead takes the
         List[TranslatedLine] that translate_chunk_with_masking() produces
-        directly, so a needs_review=True line gets a distinct "needs_review"
-        tag (see apply_appearance()) instead of the plain "translated" tag,
-        reusing the same Tk tag-over-character-range mechanism as every
-        other span (DESIGN.md Section 7) rather than a separate rendering
-        path.
+        directly.
+
+        Span-level highlighting (not line-level): a needs_review=True
+        line's base text is inserted with the ordinary `tag` (normally
+        "translated"), then find_glossary_term_spans() locates the exact
+        masked-term substring(s) actually present in that line, and only
+        those spans get the "needs_review" tag added on top via
+        tag_add() -- the rest of the line keeps its normal styling. See
+        _apply_needs_review_spans() for the shared per-line span-tagging
+        logic (also used by _render_interleaved_content()).
 
         Not currently called from render_text() -- there is no production
         code path that produces List[TranslatedLine] yet
@@ -1740,11 +1781,11 @@ class ReaderApp:
             tag: Base tag for non-flagged lines (normally "translated").
             translated_lines: List[TranslatedLine], same length/order as
                 the text items in ep["content"].
-            mask_targets: The (line_idx, word) list that produced
-                translated_lines, for needs-review click pre-fill lookup
-                (see build_review_term_map()).
+            glossary: Glossary dict as returned by load_glossary() --
+                the full glossary, not filtered by status. See
+                find_glossary_term_spans()'s docstring for why status
+                must not gate this search.
         """
-        review_terms = build_review_term_map(translated_lines, mask_targets)
         line_idx = 0
         for item in ep["content"]:
             if item["type"] == "image":
@@ -1757,49 +1798,79 @@ class ReaderApp:
                 if line_idx < len(translated_lines):
                     translated = translated_lines[line_idx]
                     line_text = translated.text
-                    line_tag = "needs_review" if translated.needs_review else tag
+                    needs_review = translated.needs_review
                 else:
                     line_text = item["text"]
-                    line_tag = tag
+                    needs_review = False
                 # "end-1c", not "end" -- see _render_content()'s comment on
                 # the same pattern for why.
                 start = self.text.index("end-1c")
-                self.text.insert("end", line_text + "\n", line_tag)
+                self.text.insert("end", line_text + "\n", tag)
                 end = self.text.index("end-1c")
-                self._rendered_spans.append((start, end, line_tag, item["text"]))
-                if line_idx in review_terms:
-                    # item["text"] (the Japanese source), not line_text (the
-                    # rendered/translated line) -- open_word_glossary_popup()'s
-                    # context param needs the source sentence for
-                    # explain_term()'s disambiguation, same as the existing
-                    # right-click flow's source_line (see _span_at_index()).
-                    self._review_terms_by_span[(start, end)] = (review_terms[line_idx], item["text"])
+                self._rendered_spans.append((start, end, tag, item["text"]))
+                if needs_review:
+                    self._apply_needs_review_spans(start, line_text, item["text"], glossary)
                 line_idx += 1
 
+    def _apply_needs_review_spans(self, line_start, line_text, source_line, glossary):
+        """Tag the exact masked-term span(s) within an already-inserted needs_review line, and track them for click resolution.
+
+        Shared by _render_translated_content_from_translated_lines() and
+        _render_interleaved_content() -- both insert a needs_review=True
+        line's text with the ordinary translated tag first, then call this
+        to layer "needs_review" on top of only the term span(s)
+        find_glossary_term_spans() actually locates, via tag_add() rather
+        than re-inserting the text. Tk gives the later-added tag priority
+        for conflicting display attributes (confirmed directly: a tag
+        added via tag_add() after insert()'s tag wins), so "needs_review"'s
+        amber/underline styling correctly overrides "translated"'s blue
+        over just that span, leaving the rest of the line unaffected.
+
+        If find_glossary_term_spans() finds nothing (e.g. the exact raw
+        word isn't a literal substring of the rendered line for some
+        reason not yet seen in practice), nothing is tagged/tracked here --
+        needs_review=True still applies to _rendered_spans' base "tag" as
+        normal, so the line doesn't silently lose its needs_review fact,
+        it just has no clickable highlighted sub-span. Not expected to
+        happen in practice (splice_terms() always inserts the literal
+        source word), but not treated as an error if it does.
+
+        Args:
+            line_start: The Tk text index where line_text's insertion began.
+            line_text: The rendered (translated/spliced) line text.
+            source_line: The Japanese source text for this line, passed
+                through to open_word_glossary_popup() as explain_term()
+                context, same as every other span-click path.
+            glossary: Glossary dict as returned by load_glossary().
+        """
+        for span_start, span_end, word in find_glossary_term_spans(line_text, glossary):
+            tk_start = self.text.index(f"{line_start}+{span_start}c")
+            tk_end = self.text.index(f"{line_start}+{span_end}c")
+            self.text.tag_add("needs_review", tk_start, tk_end)
+            self._review_terms_by_span[(tk_start, tk_end)] = (word, source_line)
+
     def _on_needs_review_click(self, event):
-        """Click on a needs_review-tagged span: open Add-to-Glossary pre-filled with the flagged term.
+        """Click on a needs_review-tagged span: open Add-to-Glossary pre-filled with the specific term clicked.
 
         Reuses the existing open_word_glossary_popup() dialog (the same
         one used by the right-click flow) rather than a new one, per
-        DESIGN.md Section 6. Pre-fills Source with the masked term that
-        triggered needs_review on this line; Target is left blank -- the
-        raw source word was spliced back into the line as a fallback (see
+        DESIGN.md Section 6. Pre-fills Source with the masked term whose
+        exact span was clicked (span-level, not line-level -- a line with
+        more than one flagged term now resolves to whichever one was
+        actually clicked, via _review_terms_by_span's per-span entries;
+        see _apply_needs_review_spans()). Target is left blank -- the raw
+        source word was spliced back into the line as a fallback (see
         llm_translate.splice_terms()), not offered as a translation guess,
         so prefilling Target with it would misrepresent an untranslated
         placeholder as a proposed English target.
-
-        A needs-review line can have more than one flagged term (multiple
-        masked words on the same line); this opens the dialog for the
-        first one -- consistent with the existing right-click flow, which
-        also resolves to a single word per click, not a batch action.
 
         Args:
             event: The Tk button-press event.
         """
         idx = self.text.index(f"@{event.x},{event.y}")
-        for (start, end), (words, source_line) in self._review_terms_by_span.items():
+        for (start, end), (word, source_line) in self._review_terms_by_span.items():
             if self.text.compare(start, "<=", idx) and self.text.compare(idx, "<", end):
-                self.open_word_glossary_popup(words[0], "", context=source_line)
+                self.open_word_glossary_popup(word, "", context=source_line)
                 return
 
     def _on_view_mode_change(self):
@@ -2004,7 +2075,17 @@ class ReaderApp:
             messagebox.showinfo("Add to Glossary", "Could not determine the novel for this URL.")
             return
 
+        if self._glossary_popup is not None and self._glossary_popup.winfo_exists():
+            # Already open -- raise/focus it rather than stacking a second,
+            # independent popup (each with its own background lookup
+            # thread) on top.
+            self._glossary_popup.lift()
+            self._glossary_popup.focus_force()
+            return
+
         win = tk.Toplevel(self.root)
+        self._glossary_popup = win
+        win.bind("<Destroy>", lambda e: setattr(self, "_glossary_popup", None) if e.widget is win else None)
         win.title("Add to Glossary")
         win.transient(self.root)
         win.resizable(False, False)
@@ -2231,10 +2312,21 @@ class ReaderApp:
             hint_word: The word/phrase the user selected in the original
                 line, passed to the engine as the retranslation hint.
         """
+        if self._retranslate_popup is not None and self._retranslate_popup.winfo_exists():
+            # Already open -- raise/focus it rather than stacking a second,
+            # independent popup (each with its own background LLM call) on
+            # top. Same guard as open_word_glossary_popup(), tracked
+            # separately since the two are different dialog kinds.
+            self._retranslate_popup.lift()
+            self._retranslate_popup.focus_force()
+            return
+
         _, _, translated_tag, _ = translated_span
         current_translation = self.text.get(translated_span[0], translated_span[1]).rstrip("\n")
 
         win = tk.Toplevel(self.root)
+        self._retranslate_popup = win
+        win.bind("<Destroy>", lambda e: setattr(self, "_retranslate_popup", None) if e.widget is win else None)
         win.title("Retranslate Line")
         win.transient(self.root)
         win.resizable(False, False)

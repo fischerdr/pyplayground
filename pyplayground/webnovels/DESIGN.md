@@ -1984,3 +1984,154 @@ work, not this task). No changes to masking, splicing, or the reading
 pane -- confirmed via `git diff` scope check that only
 `alphapolis_reader.py` (new dialog, toolbar button, window width) and
 the new test file changed; `glossary.py`/`llm_translate.py` untouched.
+
+### 2026-07-27: `translate_chunk()` error-recovery test-coverage gap closed; `n_predict` root-cause theory investigated and inconclusive
+
+A user-submitted live-test review of a real log
+(`app_log_20260727_085853.log`, novel 375266002 episode `7800123`, chunk
+3/10) correctly identified, verified line-by-line against the actual
+current code, three genuinely untested defensive-recovery paths in
+`_translate_chunk_once()`/`translate_chunk()`:
+
+1. `json.JSONDecodeError` on a truncated/malformed response ->
+   `_translate_chunk_once()` returns `None` (llm_translate.py's parse-
+   failure handling).
+2. `translate_chunk()`'s length-mismatch-triggered per-line retry.
+3. The per-line retry itself returning a non-identical, wrong-length
+   array (the live log's exact `expected a JSON array of 1 string(s),
+   got list of length 2`) -- correctly *not* collapsed by the single-line
+   dedup guard (which only collapses identical duplicates, per its own
+   docstring), correctly falling through to a `None` return and then to
+   `translate_chunk()`'s `"[translation failed: ...]"` placeholder.
+
+Every existing test in `test_llm_translate.py`/`test_llm_translate_core.py`
+at the time mocked `requests.post` to return clean, correctly-shaped JSON
+only -- confirmed by reading the mock helpers, not assumed. All three of
+the review's specific claims (function names, line numbers, the exact
+behavior of the dedup guard and the retry path) checked out exactly
+against the real code.
+
+**The review's proposed root cause (`n_predict` too small once prompt
+overhead -- context prefix + glossary prefix -- is accounted for) was
+investigated live rather than acted on directly, and turned out not to
+hold up.** Mechanically, `n_predict` in llama.cpp's `/completion` API
+caps only the *generated response* length; it doesn't share a budget
+with the prompt, so "prompt overhead eats into the response budget" isn't
+how the parameter actually works. More directly: computed the exact
+`n_predict` value used for the real failing chunk (chunk 3 of episode
+`7800123`) by reproducing the actual chunk-packing logic against the
+cached episode -- `1252` tokens -- and compared it against the observed
+failure (truncation at 928 *characters*, far fewer than 1252 tokens'
+worth of English text). This alone made the budget-too-small theory look
+unlikely. Confirmed further by re-running the exact same chunk live
+against the real server, 3 times total across two episodes (`7800123`'s
+chunk 3 specifically, and all 11 chunks of `7800232`, per direction to
+investigate before deciding): every single chunk came back
+`stop_type="eos"` (the model's own natural end-of-sequence token, not
+`"limit"` which would mean `n_predict` was hit, not `"word"` which would
+mean the `stop: ["\n\n\n"]` sequence fired) with `tokens_predicted` far
+under the cap every time (e.g. `214` of `1252` on the exact chunk that
+failed live). **The original failure did not reproduce even once.**
+
+**Conclusion, stated at the confidence level the evidence actually
+supports**: `n_predict` does not appear to have been the actual
+constraint in the original failure (the model finished generating on its
+own, well under the cap, every time this was re-run) -- but a
+non-reproducing failure can't be conclusively ruled out either. Most
+likely explanation: a genuinely rare, non-deterministic model hiccup,
+even under `temperature=0.1` (near-greedy but not perfectly deterministic
+sampling, consistent with this doc's own §4 finding that fixed-seed
+near-greedy decoding still shows occasional non-reproducible variance on
+this stack). **`n_predict`'s formula is deliberately left unchanged by
+this task** -- changing a budget calculation to "fix" a failure mode that
+live re-runs suggest it didn't actually cause would be exactly the kind
+of unverified fix this project's discipline has repeatedly avoided
+elsewhere (§4/§5's careful root-cause corrections). If this recurs with
+better evidence (e.g. a captured raw response showing `stop_type:
+"limit"`), that would be the trigger to revisit the budget formula with
+an actual confirmed cause in hand, not this investigation's absence of
+one.
+
+**Test coverage**: the three gaps closed with 2 new tests added directly
+to the user's own broader, pre-existing `test_llm_translate_core.py`
+(84 tests total, up from 82) rather than a separate new file -- an
+initial standalone file covering the same three gaps was written first,
+then found to duplicate `test_llm_translate_core.py`'s already-more-
+thorough coverage of the same paths (that file already had
+`test_json_parse_failure_returns_none`, `test_length_mismatch_returns_none`,
+`test_single_line_dedup_does_not_collapse_different_entries`,
+`test_multi_line_failure_retries_per_line`, and
+`test_per_line_partial_failure`); the two genuinely new additions were
+merged in instead of keeping duplicate files:
+`test_truncated_json_array_from_live_log_returns_none` (the literal
+truncated string from the real log, not just a synthetic "not json"
+string) and `test_per_line_retry_returning_non_identical_array_falls_back_to_placeholder`
+(the live log's specific non-identical-2-element nested-retry-failure
+shape, distinct from the existing partial-failure test's plain-non-JSON
+failure). `black`/`isort`/`flake8` clean on the added tests (one
+pre-existing line-length issue and a few pre-existing docstring-style
+flake8 findings elsewhere in that file predate this task and were left
+untouched, not in scope for this pass). Full project test suite
+re-run: no regressions.
+
+**Not done in this pass**: no change to `n_predict`'s formula or any
+other production code in `llm_translate.py`'s translation logic itself --
+investigated and deliberately left alone per the reasoning above (see
+"log_context" below for the one production change actually made). No fix
+attempted for the unrelated duplicate-`fetch_and_translate()`-call
+pattern also visible in the same live log (the same episode URL fetched
+twice within ~1 second, several times across the log) -- noticed during
+this investigation but out of scope for what was asked; likely
+`prefetch()` racing with a navigation-triggered fetch for the same URL,
+not investigated further here.
+
+**`log_context`: episode/URL now included in every warning/error this
+code logs, per explicit user request during this same investigation.**
+Diagnosing the original failure required manually cross-referencing a
+bare `Chunk 3/10: ...` log line's timestamp against a separate, earlier
+`Fetching and translating episode: <url>` line elsewhere in the file to
+figure out which episode it even belonged to -- real friction hit
+directly during this task, not a hypothetical. Added an optional
+`log_context: str = ""` parameter, threaded through the full call chain
+(`translate_lines()` / `translate_lines_with_masking()` ->
+`translate_chunk()` / `translate_chunk_with_masking()` ->
+`_translate_chunk_once()`), prefixing every warning/error/info log line
+in that chain with `[<log_context>]` when non-empty. Empty string by
+default -- every existing call site and test that doesn't pass it is
+unaffected (confirmed: full suite passes unchanged before any test
+updates were needed for this specific change). `alphapolis_reader.py`'s
+own `translate_lines()` wrapper and all three of its call sites in
+`fetch_and_translate()` (the masked-translation path, the plain-
+translation path, and the title/episode-title call) now pass
+`log_context=url` -- the real episode URL is now on every relevant log
+line going forward.
+
+**A second real live failure, surfaced by the user mid-task
+(`app_log_20260727_121419.log`, episode `7800089`, chunk 9/9,
+`Invalid \escape: line 6 column 4`), checked against the fix above and
+the existing recovery logic rather than assumed to need new handling.**
+This is a different, already-documented failure class from the original
+truncation case -- an unescaped backslash inside a JSON string value,
+the same corruption class `DESIGN.md` Sections 4/9 document extensively
+for this model (`「」` dialogue markers translating into literal
+unescaped quote/backslash characters). Confirmed directly: this string
+shape reproducibly raises `json.JSONDecodeError` when parsed, meaning it
+hits the exact same `except json.JSONDecodeError` branch in
+`_translate_chunk_once()` already covered by this task's own tests (the
+specific escape character involved doesn't change which code path
+fires, only what `json.loads` raises on). The log's own next line
+confirms the existing recovery worked correctly here too:
+`Chunk 9/9: retrying as 5 individual line(s) after length mismatch`,
+followed by `Translation complete: 63 lines` -- no placeholder text, full
+recovery. No new test needed for this specific case beyond what already
+exists; recorded here as a second, independent real-world confirmation
+that the already-existing (and now better-logged) recovery path handles
+more than one distinct malformed-JSON failure shape correctly.
+
+**Test coverage (log_context specifically)**: 2 new tests in
+`test_llm_translate.py`'s new `TestLogContext` class -- a logged failure
+includes the `[<log_context>]` prefix when provided, and omitting
+`log_context` entirely produces no prefix (preserving every existing log
+message's exact prior format). `black`/`isort`/`flake8` clean. Full
+project test suite re-run: no regressions (224 tests total in
+`tests/webnovels/`, up from 222 before this addition).

@@ -525,7 +525,7 @@ def translate_chunk(text: str, target_lang="en", source_lang="ja") -> str:
     return "".join(seg[0] for seg in data[0])
 
 
-def translate_lines(lines, target_lang="en", backend=BACKEND_GOOGLE, glossary_text=None, progress_cb=None) -> list:
+def translate_lines(lines, target_lang="en", backend=BACKEND_GOOGLE, glossary_text=None, progress_cb=None, log_context="") -> list:
     """Translate a list of text lines, chunking to respect API limits.
 
     Args:
@@ -535,12 +535,18 @@ def translate_lines(lines, target_lang="en", backend=BACKEND_GOOGLE, glossary_te
         glossary_text: Optional pre-formatted glossary text (LLM backend only;
             ignored for Google, which has no mechanism to honor it).
         progress_cb: Optional callback(done, total) for progress updates.
+        log_context: Optional label (e.g. the episode URL) prefixed to
+            every warning/error llm_translate.py logs for this call --
+            LLM backend only, ignored for Google (which doesn't log
+            chunk-level failures the same way). Found necessary via a
+            real live-test log where a chunk failure couldn't be traced
+            back to which episode produced it.
 
     Returns:
         List of translated text lines.
     """
     if backend == BACKEND_LLM:
-        return llm_translate_lines(lines, target_lang=target_lang, glossary_text=glossary_text, progress_cb=progress_cb)
+        return llm_translate_lines(lines, target_lang=target_lang, glossary_text=glossary_text, progress_cb=progress_cb, log_context=log_context)
 
     chunks = pack_into_chunks(lines, MAX_CHUNK_CHARS)
     translated_lines = []
@@ -1124,11 +1130,13 @@ class ReaderApp:
             # so a word here can never belong to an already-confirmed term
             # (see build_splice_fallbacks()'s docstring).
             fallbacks = build_splice_fallbacks(mask_targets, glossary)
-            translated = translate_lines_with_masking(ep["lines"], mask_targets, self.target_lang, glossary_text=glossary_text, progress_cb=progress_cb, fallbacks=fallbacks)
+            translated = translate_lines_with_masking(
+                ep["lines"], mask_targets, self.target_lang, glossary_text=glossary_text, progress_cb=progress_cb, fallbacks=fallbacks, log_context=url
+            )
             ep["translated_lines"] = [t.text for t in translated]
             ep["needs_review_flags"] = [t.needs_review for t in translated]
         else:
-            ep["translated_lines"] = translate_lines(ep["lines"], self.target_lang, backend=self.backend, glossary_text=glossary_text, progress_cb=progress_cb)
+            ep["translated_lines"] = translate_lines(ep["lines"], self.target_lang, backend=self.backend, glossary_text=glossary_text, progress_cb=progress_cb, log_context=url)
             ep["needs_review_flags"] = [False] * len(ep["translated_lines"])
 
         # Count-building loop (DESIGN.md Section 12): same guard as masking
@@ -1140,7 +1148,7 @@ class ReaderApp:
             updated_glossary = update_candidate_counts(ep["lines"], ep["translated_lines"], glossary, needs_review_flags=ep["needs_review_flags"])
             save_glossary(novel_id, updated_glossary)
 
-        title_lines = translate_lines([ep["title"], ep["episode_title"]], self.target_lang, backend=self.backend, glossary_text=glossary_text)
+        title_lines = translate_lines([ep["title"], ep["episode_title"]], self.target_lang, backend=self.backend, glossary_text=glossary_text, log_context=url)
         ep["translated_title"], ep["translated_episode_title"] = title_lines
         for item in ep["content"]:
             if item["type"] == "image":

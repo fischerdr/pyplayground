@@ -353,6 +353,7 @@ def _translate_chunk_once(
     glossary_text: Optional[str],
     chunk_idx: int,
     total_chunks: int,
+    log_context: str = "",
 ) -> Optional[List[str]]:
     """Make a single /completion request for `lines`, no retry.
 
@@ -364,6 +365,12 @@ def _translate_chunk_once(
         glossary_text: Optional pre-formatted glossary text.
         chunk_idx: Current chunk index (0-based), for log messages only.
         total_chunks: Total number of chunks, for log messages only.
+        log_context: Optional label (e.g. the episode URL) prefixed to
+            every warning/error this call logs, so a failure in a shared
+            log file can be traced back to which episode/request produced
+            it without cross-referencing timestamps against a separate
+            "Fetching and translating episode: ..." line. Empty by
+            default (matches every existing call site/test unchanged).
 
     Returns:
         List of translated strings, same length and order as `lines`, or
@@ -373,6 +380,7 @@ def _translate_chunk_once(
         requests.exceptions.ConnectionError: If llama-server is not reachable.
         requests.exceptions.Timeout: If the request times out.
     """
+    log_prefix = f"[{log_context}] " if log_context else ""
     source_name = _language_name(source_lang)
     target_name = _language_name(target_lang)
     lines_json = json.dumps(lines, ensure_ascii=False)
@@ -395,7 +403,7 @@ def _translate_chunk_once(
     }
 
     url = f"{LLM_ENDPOINT}/completion"
-    logger.debug(f"Translating chunk {chunk_idx + 1}/{total_chunks} ({len(lines)} lines) with {LLM_MODEL}")
+    logger.debug(f"{log_prefix}Translating chunk {chunk_idx + 1}/{total_chunks} ({len(lines)} lines) with {LLM_MODEL}")
 
     resp = requests.post(url, json=payload, timeout=LLM_TIMEOUT)
     resp.raise_for_status()
@@ -407,7 +415,7 @@ def _translate_chunk_once(
     try:
         parsed = parse_json_response(raw_output)
     except json.JSONDecodeError as e:
-        logger.error(f"Chunk {chunk_idx + 1}/{total_chunks}: failed to parse JSON response ({e}): {raw_output[:200]!r}")
+        logger.error(f"{log_prefix}Chunk {chunk_idx + 1}/{total_chunks}: failed to parse JSON response ({e}): {raw_output[:200]!r}")
         return None
 
     if isinstance(parsed, list) and len(lines) == 1 and len(parsed) > 1:
@@ -420,12 +428,14 @@ def _translate_chunk_once(
         # legitimately different pair of entries.
         deduped = [_clean_output(str(item)) for item in parsed]
         if len(set(deduped)) == 1:
-            logger.warning(f"Chunk {chunk_idx + 1}/{total_chunks}: model duplicated its answer into {len(parsed)} identical entries for a single-line request; collapsing to one")
+            logger.warning(
+                f"{log_prefix}Chunk {chunk_idx + 1}/{total_chunks}: model duplicated its answer into {len(parsed)} identical entries for a single-line request; collapsing to one"
+            )
             return [deduped[0]]
 
     if not isinstance(parsed, list) or len(parsed) != len(lines):
         got = f"{type(parsed).__name__} of length {len(parsed)}" if isinstance(parsed, list) else type(parsed).__name__
-        logger.warning(f"Chunk {chunk_idx + 1}/{total_chunks}: expected a JSON array of {len(lines)} string(s), got {got}")
+        logger.warning(f"{log_prefix}Chunk {chunk_idx + 1}/{total_chunks}: expected a JSON array of {len(lines)} string(s), got {got}")
         return None
 
     return [_clean_output(str(item)) for item in parsed]
@@ -440,6 +450,7 @@ def translate_chunk(
     progress_cb: Optional[Callable[[int, int], None]] = None,
     chunk_idx: int = 0,
     total_chunks: int = 1,
+    log_context: str = "",
 ) -> List[str]:
     """Translate a chunk of source lines as a JSON array using llama-server.
 
@@ -461,6 +472,9 @@ def translate_chunk(
         progress_cb: Optional callback(done, total) for progress updates.
         chunk_idx: Current chunk index (0-based).
         total_chunks: Total number of chunks being translated.
+        log_context: Optional label (e.g. the episode URL) prefixed to
+            every warning/error this call (and its retries) logs -- see
+            _translate_chunk_once()'s docstring for why.
 
     Returns:
         List of translated strings, same length and order as `lines`. Any
@@ -472,13 +486,14 @@ def translate_chunk(
         requests.exceptions.ConnectionError: If llama-server is not reachable.
         requests.exceptions.Timeout: If the request times out.
     """
-    translated = _translate_chunk_once(lines, target_lang, source_lang, context, glossary_text, chunk_idx, total_chunks)
+    log_prefix = f"[{log_context}] " if log_context else ""
+    translated = _translate_chunk_once(lines, target_lang, source_lang, context, glossary_text, chunk_idx, total_chunks, log_context)
 
     if translated is None and len(lines) > 1:
-        logger.info(f"Chunk {chunk_idx + 1}/{total_chunks}: retrying as {len(lines)} individual line(s) after length mismatch")
+        logger.info(f"{log_prefix}Chunk {chunk_idx + 1}/{total_chunks}: retrying as {len(lines)} individual line(s) after length mismatch")
         translated = []
         for line in lines:
-            single = _translate_chunk_once([line], target_lang, source_lang, context, glossary_text, chunk_idx, total_chunks)
+            single = _translate_chunk_once([line], target_lang, source_lang, context, glossary_text, chunk_idx, total_chunks, log_context)
             translated.append(single[0] if single else "[translation failed: unparseable response]")
 
     if translated is None:
@@ -500,6 +515,7 @@ def translate_chunk_with_masking(
     chunk_idx: int = 0,
     total_chunks: int = 1,
     fallbacks: Optional[Dict[str, str]] = None,
+    log_context: str = "",
 ) -> List[TranslatedLine]:
     """Translate a chunk while masking specific terms with opaque sentinels.
 
@@ -542,10 +558,14 @@ def translate_chunk_with_masking(
             fallback than the bare word (normally its best-ranked
             suggested candidate -- see glossary.build_splice_fallbacks()).
             Passed straight through to splice_terms(); see its docstring.
+        log_context: Optional label (e.g. the episode URL) prefixed to
+            every warning/error this call logs -- see
+            _translate_chunk_once()'s docstring for why.
 
     Returns:
         List of TranslatedLine, same length and order as `lines`.
     """
+    log_prefix = f"[{log_context}] " if log_context else ""
     targets_by_line: Dict[int, List[Tuple[str, int]]] = {}
     for term_id, (line_idx, word) in enumerate(mask_targets, start=1):
         targets_by_line.setdefault(line_idx, []).append((word, term_id))
@@ -554,7 +574,7 @@ def translate_chunk_with_masking(
     for line_idx, targets in targets_by_line.items():
         masked_lines[line_idx] = mask_terms(masked_lines[line_idx], targets)
 
-    raw_translated = translate_chunk(masked_lines, target_lang, source_lang, context, glossary_text, chunk_idx=chunk_idx, total_chunks=total_chunks)
+    raw_translated = translate_chunk(masked_lines, target_lang, source_lang, context, glossary_text, chunk_idx=chunk_idx, total_chunks=total_chunks, log_context=log_context)
 
     result: List[TranslatedLine] = []
     for line_idx, raw_line in enumerate(raw_translated):
@@ -564,12 +584,14 @@ def translate_chunk_with_masking(
             continue
 
         if not raw_line.strip():
-            logger.warning(f"Chunk {chunk_idx + 1}/{total_chunks}: masked line {line_idx} came back empty; retrying once")
-            retry = translate_chunk([masked_lines[line_idx]], target_lang, source_lang, context, glossary_text, chunk_idx=chunk_idx, total_chunks=total_chunks)
+            logger.warning(f"{log_prefix}Chunk {chunk_idx + 1}/{total_chunks}: masked line {line_idx} came back empty; retrying once")
+            retry = translate_chunk(
+                [masked_lines[line_idx]], target_lang, source_lang, context, glossary_text, chunk_idx=chunk_idx, total_chunks=total_chunks, log_context=log_context
+            )
             raw_line = retry[0] if retry else ""
 
         if not raw_line.strip():
-            logger.warning(f"Chunk {chunk_idx + 1}/{total_chunks}: masked line {line_idx} still empty after retry; falling back to raw source line")
+            logger.warning(f"{log_prefix}Chunk {chunk_idx + 1}/{total_chunks}: masked line {line_idx} still empty after retry; falling back to raw source line")
             result.append(TranslatedLine(text=lines[line_idx], needs_review=True))
             continue
 
@@ -807,6 +829,7 @@ def translate_lines(
     context_window: int = 3,
     glossary_text: Optional[str] = None,
     progress_cb: Optional[Callable[[int, int], None]] = None,
+    log_context: str = "",
 ) -> List[str]:
     """Translate a list of text lines using LLM with sliding context.
 
@@ -826,10 +849,18 @@ def translate_lines(
             terms), prepended to every chunk's prompt for consistency. See
             pyplayground.webnovels.glossary.
         progress_cb: Optional callback(done, total) for progress updates.
+        log_context: Optional label (e.g. the episode URL) prefixed to
+            every warning/error logged for this call and its chunks --
+            found necessary via a real live-test log where a chunk-level
+            failure couldn't be traced back to which episode produced it
+            without cross-referencing timestamps against a separate log
+            line. Empty by default (matches every existing call site
+            unchanged).
 
     Returns:
         List of translated text lines, same length as `lines`.
     """
+    log_prefix = f"[{log_context}] " if log_context else ""
     # Pack lines into chunks respecting size limit
     chunks: List[List[str]] = []
     current_chunk: List[str] = []
@@ -845,7 +876,7 @@ def translate_lines(
     if current_chunk:
         chunks.append(current_chunk)
 
-    logger.info(f"Translating {len(lines)} lines in {len(chunks)} chunks using {LLM_MODEL}")
+    logger.info(f"{log_prefix}Translating {len(lines)} lines in {len(chunks)} chunks using {LLM_MODEL}")
 
     translated_lines: List[str] = []
     # Keep last N translated paragraphs as context
@@ -867,9 +898,10 @@ def translate_lines(
                 progress_cb=progress_cb,
                 chunk_idx=i,
                 total_chunks=len(chunks),
+                log_context=log_context,
             )
         except Exception as e:
-            logger.error(f"Chunk {i + 1}/{len(chunks)} failed: {e}")
+            logger.error(f"{log_prefix}Chunk {i + 1}/{len(chunks)} failed: {e}")
             parts = [f"[translation failed: {e}]" for _ in chunk]
 
         translated_lines.extend(parts)
@@ -884,7 +916,7 @@ def translate_lines(
         # Small delay between chunks to avoid overwhelming the model
         time.sleep(0.1)
 
-    logger.info(f"Translation complete: {len(translated_lines)} lines")
+    logger.info(f"{log_prefix}Translation complete: {len(translated_lines)} lines")
     return translated_lines
 
 
@@ -898,6 +930,7 @@ def translate_lines_with_masking(
     glossary_text: Optional[str] = None,
     progress_cb: Optional[Callable[[int, int], None]] = None,
     fallbacks: Optional[Dict[str, str]] = None,
+    log_context: str = "",
 ) -> List[TranslatedLine]:
     """Translate a list of text lines with sliding context, masking unconfirmed glossary terms.
 
@@ -929,10 +962,14 @@ def translate_lines_with_masking(
             Passed straight through to every chunk's
             translate_chunk_with_masking() call; not re-indexed per chunk
             since it's keyed by word, not line index.
+        log_context: Optional label (e.g. the episode URL) prefixed to
+            every warning/error logged for this call and its chunks -- see
+            translate_lines()'s docstring for why.
 
     Returns:
         List of TranslatedLine, same length as `lines`.
     """
+    log_prefix = f"[{log_context}] " if log_context else ""
     # Pack lines into chunks respecting size limit -- identical logic to
     # translate_lines(), but also tracking each chunk's starting offset
     # into `lines` so mask_targets (expressed against the full input) can
@@ -956,7 +993,7 @@ def translate_lines_with_masking(
         chunks.append(current_chunk)
         chunk_offsets.append(offset)
 
-    logger.info(f"Translating {len(lines)} lines in {len(chunks)} chunks (masking {len(mask_targets)} term occurrence(s)) using {LLM_MODEL}")
+    logger.info(f"{log_prefix}Translating {len(lines)} lines in {len(chunks)} chunks (masking {len(mask_targets)} term occurrence(s)) using {LLM_MODEL}")
 
     translated_lines: List[TranslatedLine] = []
     context_buffer: List[str] = []
@@ -980,9 +1017,10 @@ def translate_lines_with_masking(
                 chunk_idx=i,
                 total_chunks=len(chunks),
                 fallbacks=fallbacks,
+                log_context=log_context,
             )
         except Exception as e:
-            logger.error(f"Chunk {i + 1}/{len(chunks)} failed: {e}")
+            logger.error(f"{log_prefix}Chunk {i + 1}/{len(chunks)} failed: {e}")
             parts = [TranslatedLine(text=f"[translation failed: {e}]") for _ in chunk]
 
         translated_lines.extend(parts)
@@ -997,7 +1035,7 @@ def translate_lines_with_masking(
 
         time.sleep(0.1)
 
-    logger.info(f"Translation complete: {len(translated_lines)} lines")
+    logger.info(f"{log_prefix}Translation complete: {len(translated_lines)} lines")
     return translated_lines
 
 

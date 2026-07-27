@@ -129,6 +129,43 @@ class TestTranslateLinesWithMasking:
         assert "translation failed" in result[0].text
 
 
+class TestLogContext:
+    """Tests for log_context -- prefixes every warning/error a translation call logs with a caller-supplied label (e.g. the episode URL).
+
+    Found necessary via a real live-test log: a chunk-level failure logged
+    only "Chunk 3/10: ..." with no way to tell which episode it belonged
+    to short of cross-referencing timestamps against a separate
+    "Fetching and translating episode: ..." line elsewhere in the file.
+    """
+
+    def test_failure_log_includes_log_context_prefix(self, mocker, caplog):
+        import logging
+
+        def raise_error(url, json=None, timeout=None):
+            raise ConnectionError("simulated failure")
+
+        mocker.patch("pyplayground.webnovels.llm_translate.requests.post", side_effect=raise_error)
+
+        with caplog.at_level(logging.ERROR):
+            translate_lines_with_masking(["こんにちは。"], [], max_chunk_chars=400, log_context="https://example.com/novel/1/episode/2")
+
+        assert any("https://example.com/novel/1/episode/2" in record.message for record in caplog.records)
+
+    def test_omitted_log_context_produces_no_prefix(self, mocker, caplog):
+        import logging
+
+        def raise_error(url, json=None, timeout=None):
+            raise ConnectionError("simulated failure")
+
+        mocker.patch("pyplayground.webnovels.llm_translate.requests.post", side_effect=raise_error)
+
+        with caplog.at_level(logging.ERROR):
+            translate_lines_with_masking(["こんにちは。"], [], max_chunk_chars=400)
+
+        assert any(record.message.startswith("Chunk") for record in caplog.records)
+        assert not any(record.message.startswith("[") for record in caplog.records)
+
+
 class TestSpliceTerms:
     """Direct tests for splice_terms(), the function actually responsible for setting needs_review.
 

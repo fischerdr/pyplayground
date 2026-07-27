@@ -195,29 +195,34 @@ def mask_terms(line: str, targets: List[Tuple[str, int]]) -> str:
     return line
 
 
-def splice_terms(translated_line: str, targets: List[Tuple[str, int]]) -> TranslatedLine:
-    """Replace each sentinel in a translated line with its original source word.
+def splice_terms(translated_line: str, targets: List[Tuple[str, int]], fallbacks: Optional[Dict[str, str]] = None) -> TranslatedLine:
+    """Replace each sentinel in a translated line with its original source word (or a better fallback, if one's available).
 
     Two distinct recovery paths, matched to what testing showed are two
     distinct failure classes (see test_sentinel_survival.py results):
       - Sentinel present (possibly with normalized brackets/digits): spliced
         back cleanly.
-      - Sentinel missing from an otherwise-populated line: the raw source
-        word is substituted at the position where the sentinel should have
+      - Sentinel missing from an otherwise-populated line: the substituted
+        text is spliced in at the position where the sentinel should have
         been -- degrade gracefully rather than silently drop the term.
 
     needs_review=True whenever `targets` is non-empty, regardless of which
-    path handled each individual term. Originally this only covered the
-    missing-sentinel path (the mechanism-survival failure); the clean-splice
-    path was treated as a non-issue since the sentinel round-tripped
-    correctly. But splicing never translates a masked term either way --
-    both paths substitute the same raw, untranslated source word into the
-    output, so both produce identical raw-Japanese-in-English-text results
-    for the reader. Confirmed via a real production run (DESIGN.md's dated
-    entry): the large majority of masked terms in one real episode hit the
-    clean-splice path and were, before this fix, invisible to needs_review
-    entirely -- rendered as plain "translated" text despite containing raw
-    source-language fragments.
+    path handled each individual term, and regardless of what gets
+    substituted (raw source word or a fallbacks[] candidate) -- neither
+    path translates the masked term, so the line is always genuinely
+    review-worthy either way. See fallbacks' docstring note below; this is
+    a display-quality change, not a trust change.
+
+    `fallbacks`, if given, maps a masked word to a better display string
+    than the bare raw word -- normally the term's best-ranked `suggested`
+    candidate (see glossary.build_splice_fallbacks()), built by the caller
+    since this module has no glossary.py import (a deliberate boundary --
+    callers resolve/format glossary data themselves before calling in,
+    same as glossary_text elsewhere in this module). A word with no entry
+    in `fallbacks` (or when `fallbacks` is omitted entirely) falls back to
+    the word itself, preserving the original behavior -- this is purely
+    additive, not a required parameter, so every existing caller/test that
+    doesn't pass it keeps working unchanged.
 
     Whole-line-empty (the other confirmed failure class, seen on dense
     multi-sentinel Qwen3 chunks) is NOT handled here -- callers should retry
@@ -228,18 +233,23 @@ def splice_terms(translated_line: str, targets: List[Tuple[str, int]]) -> Transl
         translated_line: One line of model output, potentially containing
             ⟦TERM_n⟧ sentinels (or a normalized variant).
         targets: (word, id) pairs in the same numbering used for mask_terms().
+        fallbacks: Optional dict mapping a masked word to the display text
+            to substitute for it, in place of the bare word. See above.
 
     Returns:
-        TranslatedLine with sentinels replaced by their source words.
+        TranslatedLine with sentinels replaced by their source words (or
+        fallbacks[] substitutes).
     """
+    fallbacks = fallbacks or {}
     for word, term_id in targets:
+        display_text = fallbacks.get(word, word)
         normalized = translated_line.translate(_SENTINEL_DIGIT_NORMALIZE)
         match = _sentinel_pattern(term_id).search(normalized)
         if not match:
-            logger.warning(f"Sentinel TERM_{term_id} ({word!r}) missing from translated output; substituting raw source word and flagging for review")
-            translated_line = f"{translated_line} {word}".strip() if translated_line else word
+            logger.warning(f"Sentinel TERM_{term_id} ({word!r}) missing from translated output; substituting {display_text!r} and flagging for review")
+            translated_line = f"{translated_line} {display_text}".strip() if translated_line else display_text
             continue
-        translated_line = translated_line[: match.start()] + word + translated_line[match.end() :]
+        translated_line = translated_line[: match.start()] + display_text + translated_line[match.end() :]
     return TranslatedLine(text=translated_line, needs_review=bool(targets))
 
 
@@ -489,26 +499,32 @@ def translate_chunk_with_masking(
     glossary_text: Optional[str] = None,
     chunk_idx: int = 0,
     total_chunks: int = 1,
+    fallbacks: Optional[Dict[str, str]] = None,
 ) -> List[TranslatedLine]:
     """Translate a chunk while masking specific terms with opaque sentinels.
 
     For the glossary review-queue feature: masks each target word so the
-    model translates around it rather than through it, then splices the
-    original word back into the model's output untranslated. Validated
-    against translategemma via test_sentinel_survival.py (15/15 survival
-    across single/multi-line and 5-sentinel-dense chunks) before being wired
-    in here -- see that script and the comment above _SENTINEL_OPEN for why
-    this is an opaque placeholder rather than an inline-wrapped format.
+    model translates around it rather than through it, then splices a
+    fallback (see `fallbacks`) back into the model's output untranslated.
+    Validated against translategemma via test_sentinel_survival.py (15/15
+    survival across single/multi-line and 5-sentinel-dense chunks) before
+    being wired in here -- see that script and the comment above
+    _SENTINEL_OPEN for why this is an opaque placeholder rather than an
+    inline-wrapped format.
 
     Two distinct failure classes, two distinct recoveries:
       - A sentinel goes missing from an otherwise-populated line (e.g. the
-        model dropped it): the raw source word is spliced in at that
-        position and the line is flagged needs_review.
+        model dropped it): a fallback is spliced in at that position and
+        the line is flagged needs_review.
       - A whole line comes back empty (confirmed failure mode on dense
         multi-sentinel chunks against a model without a chat template):
         retried once as its own single-line request. If the retry is also
         empty, falls back to the unmasked raw source line rather than
-        retrying indefinitely or leaving it blank.
+        retrying indefinitely or leaving it blank. Distinct from
+        `fallbacks` below -- this is a whole-line recovery (the entire
+        line's translation is gone, not just one masked term's marker), so
+        it always uses the original source line verbatim, never a
+        per-term candidate substitution.
 
     Args:
         lines: The source lines/paragraphs to translate, in order.
@@ -522,6 +538,10 @@ def translate_chunk_with_masking(
             the prompt.
         chunk_idx: Current chunk index (0-based).
         total_chunks: Total number of chunks being translated.
+        fallbacks: Optional dict mapping a masked word to a better display
+            fallback than the bare word (normally its best-ranked
+            suggested candidate -- see glossary.build_splice_fallbacks()).
+            Passed straight through to splice_terms(); see its docstring.
 
     Returns:
         List of TranslatedLine, same length and order as `lines`.
@@ -553,7 +573,7 @@ def translate_chunk_with_masking(
             result.append(TranslatedLine(text=lines[line_idx], needs_review=True))
             continue
 
-        result.append(splice_terms(raw_line, line_targets))
+        result.append(splice_terms(raw_line, line_targets, fallbacks))
 
     return result
 
@@ -877,6 +897,7 @@ def translate_lines_with_masking(
     context_window: int = 3,
     glossary_text: Optional[str] = None,
     progress_cb: Optional[Callable[[int, int], None]] = None,
+    fallbacks: Optional[Dict[str, str]] = None,
 ) -> List[TranslatedLine]:
     """Translate a list of text lines with sliding context, masking unconfirmed glossary terms.
 
@@ -903,6 +924,11 @@ def translate_lines_with_masking(
         glossary_text: Optional pre-formatted glossary text, prepended to
             every chunk's prompt for consistency.
         progress_cb: Optional callback(done, total) for progress updates.
+        fallbacks: Optional dict mapping a masked word to a better display
+            fallback than the bare word (see glossary.build_splice_fallbacks()).
+            Passed straight through to every chunk's
+            translate_chunk_with_masking() call; not re-indexed per chunk
+            since it's keyed by word, not line index.
 
     Returns:
         List of TranslatedLine, same length as `lines`.
@@ -953,6 +979,7 @@ def translate_lines_with_masking(
                 glossary_text=glossary_text,
                 chunk_idx=i,
                 total_chunks=len(chunks),
+                fallbacks=fallbacks,
             )
         except Exception as e:
             logger.error(f"Chunk {i + 1}/{len(chunks)} failed: {e}")

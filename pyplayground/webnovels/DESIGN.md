@@ -1675,3 +1675,144 @@ instructed). `build_review_term_map()` was not deleted, only left unused
 by the renderer -- a possible future cleanup, not attempted here since it
 wasn't traced for other callers and deleting a tested public function is
 outside this task's scope.
+
+### 2026-07-27: `splice_terms()` falls back to a suggested candidate instead of raw source text — implemented
+
+When a masked term has no `confirmed_target`, `splice_terms()` previously
+always spliced the literal raw source word back in as the fallback
+(both on the sentinel-missing recovery path and, since the prior entry's
+fix, the clean-splice path too). Now it falls back to the term's
+best-ranked `suggested` candidate when one exists, only falling back to
+raw source text when the term genuinely has no candidate yet.
+
+**The boundary this does and doesn't cross, confirmed unchanged**:
+`format_glossary_for_prompt()` is untouched and still filters to
+`STATUS_CONFIRMED` only (§9's locked decision) -- a `suggested` term
+still contributes nothing to how the model actually translates. This is
+strictly a post-hoc display fallback for text that's already been masked
+and already went untranslated; it changes what a reader *sees* for an
+unresolved term, not what the model is told to do. `needs_review=True`
+still fires unconditionally whenever a line has any mask targets,
+unchanged from the prior entry's fix -- confirmed by test
+(`test_fallback_used_instead_of_raw_word_on_clean_splice`,
+`test_fallback_used_on_missing_sentinel_path_too`, both assert
+`needs_review is True` alongside the new fallback text) and by the live
+check below. The fallback quality changed; the trust/review gate did not.
+
+**Candidate-selection rule, stated precisely rather than left to
+iteration order**: `best_candidate_for_term()` (new, `glossary.py`) picks
+highest `count` first (per §3's own framing: "popularity is the
+disambiguation signal, not any single model's one-shot guess"). On a
+count tie, `origin` breaks it: `ORIGIN_USER` beats `ORIGIN_MT` beats
+`ORIGIN_LLM` -- a human-entered candidate is more trustworthy than a
+machine-translation reference, which is more trustworthy than a raw
+one-shot LLM guess, even at equal usage counts. If both count and origin
+tie, the first matching candidate in the term's own `candidates` list
+wins -- falls out of Python's stable sort on the `(-count, origin_rank)`
+key, not a separate rule. An origin not in the known three (future
+addition) sorts last rather than raising, for forward compatibility.
+
+**Where this lives, and why -- the architectural boundary confirmed, not
+assumed.** `llm_translate.py` has zero imports of `glossary.py`
+(re-confirmed directly, matching the same boundary
+`retranslate_line_with_hint()`'s docstring already documents from the
+retranslation-dialog work). `splice_terms()` therefore doesn't look up
+candidates itself -- it takes a new, purely additive `fallbacks:
+Optional[Dict[str, str]] = None` parameter, a plain word-to-display-text
+map built by the caller. `build_splice_fallbacks(mask_targets, glossary)`
+(new, `glossary.py`) builds that map, using `best_candidate_for_term()`
+per distinct masked word, falling back to the word itself when the
+glossary has no matching term or the term's `candidates` list is empty.
+Threaded through `translate_chunk_with_masking()` and
+`translate_lines_with_masking()` as an optional parameter each (default
+`None`, behaving identically to before when omitted -- every existing
+caller/test that doesn't pass it is unaffected, confirmed by the full
+suite passing unchanged before any test updates were needed).
+`fetch_and_translate()` (`alphapolis_reader.py`) builds `fallbacks` from
+the same `glossary` snapshot `mask_targets` was just computed against,
+right before calling `translate_lines_with_masking()`.
+
+**The "term confirmed between chunk translation and fallback running"
+case, verified rather than left unchecked, per the task's explicit
+instruction.** Not reachable in normal flow: `build_mask_targets()` only
+includes words for `status != STATUS_CONFIRMED` terms, and
+`build_splice_fallbacks()` is called against the exact same in-memory
+`glossary` variable within the same `fetch_and_translate()` call --
+no reload happens in between, so a word belonging to an already-confirmed
+term cannot appear in `mask_targets` in the first place. Checked the
+hypothetical anyway: even a stale-snapshot edge case wouldn't produce a
+wrong value, since `make_confirmed_term()` always constructs a confirmed
+term's sole candidate identical to its `confirmed_target` -- confirmed by
+a dedicated test
+(`test_confirmed_term_returns_its_own_confirmed_target`, asserting
+`best_candidate_for_term(term) == term["confirmed_target"]`).
+
+**Live verification against novel 375266002's real glossary and real
+cached content, not just unit tests.** `オレ` (the dedup fix's earlier
+subject) is now `STATUS_CONFIRMED` in the real glossary -- correctly no
+longer a mask target at all, so it couldn't demonstrate this fallback.
+Used `鉄パイプ` instead (a real term in the same glossary, previously an
+old pre-Section-9-shape entry with no `candidates` field): upgraded it to
+a `suggested`-status entry with one real candidate
+(`"iron pipe"`, `origin=llm`) to have something with an actual candidate
+to demonstrate against -- left as this (reasonable, real) upgrade rather
+than reverted, per direction. Ran `build_mask_targets()` +
+`build_splice_fallbacks()` against the real on-disk glossary, then
+`splice_terms()` with a simulated sentinel-missing model output:
+
+- **Before** (no `fallbacks`, old behavior): `"He was holding it. 鉄パイプ"`
+  -- raw untranslated Japanese, `needs_review=True`.
+- **After** (`fallbacks` built from the real glossary): `"He was holding
+  it. iron pipe"` -- readable English fallback, `needs_review=True`
+  unchanged.
+- **Zero-candidates case, confirmed unchanged**: ran the same check
+  against `ダンジョン能力者` (a real term in the same glossary, still in its
+  original old shape with no `candidates` field at all).
+  `build_splice_fallbacks()` correctly mapped it to itself
+  (`{"ダンジョン能力者": "ダンジョン能力者"}`), and `splice_terms()` produced the
+  identical raw-source-text fallback as before this change --
+  `"He was a person. ダンジョン能力者"`, `needs_review=True`.
+
+**Test coverage**: 7 new tests in `test_glossary.py`
+(`TestBestCandidateForTerm`: single candidate, highest-count wins,
+count-tie broken by origin order, count-and-origin tie falls back to
+list order, no-candidates returns `None`, missing `candidates` key
+returns `None`, a confirmed term's candidate matches its own
+`confirmed_target`) plus 5 more (`TestBuildSpliceFallbacks`: candidate
+found and used, no glossary entry falls back to the word itself, empty
+candidates list falls back to the word itself, duplicate words across
+lines computed once, multiple distinct words in one map). 5 new tests in
+`test_llm_translate.py` (`TestSpliceTerms`: fallback used on clean
+splice, fallback used on missing-sentinel path, a word absent from
+`fallbacks` uses the raw word, omitting `fallbacks` entirely preserves
+original behavior, an empty `fallbacks` dict behaves the same as
+omitting it) plus 2 more in `TestTranslateLinesWithMasking` confirming
+`fallbacks` threads through the chunking wrapper unmodified (not
+re-indexed like `mask_targets` -- it's keyed by word, not line index) and
+that omitting it preserves original behavior end-to-end through mocked
+HTTP. `black`/`isort`/`flake8` clean on all touched files. `mypy`: one
+real, fixed error in `glossary.py` (`best_candidate_for_term()`
+returning `Any` from a `str | None`-declared function via
+`dict.get()`'s untyped return -- fixed with an explicit `str()` cast, not
+suppressed), otherwise clean; `glossary.py` remains fully typed and
+`mypy`-clean end to end, matching its existing strict-typing discipline.
+`llm_translate.py` clean (unchanged). `alphapolis_reader.py` unchanged at
+355 errors (the two-line `fetch_and_translate()` addition sits inside an
+already-untyped method). Full project test suite re-run: no regressions
+(130 tests total in `tests/webnovels/`, up from 111 before this task).
+
+**Not anticipated going in, found during this task**: none of substance
+-- the task brief's architectural boundary instruction (don't have
+`splice_terms()` reach into `glossary.py`) matched exactly what tracing
+`llm_translate.py`'s actual imports confirmed was already the established
+convention, and the "verify the confirmed-term-race is unreachable"
+instruction turned out to be checkable directly from
+`build_mask_targets()`'s own documented rule rather than requiring new
+investigation.
+
+**Not done in this pass**: no changes to `format_glossary_for_prompt()`
+or `build_mask_targets()`'s masking trigger rule -- confirmed via `git
+diff` scope check that neither was touched. No promotion/auto-confirm
+logic (§8, separate, unstarted). No bulk-review UI (the larger,
+separate "pre-detect before reading" feature this was explicitly scoped
+alongside but not part of) -- not started.

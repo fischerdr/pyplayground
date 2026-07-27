@@ -358,6 +358,105 @@ def build_mask_targets(lines: List[str], glossary: Dict[str, Any]) -> List[Tuple
     return targets
 
 
+_ORIGIN_TIEBREAK_RANK = {ORIGIN_USER: 0, ORIGIN_MT: 1, ORIGIN_LLM: 2}
+"""Deterministic tiebreak order for best_candidate_for_term() when two
+candidates share the same count: user-entered beats machine-translation
+reference beats a raw LLM guess, matching this module's existing trust
+hierarchy for how each origin gets created (make_confirmed_term() only
+ever uses ORIGIN_USER; ORIGIN_MT/ORIGIN_LLM come from lower-trust
+automated sources). An origin not in this map (future addition) sorts
+last, rather than raising, so this stays forward-compatible."""
+
+
+def best_candidate_for_term(term: Dict[str, Any]) -> Optional[str]:
+    """Pick the single best candidate target string for a term, or None if it has none.
+
+    Ranking rule, stated precisely so it isn't left to incidental list/dict
+    ordering: highest `count` wins. On a tie, ORIGIN_USER beats ORIGIN_MT
+    beats ORIGIN_LLM (see _ORIGIN_TIEBREAK_RANK) -- a human-entered
+    candidate is more trustworthy than a machine-translation reference,
+    which is more trustworthy than a raw one-shot LLM guess, even at equal
+    usage counts. If both count and origin tie, the first matching
+    candidate in the term's own candidates list wins (stable, deterministic
+    -- Python's sort is stable, so this falls out of the sort key alone,
+    not a separate rule).
+
+    Args:
+        term: A term dict (see module docstring for shape).
+
+    Returns:
+        The highest-ranked candidate's `target` string, or None if the
+        term has no candidates at all (e.g. a bare/malformed entry).
+    """
+    candidates = term.get("candidates") or []
+    if not candidates:
+        return None
+    ranked = sorted(candidates, key=lambda c: (-c.get("count", 0), _ORIGIN_TIEBREAK_RANK.get(c.get("origin"), len(_ORIGIN_TIEBREAK_RANK))))
+    target = ranked[0].get("target")
+    return str(target) if target is not None else None
+
+
+def build_splice_fallbacks(mask_targets: List[Tuple[int, str]], glossary: Dict[str, Any]) -> Dict[str, str]:
+    """Map each masked source word to its best-available display fallback, for splice_terms() to use instead of the raw word.
+
+    DESIGN.md's original masking design always spliced the literal source
+    word back in when a masked term couldn't be resolved -- correct as a
+    last resort, but needlessly raw when the term already has a
+    `suggested` candidate a human or a prior translation pass proposed.
+    This does NOT change what gets injected into the *translation prompt*
+    (format_glossary_for_prompt() stays confirmed-only, per Section 9's
+    locked decision) -- a suggested term still contributes nothing to how
+    the model translates. This only changes what a reader sees as the
+    post-hoc fallback display text for an already-masked, already-
+    untranslated term. needs_review is unaffected either way -- see
+    splice_terms()'s docstring; it still fires for every masked term
+    regardless of which fallback text gets substituted.
+
+    Deliberately kept in glossary.py, not llm_translate.py --
+    llm_translate.py has zero imports of glossary.py (a deliberate
+    architectural boundary, confirmed in RETRANSLATION_DESIGN.md's phase 2
+    entry: callers format/resolve glossary data themselves before calling
+    in). splice_terms() receives a plain Dict[str, str] built here, not a
+    glossary object.
+
+    Args:
+        mask_targets: (line_idx, word) pairs, as returned by
+            build_mask_targets() -- only the distinct words are used here,
+            not the line indices (a fallback is the same for a given
+            source word regardless of which line it appears on).
+        glossary: Glossary dict as returned by load_glossary().
+
+    Returns:
+        Dict mapping each distinct masked word to its fallback display
+        text: best_candidate_for_term()'s result if the glossary has a
+        matching term with at least one candidate, else the word itself
+        unchanged (preserves the original raw-source-text behavior for a
+        term with genuinely no candidates yet, e.g. one just detected and
+        never looked up).
+
+    Note on a term becoming confirmed between chunk translation and this
+    running: not reachable in normal flow, and harmless even if it were.
+    build_mask_targets() only includes words for status != STATUS_CONFIRMED
+    terms, and the same glossary snapshot passed to build_mask_targets()
+    is the one passed here (no reload in between, in fetch_and_translate()'s
+    actual call site) -- so a word for an already-confirmed term can't
+    appear in mask_targets in the first place. Even in a hypothetical
+    stale-snapshot case, this wouldn't produce a wrong value:
+    make_confirmed_term() always constructs a confirmed term's sole
+    candidate target identical to confirmed_target, so
+    best_candidate_for_term() would return the same string either way.
+    """
+    terms_by_source = {term.get("source"): term for term in glossary.get("terms", [])}
+    fallbacks: Dict[str, str] = {}
+    for _line_idx, word in mask_targets:
+        if word in fallbacks:
+            continue
+        term = terms_by_source.get(word)
+        candidate = best_candidate_for_term(term) if term else None
+        fallbacks[word] = candidate if candidate else word
+    return fallbacks
+
+
 def find_glossary_term_spans(translated_line: str, glossary: Dict[str, Any]) -> List[Tuple[int, int, str]]:
     """Find the character spans of glossary source terms as they appear (spliced, untranslated) in a translated line.
 

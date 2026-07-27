@@ -55,6 +55,7 @@ from pyplayground.webnovels.glossary import (
     TERM_TYPE_CHARACTER,
     TERM_TYPE_GENERAL,
     build_mask_targets,
+    build_splice_fallbacks,
     find_glossary_term_spans,
     format_glossary_for_prompt,
     load_glossary,
@@ -1110,7 +1111,17 @@ class ReaderApp:
         # the added complexity here.
         mask_targets = build_mask_targets(ep["lines"], glossary) if glossary is not None else []
         if mask_targets:
-            translated = translate_lines_with_masking(ep["lines"], mask_targets, self.target_lang, glossary_text=glossary_text, progress_cb=progress_cb)
+            # Best-available-candidate fallback (DESIGN.md's dated entry):
+            # splice_terms() substitutes a masked term's best suggested
+            # candidate instead of the bare raw word when one exists --
+            # display-quality only, does not affect what's injected into
+            # the translation prompt (glossary_text below stays
+            # confirmed-only, per Section 9). Built from the same
+            # `glossary` snapshot mask_targets was just computed against,
+            # so a word here can never belong to an already-confirmed term
+            # (see build_splice_fallbacks()'s docstring).
+            fallbacks = build_splice_fallbacks(mask_targets, glossary)
+            translated = translate_lines_with_masking(ep["lines"], mask_targets, self.target_lang, glossary_text=glossary_text, progress_cb=progress_cb, fallbacks=fallbacks)
             ep["translated_lines"] = [t.text for t in translated]
             ep["needs_review_flags"] = [t.needs_review for t in translated]
         else:

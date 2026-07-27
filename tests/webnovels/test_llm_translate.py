@@ -96,6 +96,24 @@ class TestTranslateLinesWithMasking:
         assert result[0].needs_review is True
         assert "ケイト" in result[0].text
 
+    def test_fallbacks_threaded_through_to_splice_terms(self, mocker):
+        """`fallbacks` is passed through unmodified (not re-indexed, unlike mask_targets -- it's keyed by word, not line index) to every chunk's splice."""
+        lines = ["ケイトが振り返った。"]
+        _mock_completion_response(mocker, [["⟦TERM_1⟧ turned around."]])
+
+        result = translate_lines_with_masking(lines, [(0, "ケイト")], max_chunk_chars=400, fallbacks={"ケイト": "Kate"})
+
+        assert result[0].text == "Kate turned around."
+        assert result[0].needs_review is True
+
+    def test_no_fallbacks_argument_preserves_original_behavior(self, mocker):
+        lines = ["ケイトが振り返った。"]
+        _mock_completion_response(mocker, [["⟦TERM_1⟧ turned around."]])
+
+        result = translate_lines_with_masking(lines, [(0, "ケイト")], max_chunk_chars=400)
+
+        assert result[0].text == "ケイト turned around."
+
     def test_chunk_failure_produces_placeholder_translated_line(self, mocker):
         """A chunk-level exception still produces a TranslatedLine rather than raising out."""
 
@@ -147,3 +165,35 @@ class TestSpliceTerms:
 
         assert result.text == "ケイト and ルリ talked."
         assert result.needs_review is True
+
+    def test_fallback_used_instead_of_raw_word_on_clean_splice(self):
+        """glossary.build_splice_fallbacks()'s best-candidate result substitutes for the bare raw word, per DESIGN.md's dated entry -- display-quality only."""
+        result = splice_terms("⟦TERM_1⟧ crouched down.", [("オレ", 1)], fallbacks={"オレ": "Me"})
+
+        assert result.text == "Me crouched down."
+        assert result.needs_review is True
+
+    def test_fallback_used_on_missing_sentinel_path_too(self):
+        result = splice_terms("He crouched down.", [("オレ", 1)], fallbacks={"オレ": "Me"})
+
+        assert "Me" in result.text
+        assert "オレ" not in result.text
+        assert result.needs_review is True
+
+    def test_word_not_in_fallbacks_dict_uses_raw_word(self):
+        """Only words present in fallbacks get substituted -- a word with no glossary entry keeps the original raw-source-text behavior."""
+        result = splice_terms("⟦TERM_1⟧ crouched down.", [("オレ", 1)], fallbacks={"鉄パイプ": "iron pipe"})
+
+        assert result.text == "オレ crouched down."
+
+    def test_no_fallbacks_argument_preserves_original_behavior(self):
+        """Purely additive -- omitting fallbacks entirely must behave identically to before this change."""
+        result = splice_terms("⟦TERM_1⟧ crouched down.", [("オレ", 1)])
+
+        assert result.text == "オレ crouched down."
+        assert result.needs_review is True
+
+    def test_empty_fallbacks_dict_same_as_no_fallbacks(self):
+        result = splice_terms("⟦TERM_1⟧ crouched down.", [("オレ", 1)], fallbacks={})
+
+        assert result.text == "オレ crouched down."

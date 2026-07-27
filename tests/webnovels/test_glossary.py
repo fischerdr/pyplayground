@@ -4,13 +4,16 @@
 
 from pyplayground.webnovels.glossary import (
     ORIGIN_LLM,
+    ORIGIN_MT,
     ORIGIN_USER,
     STATUS_CONFIRMED,
     STATUS_SUGGESTED,
     TERM_TYPE_CHARACTER,
     TERM_TYPE_GENERAL,
     _empty_glossary,
+    best_candidate_for_term,
     build_mask_targets,
+    build_splice_fallbacks,
     find_glossary_term_spans,
     format_glossary_for_prompt,
     make_confirmed_term,
@@ -450,6 +453,118 @@ class TestFindGlossaryTermSpans:
             line_idx, word = entry
             assert isinstance(line_idx, int)
             assert isinstance(word, str)
+
+
+class TestBestCandidateForTerm:
+    """Tests for best_candidate_for_term()."""
+
+    def test_single_candidate_returned(self):
+        term = make_suggested_term(TERM_TYPE_CHARACTER, "オレ", "Me")
+
+        assert best_candidate_for_term(term) == "Me"
+
+    def test_highest_count_wins(self):
+        term = {
+            "source": "维多教授",
+            "candidates": [
+                {"target": "Professor Weiduo", "count": 1, "origin": ORIGIN_LLM},
+                {"target": "Professor Victor", "count": 23, "origin": ORIGIN_USER},
+                {"target": "Professor Vito", "count": 4, "origin": ORIGIN_MT},
+            ],
+        }
+
+        assert best_candidate_for_term(term) == "Professor Victor"
+
+    def test_tie_on_count_broken_by_origin_user_beats_mt_beats_llm(self):
+        term = {
+            "source": "x",
+            "candidates": [
+                {"target": "from-llm", "count": 5, "origin": ORIGIN_LLM},
+                {"target": "from-mt", "count": 5, "origin": ORIGIN_MT},
+                {"target": "from-user", "count": 5, "origin": ORIGIN_USER},
+            ],
+        }
+
+        assert best_candidate_for_term(term) == "from-user"
+
+    def test_tie_on_count_and_origin_falls_back_to_list_order(self):
+        term = {
+            "source": "x",
+            "candidates": [
+                {"target": "first", "count": 5, "origin": ORIGIN_LLM},
+                {"target": "second", "count": 5, "origin": ORIGIN_LLM},
+            ],
+        }
+
+        assert best_candidate_for_term(term) == "first"
+
+    def test_no_candidates_returns_none(self):
+        term = {"source": "x", "candidates": []}
+
+        assert best_candidate_for_term(term) is None
+
+    def test_missing_candidates_key_returns_none(self):
+        term = {"source": "x"}
+
+        assert best_candidate_for_term(term) is None
+
+    def test_confirmed_term_returns_its_own_confirmed_target(self):
+        """A confirmed term's sole candidate is always identical to confirmed_target (make_confirmed_term()'s own construction) -- confirms the 'harmless even if reachable' note in build_splice_fallbacks()'s docstring."""
+        term = make_confirmed_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")
+
+        assert best_candidate_for_term(term) == term["confirmed_target"] == "Kate"
+
+
+class TestBuildSpliceFallbacks:
+    """Tests for build_splice_fallbacks()."""
+
+    def test_word_with_suggested_candidate_maps_to_best_candidate(self):
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_suggested_term(TERM_TYPE_CHARACTER, "オレ", "Me")]
+        mask_targets = [(0, "オレ")]
+
+        fallbacks = build_splice_fallbacks(mask_targets, glossary)
+
+        assert fallbacks == {"オレ": "Me"}
+
+    def test_word_with_no_glossary_entry_falls_back_to_itself(self):
+        """A term genuinely not yet extracted/known -- preserves the original raw-source-text behavior."""
+        glossary = _empty_glossary("1")
+        mask_targets = [(0, "オレ")]
+
+        fallbacks = build_splice_fallbacks(mask_targets, glossary)
+
+        assert fallbacks == {"オレ": "オレ"}
+
+    def test_term_with_empty_candidates_list_falls_back_to_itself(self):
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [{"source": "オレ", "type": "character", "candidates": []}]
+        mask_targets = [(0, "オレ")]
+
+        fallbacks = build_splice_fallbacks(mask_targets, glossary)
+
+        assert fallbacks == {"オレ": "オレ"}
+
+    def test_duplicate_words_across_lines_only_computed_once(self):
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_suggested_term(TERM_TYPE_CHARACTER, "オレ", "Me")]
+        mask_targets = [(0, "オレ"), (2, "オレ")]
+
+        fallbacks = build_splice_fallbacks(mask_targets, glossary)
+
+        assert fallbacks == {"オレ": "Me"}
+
+    def test_multiple_distinct_words(self):
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [
+            make_suggested_term(TERM_TYPE_CHARACTER, "オレ", "Me"),
+            make_suggested_term(TERM_TYPE_GENERAL, "鉄パイプ", "iron pipe"),
+        ]
+        mask_targets = [(0, "オレ"), (0, "鉄パイプ")]
+
+        fallbacks = build_splice_fallbacks(mask_targets, glossary)
+
+        assert fallbacks == {"オレ": "Me", "鉄パイプ": "iron pipe"}
 
 
 class TestUpdateCandidateCounts:

@@ -1816,3 +1816,171 @@ diff` scope check that neither was touched. No promotion/auto-confirm
 logic (§8, separate, unstarted). No bulk-review UI (the larger,
 separate "pre-detect before reading" feature this was explicitly scoped
 alongside but not part of) -- not started.
+
+### 2026-07-27: Bulk term-review dialog — implemented
+
+A new Tkinter dialog (`open_term_review_dialog()`, "Review Terms..." in
+the toolbar) to confirm or reject a novel's unconfirmed glossary terms in
+one sitting, instead of one right-click at a time while reading. Note on
+scope provenance: §7 phase 4 originally described "the candidate picker"
+as web-migration-only, future work -- this task deliberately builds it in
+Tkinter now, per explicit direction, not a reinterpretation of §7's
+sequencing; §7 itself is unchanged.
+
+**Reused vs. extended, decided and stated, not defaulted.** Considered
+extending `open_glossary_dialog()` (the existing general term editor --
+already lists every term with a Treeview + side form, close to this
+task's shape) rather than building a new dialog. **Decided against
+extending it**: that dialog lists every term of every status and its Save
+always confirms on any edit (no distinct Reject-as-delete, no candidate
+picker, no "only show what needs review" filter) -- a genuinely different
+purpose and trust model from "review the unconfirmed backlog, with a real
+delete option and ranked-candidate quick-pick." Overloading one dialog
+with both would blur that distinction in the UI. Built a new, standalone
+dialog instead, but reused its concrete patterns rather than inventing
+new ones: the Treeview-list-plus-side-form layout, `load_glossary(novel_id)`
+for loading, and the "click a candidate to use as Target" reference
+pattern from `open_word_glossary_popup()`'s Reference/Alternatives
+section (candidates listed as `ttk.Button`s ranked by count, clicking one
+fills the Target field -- same idiom, not a new one).
+
+**Confirm reuses `upsert_confirmed_term()` -- verified, not assumed.**
+`confirm_selected()` builds a fresh term via `make_confirmed_term()`
+(preserving character-only fields when type is `character`, same pattern
+as `open_word_glossary_popup()`'s save handler) and writes it via
+`upsert_confirmed_term(glossary.get("terms", []), new_term)` -- the same
+function the dedup-bug fix put behind the manual "Add to Glossary"
+dialog, not a third write path. Confirmed this actually happened, not
+just that the code calls the right function name: live-verified against
+the real glossary that a confirmed term's resulting candidate has
+`origin: "user"` (which only `make_confirmed_term()` produces -- the
+original `suggested` candidate had `origin: "llm"`), proving the write
+went through the real confirm path rather than some other code writing a
+differently-shaped entry.
+
+**Reject is a real delete, not a status change** -- removes the term from
+`glossary["terms"]` entirely (filtered by object identity, `t is not
+term`, so it can't accidentally remove a different term that happens to
+share the same source string). Reasoning, stated in the method's own
+docstring: `build_mask_targets()` masks anything that isn't
+`STATUS_CONFIRMED`, so a "rejected" status would still be masked forever
+with no path back to un-flagging it -- a real delete is the only
+option that actually stops it from being treated as an unreviewed term
+going forward. Confirmed via a `messagebox.askyesno()` prompt naming the
+exact term and stating plainly that it removes the term entirely, before
+acting.
+
+**Design decisions made explicitly, not defaulted on:**
+
+- **No "confirm all"/bulk-select.** Recommended against per the task
+  brief's own framing, and implemented that way: strictly one-at-a-time
+  review, faster iteration through the list (select, glance at
+  candidates, Confirm/Reject, move to the next row) rather than batch
+  trust. A bulk-confirm button would reintroduce exactly the "trust
+  unreviewed model output" failure Section 1 documents as the original
+  motivation for this whole redesign (Lanchester's Law hallucination,
+  mundane compounds entering the glossary unreviewed) -- the entire point
+  of the `suggested` review gate is that nothing skips human judgment,
+  and a bulk-confirm button is a direct hole in that gate.
+- **No rejection-blocklist.** A term rejected here can be re-suggested by
+  a future `build_glossary.py` extraction run on the same novel and
+  reviewed again -- accepted as a reasonable v1 tradeoff (re-reviewing an
+  occasional re-suggested term is cheap; building and maintaining a
+  separate blocklist mechanism before there's real usage data on how
+  often this actually recurs is premature). A real future addition, not
+  an oversight.
+- **Type editing needs no special handling beyond what Confirm already
+  does.** Changing Type on a still-`suggested` term (directly relevant to
+  §1/§8's `character`-vs-`term` misclassification problem -- `explain_term()`'s
+  live classification and `build_glossary.py`'s extraction-time guess can
+  disagree, per the dedup-fix's §8 entry) just flows the corrected
+  `type_var` value straight into `make_confirmed_term()`'s `term_type`
+  argument on Confirm, identical to every other manual-confirm path in
+  this file (`open_word_glossary_popup()`, `open_glossary_dialog()`'s
+  inline edit). No separate code path, no special-casing needed --
+  confirmed by a dedicated test
+  (`test_type_change_then_confirm_uses_new_type`).
+
+**A real gap found and fixed during this task's own live verification,
+not part of the original design.** The first implementation filtered the
+tree to `status == STATUS_SUGGESTED` exactly. Live-checked against novel
+375266002's real glossary before considering this done and found: 9 of
+its 10 unconfirmed terms are old, pre-Section-9-shape entries with no
+`status` field at all (`status` reads as `None`, not `"suggested"`) --
+exactly the terms most in need of review, and the narrower filter
+silently hid all of them, showing only 1 term (`鉄パイプ`) instead of 10.
+Fixed by matching `build_mask_targets()`'s own broader, already-correct
+rule (`status != STATUS_CONFIRMED`, not `status == STATUS_SUGGESTED`) --
+consistent with the same principle the `needs_review` span-highlighting
+fix and the `best_candidate_for_term()` confirmed-term-race note both
+already established this session: don't assume a narrower status check
+is equivalent to the broader "not yet confirmed" one without checking
+against real data.
+
+**Live verification, against novel 375266002's real glossary and a real
+cached episode, not synthetic fixtures.** Before this task: 12 terms, 10
+reviewable (`オレ` confirmed from the earlier dedup fix, `鉄パイプ`
+`suggested` with one real `llm`-origin candidate from the candidate-
+fallback task, the other 9 old-shape/unconfirmed). Launched the real,
+unmodified app via `xdotool` against the real, unmodified toolbar and
+dialog:
+
+- Screenshot confirmed the widened toolbar (1090 -> 1220) renders the new
+  "Review Terms..." button with no clipping, alongside the already-
+  working span-level `needs_review` highlighting from the prior task.
+- Opened the dialog: all 10 reviewable terms listed (confirmed the
+  old-shape-terms fix directly, not just via its own unit test), `鉄パイプ`
+  correctly showing its best candidate (`iron pipe`) and count (1), the
+  other 9 showing no candidate/count 0. `オレ` correctly absent.
+- Selected `鉄パイプ`: side form showed `Source: 鉄パイプ`, `Type: term`,
+  `Target` pre-filled `iron pipe`, one candidate button
+  (`iron pipe (x1, llm)`). Clicked **Confirm**: the row disappeared from
+  the list (9 remaining), form cleared. Verified via `load_glossary()`
+  immediately after: `鉄パイプ` now `status: confirmed`,
+  `confirmed_target: "iron pipe"`, and -- the proof this went through
+  `upsert_confirmed_term()`/`make_confirmed_term()` and not some other
+  path -- its candidate's `origin` is now `"user"`, not the original
+  `"llm"`.
+- Selected `ダンジョン能力者`: side form showed empty Target, no candidate
+  buttons (genuinely zero candidates). Clicked **Reject**: a
+  `messagebox.askyesno()` prompt appeared naming the exact term and
+  stating it removes the term entirely, confirmed via screenshot. Clicked
+  Yes: the row disappeared (8 remaining). Verified via `load_glossary()`
+  immediately after: 12 -> 11 total terms, `ダンジョン能力者` completely
+  absent from the file (a real delete, not a status flip), `オレ` and
+  `鉄パイプ` both still present and correctly confirmed.
+
+**Test coverage**: 8 new tests in new file `test_term_review_dialog.py`
+(`TestTermReviewDialogListing`: lists suggested terms and excludes
+confirmed, old-shape no-status terms are also listed [the live-found
+gap's regression test], zero-reviewable-terms shows the empty state;
+`TestTermReviewDialogConfirm`: writes via `upsert_confirmed_term()` and
+persists, an edited Target value is used instead of the best candidate,
+type-change-then-confirm uses the new type; `TestTermReviewDialogReject`:
+removes the term entirely, and a declined confirmation prompt leaves the
+glossary unchanged) -- all driven against the real bound method and a
+real (headless) Tk widget tree, `load_glossary()`/`save_glossary()`
+mocked so no filesystem access happens, same pattern as
+`TestPopupSingleInstanceGuard`. `black`/`isort`/`flake8` clean.
+`mypy`: `alphapolis_reader.py` at 403 errors (up from 355) -- the new
+dialog's closures account for the delta, consistent with the file's
+existing untyped-method convention, not fixed here. Full project test
+suite re-run: no regressions (138 tests total in `tests/webnovels/`, up
+from 130 before this task; one pre-existing, unrelated flaky background-
+thread warning in `test_retranslation_dialog.py` confirmed via `git
+stash` to predate this task).
+
+**Not anticipated going in, found during this task**: the old-shape-terms
+filter gap above -- the task brief's own listing requirement ("suggested-
+status terms") was taken at face value initially, and only caught by
+actually running the dialog against real, current glossary data before
+calling it done, rather than trusting the synthetic unit tests (which all
+used `make_suggested_term()`, so none of them would have caught a
+narrower-than-intended status filter).
+
+**Not done in this pass**: no auto-promotion/threshold logic (§8,
+unrelated). No rejection-blocklist mechanism (named above as future
+work, not this task). No changes to masking, splicing, or the reading
+pane -- confirmed via `git diff` scope check that only
+`alphapolis_reader.py` (new dialog, toolbar button, window width) and
+the new test file changed; `glossary.py`/`llm_translate.py` untouched.

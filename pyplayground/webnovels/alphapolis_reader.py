@@ -54,6 +54,7 @@ from pyplayground.webnovels.glossary import (
     STATUS_SUGGESTED,
     TERM_TYPE_CHARACTER,
     TERM_TYPE_GENERAL,
+    best_candidate_for_term,
     build_mask_targets,
     build_splice_fallbacks,
     find_glossary_term_spans,
@@ -729,8 +730,9 @@ class ReaderApp:
 
         root.title("Alphapolis Reader")
         # Widened from 900 -> 990 (Refresh button) -> 1090 (Glossary... button)
-        # to keep the toolbar from clipping Settings... off the right edge.
-        root.geometry("1090x700")
+        # -> 1220 (Review Terms... button) to keep the toolbar from clipping
+        # Settings... off the right edge.
+        root.geometry("1220x700")
 
         toolbar = ttk.Frame(root)
         toolbar.pack(fill="x", padx=8, pady=6)
@@ -757,6 +759,7 @@ class ReaderApp:
         ttk.Button(toolbar, text="Load Novel...", command=self.open_load_url_dialog).pack(side="left")
         ttk.Button(toolbar, text="Refresh", command=self.refresh_current_episode).pack(side="left", padx=(6, 0))
         ttk.Button(toolbar, text="Glossary...", command=self.open_glossary_dialog).pack(side="left", padx=(6, 0))
+        ttk.Button(toolbar, text="Review Terms...", command=self.open_term_review_dialog).pack(side="left", padx=(6, 0))
         ttk.Button(toolbar, text="Settings...", command=self.open_settings_dialog).pack(side="left", padx=(6, 0))
 
         url_bar = ttk.Frame(root)
@@ -1525,6 +1528,226 @@ class ReaderApp:
         bottom.pack(pady=(10, 10))
         ttk.Button(bottom, text="Save", command=save_and_close).pack(side="left", padx=4)
         ttk.Button(bottom, text="Cancel", command=win.destroy).pack(side="left", padx=4)
+
+        refresh_tree()
+
+    def open_term_review_dialog(self):
+        """Open the bulk term-review screen: confirm or reject the current novel's suggested glossary terms in one sitting.
+
+        A separate, standalone dialog from open_glossary_dialog() (the
+        general term editor, which lists every term of every status and
+        always confirms-on-save), not an extension of it -- deliberately.
+        This dialog is scoped to exactly one purpose: review the backlog
+        of unreviewed suggested terms faster than the existing one-at-a-
+        time right-click flow, without conflating that with general
+        term editing. Reasoning for building new rather than extending:
+        open_glossary_dialog()'s Treeview shows all terms/all statuses and
+        its Save button always writes STATUS_CONFIRMED on any edit -- a
+        "review only the suggested backlog, with a real Reject (delete),
+        candidate picker, and per-term Confirm/Reject actions" purpose
+        needs a different filter, different actions, and a different
+        default trust posture (nothing here is confirmed until explicitly
+        confirmed) than that dialog's "edit anything, save commits
+        everything" model. Building this as a second dialog keeps that
+        distinction visible in the UI rather than overloading one screen
+        with two different mental models.
+
+        Deliberately one-at-a-time review, no "confirm all" bulk action --
+        see this task's DESIGN.md entry for why: a bulk-confirm button
+        would reintroduce exactly the "trust unreviewed model output"
+        failure Section 1 of this doc documented as the original reason
+        this whole redesign started (Lanchester's Law hallucination,
+        mundane compounds entering the glossary unreviewed). Faster
+        iteration through the list is the goal, not batch trust.
+
+        Confirm writes through upsert_confirmed_term() (the same path the
+        manual "Add to Glossary" dialog uses, from the dedup-bug fix) --
+        not a third way of writing a confirmed term into the glossary.
+        Reject is a real delete (removes the term from the glossary
+        entirely), not a status change -- a rejected term shouldn't keep
+        occupying a mask-target slot (build_mask_targets() masks anything
+        that isn't STATUS_CONFIRMED, so leaving a rejected term in the
+        glossary at any other status would keep it masked forever with no
+        way to un-flag it). No rejection-blocklist mechanism -- a term
+        rejected here can be re-suggested by a future build_glossary.py
+        extraction run and reviewed again; that's an acceptable v1
+        tradeoff, not an oversight (see DESIGN.md for the reasoning).
+        """
+        if not hasattr(self, "current_url") or not self.current_url:
+            messagebox.showinfo("Review Terms", "Load a novel first.")
+            return
+        novel_id = _extract_novel_id(self.current_url)
+        if not novel_id:
+            messagebox.showinfo("Review Terms", "Could not determine the novel for this URL.")
+            return
+
+        glossary = load_glossary(novel_id)
+
+        win = tk.Toplevel(self.root)
+        win.title(f"Review Terms - {glossary.get('title') or novel_id}")
+        win.geometry("760x480")
+        win.transient(self.root)
+
+        # reviewable_indices maps each Treeview row back to its real index
+        # in glossary["terms"] -- the tree shows every not-yet-confirmed
+        # term (status != STATUS_CONFIRMED, same broad rule
+        # build_mask_targets() uses -- see the filter below for why),
+        # since already-confirmed terms have nothing to review here. The
+        # underlying list is the full, unfiltered glossary, and
+        # Confirm/Reject need to mutate the right entry in it.
+        reviewable_indices: List[int] = []
+
+        body = ttk.Frame(win)
+        body.pack(fill="both", expand=True, padx=10, pady=10)
+
+        columns = ("source", "type", "best_candidate", "count")
+        tree = ttk.Treeview(body, columns=columns, show="headings", height=14)
+        for col, label, width in (("source", "Source", 140), ("type", "Type", 70), ("best_candidate", "Best candidate", 160), ("count", "Candidates", 80)):
+            tree.heading(col, text=label)
+            tree.column(col, width=width)
+        tree.pack(side="left", fill="both", expand=True)
+        tree_scroll = ttk.Scrollbar(body, orient="vertical", command=tree.yview)
+        tree_scroll.pack(side="left", fill="y")
+        tree.config(yscrollcommand=tree_scroll.set)
+
+        form = ttk.Frame(body)
+        form.pack(side="left", fill="y", padx=(10, 0))
+
+        empty_label = ttk.Label(win, text="No unconfirmed terms to review for this novel.", foreground="#888")
+
+        def refresh_tree(select_index=None):
+            tree.delete(*tree.get_children())
+            reviewable_indices.clear()
+            for i, t in enumerate(glossary.get("terms", [])):
+                # Anything not confirmed, not just status == STATUS_SUGGESTED
+                # -- matches build_mask_targets()'s own broader rule
+                # (status != STATUS_CONFIRMED), which also catches old-shape
+                # terms with no status field at all (status is None). A
+                # narrower "== STATUS_SUGGESTED" check would silently hide
+                # exactly the pre-Section-9-shape terms most in need of
+                # review from this dialog -- confirmed live against
+                # novel 375266002's real glossary, which has 9 old-shape
+                # unconfirmed terms and only 1 properly-suggested one.
+                if t.get("status") == STATUS_CONFIRMED:
+                    continue
+                reviewable_indices.append(i)
+                row_id = str(len(reviewable_indices) - 1)
+                best = best_candidate_for_term(t) or ""
+                count = len(t.get("candidates") or [])
+                tree.insert("", "end", iid=row_id, values=(t.get("source", ""), t.get("type", TERM_TYPE_GENERAL), best, count))
+            if reviewable_indices:
+                empty_label.pack_forget()
+            else:
+                empty_label.pack(fill="x", padx=10, pady=(0, 10))
+            if select_index is not None and 0 <= select_index < len(reviewable_indices):
+                tree.selection_set(str(select_index))
+                tree.see(str(select_index))
+
+        form_vars: Dict[str, Any] = {}
+
+        def clear_form():
+            for widget in form.winfo_children():
+                widget.destroy()
+            form_vars.clear()
+
+        def build_form(row_index):
+            clear_form()
+            term_idx = reviewable_indices[row_index]
+            term = glossary["terms"][term_idx]
+            pad = {"padx": 4, "pady": (6, 0)}
+
+            ttk.Label(form, text="Source:", foreground="#888").grid(row=0, column=0, sticky="w", **pad)
+            ttk.Label(form, text=term.get("source", ""), wraplength=220, justify="left").grid(row=0, column=1, sticky="w", **pad)
+
+            ttk.Label(form, text="Type").grid(row=1, column=0, sticky="w", **pad)
+            form_vars["type"] = tk.StringVar(value=term.get("type", TERM_TYPE_GENERAL))
+            # Type is editable here on purpose -- this is exactly the
+            # character-vs-term misclassification problem Section 1/8
+            # documents (build_glossary.py's extraction guesses a type
+            # that isn't always right). Correcting it here, at review
+            # time, needs no special handling beyond what Confirm already
+            # does: the corrected type_var value flows straight into
+            # make_confirmed_term()'s term_type argument below, same as
+            # every other manual-confirm path in this file.
+            ttk.Combobox(form, textvariable=form_vars["type"], values=[TERM_TYPE_GENERAL, TERM_TYPE_CHARACTER], state="readonly", width=18).grid(row=1, column=1, sticky="w", **pad)
+
+            best = best_candidate_for_term(term) or ""
+            ttk.Label(form, text="Target").grid(row=2, column=0, sticky="w", **pad)
+            form_vars["target"] = tk.StringVar(value=best)
+            ttk.Entry(form, textvariable=form_vars["target"], width=24).grid(row=2, column=1, sticky="w", **pad)
+
+            candidates = term.get("candidates") or []
+            next_row = 3
+            if candidates:
+                # Same "click to use as Target" reference pattern as
+                # open_word_glossary_popup()'s Reference/Alternatives
+                # section -- reused, not a new UI idiom -- ranked by count
+                # (best_candidate_for_term()'s own rule) so the top pick is
+                # listed first.
+                ranked = sorted(candidates, key=lambda c: -c.get("count", 0))
+                ttk.Label(form, text="Candidates (click to use as Target):", foreground="#888").grid(row=next_row, column=0, columnspan=2, sticky="w", padx=4, pady=(10, 0))
+                next_row += 1
+                for c in ranked:
+                    label = f"{c.get('target', '')} (x{c.get('count', 0)}, {c.get('origin', '')})"
+                    ttk.Button(form, text=label, command=lambda t=c.get("target", ""): form_vars["target"].set(t)).grid(
+                        row=next_row, column=0, columnspan=2, sticky="w", padx=4, pady=(2, 0)
+                    )
+                    next_row += 1
+
+            def confirm_selected():
+                target = form_vars["target"].get().strip()
+                if not target:
+                    messagebox.showinfo("Review Terms", "Target is required to confirm.", parent=win)
+                    return
+                new_term = make_confirmed_term(term_type=form_vars["type"].get(), source=term.get("source", ""), target=target, note=term.get("note"))
+                if form_vars["type"].get() == TERM_TYPE_CHARACTER:
+                    new_term.update(
+                        gender=term.get("gender"),
+                        pronoun_style=term.get("pronoun_style"),
+                        honorific_override=term.get("honorific_override"),
+                    )
+                # Same write path the manual "Add to Glossary" dialog uses
+                # (dedup-bug fix) -- not a third way of confirming a term.
+                glossary["terms"] = upsert_confirmed_term(glossary.get("terms", []), new_term)
+                glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
+                save_glossary(novel_id, glossary)
+                logger.info(f"Confirmed term via review dialog for novel {novel_id}: {term.get('source')!r} -> {target!r}")
+                clear_form()
+                refresh_tree()
+                self.set_status(f"Confirmed: {term.get('source')} -> {target}")
+
+            def reject_selected():
+                # Real delete, not a status change -- see this method's
+                # docstring for why a rejected term must not linger at any
+                # non-confirmed status (it would stay masked forever).
+                if not messagebox.askyesno("Review Terms", f"Reject {term.get('source')!r}? This removes it from the glossary entirely.", parent=win):
+                    return
+                source = term.get("source", "")
+                glossary["terms"] = [t for t in glossary.get("terms", []) if t is not term]
+                glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
+                save_glossary(novel_id, glossary)
+                logger.info(f"Rejected term via review dialog for novel {novel_id}: {source!r}")
+                clear_form()
+                refresh_tree()
+                self.set_status(f"Rejected: {source}")
+
+            action_row = ttk.Frame(form)
+            action_row.grid(row=next_row, column=0, columnspan=2, sticky="w", padx=4, pady=(12, 0))
+            ttk.Button(action_row, text="Confirm", command=confirm_selected).pack(side="left")
+            ttk.Button(action_row, text="Reject", command=reject_selected).pack(side="left", padx=(6, 0))
+
+        def on_select(_event=None):
+            selection = tree.selection()
+            if not selection:
+                clear_form()
+                return
+            build_form(int(selection[0]))
+
+        tree.bind("<<TreeviewSelect>>", on_select)
+
+        bottom = ttk.Frame(win)
+        bottom.pack(pady=(0, 10))
+        ttk.Button(bottom, text="Close", command=win.destroy).pack(side="left", padx=4)
 
         refresh_tree()
 

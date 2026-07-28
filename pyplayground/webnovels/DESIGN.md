@@ -4,7 +4,7 @@ Living record of decisions for the glossary/term-consistency rework and the
 Tkinter → web migration. Update this alongside code changes, not after —
 chat history is not the system of record.
 
-Last updated: 2026-07-27 (all per-novel glossary/cache data wiped, clean slate)
+Last updated: 2026-07-27 (cross-dialog stale-overwrite bug: confirmed real, NOT fixed -- open)
 
 ---
 
@@ -2314,3 +2314,252 @@ cache from scratch — fresh scrape, fresh `build_glossary.py` extraction
 — on next read, now running under the fixed `open_glossary_dialog()`
 code above and with none of this session's prior data or bugs carried
 forward.
+
+### 2026-07-27: auto-refresh the displayed episode after a glossary edit -- implemented
+
+**Confirmed cost of the existing "Refresh" button before designing
+anything, per the task's own explicit prerequisite** (not assumed from
+its name): `refresh_current_episode()` deletes both the in-memory
+(`self.cache.pop(url, None)`) and on-disk (`_cache_path(url).unlink()`)
+cache entries for the current episode, then calls `load_episode(url)`.
+With no cache hit left, `fetch_and_translate()` falls through to its
+real path: a genuine `self.browser.fetch(url)` network fetch plus a
+real LLM translation pass over every line. This is the full, expensive
+pipeline, not a cheap re-render -- confirmed live below, not just from
+reading the code (a real re-translation of a real 9-paragraph chapter
+took roughly 100 seconds against the local translategemma server).
+
+**Why "auto-refresh" can only mean this, not something cheaper**:
+`needs_review` flags and span-level term highlighting are computed once
+at translation time and cached (`translated_lines`/`needs_review_flags`
+in the on-disk cache shape, per `DESIGN.md` Section 11) -- they are not
+re-derived live from current glossary state on every render. Confirming
+or rejecting a term in either dialog changes nothing about an
+already-translated, already-open episode's cached content or on-screen
+text. The only way to make the display reflect the edited glossary is
+to re-run translation against it, i.e. call
+`refresh_current_episode()` -- there is no cheaper "just re-render"
+path available, and building one (re-deriving highlighting live on
+every render) was explicitly out of scope for this task.
+
+**Design decision, stated explicitly, not defaulted into: debounce to
+dialog close, not per Confirm/Reject/Save action.** Given the confirmed
+cost above, firing a full re-scrape + re-translate after every
+individual edit in a multi-term Review Terms session (e.g. confirming
+5 terms in a backlog in one sitting) would mean 5 expensive passes
+instead of one. Both dialogs now call a single shared method,
+`_maybe_refresh_after_glossary_edit(dialog_novel_id, edited)`, exactly
+once, from a single close path per dialog (bound to `WM_DELETE_WINDOW`
+*and* invoked directly by every button that ends the dialog session --
+Save, Cancel, Close, and the destroy-then-reopen paths inside Clear
+Glossary/Rebuild Glossary -- so the check fires exactly once regardless
+of *how* the dialog was closed, not just for one specific button; a
+button bound straight to `win.destroy()` would silently bypass
+`WM_DELETE_WINDOW`, since that protocol only fires for the window
+manager's own close action).
+
+**Scope, both conditions required, per the task's explicit narrowing:**
+
+- **At least one actual edit must have happened.** Opening and closing
+  either dialog with zero Confirm/Reject/Save actions must not trigger
+  anything. `open_glossary_dialog()` tracks this via a new
+  `disk_write_happened` flag, deliberately separate from the
+  pre-existing `dirty` flag (which tracks in-memory edits that Cancel
+  can still discard with no disk write at all -- conflating the two
+  would have made a `dirty`-but-Cancelled session incorrectly trigger a
+  refresh). Set only at the three points that actually call
+  `save_glossary()`: `save_and_close()`, `clear_glossary()`, and a
+  successful `rebuild_glossary()`. `open_term_review_dialog()` needs no
+  such distinction -- every Confirm/Reject already writes to disk
+  immediately (per its own design, documented in this doc's bulk
+  term-review entry), so a plain `edited` flag set on either action is
+  sufficient and correct.
+- **The dialog's novel must match the *currently displayed* episode's
+  novel, re-checked at dialog-close time, not dialog-open time.** Both
+  dialogs already pin `novel_id` from `self.current_url` once, at open
+  time (confirmed in the prior write-timing investigation into these
+  same two dialogs). But the main window's displayed episode can change
+  independently while either dialog stays open, so
+  `_maybe_refresh_after_glossary_edit()` re-derives
+  `_extract_novel_id(self.current_url)` fresh at the moment the dialog
+  actually closes and compares it against the dialog's pinned
+  `novel_id` -- editing novel A's glossary must never refresh novel B's
+  episode just because B happens to be on screen when the dialog
+  closes.
+
+**Live verification, via the same `xdotool` setup as prior tasks,
+against the real app and real novel 375266002 (which turned out to be
+a real, scrapable Alphapolis chapter -- "うちの冷蔵庫がダンジョンになった",
+confirmed live, not a synthetic fixture for this part):**
+
+- Opened Review Terms, confirmed one `suggested` term (`ハードキャッチ`).
+  Cache file's mtime confirmed unchanged immediately after Confirm --
+  no refresh fired yet, debounce holding as designed.
+- Closed the dialog: the on-disk cache file for the episode was deleted
+  within the same action (direct proof `refresh_current_episode()`
+  actually ran, not inferred), the main window immediately showed
+  "Loading..." and the status bar showed live translation progress
+  (`Translating... 1/9`, `4/9`, ...), and the chapter finished
+  re-scraping and re-translating successfully end-to-end (real title,
+  real author, real paragraphs, a real embedded image) roughly 100
+  seconds later.
+- Repeated with the exact rapid-fire scenario from the task: added
+  three fresh `suggested` terms, confirmed all three back-to-back in
+  one Review Terms session (verified via screenshot after each Confirm
+  that the tree correctly shrank and the cache file's mtime stayed
+  unchanged throughout all three), then closed once. The cache file was
+  deleted exactly once, immediately after the single Close click -- not
+  after any of the three Confirms -- and the main window again showed a
+  single, complete re-translation cycle to completion. Three edits, one
+  refresh, confirmed live, not just in the mocked test below.
+- One process-level artifact during setup, caught and handled rather
+  than left silent: two `xdotool` clicks aimed at the "Review Terms..."
+  toolbar button both registered (a retry-timing miss, same class as
+  the duplicate-dialog artifact recorded in the retranslation dialog's
+  phase 3 entry), producing two independent, correctly-populated
+  `Review Terms` windows. Closed the extra one via its own real Close
+  button before continuing with a single clean dialog instance -- not a
+  defect in this task's code, an `xdotool` interaction artifact.
+
+**Tests** (in `tests/webnovels/test_alphapolis_reader.py`'s new
+`TestGlossaryDialogAutoRefresh` and `tests/webnovels/test_term_review_dialog.py`'s
+new `TestTermReviewDialogAutoRefresh`, both driving the real bound
+dialog methods against real headless Tk widgets, `refresh_current_episode()`
+stubbed to a call-recording spy rather than mocking the auto-refresh
+logic itself):
+
+- Zero edits (Cancel / Close with no Confirm/Reject) triggers no
+  refresh, for both dialogs.
+- A Save that wrote to disk triggers exactly one refresh, for
+  `open_glossary_dialog()`.
+- Three Confirms in one `open_term_review_dialog()` session followed by
+  one Close trigger exactly one refresh, not three -- the specific
+  scenario named in the task, and the one live-verified above.
+- Editing a novel's glossary while the main window displays a different
+  novel does not refresh the displayed episode, for both dialogs (using
+  the real, unmocked `_extract_novel_id()` against two genuinely
+  different URLs, not a fixed-return stub -- an earlier draft of this
+  test used a fixed-return mock and could not actually distinguish
+  "same novel" from "different novel," passing regardless of whether
+  the guard worked; caught before finalizing, not left in as a false
+  positive).
+
+Confirmed load-bearing the same way as the prior two tasks: with the
+implementation stashed out, both new test files fail to even *collect*
+(`AttributeError: type object 'ReaderApp' has no attribute
+'_maybe_refresh_after_glossary_edit'`), since the test harnesses mix in
+the new method directly -- restored and confirmed all pass again
+afterward.
+
+Full `tests/webnovels/` suite re-run: 237 passed (up from 231), no
+regressions. `black`/`isort`/`flake8` clean on all touched files.
+`mypy`: 412 errors, up from the 403 baseline -- the 9 new errors are
+exclusively "missing type annotation" on the new nested `close_dialog()`
+closures and the new `_maybe_refresh_after_glossary_edit()` method
+itself, consistent with this file's existing untyped-method convention
+(the sibling method it calls, `refresh_current_episode()`, is likewise
+untyped) -- not fixed here, same treatment this file's mypy baseline
+has received in every prior session.
+
+**Not done in this pass**: no cheaper "re-derive highlighting live"
+rendering path -- out of scope, per the task's own framing (auto-refresh
+can only mean re-translation, given how `needs_review`/span highlighting
+are actually computed). The pre-existing cross-dialog stale-overwrite
+write-timing inconsistency between `open_glossary_dialog()` (batch-on-
+Save) and `open_term_review_dialog()` (immediate-per-action) -- live-
+reproduced and confirmed real earlier in this session but not yet fixed
+or written up as its own dated entry -- remains open and untouched by
+this task; this task's `disk_write_happened`/`edited` flags read
+whatever each dialog already writes, they do not change either
+dialog's write-timing model itself.
+
+### 2026-07-27: cross-dialog stale-overwrite bug -- confirmed real via live reproduction, NOT fixed (open)
+
+**Status, stated plainly upfront: this is a known, live-reproduced bug
+that was investigated in this session but never fixed.** Recording it
+here now specifically so it is not lost -- it was mentioned only as an
+aside in the auto-refresh entry above, not given its own entry, which
+made it too easy to miss on a later skim of this doc.
+
+**The bug**: `open_glossary_dialog()` loads a full in-memory snapshot of
+the glossary once, at dialog-open time, and writes it back to disk in
+one shot on Save (`save_and_close()`). `open_term_review_dialog()`,
+opened separately, writes to disk immediately on every individual
+Confirm/Reject, using its *own* separate in-memory snapshot loaded at
+its own open time. If both dialogs are open on the same novel at once
+-- opening the Glossary dialog, then opening Review Terms on top of it
+and confirming a term there -- the Glossary dialog's snapshot has no
+way to know about that Confirm. Saving from the still-open Glossary
+dialog afterward writes its own stale snapshot back over the file,
+silently reverting the Review Terms Confirm with no error, no warning,
+and no indication anything was lost.
+
+**Confirmed real, live, not just reasoned about from the code**:
+reproduced the exact sequence via `xdotool` against the real app and a
+real on-disk glossary file for novel 375266002 -- opened Glossary,
+opened Review Terms on top, confirmed `ハードキャッチ`
+(`status: suggested` -> `confirmed`, written to disk immediately,
+confirmed via direct file read), switched back to the still-open
+Glossary dialog (whose Treeview still showed `ハードキャッチ` as
+`suggested`, proving its snapshot was already stale), edited an
+unrelated term (`オレ`)'s Target field, and clicked Save. The on-disk
+file after that Save showed the `オレ` edit landed correctly, but
+`ハードキャッチ` had been silently reverted back to
+`status: suggested, confirmed_target: null` -- the exact pre-Confirm
+state, `updated_at` timestamp reverted along with it. This is real data
+loss with no user-visible indication it happened.
+
+Separately confirmed **not** a problem: switching the active novel in
+the main reader window while either dialog is open does not misdirect
+either dialog's writes -- both pin `novel_id` from `self.current_url`
+into a closure at dialog-open time and never re-derive it, verified via
+two independent live reproductions (one per dialog) that a save while a
+different novel was displayed still wrote to the correct, originally-
+intended novel's file.
+
+**Also relevant, found by the user live on-screen during this
+investigation (not by this session's own testing) and unrelated to the
+write-timing bug above**: `open_glossary_dialog()`'s window is created
+with `win.transient(self.root)` but never `win.grab_set()` -- it is not
+modal. The main window and other dialogs (e.g. Review Terms) remain
+fully interactive while it's open, which is what makes the reproduction
+above possible in the first place: a modal Glossary dialog would
+prevent a user from ever having Review Terms open at the same time. Not
+fixed or scoped here -- recorded because it's very likely the actual
+root enabler of the bug above, and any fix design should account for
+it (see "what's still needed" below).
+
+**Why this was investigated but left unfixed**: the session's live
+`xdotool` interaction hit real friction reproducing the initial
+scenario (overlapping dialog windows, one accidental `windowkill` that
+crashed the single-process Tk app entirely, several stray/duplicate
+agent processes from an earlier delegation misstep) -- confirming the
+bug took priority and consumed the available investigation time before
+a fix was designed or implemented. This is an honest gap, not a
+deferred-on-purpose scope decision like the "not done in this pass"
+notes elsewhere in this doc.
+
+**What's still needed** (not started):
+
+- A fix decision between the two approaches named when this bug was
+  first scoped: (a) `open_glossary_dialog()` re-checks for external
+  changes before its Save actually writes, or (b) convert it to the
+  same immediate-write-per-edit model `open_term_review_dialog()`
+  already uses. (b) needs a real answer for what Cancel means under an
+  immediate-write model before it can be chosen safely -- not
+  hand-waved.
+- Given the modality finding above, adding `win.grab_set()` to
+  `open_glossary_dialog()` (and/or `open_term_review_dialog()`) is
+  worth evaluating as an alternative or companion fix -- it wouldn't
+  fix stale-snapshot writes from a *sequential* open-edit-close-reopen
+  pattern, but it would close off the specific overlapping-dialogs
+  reproduction path entirely, which may be a simpler, more robust fix
+  than reconciling two independent in-memory snapshots.
+- Regression test(s) for the exact reproduction sequence above, written
+  to fail pre-fix and pass post-fix, same standard as every other fix
+  in this doc.
+- Live re-verification of the fixed sequence via `xdotool`, same
+  standard as every other fix in this doc.
+
+No code changes were made for this entry -- it documents an open,
+confirmed-real bug and the investigation already done, nothing more.

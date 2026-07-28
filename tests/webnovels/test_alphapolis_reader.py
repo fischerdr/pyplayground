@@ -518,17 +518,28 @@ class _GlossaryDialogHarness:
     requires a live browser/Playwright object to construct. The dialog's
     actual selection/form/save/delete logic runs unmodified, since
     open_glossary_dialog is bound straight off ReaderApp.
+
+    refresh_current_episode is stubbed (records calls instead of doing a
+    real network fetch + LLM translation) -- _maybe_refresh_after_glossary_edit()
+    is the real ReaderApp method, unmodified, so the auto-refresh
+    trigger/gating logic under test is real; only the expensive operation
+    it would ultimately call is replaced with a spy.
     """
 
     def __init__(self, root, current_url):
         self.root = root
         self.current_url = current_url
         self.status_calls = []
+        self.refresh_calls = []
 
     def set_status(self, msg):
         self.status_calls.append(msg)
 
+    def refresh_current_episode(self):
+        self.refresh_calls.append(self.current_url)
+
     open_glossary_dialog = ReaderApp.open_glossary_dialog
+    _maybe_refresh_after_glossary_edit = ReaderApp._maybe_refresh_after_glossary_edit
 
 
 class TestGlossaryDialogSelection:
@@ -749,5 +760,102 @@ class TestGlossaryDialogSelection:
             assert "オレ" not in remaining_sources, "Delete should have removed the selected row (オレ)"
             assert "ハードキャッチ" in remaining_sources
             assert "鉄パイプ" in remaining_sources
+        finally:
+            root.destroy()
+
+
+def _find_button_by_text(win, text):
+    """Recursively search a dialog's widget tree for a ttk.Button with the given text."""
+    for child in win.winfo_children():
+        if isinstance(child, ttk.Button) and child.cget("text") == text:
+            return child
+        found = _find_button_by_text(child, text)
+        if found is not None:
+            return found
+    return None
+
+
+class TestGlossaryDialogAutoRefresh:
+    """Regression coverage for auto-refreshing the displayed episode after a glossary edit (RETRANSLATION_DESIGN.md-adjacent DESIGN.md entry, 2026-07-27).
+
+    Both open_glossary_dialog() and open_term_review_dialog() write to
+    disk but the currently-displayed episode's rendered content
+    (needs_review flags, span highlighting) is computed and cached at
+    translation time, not re-derived live from current glossary state on
+    render -- so "auto-refresh" can only mean re-triggering
+    refresh_current_episode() (confirmed by reading it: a full
+    cache-evict + re-fetch + re-translate, not a cheap re-render).
+    Deliberately debounced to dialog-close, not per-edit, so confirming
+    several terms in one Review Terms session doesn't fire several
+    expensive passes. Deliberately scoped to same-novel-as-displayed,
+    checked at close time (not dialog-open time), and to "at least one
+    edit actually happened" -- opening and closing with no changes must
+    not trigger anything.
+    """
+
+    def _make_glossary(self):
+        return {
+            "title": "Test Novel",
+            "honorific_policy": "keep",
+            "terms": [
+                make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="ハードキャッチ", target="demanding catch"),
+                make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="オレ", target="Me"),
+            ],
+        }
+
+    def _open_glossary_dialog(self, mocker, glossary, current_url):
+        # _extract_novel_id() is a pure regex parse (NOVEL_ID_RE) -- not
+        # mocked, since real /novel/{id}/ URLs already exercise it
+        # correctly without needing a stub, including the
+        # different-novel-than-displayed case (two different real URLs).
+        mocker.patch("pyplayground.webnovels.alphapolis_reader.load_glossary", return_value=glossary)
+        mocker.patch("pyplayground.webnovels.alphapolis_reader.save_glossary")
+
+        root = tk.Tk()
+        harness = _GlossaryDialogHarness(root, current_url=current_url)
+        harness.open_glossary_dialog()
+        root.update()
+        win = root.winfo_children()[0]
+        return root, harness, win
+
+    def test_no_edits_triggers_no_refresh_on_cancel(self, mocker):
+        root, harness, win = self._open_glossary_dialog(mocker, self._make_glossary(), "https://www.alphapolis.co.jp/novel/375266002/x/episode/1")
+        try:
+            cancel_btn = _find_button_by_text(win, "Cancel")
+            assert cancel_btn is not None
+            cancel_btn.invoke()
+
+            assert harness.refresh_calls == [], "opening and closing with no edits must not trigger a refresh"
+        finally:
+            root.destroy()
+
+    def test_save_with_edit_triggers_exactly_one_refresh(self, mocker):
+        url = "https://www.alphapolis.co.jp/novel/375266002/x/episode/1"
+        root, harness, win = self._open_glossary_dialog(mocker, self._make_glossary(), url)
+        try:
+            save_btn = _find_button_by_text(win, "Save")
+            assert save_btn is not None
+            save_btn.invoke()
+
+            assert harness.refresh_calls == [url], "a Save that wrote to disk must trigger exactly one refresh of the displayed episode"
+        finally:
+            root.destroy()
+
+    def test_editing_a_different_novel_than_displayed_does_not_refresh(self, mocker):
+        """The dialog was opened for novel 375266002 (dialog_novel_id resolved from current_url at open time), but the main window's current_url changes to a different novel before Save -- Save must not refresh the now-displayed different novel."""
+        root, harness, win = self._open_glossary_dialog(mocker, self._make_glossary(), "https://www.alphapolis.co.jp/novel/375266002/x/episode/1")
+        try:
+            # Simulate the main window switching to a different novel while
+            # this dialog is still open -- both dialogs pin novel_id at
+            # open time (confirmed in the prior write-timing investigation),
+            # so the dialog keeps operating on 375266002's glossary, but
+            # the auto-refresh check re-reads self.current_url at close
+            # time and must see it no longer matches.
+            harness.current_url = "https://www.alphapolis.co.jp/novel/999999999/x/episode/1"
+
+            save_btn = _find_button_by_text(win, "Save")
+            save_btn.invoke()
+
+            assert harness.refresh_calls == [], "editing novel 375266002's glossary must not refresh a differently-displayed novel (999999999)"
         finally:
             root.destroy()

@@ -26,16 +26,27 @@ from pyplayground.webnovels.glossary import (
 
 
 class _ReviewDialogHarness:
-    """Minimal stand-in exposing exactly what open_term_review_dialog() touches on self."""
+    """Minimal stand-in exposing exactly what open_term_review_dialog() touches on self.
+
+    refresh_current_episode is stubbed (records calls instead of a real
+    network fetch + LLM translation) -- _maybe_refresh_after_glossary_edit()
+    is the real, unmodified ReaderApp method, so the auto-refresh trigger/
+    gating logic under test is real.
+    """
 
     def __init__(self, root, current_url):
         self.root = root
         self.current_url = current_url
+        self.refresh_calls = []
 
     def set_status(self, msg):
         pass
 
+    def refresh_current_episode(self):
+        self.refresh_calls.append(self.current_url)
+
     open_term_review_dialog = ReaderApp.open_term_review_dialog
+    _maybe_refresh_after_glossary_edit = ReaderApp._maybe_refresh_after_glossary_edit
 
 
 def _make_glossary(terms):
@@ -346,5 +357,147 @@ class TestTermReviewDialogReject:
 
             assert save_calls == []
             assert len(glossary["terms"]) == 1
+        finally:
+            root.destroy()
+
+
+def _find_action_button(win, text):
+    """Find the Confirm/Reject/Close button by text, same tree-walk pattern as the tests above."""
+    tree_frame = win.winfo_children()[0]
+    form = tree_frame.winfo_children()[-1]
+    for w in form.winfo_children():
+        if isinstance(w, tk.ttk.Frame):
+            for sub in w.winfo_children():
+                if isinstance(sub, tk.ttk.Button) and sub.cget("text") == text:
+                    return sub
+    for w in win.winfo_children():
+        if isinstance(w, tk.ttk.Frame):
+            for sub in w.winfo_children():
+                if isinstance(sub, tk.ttk.Button) and sub.cget("text") == text:
+                    return sub
+    return None
+
+
+class TestTermReviewDialogAutoRefresh:
+    """Regression coverage for auto-refreshing the displayed episode after Confirm/Reject actions (DESIGN.md, 2026-07-27).
+
+    open_term_review_dialog() writes to disk immediately on every
+    Confirm/Reject (unlike open_glossary_dialog()'s batch-on-Save model),
+    so debouncing to dialog-close matters even more here: a backlog
+    review session confirming several terms in a row must trigger one
+    refresh on Close, not one per Confirm/Reject.
+    """
+
+    def test_no_confirm_or_reject_triggers_no_refresh_on_close(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        glossary = _make_glossary([make_suggested_term(TERM_TYPE_GENERAL, "鉄パイプ", "iron pipe")])
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(reader_module, "save_glossary", lambda novel_id, g: None)
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "12345")
+
+        root = tk.Tk()
+        try:
+            harness = _ReviewDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/12345/1/episode/1")
+            harness.open_term_review_dialog()
+            root.update()
+
+            win = _find_toplevel_titled(root, "Review Terms")
+            close_btn = _find_action_button(win, "Close")
+            assert close_btn is not None
+            close_btn.invoke()
+
+            assert harness.refresh_calls == [], "opening and closing with no Confirm/Reject must not trigger a refresh"
+        finally:
+            root.destroy()
+
+    def test_multiple_confirms_in_one_session_trigger_exactly_one_refresh_on_close(self, monkeypatch):
+        """The exact scenario from the task: confirming several terms in a row must fire one refresh, not one per Confirm."""
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        url = "https://www.alphapolis.co.jp/novel/12345/1/episode/1"
+        glossary = _make_glossary(
+            [
+                make_suggested_term(TERM_TYPE_GENERAL, "鉄パイプ", "iron pipe"),
+                make_suggested_term(TERM_TYPE_CHARACTER, "オレ", "I"),
+                make_suggested_term(TERM_TYPE_GENERAL, "ダンジョン能力者", "Dungeon Abiliter"),
+            ]
+        )
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(reader_module, "save_glossary", lambda novel_id, g: None)
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "12345")
+
+        root = tk.Tk()
+        try:
+            harness = _ReviewDialogHarness(root, current_url=url)
+            harness.open_term_review_dialog()
+            root.update()
+
+            win = _find_toplevel_titled(root, "Review Terms")
+            tree_frame = win.winfo_children()[0]
+            tree = tree_frame.winfo_children()[0]
+
+            # Confirm the first row three times in a row (each Confirm
+            # removes the just-confirmed term from the reviewable list and
+            # refresh_tree() re-numbers remaining rows back to iid "0", so
+            # selecting "0" each time reaches a fresh not-yet-confirmed
+            # term, not the same one three times).
+            for _ in range(3):
+                tree.selection_set("0")
+                tree.event_generate("<<TreeviewSelect>>")
+                root.update()
+                confirm_btn = _find_action_button(win, "Confirm")
+                assert confirm_btn is not None
+                confirm_btn.invoke()
+                root.update()
+
+            assert harness.refresh_calls == [], "no refresh should fire yet -- only on Close, not per Confirm"
+
+            close_btn = _find_action_button(win, "Close")
+            assert close_btn is not None
+            close_btn.invoke()
+
+            assert harness.refresh_calls == [url], "three Confirms followed by one Close must trigger exactly one refresh, not three"
+        finally:
+            root.destroy()
+
+    def test_editing_a_different_novel_than_displayed_does_not_refresh(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        glossary = _make_glossary([make_suggested_term(TERM_TYPE_GENERAL, "鉄パイプ", "iron pipe")])
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(reader_module, "save_glossary", lambda novel_id, g: None)
+        # Real _extract_novel_id() (not mocked to a fixed value here) so
+        # the two different URLs below actually resolve to two different
+        # novel_ids -- a fixed-return mock would make this test unable to
+        # tell "same novel" from "different novel" and pass either way.
+
+        root = tk.Tk()
+        try:
+            harness = _ReviewDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/12345/1/episode/1")
+            harness.open_term_review_dialog()
+            root.update()
+
+            win = _find_toplevel_titled(root, "Review Terms")
+            tree_frame = win.winfo_children()[0]
+            tree = tree_frame.winfo_children()[0]
+            tree.selection_set("0")
+            tree.event_generate("<<TreeviewSelect>>")
+            root.update()
+
+            confirm_btn = _find_action_button(win, "Confirm")
+            confirm_btn.invoke()
+
+            # Simulate the main window switching to a different novel
+            # while this dialog is still open -- the dialog itself stays
+            # pinned to novel 12345 (confirmed safe in the prior
+            # write-timing investigation), but the auto-refresh check
+            # re-reads self.current_url at close time.
+            harness.current_url = "https://www.alphapolis.co.jp/novel/99999/x/episode/1"
+
+            close_btn = _find_action_button(win, "Close")
+            close_btn.invoke()
+
+            assert harness.refresh_calls == [], "confirming a term for novel 12345 must not refresh a differently-displayed novel (99999)"
         finally:
             root.destroy()

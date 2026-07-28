@@ -1235,6 +1235,51 @@ class ReaderApp:
         self.set_status("Refreshing chapter...")
         self.load_episode(url)
 
+    def _maybe_refresh_after_glossary_edit(self, dialog_novel_id, edited):
+        """Auto-refresh the currently displayed episode after a glossary dialog closes, if warranted.
+
+        Called once, on dialog close (WM_DELETE_WINDOW plus every button
+        that ends up calling win.destroy()), not once per Confirm/Reject/
+        Save action -- refresh_current_episode() is a full re-scrape +
+        re-translate (real network fetch, real LLM calls), confirmed by
+        reading its implementation before this method was written, not
+        assumed from its name. Firing it after every individual edit in a
+        multi-term Review Terms session (e.g. confirming 5 terms in a row)
+        would mean 5 expensive passes instead of one -- wasteful, and
+        needs_review flags/span highlighting are computed and cached at
+        translation time, not re-derived live from current glossary state
+        on render, so "auto-refresh" can only mean "re-run the
+        translation," never a cheap in-place re-render.
+
+        Deliberately narrow triggering conditions, both required:
+        - `edited` must be true -- opening and closing a dialog with no
+          Confirm/Reject/Save actions must not trigger anything.
+        - `dialog_novel_id` must match the novel of the *currently
+          displayed* episode, checked at call time (dialog close), not
+          the novel that was current when the dialog was opened -- the
+          displayed episode can change while the dialog is open (the
+          main window's novel switch is independent of either dialog,
+          confirmed in the stale-overwrite/novel-switch investigation),
+          so re-checking at close time is what actually matters here.
+
+        Args:
+            dialog_novel_id: The novel_id the glossary dialog was opened
+                for (pinned at dialog-open time, same as both dialogs
+                already do for their own save/confirm/reject calls).
+            edited: Whether at least one Confirm/Reject/Save action
+                actually happened during this dialog session.
+        """
+        if not edited:
+            return
+        if not hasattr(self, "current_url") or not self.current_url:
+            return
+        current_novel_id = _extract_novel_id(self.current_url)
+        if current_novel_id != dialog_novel_id:
+            logger.debug(f"Glossary dialog for novel {dialog_novel_id} closed with edits, but displayed episode belongs to novel {current_novel_id!r} -- not auto-refreshing")
+            return
+        logger.info(f"Auto-refreshing displayed episode after glossary edit for novel {dialog_novel_id}")
+        self.refresh_current_episode()
+
     def _confirm_clear_cache(self, settings_win):
         """Ask for confirmation, then clear the entire on-disk episode cache.
 
@@ -1285,11 +1330,36 @@ class ReaderApp:
         # (rebuild always operates on the on-disk glossary, then reloads the
         # whole dialog from it -- see rebuild_glossary()).
         dirty = {"value": False}
+        # Separate from `dirty` above on purpose: `dirty` tracks in-memory
+        # edits that Cancel can still discard with no disk write at all,
+        # but auto-refresh (_maybe_refresh_after_glossary_edit()) must only
+        # fire when something was actually written to disk -- Cancel with
+        # a `dirty` session must not trigger a refresh of already-correct
+        # displayed content. Set only at the three points that actually
+        # call save_glossary(): save_and_close(), clear_glossary(), and a
+        # successful rebuild_glossary().
+        disk_write_happened = {"value": False}
 
         win = tk.Toplevel(self.root)
         win.title(f"Glossary - {glossary.get('title') or novel_id}")
         win.geometry("700x520")
         win.transient(self.root)
+
+        def close_dialog():
+            # Single close path -- called from every button that ends this
+            # dialog (Save, Cancel, and indirectly Clear Glossary/Rebuild
+            # Glossary's destroy-then-reopen) and from the window manager's
+            # own close button (bound via WM_DELETE_WINDOW below) -- so the
+            # auto-refresh check (_maybe_refresh_after_glossary_edit())
+            # fires exactly once regardless of *how* the dialog closed, not
+            # just for one specific button. A plain win.destroy() bound
+            # directly to a button would bypass this entirely, since
+            # WM_DELETE_WINDOW only fires for the OS-level close, not a
+            # programmatic destroy() call from within the app.
+            self._maybe_refresh_after_glossary_edit(novel_id, disk_write_happened["value"])
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", close_dialog)
 
         top = ttk.Frame(win)
         top.pack(fill="x", padx=10, pady=(10, 4))
@@ -1524,7 +1594,8 @@ class ReaderApp:
                     rebuild_state["running"] = False
 
                     def reload_dialog():
-                        win.destroy()
+                        disk_write_happened["value"] = True
+                        close_dialog()
                         self.open_glossary_dialog()
 
                     self.root.after(0, reload_dialog)
@@ -1550,7 +1621,8 @@ class ReaderApp:
             glossary["context_notes"] = ""
             glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
             save_glossary(novel_id, glossary)
-            win.destroy()
+            disk_write_happened["value"] = True
+            close_dialog()
             self.open_glossary_dialog()
             self.set_status("Glossary cleared")
 
@@ -1562,13 +1634,14 @@ class ReaderApp:
             glossary["honorific_policy"] = honorific_var.get()
             glossary["honorific_policy_user_set"] = True
             save_glossary(novel_id, glossary)
-            win.destroy()
+            disk_write_happened["value"] = True
+            close_dialog()
             self.set_status("Glossary saved")
 
         bottom = ttk.Frame(win)
         bottom.pack(pady=(10, 10))
         ttk.Button(bottom, text="Save", command=save_and_close).pack(side="left", padx=4)
-        ttk.Button(bottom, text="Cancel", command=win.destroy).pack(side="left", padx=4)
+        ttk.Button(bottom, text="Cancel", command=close_dialog).pack(side="left", padx=4)
 
         refresh_tree()
 
@@ -1628,6 +1701,28 @@ class ReaderApp:
         win.title(f"Review Terms - {glossary.get('title') or novel_id}")
         win.geometry("760x480")
         win.transient(self.root)
+
+        # Tracks whether at least one Confirm/Reject actually happened
+        # this dialog session -- both write to disk immediately (see this
+        # dialog's own docstring), unlike open_glossary_dialog()'s
+        # batch-on-Save model, so unlike that dialog there is no separate
+        # "in-memory dirty vs. actually written" distinction to make here:
+        # any Confirm/Reject IS a disk write, so this flag alone is the
+        # correct auto-refresh trigger signal.
+        edited = {"value": False}
+
+        def close_dialog():
+            # Single close path -- this dialog has exactly one button
+            # ("Close") plus the window manager's own close button, both
+            # routed through here so the auto-refresh check
+            # (_maybe_refresh_after_glossary_edit()) fires exactly once
+            # per dialog session regardless of which one was used. See
+            # open_glossary_dialog()'s close_dialog() for the fuller
+            # rationale (same pattern, applied here for consistency).
+            self._maybe_refresh_after_glossary_edit(novel_id, edited["value"])
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", close_dialog)
 
         # reviewable_indices maps each Treeview row back to its real index
         # in glossary["terms"] -- the tree shows every not-yet-confirmed
@@ -1752,6 +1847,7 @@ class ReaderApp:
                 glossary["terms"] = upsert_confirmed_term(glossary.get("terms", []), new_term)
                 glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
                 save_glossary(novel_id, glossary)
+                edited["value"] = True
                 logger.info(f"Confirmed term via review dialog for novel {novel_id}: {term.get('source')!r} -> {target!r}")
                 clear_form()
                 refresh_tree()
@@ -1767,6 +1863,7 @@ class ReaderApp:
                 glossary["terms"] = [t for t in glossary.get("terms", []) if t is not term]
                 glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
                 save_glossary(novel_id, glossary)
+                edited["value"] = True
                 logger.info(f"Rejected term via review dialog for novel {novel_id}: {source!r}")
                 clear_form()
                 refresh_tree()
@@ -1788,7 +1885,7 @@ class ReaderApp:
 
         bottom = ttk.Frame(win)
         bottom.pack(pady=(0, 10))
-        ttk.Button(bottom, text="Close", command=win.destroy).pack(side="left", padx=4)
+        ttk.Button(bottom, text="Close", command=close_dialog).pack(side="left", padx=4)
 
         refresh_tree()
 

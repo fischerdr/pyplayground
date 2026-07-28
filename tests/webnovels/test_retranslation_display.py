@@ -67,6 +67,7 @@ class _InterleaveHarness:
         self.text = text_widget
         self._rendered_spans = []
         self._review_terms_by_span = {}
+        self._translated_line_index_by_span = {}
         self.fallback_calls = []
         self.current_url = current_url
 

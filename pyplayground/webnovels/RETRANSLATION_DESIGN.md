@@ -9,7 +9,7 @@ words the model got wrong), not about per-novel proper-noun/term
 consistency. Conflating the two would repeat the same flag-means-two-
 things mistake `DESIGN.md` §11 already caught once for `needs_review`.
 
-Last updated: 2026-07-26
+Last updated: 2026-07-27 (Accept survives same-session view-mode switch, found and fixed)
 
 ---
 
@@ -608,3 +608,140 @@ this" checkbox is inert, wired to a logged no-op with a `# TODO: phase 5`
 marker, not functional. No changes to `retranslate_line_with_hint()`,
 `translate_chunk_with_masking()`, `build_mask_targets()`, or phase 1's
 display/mode code -- confirmed via `git diff` scope check.
+
+### 2026-07-27: Accept did not survive a same-session view-mode switch -- found live, fixed
+
+A suspected, previously-unverified data-loss bug, investigated and
+confirmed real: an accepted retranslation in Interleaved mode was
+silently discarded the moment the user switched to a different view mode
+(Translated/Both/Original) within the *same reading session* -- not the
+already-known, expected-to-be-lost-on-reload case documented in the
+phase 3 entry above, but a strictly worse case: losing the correction on
+a single button click, with no reload or restart involved.
+
+**Step 1 (code reading, confirmed against the actual current code, not
+assumed from this doc's own phase 3 prose)**: `accept_and_close()`
+(`alphapolis_reader.py`, in `open_retranslate_popup()`) mutated only the
+live `tk.Text` widget (`self.text.delete`/`self.text.insert` over the
+`translated_span` range) and the matching entry in
+`self._rendered_spans` -- exactly as phase 3 documented, nothing drifted.
+Separately, `render_text()` -- called by `_on_view_mode_change()` on
+every Original/Translated/Both/Interleaved radio click -- unconditionally
+does `self.text.delete("1.0", "end")` and `self._rendered_spans = []`,
+then re-renders everything fresh from `self.episode`/`ep` via
+`_render_content()`/`_render_translated_view()`/
+`_render_interleaved_content()`, none of which read `_rendered_spans` or
+anything Accept touched. This makes the bug mechanical, not
+probabilistic: `self.episode["translated_lines"]` was never written by
+Accept, so any mode switch was guaranteed to discard the correction, not
+just likely to.
+
+**Step 2 (live reproduction, `xdotool` against the real app)**: seeded a
+synthetic cache-hit episode (the same `彼は醤油顔でモテる。` /
+"...dark complexion." case from phase 2/3's own live testing, for
+continuity with prior verification). Switched to Interleaved, drag-
+selected `醤油顔`, right-clicked, opened "Retranslate this line...",
+Accepted the candidate ("...because of his dark complexion."). Screenshot
+confirmed the corrected text on screen and the expected status-bar
+message. Switched to Translated mode: **confirmed data loss** --
+screenshot shows the line reverted to the original "...with a dark
+complexion.", not the correction. Switched back to Interleaved:
+confirmed the correction did not reappear either -- it was not merely
+hidden in the other mode, it was permanently gone for the rest of the
+session, matching the code-level analysis exactly (there was never a
+second copy of the corrected text anywhere except the widget that had
+just been wiped).
+
+**Step 3 (fix, implemented and live-verified)**: Accept now also writes
+the correction into `self.episode["translated_lines"][line_idx]` --
+the shared in-memory structure every render mode reads from -- not just
+the transient widget/`_rendered_spans`. Resolving `line_idx` reliably
+(rather than re-deriving it from `source_line` text, which would be
+ambiguous if the same source line occurs more than once in a chapter)
+required a new side table, `self._translated_line_index_by_span`:
+`(start, end) -> line_idx`, populated by `_render_interleaved_content()`
+at the exact point it already has `line_idx` in scope (building
+`_rendered_spans`' translated-half entries from `pairs[line_idx]`, itself
+built via `build_interleaved_pairs(ep["lines"], ep["translated_lines"])`
+-- so `line_idx` is guaranteed to be the correct index into
+`ep["translated_lines"]`, not inferred). Same "separate, purpose-built
+span-keyed side table" pattern phase 3 already used for
+`_review_terms_by_span`, not a new mechanism. Reset alongside
+`_rendered_spans`/`_review_terms_by_span` in `render_text()`, same
+lifecycle. `accept_and_close()` looks up the index via the *original*
+`(start, end)` span key (before the widget edit moves `end`), writes
+`translated_lines[line_idx] = candidate`, and re-keys the side table
+to the new `(start, new_end)` range so a second Accept on the same line
+within the same render cycle would still resolve correctly. Both failure
+paths (no index found for the span; index out of range against the
+current `translated_lines` length) degrade to a logged warning rather
+than a crash or a silent no-op, so a future structural change that
+breaks this invariant would be loud, not silently wrong again.
+
+**Session-only boundary confirmed unchanged, not touched by this fix**:
+`self.episode` is in-memory only; nothing in this fix writes to
+`save_cached_episode()`, the on-disk cache, or any new field. Verified
+live -- after Accept, read the on-disk cache file directly while the app
+was still running: still the original, un-retranslated text. Reloading
+the chapter or restarting the app still reverts the correction, exactly
+as phase 3 intended -- that boundary is phase 4's territory and is
+correctly untouched here; only the same-session cross-mode-switch
+behavior changed.
+
+**Live verification, via the same `xdotool` setup as prior tasks**:
+reproduced the fixed sequence end-to-end against the real app: Accept in
+Interleaved (screenshot confirms on-screen correction), switch to
+Translated (screenshot confirms the correction, not the original, is
+shown), switch to Both (screenshot confirms both the original-language
+pass and the corrected translated pass are consistent), switch back to
+Interleaved (screenshot confirms the correction is still there). On-disk
+cache re-checked afterward and still shows the original text, confirming
+the session-only boundary held throughout.
+
+**Test coverage**: one new regression test,
+`TestAcceptSurvivesModeSwitch::test_accepted_retranslation_survives_switching_to_translated_and_back`
+in `test_retranslation_dialog.py`, driving the real `render_text()` and
+`open_retranslate_popup()` methods (not reimplemented) against a real
+headless `tk.Text` widget -- selects the translated span via the real
+`_translated_span_after()`, opens the real popup, finds and invokes the
+real Accept button, then asserts both that `self.episode["translated_lines"]`
+was updated directly and that a full `render_text()` rebuild in
+Translated mode (then back in Interleaved mode) still shows the
+correction. Confirmed load-bearing: reverted the fix and re-ran the
+test, which failed at exactly the "episode dict was updated" assertion
+(`'He is popular with a dark complexion.' == 'He is popular because of
+his dark complexion.'`); re-applied the fix and confirmed it passes
+again. One test-infrastructure detail worth recording: `open_retranslate_popup()`'s
+background thread normally schedules `build_form()` via
+`self.root.after(0, ...)`, which races real Tk C-level state outside a
+running `mainloop()` (`RuntimeError: main thread is not in main loop`)
+-- resolved in-test by patching `threading.Thread` to run its target
+synchronously in the calling thread, since `retranslate_line_with_hint()`
+is already mocked to return deterministically and there is no real
+concurrency behavior being tested here; this is a test-harness
+workaround only, not a change to production threading behavior.
+
+Adding the new `_translated_line_index_by_span` attribute to
+`ReaderApp.__init__()` and `render_text()`'s per-render reset required
+updating two pre-existing test harnesses in
+`test_retranslation_dialog.py`/`test_retranslation_display.py`
+(`_NeedsReviewAndRetranslateHarness`, `_InterleaveHarness`) that mix in
+the real `_render_interleaved_content()` but construct their own
+`__init__` rather than inheriting `ReaderApp`'s -- both were missing the
+new attribute and failed with `AttributeError` until added; not a
+behavioral regression, a mechanical consequence of adding a new instance
+attribute that hand-built harnesses don't get for free.
+
+Full `tests/webnovels/` suite re-run: 231 passed (up from 224), no
+regressions. `black`/`isort`/`flake8` clean on all three touched files.
+`mypy`: 403 errors, confirmed identical before and after this change via
+`git stash` comparison -- zero new errors introduced.
+
+**Not done in this pass**: no changes to phase 4/5 scope (still no
+`line_overrides` cache field, still no persistence surviving reload/
+restart, still no vocabulary-notes store) -- this task was specifically
+the same-session cross-mode-switch bug, kept separate from persistence
+per the task's own explicit framing. No changes to
+`retranslate_line_with_hint()`, `translate_chunk_with_masking()`,
+`build_mask_targets()`, or the menu-gating/dialog-opening logic --
+confirmed via `git diff` scope check, same discipline as phase 3.

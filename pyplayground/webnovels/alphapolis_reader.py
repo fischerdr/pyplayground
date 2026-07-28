@@ -697,6 +697,16 @@ class ReaderApp:
         # must not disturb. Rebuilt on every render_text() call, same
         # lifecycle as _rendered_spans.
         self._review_terms_by_span = {}
+        # (start_index, end_index) -> index into ep["translated_lines"],
+        # one entry per translated-half span rendered by
+        # _render_interleaved_content() -- lets open_retranslate_popup()'s
+        # Accept write the correction into the shared episode dict itself
+        # (not just the live widget/_rendered_spans), so the fix survives a
+        # view-mode switch within the same session. Same "separate,
+        # purpose-built side table" pattern as _review_terms_by_span, kept
+        # apart from _rendered_spans for the same reason given there.
+        # Rebuilt on every render_text() call, same lifecycle as the above.
+        self._translated_line_index_by_span = {}
         # (word, context) -> (google_guess, llm_guess, explanation),
         # populated by open_word_glossary_popup()'s background lookup.
         # Session-only (not persisted) -- avoids repeating a network
@@ -1940,7 +1950,9 @@ class ReaderApp:
 
             start = self.text.index("end-1c")
             self.text.insert("end", translated_line + "\n", translated_tag)
-            self._rendered_spans.append((start, self.text.index("end-1c"), translated_tag, source_line))
+            end = self.text.index("end-1c")
+            self._rendered_spans.append((start, end, translated_tag, source_line))
+            self._translated_line_index_by_span[(start, end)] = line_idx
             if review_aware and needs_review_flags[line_idx]:
                 self._apply_needs_review_spans(start, translated_line, source_line, glossary)
 
@@ -2158,6 +2170,7 @@ class ReaderApp:
         self.text.delete("1.0", "end")
         self._rendered_spans = []
         self._review_terms_by_span = {}
+        self._translated_line_index_by_span = {}
 
         if mode in ("original", "both", "interleaved"):
             self.text.insert("end", f"{ep['title']} — {ep['episode_title']}\n", "heading")
@@ -2690,6 +2703,32 @@ class ReaderApp:
                 new_end = self.text.index(f"{start}+{len(candidate) + 1}c")
                 idx = self._rendered_spans.index(translated_span)
                 self._rendered_spans[idx] = (start, new_end, translated_tag, source_line)
+
+                # Write through to the shared episode dict (not just the
+                # live widget/_rendered_spans above) so the correction
+                # survives a view-mode switch within the same session --
+                # render_text() always rebuilds from self.episode fresh on
+                # every mode change, so anything not written here is
+                # silently lost the moment the user switches modes. Still
+                # session-only: self.episode is in-memory only, never
+                # written to the on-disk cache, so a reload/restart still
+                # reverts it -- that boundary (phase 4's territory) is
+                # unchanged by this fix.
+                line_idx = self._translated_line_index_by_span.pop((start, end), None)
+                if line_idx is not None and self.episode is not None:
+                    translated_lines = self.episode.get("translated_lines")
+                    if translated_lines is not None and 0 <= line_idx < len(translated_lines):
+                        translated_lines[line_idx] = candidate
+                        self._translated_line_index_by_span[(start, new_end)] = line_idx
+                    else:
+                        logger.warning(
+                            f"Retranslation accepted but translated_lines index {line_idx} out of range ({len(translated_lines) if translated_lines is not None else 'n/a'}) -- in-memory episode not updated, correction will not survive a view-mode switch"
+                        )
+                else:
+                    logger.warning(
+                        "Retranslation accepted but no translated_lines index found for this span -- in-memory episode not updated, correction will not survive a view-mode switch"
+                    )
+
                 logger.info(f"Retranslation accepted (session-only, not persisted) for line: {source_line!r} -> {candidate!r}")
                 win.destroy()
                 self.set_status("Retranslation applied for this session (not saved)")

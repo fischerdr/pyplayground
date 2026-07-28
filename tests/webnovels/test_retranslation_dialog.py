@@ -222,6 +222,7 @@ class _NeedsReviewAndRetranslateHarness:
         self.text = text_widget
         self._rendered_spans = []
         self._review_terms_by_span = {}
+        self._translated_line_index_by_span = {}
         self.current_url = current_url
 
     def _make_photo_image(self, src):
@@ -290,6 +291,180 @@ class TestNeedsReviewLineAlsoRetranslateTarget:
             assert source_line == "オレは彼を見た。"
             assert text.get(start, end) == "オレ"
             assert "needs_review" in text.tag_names(start)
+        finally:
+            root.destroy()
+
+
+def _find_toplevel_titled(root, title_substring):
+    for child in root.winfo_children():
+        if isinstance(child, tk.Toplevel) and title_substring in child.title():
+            return child
+    return None
+
+
+def _find_button(container, text):
+    for w in container.winfo_children():
+        if isinstance(w, tk.ttk.Button) and w.cget("text") == text:
+            return w
+        found = _find_button(w, text)
+        if found is not None:
+            return found
+    return None
+
+
+class _AcceptSurvivesModeSwitchHarness:
+    """Real render_text() + open_retranslate_popup(), for the required same-session mode-switch regression test.
+
+    Combines render_text()'s dependencies (self.text/self.episode/
+    self.view_mode plus the real _render_content/_render_translated_view/
+    _render_interleaved_content methods) with open_retranslate_popup()'s
+    (self.root/self.text/self.current_url/self._retranslate_popup/
+    self._word_guess_cache/self.target_lang) -- both real, unmodified
+    methods, not reimplemented, so this exercises the actual Accept code
+    path against the actual render/rebuild code path.
+    """
+
+    def __init__(self, root, text_widget, current_url, episode):
+        self.root = root
+        self.text = text_widget
+        self.current_url = current_url
+        self.episode = episode
+        self.view_mode = tk.StringVar(value="interleaved")
+        self._rendered_spans = []
+        self._review_terms_by_span = {}
+        self._translated_line_index_by_span = {}
+        self._retranslate_popup = None
+        self._word_guess_cache = {}
+        self.target_lang = "en"
+
+    def _make_photo_image(self, src):
+        return None
+
+    def set_status(self, msg):
+        pass
+
+    render_text = ReaderApp.render_text
+    _render_content = ReaderApp._render_content
+    _render_translated_view = ReaderApp._render_translated_view
+    _render_translated_content = ReaderApp._render_translated_content
+    _render_interleaved_content = ReaderApp._render_interleaved_content
+    _apply_needs_review_spans = ReaderApp._apply_needs_review_spans
+    _translated_span_after = ReaderApp._translated_span_after
+    open_retranslate_popup = ReaderApp.open_retranslate_popup
+
+
+class TestAcceptSurvivesModeSwitch:
+    """Required regression test: an accepted retranslation in Interleaved mode must survive switching to a different view mode within the same session.
+
+    Found live (not just suspected): Accept previously mutated only the
+    live tk.Text widget and _rendered_spans, both of which render_text()
+    unconditionally wipes and rebuilds from self.episode on every mode
+    switch -- so the correction was silently discarded the moment the
+    view mode changed, even though it had nothing to do with reloading
+    the chapter (the already-known, expected-to-be-lost case). Fixed by
+    having Accept also write the correction into
+    self.episode["translated_lines"] itself, the shared structure every
+    render mode reads from.
+    """
+
+    def _make_widget(self):
+        root = tk.Tk()
+        text = tk.Text(root, width=80, height=24)
+        text.pack()
+        text.tag_configure("heading", font=("TkDefaultFont", 12, "bold"))
+        text.tag_configure("original", foreground="#333333")
+        text.tag_configure("translated", foreground="#1a56c4")
+        root.update()
+        return root, text
+
+    def _make_episode(self):
+        return {
+            "title": "Title",
+            "author": "Author",
+            "episode_title": "Ep 1",
+            "translated_title": "Title",
+            "translated_episode_title": "Ep 1",
+            "lines": ["彼は醤油顔でモテる。"],
+            "content": [{"type": "text", "text": "彼は醤油顔でモテる。"}],
+            "translated_lines": ["He is popular with a dark complexion."],
+        }
+
+    def test_accepted_retranslation_survives_switching_to_translated_and_back(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(reader_module, "retranslate_line_with_hint", lambda *a, **k: "He is popular because of his dark complexion.")
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: {"terms": []})
+        monkeypatch.setattr(reader_module, "format_glossary_for_prompt", lambda glossary: "")
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "12345")
+
+        # open_retranslate_popup() normally runs fetch_candidate() on a
+        # background thread and schedules build_form() via
+        # self.root.after(0, ...) once it returns -- outside a real
+        # mainloop() (as in this test), that after() call races the test
+        # thread and can hit "main thread is not in main loop" in Tk's C
+        # layer. retranslate_line_with_hint() is mocked above to return
+        # instantly/deterministically anyway, so there is no real
+        # concurrency to test here -- run the "background" work
+        # synchronously in the calling thread instead, exercising the
+        # exact same fetch_candidate/build_form code, just without the
+        # thread-timing race that has nothing to do with what this test
+        # is actually checking (Accept's in-memory write-through).
+        class _SyncThread:
+            def __init__(self, target, daemon=True):
+                self._target = target
+
+            def start(self):
+                self._target()
+
+        monkeypatch.setattr(reader_module.threading, "Thread", _SyncThread)
+
+        root, text = self._make_widget()
+        try:
+            episode = self._make_episode()
+            harness = _AcceptSurvivesModeSwitchHarness(root, text, current_url="https://www.alphapolis.co.jp/novel/12345/1/episode/1", episode=episode)
+
+            harness.render_text()
+            original_span = harness._rendered_spans[0]
+            translated_span = harness._translated_span_after(original_span)
+            assert translated_span is not None
+
+            harness.open_retranslate_popup("彼は醤油顔でモテる。", translated_span, "醤油顔で")
+
+            popup = harness._retranslate_popup
+            assert popup is not None
+
+            # fetch_candidate() (run synchronously in-thread, per the
+            # _SyncThread patch above) schedules build_form() via
+            # root.after(0, ...) -- pump the event loop so that callback
+            # actually runs and replaces the "Retranslating..." status
+            # label with the real Accept/Discard buttons.
+            root.update()
+            accept_btn = _find_button(popup, "Accept")
+            assert accept_btn is not None, "Accept button never appeared -- build_form() did not run"
+            accept_btn.invoke()
+            root.update()
+
+            # Accept must write through to the shared episode structure,
+            # not just the transient widget/_rendered_spans -- this is the
+            # actual mechanism render_text() reads from on every mode
+            # switch, so this assertion is the crux of the fix.
+            assert episode["translated_lines"][0] == "He is popular because of his dark complexion."
+
+            # Simulate switching to Translated mode: a full render_text()
+            # rebuild from self.episode, same as _on_view_mode_change() does.
+            harness.view_mode.set("translated")
+            harness.render_text()
+            translated_mode_text = text.get("1.0", "end")
+            assert "He is popular because of his dark complexion." in translated_mode_text
+            assert "He is popular with a dark complexion." not in translated_mode_text
+
+            # And switching back to Interleaved -- the correction must
+            # still be there, not just transiently visible in one mode.
+            harness.view_mode.set("interleaved")
+            harness.render_text()
+            interleaved_mode_text = text.get("1.0", "end")
+            assert "He is popular because of his dark complexion." in interleaved_mode_text
+            assert "He is popular with a dark complexion." not in interleaved_mode_text
         finally:
             root.destroy()
 

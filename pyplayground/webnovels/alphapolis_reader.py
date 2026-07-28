@@ -1321,9 +1321,39 @@ class ReaderApp:
             return
 
         glossary = load_glossary(novel_id)
+        # Captured once at open time -- compared against the on-disk
+        # value at Save time to detect whether another writer (e.g.
+        # open_term_review_dialog(), which writes immediately per
+        # Confirm/Reject rather than batching like this dialog) touched
+        # the file while this dialog was open. See save_and_close()'s
+        # merge-on-divergence logic below -- this is the actual fix for
+        # the cross-dialog stale-overwrite bug documented in DESIGN.md.
+        opened_updated_at = glossary.get("updated_at")
         # Work on a local copy of the term list; only written back to the
         # glossary dict (and disk) on Save, so Cancel discards cleanly.
         terms = [dict(t) for t in glossary.get("terms", [])]
+        # Sources deleted via the Delete button this session -- tracked
+        # separately from `terms` (which simply no longer contains them)
+        # so a merge-on-divergence at Save time can still honor an
+        # explicit delete even for a term that also exists, untouched, in
+        # a newer on-disk snapshot -- otherwise the merge below would
+        # treat "not in `terms`" as "never existed" and silently resurrect
+        # it from disk instead of respecting the deletion.
+        deleted_sources = set()
+        # Sources actually touched this session (row visited/edited via
+        # save_form_to_term(), or a newly added term) -- the merge-on-
+        # divergence logic in save_and_close() only lets THIS dialog's
+        # local copy win, per source, for entries in this set. Without
+        # this distinction, merging `local_terms` wholesale would let
+        # every term in this dialog's stale in-memory snapshot overwrite
+        # the fresh on-disk copy, including terms the user never touched
+        # -- silently reverting exactly the kind of concurrent write
+        # (e.g. a Review Terms Confirm) this fix exists to protect,
+        # just via the merge path instead of a blind save. Confirmed
+        # this distinction is necessary by first shipping the merge
+        # without it and reproducing the original bug through the merge
+        # path itself -- not a hypothetical concern.
+        edited_sources = set()
         # Mutable container (not a plain bool) so nested handlers below can
         # flip it without needing `nonlocal` in every one of them. Tracks
         # unsaved edits so Rebuild Glossary can warn before discarding them
@@ -1344,6 +1374,20 @@ class ReaderApp:
         win.title(f"Glossary - {glossary.get('title') or novel_id}")
         win.geometry("700x520")
         win.transient(self.root)
+        # Modal: prevents a user from ever having open_term_review_dialog()
+        # (or anything else) open and interactive at the same time as this
+        # dialog, closing off the specific overlapping-dialogs reproduction
+        # of the cross-dialog stale-overwrite bug (DESIGN.md) entirely, on
+        # top of (not instead of) the merge-on-divergence fix in
+        # save_and_close() below -- modality alone would not fix a
+        # sequential case (open this dialog, something else writes to the
+        # same file some other way while it's open, Save anyway), only the
+        # interactive-overlap case. Not applied to open_term_review_dialog()
+        # itself: that dialog already writes immediately per action, so it
+        # isn't the one holding a stale snapshot, and making it modal too
+        # would block the legitimate case of opening it to check current
+        # state while this dialog is up, which isn't the bug.
+        win.grab_set()
 
         def close_dialog():
             # Single close path -- called from every button that ends this
@@ -1465,8 +1509,16 @@ class ReaderApp:
 
             def save_form_to_term(idx):
                 t = terms[idx]
+                # Track both the source this term had when the dialog
+                # loaded it and whatever it's being renamed to (if
+                # different) as "edited" -- the merge-on-divergence logic
+                # in save_and_close() needs to let this dialog's copy win
+                # under the *new* key, and must not treat the *old* key as
+                # still protected (it no longer describes this term).
+                edited_sources.add(t.get("source", ""))
                 t["type"] = form_vars["type"].get()
                 t["source"] = form_vars["source"].get().strip()
+                edited_sources.add(t["source"])
                 # Editing a term in this dialog is a deliberate human action,
                 # same trust level as "Highlight -> Add Term" -- confirm it
                 # immediately rather than leaving it in the suggested queue.
@@ -1536,6 +1588,9 @@ class ReaderApp:
             if not selection:
                 return
             index = int(selection[0])
+            deleted_source = terms[index].get("source")
+            if deleted_source:
+                deleted_sources.add(deleted_source)
             del terms[index]
             dirty["value"] = True
             clear_form()
@@ -1630,9 +1685,55 @@ class ReaderApp:
 
         def save_and_close():
             commit_selected_form()
-            glossary["terms"] = [t for t in terms if t.get("source")]
+            local_terms = [t for t in terms if t.get("source")]
+
+            # Re-check-before-write: reload the glossary fresh, right
+            # before writing, and compare updated_at against what this
+            # dialog loaded at open time. If another writer (most
+            # notably open_term_review_dialog(), which writes
+            # immediately per Confirm/Reject rather than batching like
+            # this dialog does) touched the file in the meantime, a
+            # blind overwrite of `local_terms` over the current on-disk
+            # state would silently revert that writer's changes -- the
+            # exact cross-dialog stale-overwrite bug documented in
+            # DESIGN.md. Merging instead of aborting: aborting would
+            # lose everything typed in this dialog session with no easy
+            # way to reapply it, and a merge is achievable here because
+            # both dialogs identify terms by `source`, a stable,
+            # comparable key.
+            current_glossary = load_glossary(novel_id)
+            if current_glossary.get("updated_at") != opened_updated_at:
+                logger.info(
+                    f"Glossary for novel {novel_id} changed on disk while this dialog was open (updated_at {opened_updated_at!r} -> {current_glossary.get('updated_at')!r}) -- merging by source instead of overwriting"
+                )
+                current_by_source = {t.get("source"): t for t in current_glossary.get("terms", []) if t.get("source")}
+                local_by_source = {t.get("source"): t for t in local_terms}
+                merged_by_source = dict(current_by_source)
+                # Only let this dialog's copy win for sources it actually
+                # touched this session (edited_sources) -- NOT every
+                # source merely present in `local_by_source`. This
+                # dialog's in-memory `terms` is a full snapshot loaded at
+                # open time, so it still contains every term the user
+                # never looked at; blindly applying all of `local_by_source`
+                # would silently overwrite whatever the concurrent writer
+                # changed on exactly those untouched terms -- reproducing
+                # the very bug this merge exists to fix, just one layer
+                # deeper. Confirmed live: shipping this without the
+                # edited_sources filter reproduced the original bug
+                # through the merge path itself.
+                for source in edited_sources:
+                    if source in local_by_source:
+                        merged_by_source[source] = local_by_source[source]
+                for source in deleted_sources:
+                    merged_by_source.pop(source, None)
+                final_terms = list(merged_by_source.values())
+            else:
+                final_terms = local_terms
+
+            glossary["terms"] = final_terms
             glossary["honorific_policy"] = honorific_var.get()
             glossary["honorific_policy_user_set"] = True
+            glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
             save_glossary(novel_id, glossary)
             disk_write_happened["value"] = True
             close_dialog()

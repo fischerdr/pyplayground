@@ -4,7 +4,7 @@ Living record of decisions for the glossary/term-consistency rework and the
 Tkinter → web migration. Update this alongside code changes, not after —
 chat history is not the system of record.
 
-Last updated: 2026-07-27 (cross-dialog stale-overwrite bug: confirmed real, NOT fixed -- open)
+Last updated: 2026-07-28 (cross-dialog stale-overwrite bug: fixed and live-verified)
 
 ---
 
@@ -2561,5 +2561,141 @@ notes elsewhere in this doc.
 - Live re-verification of the fixed sequence via `xdotool`, same
   standard as every other fix in this doc.
 
-No code changes were made for this entry -- it documents an open,
-confirmed-real bug and the investigation already done, nothing more.
+**Status update, 2026-07-28: fixed and live-verified.** Everything above
+this line is preserved as originally written -- the bug description and
+reproduction stand as the record of what was found. What follows is the
+resolution.
+
+**Approach chosen: (a), re-check-before-write, not (b).** (b) (converting
+`open_glossary_dialog()` to immediate-write-per-edit) was rejected
+because its prerequisite -- a real answer for what Cancel means under
+immediate-write -- does not have a good answer for this specific
+dialog. `commit_selected_form()` already runs on *every* row-selection
+change, not just on an explicit save action; under immediate-write, that
+would mean a disk write on every row click, with no clean point left to
+"commit" an in-progress edit short of redesigning the form to autosave
+per-keystroke or per-field-blur -- a materially larger UX/structural
+change than this bug warrants, and one that would silently break this
+dialog's long-standing, documented "edit anything, Save commits
+everything" contract (Section 9). (a) is small, local, and additive:
+`save_and_close()` now reloads the glossary fresh immediately before
+writing and compares `updated_at` against what was captured at dialog-open
+time. On divergence, it merges by `source` (a stable, comparable key both
+dialogs already use) instead of aborting -- aborting would lose
+everything typed in the dialog session with no easy way to reapply it.
+
+**A real bug found in the merge logic itself during live re-verification,
+not a hypothetical concern.** The first implementation, on divergence,
+applied the dialog's *entire* local snapshot over the freshly-reloaded
+on-disk terms (`merged_by_source.update(local_by_source)` for every
+source in the dialog's in-memory copy). This reproduced the original bug
+through the merge path itself: `local_by_source` still contains every
+term the dialog loaded at open time, including ones the user never
+touched, so a term confirmed concurrently by Review Terms -- present in
+the dialog's stale snapshot as `suggested` -- got silently overwritten
+right back to `suggested` by the merge, exactly as if no fix existed.
+Caught via the live reproduction below (first attempt), not by
+inspection. Fixed by adding `edited_sources`, a set of every `source`
+actually visited/edited via `save_form_to_term()` (which runs on every
+row-selection commit and on Save, matching this dialog's existing
+`dirty`-tracking granularity) or added via `add_term()`. The merge now
+only lets the dialog's local copy win, per source, for entries in
+`edited_sources` -- every other source falls through to the freshly-
+reloaded on-disk value untouched. A term explicitly removed via Delete is
+tracked in a separate `deleted_sources` set and popped from the merge
+result last, so an explicit delete still wins even if the same source
+also exists, untouched, in the newer on-disk snapshot.
+
+**Modality added as a companion, confirmed live it does not replace the
+merge fix.** `win.grab_set()` added to `open_glossary_dialog()` only
+(not `open_term_review_dialog()` -- that dialog already writes
+immediately, so it was never the one holding a stale snapshot, and
+making it modal too would block the legitimate case of checking it while
+the Glossary dialog is open, which isn't the bug). Confirmed live: with
+the Glossary dialog open, clicking "Review Terms..." on the main window
+does nothing -- no window opens, closing off the original overlapping-
+dialogs reproduction path entirely. Because this closed off the exact UI
+path used for the original reproduction, re-verifying the merge fix
+itself required simulating the concurrent writer directly (writing to
+the glossary file on disk while the modal dialog was open, the same
+effect `open_term_review_dialog()`'s `confirm_selected()` has), rather
+than opening a second dialog through the UI -- confirming, live, exactly
+the point made when this bug was first scoped: modality prevents the
+*interactive* overlap, it does not by itself fix a *sequential* stale-
+snapshot write (open dialog, something else writes to the file some
+other way, Save anyway) -- the re-check-before-write/merge logic is what
+actually closes that gap, modality is defense-in-depth on top of it.
+
+**Live re-verification, via the same `xdotool` setup as every prior fix
+in this doc, following Step 4's window-management discipline explicitly
+adopted for this task to avoid the prior session's specific failures**
+(polling for window/process existence rather than assuming readiness,
+never `windowkill` on the app's own windows, closing only via the app's
+real UI or a process-level `kill` on an unresponsive process, confirming
+exactly one `alphapolis_reader` process before and after each launch):
+
+- First attempt (pre-merge-logic-fix): opened Glossary, simulated a
+  concurrent Confirm write to the on-disk file (matching what Review
+  Terms' `confirm_selected()` does), edited an unrelated term in the
+  still-open Glossary dialog, clicked Save. On-disk file showed the
+  unrelated edit landed correctly, but the concurrent Confirm was
+  reverted -- **the bug reproduced through the merge path itself**, which
+  is what surfaced the `edited_sources` gap above. Recorded honestly as
+  a real failed attempt, not smoothed over.
+- Second attempt (post-`edited_sources`-fix), same sequence: opened
+  Glossary fresh, confirmed via live screenshot that "Review Terms..."
+  is inert while the modal dialog is open, simulated the concurrent
+  Confirm write, edited a different unrelated term (`鉄パイプ`) in the
+  still-open dialog (its Treeview still showed the concurrently-confirmed
+  term at its old, stale status, confirming the snapshot really was
+  stale), clicked Save. On-disk file read directly afterward: **both
+  changes present** -- the dialog's own edit applied correctly, and the
+  concurrently-confirmed term remained confirmed, not reverted. App log
+  confirmed the merge branch fired
+  (`... changed on disk while this dialog was open ... merging by source
+  instead of overwriting`). The resulting auto-refresh (per the prior
+  entry in this doc) then ran a full, real re-translation to completion,
+  confirmed via screenshot before the app was closed.
+- The previously-confirmed novel-switch safety (both dialogs pin
+  `novel_id` at open time) and the auto-refresh debounce (prior entry)
+  were not disturbed by this fix -- neither was touched, and the full
+  test suite (below) confirms no regression in either area.
+
+**Tests**, in `tests/webnovels/test_alphapolis_reader.py`'s new
+`TestGlossaryDialogMergeOnDivergence` (driving the real, unmodified
+`open_glossary_dialog()` against a real headless Tk widget tree, with
+`load_glossary()` mocked via `side_effect` to return a different,
+already-diverged dict on the dialog's second call -- simulating a
+concurrent writer without needing two real Tk dialogs open at once):
+
+- The exact original reproduction sequence: edit an unrelated term,
+  Save -- the concurrent Confirm must survive, not revert. This is the
+  regression test that failed against the pre-fix code (see below).
+- No divergence (`updated_at` unchanged between open and Save) saves
+  normally, with no merge needed -- confirms the merge path doesn't
+  fire when it shouldn't.
+- An explicit Delete of one term survives a divergent-Save merge even
+  when that same term also exists, untouched, in the fresher on-disk
+  copy -- covers the `deleted_sources`-wins-last case directly, not just
+  by inspection.
+
+Confirmed load-bearing the same way as every prior fix in this doc: with
+the implementation stashed out, the original-reproduction test failed
+cleanly (`assert load_glossary_mock.call_count == 2` -- `1 == 2`, since
+`save_and_close()` never reloaded without the fix) -- restored and
+confirmed all three pass again.
+
+Full `tests/webnovels/` suite re-run: 240 passed (up from 237), no
+regressions. `black`/`isort`/`flake8` clean on both touched files.
+`mypy`: 412 errors, confirmed identical before and after this change via
+`git stash` comparison -- zero new errors introduced (the new
+`edited_sources`/`deleted_sources` tracking and the merge logic itself
+are additions to already-untyped nested closures, consistent with this
+file's existing convention).
+
+**Not done in this pass**: no changes to `open_term_review_dialog()`
+itself (still writes immediately per action, unchanged, and deliberately
+not made modal -- see the modality reasoning above). No changes to the
+auto-refresh logic from the prior entry, confirmed undisturbed by the
+full suite re-run. The "what's still needed" list above is now fully
+addressed; nothing from it remains open.

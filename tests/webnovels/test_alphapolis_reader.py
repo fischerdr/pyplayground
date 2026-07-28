@@ -34,7 +34,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from pyplayground.webnovels.alphapolis_reader import ReaderApp, build_review_term_map
-from pyplayground.webnovels.glossary import TERM_TYPE_GENERAL, make_confirmed_term
+from pyplayground.webnovels.glossary import STATUS_CONFIRMED, TERM_TYPE_CHARACTER, TERM_TYPE_GENERAL, make_confirmed_term
 from pyplayground.webnovels.llm_translate import TranslatedLine
 
 
@@ -857,5 +857,190 @@ class TestGlossaryDialogAutoRefresh:
             save_btn.invoke()
 
             assert harness.refresh_calls == [], "editing novel 375266002's glossary must not refresh a differently-displayed novel (999999999)"
+        finally:
+            root.destroy()
+
+
+class TestGlossaryDialogMergeOnDivergence:
+    """Regression coverage for the cross-dialog stale-overwrite bug (DESIGN.md, 2026-07-27 -- fixed in this entry).
+
+    open_glossary_dialog() loads a snapshot once at open time and only
+    writes on Save; open_term_review_dialog() writes immediately per
+    Confirm/Reject. If both are open on the same novel, a stale Save
+    from the Glossary dialog used to silently overwrite whatever the
+    Review Terms dialog had written in the meantime -- confirmed real
+    via live xdotool reproduction, documented in DESIGN.md. Fixed by
+    having save_and_close() reload the glossary fresh immediately before
+    writing, compare `updated_at` against what was loaded at open time,
+    and merge by `source` instead of blindly overwriting when they
+    diverge -- critically, only letting this dialog's copy win for
+    sources it actually edited this session (`edited_sources`), not
+    every source merely present in its stale in-memory snapshot (a bug
+    in the merge logic itself, caught during live re-verification: an
+    early version applied the dialog's full local snapshot on divergence
+    and silently reverted the untouched concurrent term right back,
+    reproducing the original bug through the merge path).
+
+    These tests simulate the concurrent writer by having the mocked
+    load_glossary() return a different (already-diverged) dict on the
+    dialog's second call (Save-time reload) than on its first (dialog-open
+    load) -- the same effect as another dialog/process writing to the file
+    in between, without needing two real Tk dialogs open at once.
+    """
+
+    def _make_glossary_at_open(self):
+        return {
+            "title": "Test Novel",
+            "honorific_policy": "keep",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "terms": [
+                make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="鉄パイプ", target="iron pipe"),
+                {
+                    "type": "character",
+                    "source": "ハードキャッチ",
+                    "candidates": [{"target": "Hard Catch", "count": 1, "origin": "llm"}],
+                    "confirmed_target": None,
+                    "status": "suggested",
+                    "note": None,
+                },
+            ],
+        }
+
+    def _make_glossary_after_concurrent_confirm(self):
+        """The same glossary, but as if open_term_review_dialog() had confirmed ハードキャッチ in the meantime -- a later updated_at, ハードキャッチ now confirmed."""
+        return {
+            "title": "Test Novel",
+            "honorific_policy": "keep",
+            "updated_at": "2026-01-01T00:05:00+00:00",
+            "terms": [
+                make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="鉄パイプ", target="iron pipe"),
+                make_confirmed_term(term_type=TERM_TYPE_CHARACTER, source="ハードキャッチ", target="Hard Catch"),
+            ],
+        }
+
+    def test_concurrent_confirm_survives_a_save_that_edited_an_unrelated_term(self, mocker):
+        """The exact original reproduction: edit 鉄パイプ, Save -- ハードキャッチ's concurrent Confirm must survive, not revert."""
+        url = "https://www.alphapolis.co.jp/novel/375266002/x/episode/1"
+        load_glossary_mock = mocker.patch(
+            "pyplayground.webnovels.alphapolis_reader.load_glossary",
+            side_effect=[self._make_glossary_at_open(), self._make_glossary_after_concurrent_confirm()],
+        )
+        saved = {}
+        mocker.patch(
+            "pyplayground.webnovels.alphapolis_reader.save_glossary",
+            side_effect=lambda novel_id, g: saved.update(novel_id=novel_id, glossary=dict(g, terms=[dict(t) for t in g["terms"]])),
+        )
+
+        root = tk.Tk()
+        try:
+            harness = _GlossaryDialogHarness(root, current_url=url)
+            harness.open_glossary_dialog()
+            root.update()
+            win = root.winfo_children()[0]
+
+            tree = None
+            for body in win.winfo_children():
+                for child in body.winfo_children():
+                    if isinstance(child, ttk.Treeview):
+                        tree = child
+            assert tree is not None
+
+            # Select and edit 鉄パイプ (row 0) -- an unrelated term to the
+            # concurrently-confirmed ハードキャッチ (row 1), matching the
+            # original live reproduction sequence exactly.
+            tree.selection_set("0")
+            root.update()
+
+            form_container = None
+            for body in win.winfo_children():
+                for child in body.winfo_children():
+                    if isinstance(child, ttk.Frame) and child is not win.winfo_children()[0]:
+                        form_container = child
+            for widget in form_container.winfo_children():
+                info = widget.grid_info()
+                if isinstance(widget, ttk.Entry) and info.get("row") == 2:
+                    widget.delete(0, "end")
+                    widget.insert(0, "iron pipe EDITED")
+
+            save_btn = _find_button_by_text(win, "Save")
+            assert save_btn is not None
+            save_btn.invoke()
+
+            assert load_glossary_mock.call_count == 2, "save_and_close() must reload the glossary fresh before writing, not rely solely on the open-time snapshot"
+            saved_terms = {t["source"]: t for t in saved["glossary"]["terms"]}
+
+            assert saved_terms["鉄パイプ"]["confirmed_target"] == "iron pipe EDITED", "the edit made in this dialog must still be applied"
+            assert saved_terms["ハードキャッチ"]["status"] == STATUS_CONFIRMED, "the concurrent Confirm must survive this Save, not be reverted back to suggested"
+            assert saved_terms["ハードキャッチ"]["confirmed_target"] == "Hard Catch"
+        finally:
+            root.destroy()
+
+    def test_no_divergence_saves_normally_without_merging(self, mocker):
+        """When updated_at hasn't changed between open and Save, no merge branch should be needed -- plain overwrite is correct and sufficient."""
+        url = "https://www.alphapolis.co.jp/novel/375266002/x/episode/1"
+        glossary = self._make_glossary_at_open()
+        mocker.patch("pyplayground.webnovels.alphapolis_reader.load_glossary", return_value=glossary)
+        saved = {}
+        mocker.patch(
+            "pyplayground.webnovels.alphapolis_reader.save_glossary",
+            side_effect=lambda novel_id, g: saved.update(glossary=dict(g, terms=[dict(t) for t in g["terms"]])),
+        )
+
+        root = tk.Tk()
+        try:
+            harness = _GlossaryDialogHarness(root, current_url=url)
+            harness.open_glossary_dialog()
+            root.update()
+            win = root.winfo_children()[0]
+
+            save_btn = _find_button_by_text(win, "Save")
+            save_btn.invoke()
+
+            saved_terms = {t["source"]: t for t in saved["glossary"]["terms"]}
+            assert saved_terms["ハードキャッチ"]["status"] == "suggested", "no concurrent change happened -- the dialog's own unedited copy should be saved as-is"
+        finally:
+            root.destroy()
+
+    def test_explicit_delete_wins_over_a_concurrently_unrelated_change_even_on_divergence(self, mocker):
+        """A term explicitly deleted in this dialog must stay deleted after a merge, not get resurrected from the fresher on-disk copy."""
+        url = "https://www.alphapolis.co.jp/novel/375266002/x/episode/1"
+        mocker.patch(
+            "pyplayground.webnovels.alphapolis_reader.load_glossary",
+            side_effect=[self._make_glossary_at_open(), self._make_glossary_after_concurrent_confirm()],
+        )
+        saved = {}
+        mocker.patch(
+            "pyplayground.webnovels.alphapolis_reader.save_glossary",
+            side_effect=lambda novel_id, g: saved.update(glossary=dict(g, terms=[dict(t) for t in g["terms"]])),
+        )
+
+        root = tk.Tk()
+        try:
+            harness = _GlossaryDialogHarness(root, current_url=url)
+            harness.open_glossary_dialog()
+            root.update()
+            win = root.winfo_children()[0]
+
+            tree = None
+            for body in win.winfo_children():
+                for child in body.winfo_children():
+                    if isinstance(child, ttk.Treeview):
+                        tree = child
+            assert tree is not None
+
+            # Delete 鉄パイプ (row 0) -- unrelated to the concurrently
+            # confirmed ハードキャッチ (row 1).
+            tree.selection_set("0")
+            root.update()
+            delete_btn = _find_button_by_text(win, "Delete")
+            assert delete_btn is not None
+            delete_btn.invoke()
+
+            save_btn = _find_button_by_text(win, "Save")
+            save_btn.invoke()
+
+            saved_terms = {t["source"]: t for t in saved["glossary"]["terms"]}
+            assert "鉄パイプ" not in saved_terms, "explicit delete must survive the merge, not be resurrected from the fresher on-disk copy"
+            assert saved_terms["ハードキャッチ"]["status"] == STATUS_CONFIRMED, "the concurrent Confirm must still survive alongside the delete"
         finally:
             root.destroy()

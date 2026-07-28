@@ -662,6 +662,23 @@ class ReaderApp:
         self.backend = self._load_backend()
         self.episode = None
         self.cache = {}
+        # url -> threading.Event, one entry per fetch_and_translate() call
+        # currently in flight (real network fetch + real LLM translation
+        # running, cache not yet populated). Guards against the duplicate-
+        # fetch race documented in DESIGN.md: prefetch() (fired from
+        # display_episode() right after an episode finishes loading, to
+        # warm the next chapter in the background) and a navigation-
+        # triggered load_episode() (e.g. the user clicking Next) can both
+        # call fetch_and_translate() for the same URL before either has
+        # written to self.cache/disk -- self._prefetching only guards
+        # prefetch() against re-entering itself, and self._loading only
+        # guards load_episode() against overlapping *unrelated* loads,
+        # neither prevents this specific same-URL race between the two
+        # different call paths. A second concurrent call for a URL already
+        # in this dict waits on its Event instead of duplicating the real
+        # network fetch and real LLM translation pass -- see
+        # fetch_and_translate() for the wait/signal logic.
+        self._fetch_in_progress: Dict[str, threading.Event] = {}
         self._restore_scroll_pos = restore_scroll_pos
         # Tracks the currently-open Add-to-Glossary / Retranslate popup (at
         # most one of each kind at a time), so a second click while one is
@@ -1088,13 +1105,46 @@ class ReaderApp:
         ttk.Button(win, text="Close", command=win.destroy).pack(pady=(0, 8))
 
     def fetch_and_translate(self, url, progress_cb=None):
-        """Fetch+translate an episode, checking memory and disk caches first."""
+        """Fetch+translate an episode, checking memory and disk caches first.
+
+        Guards against duplicate concurrent work for the same URL (found
+        live: prefetch() warming the next chapter in the background races
+        a navigation-triggered load_episode() call for that same URL,
+        producing two independent real network fetches and two independent
+        real LLM translation passes -- see DESIGN.md for the live
+        reproduction). A second caller for a URL already in flight waits
+        for the first to finish and reuses its result instead of
+        duplicating the work.
+        """
         if url in self.cache:
             return self.cache[url]
         cached = load_cached_episode(url)
         if cached is not None:
             self.cache[url] = cached
             return cached
+
+        existing = self._fetch_in_progress.get(url)
+        if existing is not None:
+            logger.info(f"fetch_and_translate({url}) already in progress on another call -- waiting for it instead of duplicating the fetch/translate")
+            existing.wait()
+            # The winning caller populates self.cache before signaling
+            # (see the finally block below) -- if it failed instead
+            # (exception path), self.cache won't have url and this
+            # falls through to attempting the fetch itself, same as if
+            # no in-flight call had ever existed.
+            if url in self.cache:
+                return self.cache[url]
+
+        done_event = threading.Event()
+        self._fetch_in_progress[url] = done_event
+        try:
+            return self._do_fetch_and_translate(url, progress_cb=progress_cb)
+        finally:
+            del self._fetch_in_progress[url]
+            done_event.set()
+
+    def _do_fetch_and_translate(self, url, progress_cb=None):
+        """The actual fetch+translate work, called only once per URL at a time -- see fetch_and_translate()'s in-flight guard."""
         logger.info(f"Fetching and translating episode: {url} (backend={self.backend})")
 
         glossary_text = None

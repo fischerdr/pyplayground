@@ -4,7 +4,7 @@ Living record of decisions for the glossary/term-consistency rework and the
 Tkinter → web migration. Update this alongside code changes, not after —
 chat history is not the system of record.
 
-Last updated: 2026-07-28 (cross-dialog stale-overwrite bug: fixed and live-verified)
+Last updated: 2026-07-28 (old-flat-shape term display: confirmed moot; candidate display in open_glossary_dialog(): decided against)
 
 ---
 
@@ -2699,3 +2699,247 @@ not made modal -- see the modality reasoning above). No changes to the
 auto-refresh logic from the prior entry, confirmed undisturbed by the
 full suite re-run. The "what's still needed" list above is now fully
 addressed; nothing from it remains open.
+
+### 2026-07-28: duplicate `fetch_and_translate()` calls -- confirmed real, fixed and live-verified
+
+Picks up the side-finding recorded (not investigated) in the `n_predict`/
+`log_context` entry above: "the same episode URL fetched twice within
+~1 second, several times across the log ... likely `prefetch()` racing
+with a navigation-triggered fetch for the same URL, not investigated
+further here." This closes that item.
+
+**Step 1 (code reading, confirmed against the actual current code): the
+original hypothesis was correct, mechanism confirmed exactly.**
+`prefetch()` already guards itself against re-entering for a URL it's
+already prefetching (`if ... url in self._prefetching: return`), and
+`load_episode()` guards against overlapping loads via a single global
+`self._loading` flag -- but neither guard covers the actual gap: a URL
+`prefetch()` is currently fetching, racing a *different* call path
+(`load_episode()`, via a `Next` click) for that same URL. The trigger:
+`display_episode()` calls `self.prefetch(ep.get("next_url"))`
+immediately after an episode finishes loading, to warm the next
+chapter in the background. If the user clicks `Next` while that
+background prefetch is still running for the same URL that's about to
+become the navigation target, `go_next()` -> `load_episode(next_url)`
+calls `fetch_and_translate(next_url)` directly, with no check against
+`self._prefetching` or any per-URL in-flight state at all. Both calls
+see a cache-miss (neither has written to `self.cache`/disk yet) and
+both proceed to run the full pipeline independently.
+
+**Step 2 (live reproduction, `xdotool` against the real app, real
+novel 375266002, cache entries invalidated via a schema-version bump
+rather than deleted so the reproduction exercises exactly the
+cache-miss path `fetch_and_translate()` actually checks): reproduced on
+the first deliberately-timed attempt.** A first, untimed attempt missed
+the window entirely (waited for the prefetch to fully finish before
+clicking `Next`, which by definition can't race it) -- corrected by
+watching the log for episode N's "Episode translated successfully" line
+(the exact moment `display_episode()` fires `prefetch()` for episode
+N+1) and clicking `Next` immediately at that moment. Log evidence:
+
+```text
+07:14:44 - Episode translated successfully: contact
+07:14:44 - Fetching and translating episode: .../7800123 (backend=llm)
+07:14:45 - Parsed 68 paragraph(s) ... from .../7800123
+07:14:45 - Translating 68 lines in 10 chunks ...
+07:14:48 - Fetching and translating episode: .../7800123 (backend=llm)
+07:14:49 - Parsed 68 paragraph(s) ... from .../7800123
+07:14:49 - Translating 68 lines in 10 chunks ...
+```
+
+Two independent `fetch_and_translate` entries for the identical URL, 4
+seconds apart -- both parsed the page independently (both "Parsed 68
+paragraph(s)"), both started their own real chunked LLM translation
+pass. Let to completion: both finished
+(`Episode translated successfully: night sky` appears twice), one
+simply overwriting the other's cache/disk write with a second,
+independently-produced (and, since LLM output isn't perfectly
+deterministic, potentially slightly different) translation.
+
+**Step 3 (cost quantified with direct evidence, not assumed): the
+expensive case, confirmed, not the cheap cache-hit case.** Both log
+lines show a genuine chunked translation start (`Translating 68 lines
+in 10 chunks`), not an immediate return -- both calls ran the real
+`self.browser.fetch(url)` network scrape and the real
+`translate_lines()` LLM pass against `translategemma`, independently
+and in full, at whatever the model's real per-chunk latency is for
+that chapter (this specific chapter took roughly 95 seconds end to end
+for the *first* of the two duplicate passes alone). Two real network
+scrapes, two real full translation passes, for identical content --
+100% wasted work on the losing call, not the cheap case.
+
+**Fix**: an in-flight-request guard, chosen as simplest-and-correct
+given what Step 1 found -- the two racing call paths
+(`load_episode()`/`Next` and `prefetch()`) both already funnel through
+`fetch_and_translate()` regardless of caller, so that single method is
+the correct choke point rather than trying to reconcile
+`self._loading`/`self._prefetching` (two separate, differently-scoped
+flags that were never meant to coordinate with each other). Added
+`self._fetch_in_progress: Dict[str, threading.Event]`, a
+url -> in-progress marker. `fetch_and_translate()` now splits into
+itself (the guard) and a new `_do_fetch_and_translate()` (the actual
+work, unchanged in substance, just renamed and extracted). A second
+concurrent call for a URL already in `self._fetch_in_progress` waits on
+that URL's `Event` instead of duplicating the fetch/translate, then
+returns the winning caller's now-cached result. If the winning caller
+fails (an exception during fetch/translate), the losing caller falls
+through to attempting the fetch itself after waking, rather than
+returning `None`/stale data -- same outcome as if no in-flight call had
+existed, not a new failure mode.
+
+**A pre-existing type-annotation inaccuracy in this file, surfaced by
+this change but not introduced or fixed by it, worth recording
+plainly.** `load_cached_episode()` is declared `-> dict` but its actual
+implementation returns `None` on a cache-miss/stale-schema case (used
+correctly, and checked for, everywhere it's called). `mypy` infers from
+the declared (inaccurate) signature that `cached` can never be `None`,
+concludes the `if cached is not None:` branch always taken, and flags
+the new in-flight-guard code immediately after it as `unreachable` --
+a false positive: the guard demonstrably runs (both the new regression
+test and the live reproduction below prove it). Not fixed here --
+correcting `load_cached_episode()`'s signature to
+`Optional[dict]` is a real, separate, pre-existing type-accuracy gap
+unrelated to this task's scope, and this file's mypy baseline has
+consistently been left alone in every prior session absent a reason to
+touch that specific line.
+
+**Live re-verification with the fix, same timing-precise reproduction
+technique as Step 2, against a fresh invalidated-cache pair:**
+
+```text
+07:27:03 - Episode translated successfully: contact
+07:27:03 - Fetching and translating episode: .../7800123 (backend=llm)
+07:27:04 - Parsed 68 paragraph(s) ... from .../7800123
+07:27:04 - Translating 68 lines in 10 chunks ...
+07:27:06 - fetch_and_translate(.../7800123) already in progress on
+           another call -- waiting for it instead of duplicating the
+           fetch/translate
+07:28:38 - Translation complete: 68 lines
+...
+07:28:39 - Episode translated successfully: night sky
+```
+
+Exactly one `Translating 68 lines in 10 chunks` entry, one `Episode
+translated successfully`, and the second (`Next`-click) caller's own
+log line shows it hit the wait path instead of re-fetching. Confirmed
+via screenshot that the waiting caller received the correct, complete
+result once released -- the main window displayed episode 2's real
+title, real translated paragraphs, and correctly re-enabled
+Previous/Next controls; no stall, no error, no blank/partial content.
+
+**Tests**, in `tests/webnovels/test_alphapolis_reader.py`'s new
+`TestFetchAndTranslateDuplicateGuard` (driving the real, unmodified
+`fetch_and_translate()`/`_do_fetch_and_translate()` against a fake
+`browser.fetch()` that blocks on a `threading.Event` until released,
+so the test can force two calls to genuinely overlap -- both see a
+cache-miss, deterministically -- rather than relying on wall-clock
+timing luck the way the live reproduction necessarily did):
+
+- Two threads calling `fetch_and_translate()` for the same URL, the
+  second started only once the first has genuinely entered
+  `browser.fetch()` (matching the real race's actual precondition:
+  both calls see a cache-miss because the winning call hasn't finished
+  yet). Asserts `browser.fetch()` is called exactly once (not twice),
+  the real translation pass runs exactly once (`llm_translate_lines`
+  called twice *per successful run*, by this function's own design --
+  once for the body, once for the title/episode_title -- so the
+  assertion is `== 2`, not `== 4`, checked explicitly with that
+  reasoning stated in the test itself so a future reader doesn't
+  mistake the "2" for a bug), and both callers receive the identical
+  episode dict object (`results[0] is results[1]`), not two
+  independently-produced copies.
+
+Confirmed load-bearing the same way as every prior fix in this doc:
+with the implementation stashed out, the test file failed to even
+*collect* (`AttributeError: type object 'ReaderApp' has no attribute
+'_do_fetch_and_translate'`), since the harness mixes in the new method
+directly -- restored and confirmed it passes again.
+
+Full `tests/webnovels/` suite re-run: 241 passed (up from 240), no
+regressions. `black`/`isort`/`flake8` clean on both touched files.
+`mypy`: 414 errors, up from the 412 baseline -- one is the new
+`_do_fetch_and_translate()` method being untyped (consistent with this
+file's existing convention), the other is the `load_cached_episode()`
+signature-inaccuracy false-positive documented above, not a real defect
+in the new code.
+
+**Not done in this pass**: no change to `load_cached_episode()`'s
+return-type annotation (a separate, pre-existing gap, not this task's
+scope -- see above). No change to `prefetch()` or `load_episode()`
+themselves beyond what was needed to route both through the new guard
+-- confirmed via `git diff` scope check that only `fetch_and_translate()`
+was split/guarded and one new `__init__` attribute was added, nothing
+in the prefetch-triggering or navigation logic itself changed.
+
+### 2026-07-28: old-flat-shape term display -- checked and confirmed moot; candidate display in `open_glossary_dialog()` -- decided against
+
+Two related, previously-deferred display items, checked/decided
+together per the same task.
+
+**Item 1 (surfacing old flat `target` values as read-only context in
+Review Terms): checked first, confirmed moot, not built.** The 2026-07-27
+wipe entry ("all per-novel glossary files and cached episodes deleted")
+did not leave the glossary directory empty, as a quick skim might
+suggest -- both files present on disk right now
+(`375266002.json`, `888888887.json`) were created *after* that wipe, by
+this session's own later test/verification work. Checked every term in
+both files directly, not assumed: **all 9 terms across both files are
+already in the new §9 `candidates` shape** (`'candidates' in t` true
+for every single one; zero terms with a bare `target` string and no
+`candidates` list). A third file found via a filesystem-wide search
+(`/tmp/.../scratchpad/glossary_before_repro.json`) is a leftover
+scratchpad artifact from an earlier task, not a path the app itself
+ever reads, and was checked anyway for completeness -- also all
+new-shape.
+
+**Conclusion: item 1 is currently moot.** No old-flat-shape term exists
+anywhere on disk the app would load, right now, for any novel. Building
+read-only display logic for a data shape with zero live instances would
+have been speculative work against a hypothetical, not a real gap --
+skipped per the task's own explicit instruction not to do that.
+`test_old_shape_terms_with_no_status_field_are_also_listed`
+(`test_term_review_dialog.py`, pre-existing) already covers the
+*code path* that would handle an old-shape term if one existed, via a
+synthetic fixture -- appropriate, since a unit test exercising a code
+path doesn't require live production data to justify existing, unlike
+building new user-facing display logic would. `test_zero_reviewable_terms_shows_empty_state`
+(also pre-existing) covers the actual current real-world case directly.
+Both re-run and confirmed passing, no new tests needed.
+
+**Live verification**, via the same `xdotool` setup as every prior task
+in this doc (this time with deliberately longer waits between each
+step -- window-existence polling extended, and an explicit pause after
+each simulated click before checking whether it landed -- since this
+environment sometimes requires a manual approval click or has a
+mouse-movement/screenshot permission prompt that needs a moment to
+clear before a window appears; a prior attempt within this same task
+undercounted that and had to retry the same click): launched the real
+app against novel 375266002's real, current, all-new-shape glossary,
+opened Review Terms. Screenshot confirms it renders correctly and shows
+the accurate empty state -- "No unconfirmed terms to review for this
+novel." -- with the column headers present and no error, matching what
+direct file inspection already predicted. This is the live confirmation
+that the moot conclusion holds in the running app, not just on disk.
+
+**Item 2 (candidate display in `open_glossary_dialog()`): decided
+against, explicitly, not defaulted into.** `open_glossary_dialog()`
+remains the plain, raw list/form editor -- edit anything, batch-save on
+Save, no candidate ranking. Reasoning: this codebase already has three
+dialogs touching glossary terms, each with one clear, distinct job --
+`open_glossary_dialog()` (raw editing, any term, any status),
+`open_term_review_dialog()` (backlog review, ranked candidates, real
+Confirm/Reject), and `open_word_glossary_popup()` (in-context single-
+term lookup with live reference/alternatives). Adding candidate display
+to `open_glossary_dialog()` too would duplicate a feature that already
+has a dedicated, purpose-built home in the review dialog, and would
+blur exactly the distinction `open_term_review_dialog()`'s own
+docstring already gives as the reason it was built as a *separate*
+dialog in the first place rather than an extension of this one. Three
+dialogs with three jobs stays clearer than two dialogs each trying to
+do a bit of both.
+
+**Not done in this pass**: no display-logic changes to either dialog --
+item 1 turned out to have nothing to display for, and item 2 was a
+"don't build this" decision. No changes to `glossary.py`'s schema or
+any term-shape handling -- confirmed via `git diff` scope check that
+this task touched only `DESIGN.md`.

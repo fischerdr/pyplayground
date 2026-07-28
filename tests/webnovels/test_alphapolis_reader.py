@@ -30,12 +30,14 @@ Coverage tiers:
     episode dict).
 """
 
+import threading
+import time
 import tkinter as tk
 from tkinter import ttk
 
 from pyplayground.webnovels.alphapolis_reader import ReaderApp, build_review_term_map
 from pyplayground.webnovels.glossary import STATUS_CONFIRMED, TERM_TYPE_CHARACTER, TERM_TYPE_GENERAL, make_confirmed_term
-from pyplayground.webnovels.llm_translate import TranslatedLine
+from pyplayground.webnovels.llm_translate import BACKEND_LLM, TranslatedLine
 
 
 class TestBuildReviewTermMap:
@@ -1044,3 +1046,137 @@ class TestGlossaryDialogMergeOnDivergence:
             assert saved_terms["ハードキャッチ"]["status"] == STATUS_CONFIRMED, "the concurrent Confirm must still survive alongside the delete"
         finally:
             root.destroy()
+
+
+class _FetchTranslateHarness:
+    """Minimal stand-in exposing exactly what fetch_and_translate() touches on self.
+
+    Not a full ReaderApp -- self.browser is a fake with a controllable,
+    slow fetch() so a test can force a real overlap window between two
+    concurrent fetch_and_translate() calls for the same URL, the same
+    race condition found live (prefetch() vs. a navigation-triggered
+    load_episode() call, see DESIGN.md).
+    """
+
+    def __init__(self, browser):
+        self.browser = browser
+        self.backend = BACKEND_LLM
+        self.target_lang = "en"
+        self.cache = {}
+        self._fetch_in_progress = {}
+
+    fetch_and_translate = ReaderApp.fetch_and_translate
+    _do_fetch_and_translate = ReaderApp._do_fetch_and_translate
+
+
+class _SlowFakeBrowser:
+    """fetch() blocks until released, so a test can force two fetch_and_translate() calls to genuinely overlap rather than racing on real timing."""
+
+    def __init__(self):
+        self.release_event = threading.Event()
+        self.fetch_call_count = 0
+        self.first_call_started = threading.Event()
+
+    def fetch(self, url):
+        self.fetch_call_count += 1
+        self.first_call_started.set()
+        self.release_event.wait(timeout=5)
+        return "<html><body><div id='novelBody'><p>dummy</p></div></body></html>"
+
+
+class TestFetchAndTranslateDuplicateGuard:
+    """Regression coverage for the duplicate-fetch race (DESIGN.md, 2026-07-28).
+
+    prefetch() (fired from display_episode() right after an episode
+    finishes loading) and a navigation-triggered load_episode() call can
+    both call fetch_and_translate() for the same URL before either has
+    populated self.cache -- neither self._loading nor self._prefetching
+    guards against this specific cross-path race. Live-reproduced:
+    confirmed via a real app log showing two independent
+    "Fetching and translating episode" + "Translating N lines in M
+    chunks" entries for the same URL, seconds apart, each a real,
+    complete, wasted LLM translation pass. Fixed via self._fetch_in_progress,
+    a url -> threading.Event map in fetch_and_translate() itself -- a
+    second concurrent call for a URL already in flight waits for the
+    first to finish and reuses its result.
+    """
+
+    def test_two_concurrent_calls_for_the_same_url_only_fetch_once(self, mocker):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        translate_call_count = {"value": 0}
+
+        def fake_translate_lines(lines, *args, **kwargs):
+            translate_call_count["value"] += 1
+            return [f"translated: {line}" for line in lines]
+
+        mocker.patch.object(reader_module, "llm_translate_lines", side_effect=fake_translate_lines)
+        mocker.patch.object(reader_module, "build_mask_targets", return_value=[])
+        mocker.patch.object(reader_module, "load_glossary", return_value={"terms": []})
+        mocker.patch.object(reader_module, "format_glossary_for_prompt", return_value="")
+        mocker.patch.object(reader_module, "update_candidate_counts", return_value={"terms": []})
+        mocker.patch.object(reader_module, "save_glossary")
+        mocker.patch.object(reader_module, "save_cached_episode")
+        mocker.patch.object(reader_module, "load_cached_episode", return_value=None)
+        mocker.patch.object(
+            reader_module,
+            "parse_episode",
+            return_value={
+                "title": "Title",
+                "author": "Author",
+                "episode_title": "Ep",
+                "lines": ["line one", "line two"],
+                "content": [{"type": "text", "text": "line one"}, {"type": "text", "text": "line two"}],
+                "prev_url": None,
+                "next_url": None,
+            },
+        )
+
+        browser = _SlowFakeBrowser()
+        harness = _FetchTranslateHarness(browser)
+        url = "https://www.alphapolis.co.jp/novel/375266002/x/episode/1"
+
+        results = []
+
+        def call_fetch_and_translate():
+            results.append(harness.fetch_and_translate(url))
+
+        # Thread A starts first and blocks inside browser.fetch() (the
+        # "real network fetch in progress" window). Thread B, standing in
+        # for the second, racing caller (e.g. a Next click landing while
+        # prefetch() is mid-fetch for the same URL), starts only once
+        # Thread A has genuinely entered fetch() -- reproducing the real
+        # race's timing (both calls see a cache-miss, the first's
+        # fetch/translate hasn't finished yet) without depending on wall-
+        # clock timing luck.
+        thread_a = threading.Thread(target=call_fetch_and_translate)
+        thread_a.start()
+        assert browser.first_call_started.wait(timeout=5), "thread A never entered browser.fetch()"
+
+        thread_b = threading.Thread(target=call_fetch_and_translate)
+        thread_b.start()
+        # Give thread B a moment to reach fetch_and_translate()'s in-flight
+        # check and start waiting on thread A's Event, before releasing
+        # thread A's fetch() -- without this, thread B could plausibly not
+        # have reached the check yet, which wouldn't prove anything either
+        # way about the guard.
+        time.sleep(0.3)
+
+        browser.release_event.set()
+        thread_a.join(timeout=5)
+        thread_b.join(timeout=5)
+
+        assert (
+            browser.fetch_call_count == 1
+        ), f"browser.fetch() must only be called once for two concurrent requests for the same URL, was called {browser.fetch_call_count} time(s)"
+        # 2, not 1: _do_fetch_and_translate() calls translate_lines() twice
+        # per successful run by design (once for the body, once for the
+        # title/episode_title) -- the guard being tested is against a
+        # second full *run* of _do_fetch_and_translate(), which would
+        # double this to 4, not against translate_lines() being called
+        # only once in absolute terms.
+        assert (
+            translate_call_count["value"] == 2
+        ), f"the real LLM translation pass must only run once (2 translate_lines() calls per run: body + title), ran with count {translate_call_count['value']}"
+        assert len(results) == 2
+        assert results[0] is results[1], "both callers must receive the same episode dict, not two independently-produced (and possibly differently-translated) copies"

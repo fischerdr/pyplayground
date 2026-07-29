@@ -4,7 +4,7 @@ Living record of decisions for the glossary/term-consistency rework and the
 Tkinter → web migration. Update this alongside code changes, not after —
 chat history is not the system of record.
 
-Last updated: 2026-07-28 (old-flat-shape term display: confirmed moot; candidate display in open_glossary_dialog(): decided against)
+Last updated: 2026-07-28 (WM_DELETE_WINDOW app crash under Xvfb: confirmed real, open investigation, not fixed)
 
 ---
 
@@ -2943,3 +2943,205 @@ item 1 turned out to have nothing to display for, and item 2 was a
 "don't build this" decision. No changes to `glossary.py`'s schema or
 any term-shape handling -- confirmed via `git diff` scope check that
 this task touched only `DESIGN.md`.
+
+### 2026-07-28: background glossary extraction -- investigated (Steps 1-2), proposal only (Step 3), nothing implemented
+
+Investigation-first task, deliberately: confirm extraction's real cost
+and `merge_terms()`'s real safety before proposing any auto-trigger
+mechanism, and do not implement anything -- this entry records
+findings and a proposal, not a shipped feature.
+
+**Step 1: extraction is confirmed NOT incremental -- the single most
+important finding here, exactly as flagged going in.**
+`build_glossary_for_novel()` (`build_glossary.py`) calls
+`_load_cached_episodes_for_novel(novel_id)` (line 376), which
+unconditionally returns *every* cached episode belonging to that
+novel -- there is no field anywhere in the episode dict or the
+glossary dict recording "extraction has already run against this
+episode." The result is only capped by `max_episodes` (default 20,
+most-recently-cached-first), not by what's new since the last run.
+Every call -- whether the "Rebuild Glossary" button today, or any
+future auto-trigger -- re-runs a real `extract_glossary_terms()` LLM
+call for every episode in that (up to 20-deep) slice, every single
+time, including episodes already processed in a prior run.
+`merge_terms()` deduping on `(type, source)` means re-extracted terms
+that already exist just get silently dropped on merge (see Step 2),
+so re-processing is not *unsafe* -- but it is genuinely wasted,
+growing LLM cost every time it runs, confirmed by reading the actual
+loop logic (`build_glossary.py:392-419`), not inferred from the
+function's name or docstring.
+
+**Step 2: the `merge_terms()` safety claim holds, confirmed directly
+against current code -- and one real gap found and named, at the
+`build_glossary_for_novel()` level, not inside `merge_terms()` itself.**
+`merge_terms()` (`glossary.py:622-655`) builds `known_keys` from
+`existing` up front and only appends a new term if its `(type,
+source)` key isn't already present (lines 647-654) -- it never
+modifies, replaces, or drops an existing entry. This matches the
+docstring exactly, confirmed by reading the logic, not taken on the
+doc's word.
+
+**The gap**: `build_glossary_for_novel()` calls `load_glossary(novel_id)`
+exactly **once**, before its per-episode extraction loop starts (line
+385), and only writes back via `save_glossary()` once, after the
+entire loop finishes (line 425) -- and this function runs on a
+background thread specifically so it doesn't freeze the UI while
+making "one LLM call per episode" (confirmed via `rebuild_glossary()`'s
+own docstring in `alphapolis_reader.py`), which for up to 20 episodes
+can run for minutes (a single episode's *translation* alone was
+independently measured elsewhere in this doc at ~90-100 seconds; a
+20-episode extraction run is a comparable or longer order of
+magnitude). If a user manually confirms a term via
+`open_term_review_dialog()` or the right-click Add-to-Glossary popup
+*while that background extraction is still running*, that manual write
+lands on disk immediately (both paths write through
+`upsert_confirmed_term()`/`save_glossary()` synchronously) -- but the
+extraction thread's in-memory `glossary` variable was loaded before
+that write and is never refreshed mid-loop. When extraction finishes
+and does its own single `save_glossary()` call, it writes back its own
+stale in-memory copy, silently overwriting and discarding the manual
+confirmation that happened during the run. Checked directly whether
+the UI actually allows this: `rebuild_glossary()`'s
+`set_dialog_controls_enabled(False)` only disables controls within the
+*same* `open_glossary_dialog()` instance that started the rebuild --
+it does not touch `open_term_review_dialog()` or the right-click
+popup, both separate windows with no awareness of a running
+background rebuild. The gap is real and reachable through the existing
+UI today, not a theoretical one requiring true-simultaneous timing --
+structurally the same class of bug as the cross-dialog stale-overwrite
+bug found and fixed earlier in this doc, just between extraction and a
+manual dialog instead of between two manual dialogs. Named plainly per
+the task's instruction, even though for a single user clicking through
+chapters at normal reading speed the actual window to hit it (having a
+review dialog open and confirming a term in the middle of a multi-
+minute background rebuild) is narrow, not something to block this
+investigation on fixing here.
+
+**Step 3: proposal, not implemented.** Given Step 1's finding
+(non-incremental, real and growing per-call cost) and the slot-
+contention concern named when this was originally scoped (the LLM
+server has limited concurrent slot capacity, documented elsewhere in
+this doc's `-np 2`/`--kv-unified` investigation) -- triggering
+extraction immediately after every single episode's translation
+completes would compete with the *next* chapter's translation for that
+same shared slot if the user navigates quickly, exactly the risk named
+up front.
+
+**Recommendation: an idle trigger, not a per-episode trigger.** Start
+(or reset, on every subsequent episode load) a single cancellable Tk
+timer (`self.root.after(N * 1000, ...)`) in `display_episode()`;
+firing `build_glossary_for_novel()` in the background only after N
+seconds with no further navigation, not immediately per-episode. This
+means extraction only actually runs once the user has stopped actively
+flipping through chapters, not fighting translation for the shared LLM
+slot mid-read-session. It also keeps the mechanism appropriately
+simple for what the task specifies this is -- a single-user, single-
+machine tool with no concurrent-reader contention to design against: one
+timer, no queue, no per-episode bookkeeping beyond what already exists.
+
+**This recommendation is explicitly contingent on Step 1's finding
+being addressed first, as its own separate task -- not bundled into
+whatever implements the trigger.** Auto-triggering extraction on an
+idle signal without first making it incremental would still mean every
+idle period re-runs a full (up to 20-episode) re-extraction pass,
+which is wasteful regardless of how well-timed the trigger is. Per the
+task's explicit instruction, that incremental-extraction fix is named
+here as a prerequisite, not attempted in this pass.
+
+**Not done in this pass, deliberately, per the task's own scope**: no
+trigger mechanism implemented. No fix to extraction's non-incremental
+behavior. No fix to the `build_glossary_for_novel()`-vs-manual-dialog
+race named in Step 2 (named, not fixed -- narrow enough in practice for
+a single user that it doesn't block this investigation, but real).
+Confirmed via `git diff` scope check that this task touched only
+`DESIGN.md` -- no code changes.
+
+---
+
+### 2026-07-28: WM_DELETE_WINDOW crashes the whole app under Xvfb -- confirmed real via live reproduction, NOT fixed (open)
+
+Found while building and live-verifying `pyplayground/webnovels/ui_testing/`
+(the new agent-driven UI testing module, see `agents-ui-testing.md`) against
+the real running app under a dedicated Xvfb display. Not a testing-tooling
+quirk to route around silently -- a real, reproducible full-application
+crash triggered by an otherwise-ordinary window-close request.
+
+**Reproduction, confirmed directly, multiple times**: launch the app under
+Xvfb (`Xvfb :99` + `fluxbox`), open any Toplevel dialog (Load Novel tested
+explicitly; Glossary/Review Terms/Settings not individually re-confirmed but
+share the same Toplevel/WM_DELETE_WINDOW mechanism), then send a
+WM_DELETE_WINDOW close request via `xdotool windowclose <dialog-window-id>`.
+The entire process dies. The app's own stdout/stderr (captured via
+`launch_and_track(stdout_log=...)`) shows:
+
+```text
+X Error of failed request:  BadWindow (invalid Window parameter)
+  Major opcode of failed request:  10 (X_UnmapWindow)
+  Resource id in failed request:  0x<varies per run>
+node:events:487
+      throw er; // Unhandled 'error' event
+Error: write EPIPE
+    at WriteWrap.onWriteComplete [as oncomplete] (node:internal/stream_base_commons:87:19)
+```
+
+The crashing window id varies run to run -- not a fixed stale handle, a real
+X_UnmapWindow hitting a window some client no longer considers valid, at the
+moment WM_DELETE_WINDOW is processed.
+
+**Isolation performed to narrow the cause, not just observed and reported**:
+
+1. **Ruled out Xvfb/fluxbox themselves as the cause.** A minimal standalone
+   Tk script (a root window, one button opening a Toplevel with its own
+   Cancel button calling `.destroy()`) was run against the exact same live
+   Xvfb display. `xdotool windowclose` against that dialog closed it cleanly
+   with no crash. The display and window manager are not the trigger.
+2. **Ruled out the dialog-close mechanism in general.** Clicking the real
+   app's own dialog Cancel/Close button (which calls Tk's `.destroy()`
+   directly -- confirmed for Load Novel, Glossary, Review Terms, and
+   Settings, all four) closes the dialog and leaves the app running fine.
+   Only the WM_DELETE_WINDOW protocol path (`xdotool windowclose`) crashes it,
+   not window-closing as a concept.
+3. **Ruled out live Playwright fetch activity as a precondition.** The crash
+   was reproduced against a cache-hit episode load, where
+   `fetch_and_translate()` returns from `load_cached_episode()` before ever
+   calling into the `BrowserWorker`/Playwright request path (see
+   `fetch_and_translate()`, `pyplayground/webnovels/alphapolis_reader.py`).
+   The crash does not require an in-flight fetch, only that the process's
+   `BrowserWorker` thread (and its headless Chromium child, started
+   unconditionally in `main()` before the Tk window even exists) is alive at
+   all.
+
+**What is implicated, not yet confirmed as root cause**: the app's
+`BrowserWorker` launches Chromium via Playwright's Node.js driver
+(`headless=True`, see `BrowserWorker.run()`). The Node.js EPIPE and the
+`X_UnmapWindow`/`BadWindow` error strongly suggest Playwright's Node driver
+process holds its own X11 connection to the same `DISPLAY` (plausible even
+in headless mode, e.g. via a sandboxing or GPU-capability check at Chromium
+launch), and that connection's handling of an X protocol event triggered by
+WM_DELETE_WINDOW is what actually crashes -- not anything in the Tk app's
+own code. This is a plausible mechanism, not a confirmed one.
+
+**Explicitly NOT yet answered, and this matters for prioritization**:
+
+- **Does this reproduce outside Xvfb** (a real XWayland desktop session)?
+  Not tested -- doing so requires a human-supervised real-desktop session
+  (see `agents-ui-testing.md`'s Guardrail section), which this investigation
+  did not have available. If it reproduces there too, this is a severe,
+  user-facing crash bug in ordinary use (closing a dialog the normal way,
+  if the OS/WM ever sends WM_DELETE_WINDOW instead of routing through a
+  button handler) and should be re-prioritized above anything else queued.
+  If it is genuinely Xvfb-only, it is most likely a cheap environment-level
+  fix (give `BrowserWorker`'s Chromium/Node driver its own isolated
+  `DISPLAY`, separate from whichever Xvfb instance is used for UI testing)
+  rather than an app bug to chase further.
+- **Exact mechanism inside Playwright's Node driver** -- not traced further
+  than the isolation above. Would need instrumenting or straceing the Node
+  process specifically, not the Python process, to pin down.
+
+**Not done in this pass, deliberately**: no fix attempted. No workaround
+beyond documenting it and having `pyplayground/webnovels/ui_testing/`'s own
+test suite avoid `windowclose`/WM_DELETE_WINDOW against this app entirely
+(closing every dialog via its own real Cancel/Close button instead -- see
+`xdo_helper.close_window()`'s docstring and `test_menu_smoke.py`). Left open
+here specifically so it doesn't get lost the way an earlier finding this
+session briefly did.

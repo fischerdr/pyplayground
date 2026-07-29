@@ -638,61 +638,63 @@ def build_interleaved_pairs(source_lines: List[str], translated_lines: List[str]
 # ---------------------------------------------------------------------------
 # GUI
 # ---------------------------------------------------------------------------
-class ReaderApp:
-    """Tkinter-based desktop reader for Alphapolis novels.
+class ReaderRenderer:
+    """Owns view-mode rendering, span tracking, and appearance/theming for a ReaderApp.
 
-    Provides navigation, translation display, font controls, and dark mode.
+    REFACTOR_DESIGN.md Phase 2: extracted from ReaderApp per the Phase 1
+    investigation's Group B (rendering). Composition, not a mixin (see
+    Phase 1's section 3 for why) -- holds an explicit back-reference to
+    the owning ReaderApp (`self.app`) for state it needs to read but
+    doesn't own (`current_url`, `episode`, `backend` for settings
+    persistence purposes -- see _save_settings() on ReaderApp) rather
+    than assuming a shared flat namespace. The `tk.Text` widget itself
+    (`self.app.text`) stays owned/constructed by ReaderApp, since it's
+    read by Group A (`load_episode()`'s "Loading..." placeholder),
+    Group C, and Group D call sites not yet extracted -- only this
+    renderer's own view-mode/span-tracking/appearance state moved here.
+
+    Two known, deliberate cross-group entanglements preserved exactly,
+    not cleaned up as part of this extraction (per Phase 1's explicit
+    finding that these are load-bearing, not incidental coupling):
+
+    - _render_translated_content_from_translated_lines() and
+      _render_interleaved_content() call glossary.load_glossary()
+      directly and pass the *unfiltered* glossary dict to
+      find_glossary_term_spans() -- not build_mask_targets()'s
+      confirmed-only filter. This is a read-only lookup, not the
+      load/write-pair pattern this refactor exists to close, so
+      ReaderRenderer importing glossary.py directly is fine (Phase 1
+      section 2's recommendation (a)).
+    - _on_needs_review_click() calls self.app.open_word_glossary_popup()
+      (Group C, still on ReaderApp) via the back-reference, rather than
+      moving or duplicating that dialog method here.
     """
 
-    def __init__(self, root, browser, start_url, target_lang="en", restore_scroll_pos=None):
-        """Initialize the reader application GUI.
+    def __init__(self, app: "ReaderApp"):
+        """Initialize renderer state from the owning ReaderApp's persisted settings.
 
         Args:
-            root: The Tkinter root window.
-            browser: A BrowserWorker instance for fetching pages.
-            start_url: The initial episode URL to load.
-            target_lang: Target translation language code (default: en).
-            restore_scroll_pos: Fraction (0.0-1.0) to scroll to once start_url
-                finishes loading, if resuming a previous session. None means
-                scroll to the top as usual (a fresh/explicit URL was given).
+            app: The owning ReaderApp instance -- read for current_url,
+                episode, and the text widget; never written to directly
+                by this class except via the app's own public methods.
         """
-        self.root = root
-        self.browser = browser
-        self.target_lang = target_lang
-        self.backend = self._load_backend()
-        self.episode = None
-        self.cache = {}
-        # url -> threading.Event, one entry per fetch_and_translate() call
-        # currently in flight (real network fetch + real LLM translation
-        # running, cache not yet populated). Guards against the duplicate-
-        # fetch race documented in DESIGN.md: prefetch() (fired from
-        # display_episode() right after an episode finishes loading, to
-        # warm the next chapter in the background) and a navigation-
-        # triggered load_episode() (e.g. the user clicking Next) can both
-        # call fetch_and_translate() for the same URL before either has
-        # written to self.cache/disk -- self._prefetching only guards
-        # prefetch() against re-entering itself, and self._loading only
-        # guards load_episode() against overlapping *unrelated* loads,
-        # neither prevents this specific same-URL race between the two
-        # different call paths. A second concurrent call for a URL already
-        # in this dict waits on its Event instead of duplicating the real
-        # network fetch and real LLM translation pass -- see
-        # fetch_and_translate() for the wait/signal logic.
-        self._fetch_in_progress: Dict[str, threading.Event] = {}
-        self._restore_scroll_pos = restore_scroll_pos
-        # Tracks the currently-open Add-to-Glossary / Retranslate popup (at
-        # most one of each kind at a time), so a second click while one is
-        # already open raises/focuses it instead of opening a duplicate --
-        # found live: repeated clicks (e.g. during xdotool verification, or
-        # an impatient double-click) could otherwise stack multiple
-        # independent Toplevel windows, each with its own background
-        # lookup thread, confusing rather than just redundant. None when no
-        # popup of that kind is open; cleared via a <Destroy> binding on
-        # the Toplevel itself so it's reset regardless of how the window
-        # closed (Save, Cancel, Accept/Discard, or the window manager's
-        # close button).
-        self._glossary_popup = None
-        self._retranslate_popup = None
+        self.app = app
+        settings = load_reader_state()
+        self.font_size = settings.get("font_size", 12)
+        self.image_width = settings.get("image_width", 400)
+        self.dark_mode = settings.get("dark_mode", False)
+        saved_font_family = settings.get("font_family")
+        self.line_height = settings.get("line_height", 1.3)  # multiplier on font_size, converted to pixel spacing
+        self.paragraph_spacing = settings.get("paragraph_spacing", 12)  # pixels between paragraphs
+        self.page_width_pct = settings.get("page_width_pct", 100)  # percent of the text widget's available width
+        self.text_align = settings.get("text_align", "left")  # left, center, right, justify(fallback to left)
+        # Default changed to "translated" (was "both") per
+        # RETRANSLATION_DESIGN.md's phase 1 design decision -- confirmed
+        # the prior default before changing it, not assumed.
+        self.view_mode = tk.StringVar(value=settings.get("view_mode", "translated"))
+        self._photo_images = {}
+        available_fonts = self._available_fonts()
+        self.font_family = saved_font_family if saved_font_family in available_fonts else self._pick_default_font()
         # (start_index, end_index, tag, source_line) per rendered paragraph,
         # rebuilt on every render_text() call -- lets a right-click resolve
         # back to which source Japanese line a click/selection came from,
@@ -724,120 +726,11 @@ class ReaderApp:
         # apart from _rendered_spans for the same reason given there.
         # Rebuilt on every render_text() call, same lifecycle as the above.
         self._translated_line_index_by_span = {}
-        # (word, context) -> (google_guess, llm_guess, explanation),
-        # populated by open_word_glossary_popup()'s background lookup.
-        # Session-only (not persisted) -- avoids repeating a network
-        # round-trip if the user reopens the popup for the same word in
-        # the same sentence (e.g. after Cancel). Keyed with context, not
-        # just the word, since the same surface text can mean different
-        # things (or be a name vs. not) depending on the sentence.
-        self._word_guess_cache = {}
 
-        settings = load_reader_state()
-        self.font_size = settings.get("font_size", 12)
-        self.image_width = settings.get("image_width", 400)
-        self.dark_mode = settings.get("dark_mode", False)
-        saved_font_family = settings.get("font_family")
-        self.line_height = settings.get("line_height", 1.3)  # multiplier on font_size, converted to pixel spacing
-        self.paragraph_spacing = settings.get("paragraph_spacing", 12)  # pixels between paragraphs
-        self.page_width_pct = settings.get("page_width_pct", 100)  # percent of the text widget's available width
-        self.text_align = settings.get("text_align", "left")  # left, center, right, justify(fallback to left)
-        # Default changed to "translated" (was "both") per
-        # RETRANSLATION_DESIGN.md's phase 1 design decision -- confirmed
-        # the prior default before changing it, not assumed.
-        self.view_mode = tk.StringVar(value=settings.get("view_mode", "translated"))
-        self._prefetching = set()
-        self._photo_images = {}
-        # True while a load_episode() worker thread is running. Prevents
-        # overlapping loads -- confirmed possible via rapid clicks on
-        # Previous/Next or the <Left>/<Right> key bindings (keyboard repeat
-        # fires go_prev()/go_next() directly, bypassing the toolbar buttons'
-        # disabled state entirely). Concurrent loads meant multiple
-        # simultaneous LLM translation requests hitting the same
-        # llama-server slots, which is suspected to have contributed to
-        # scrambled/misaligned translated output.
-        self._loading = False
-
-        available_fonts = self._available_fonts()
-        self.font_family = saved_font_family if saved_font_family in available_fonts else self._pick_default_font()
-
-        root.title("Alphapolis Reader")
-        # Widened from 900 -> 990 (Refresh button) -> 1090 (Glossary... button)
-        # -> 1220 (Review Terms... button) to keep the toolbar from clipping
-        # Settings... off the right edge.
-        root.geometry("1220x700")
-
-        toolbar = ttk.Frame(root)
-        toolbar.pack(fill="x", padx=8, pady=6)
-
-        self.prev_btn = ttk.Button(toolbar, text="< Previous", command=self.go_prev)
-        self.prev_btn.pack(side="left")
-        self.next_btn = ttk.Button(toolbar, text="Next >", command=self.go_next)
-        self.next_btn.pack(side="left", padx=(6, 0))
-
-        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
-        for value, label in (("original", "Original"), ("translated", "Translated"), ("both", "Both"), ("interleaved", "Interleaved")):
-            ttk.Radiobutton(toolbar, text=label, value=value, variable=self.view_mode, command=self._on_view_mode_change).pack(side="left")
-
-        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(toolbar, text="A-", width=3, command=self.decrease_font).pack(side="left")
-        ttk.Button(toolbar, text="A+", width=3, command=self.increase_font).pack(side="left", padx=(2, 0))
-        ttk.Button(toolbar, text="Dark", command=self.toggle_dark_mode).pack(side="left", padx=(6, 0))
-
-        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(toolbar, text="Img-", width=4, command=self.decrease_image_width).pack(side="left")
-        ttk.Button(toolbar, text="Img+", width=4, command=self.increase_image_width).pack(side="left", padx=(2, 0))
-
-        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(toolbar, text="Load Novel...", command=self.open_load_url_dialog).pack(side="left")
-        ttk.Button(toolbar, text="Refresh", command=self.refresh_current_episode).pack(side="left", padx=(6, 0))
-        ttk.Button(toolbar, text="Glossary...", command=self.open_glossary_dialog).pack(side="left", padx=(6, 0))
-        ttk.Button(toolbar, text="Review Terms...", command=self.open_term_review_dialog).pack(side="left", padx=(6, 0))
-        ttk.Button(toolbar, text="Settings...", command=self.open_settings_dialog).pack(side="left", padx=(6, 0))
-
-        url_bar = ttk.Frame(root)
-        url_bar.pack(fill="x", padx=8, pady=(0, 6))
-        ttk.Label(url_bar, text="URL:").pack(side="left")
-        self.url_var = tk.StringVar(value="")
-        self.url_entry = ttk.Entry(url_bar, textvariable=self.url_var, state="readonly")
-        self.url_entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
-
-        # Status bar docked at the bottom -- packed before the text widget so
-        # it claims its space first; the text widget then fills what remains.
-        status_bar = ttk.Frame(root)
-        status_bar.pack(side="bottom", fill="x", padx=8, pady=(0, 6))
-        self.status_label = ttk.Label(status_bar, text="")
-        self.status_label.pack(side="left")
-
-        text_frame = ttk.Frame(root)
-        text_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-
-        text_scrollbar = ttk.Scrollbar(text_frame, orient="vertical")
-        text_scrollbar.pack(side="right", fill="y")
-
-        self.text = tk.Text(text_frame, wrap="word", padx=16, pady=12, borderwidth=0, highlightthickness=0, yscrollcommand=text_scrollbar.set)
-        self.text.pack(side="left", fill="both", expand=True)
-        text_scrollbar.config(command=self.text.yview)
-        self.text.bind("<Button-3>", self._on_text_right_click)
-        # Left-click specifically on a needs_review span (tag_bind, not the
-        # widget-wide right-click handler) opens Add-to-Glossary pre-filled
-        # with the flagged term -- a lower-friction path than "right-click,
-        # then pick Add to Glossary from a menu" for the specific case of a
-        # term the pipeline already flagged as needing attention.
-        self.text.tag_bind("needs_review", "<Button-1>", self._on_needs_review_click)
-        self.apply_appearance()
-
-        self.prev_btn.state(["disabled"])
-        self.next_btn.state(["disabled"])
-
-        root.bind("<Left>", lambda e: self.go_prev())
-        root.bind("<Right>", lambda e: self.go_next())
-        root.bind("<Prior>", lambda e: self.text.yview_scroll(-1, "pages"))
-        root.bind("<Next>", lambda e: self.text.yview_scroll(1, "pages"))
-        root.bind("<Control-equal>", lambda e: self.increase_font())
-        root.bind("<Control-minus>", lambda e: self.decrease_font())
-
-        self.load_episode(start_url)
+    @property
+    def text(self):
+        """The shared tk.Text widget -- owned/constructed by ReaderApp, read here via the back-reference."""
+        return self.app.text
 
     def _pick_default_font(self) -> str:
         available = self._available_fonts()
@@ -851,38 +744,6 @@ class ReaderApp:
 
         return set(tkfont.families())
 
-    def _load_backend(self) -> str:
-        """Load the saved translation backend setting."""
-        try:
-            state = load_reader_state()
-            return state.get("backend", DEFAULT_BACKEND)
-        except Exception:
-            return DEFAULT_BACKEND
-
-    def _save_backend(self) -> None:
-        """Save the current backend setting to state."""
-        try:
-            update_reader_state(backend=self.backend)
-        except Exception as e:
-            logger.debug(f"Failed to save backend setting: {e}")
-
-    def _save_settings(self) -> None:
-        """Persist current display settings (font, sizing, mode) to state."""
-        try:
-            update_reader_state(
-                font_size=self.font_size,
-                image_width=self.image_width,
-                dark_mode=self.dark_mode,
-                font_family=self.font_family,
-                line_height=self.line_height,
-                paragraph_spacing=self.paragraph_spacing,
-                page_width_pct=self.page_width_pct,
-                text_align=self.text_align,
-                view_mode=self.view_mode.get(),
-            )
-        except Exception as e:
-            logger.debug(f"Failed to save display settings: {e}")
-
     def apply_appearance(self):
         """Apply current appearance settings (colors, font, spacing) to the GUI."""
         palette = DARK_PALETTE if self.dark_mode else LIGHT_PALETTE
@@ -893,7 +754,7 @@ class ReaderApp:
         line_spacing = max(int(self.font_size * (self.line_height - 1.0)), 0)
         justify = "center" if self.text_align == "center" else "right" if self.text_align == "right" else "left"
 
-        self.root.configure(bg=palette["bg"])
+        self.app.root.configure(bg=palette["bg"])
         self.text.configure(
             font=(self.font_family, self.font_size),
             bg=palette["bg"],
@@ -935,7 +796,7 @@ class ReaderApp:
         self._apply_page_width()
 
     def _apply_page_width(self):
-        self.root.update_idletasks()
+        self.app.root.update_idletasks()
         total_width = self.text.winfo_width() or 900
         margin = int(total_width * (1 - self.page_width_pct / 100) / 2)
         self.text.configure(padx=max(margin, 8))
@@ -944,33 +805,646 @@ class ReaderApp:
         """Increase the font size by 1, up to a maximum of 32."""
         self.font_size = min(self.font_size + 1, 32)
         self.apply_appearance()
-        self._save_settings()
+        self.app._save_settings()
 
     def decrease_font(self):
         """Decrease the font size by 1, down to a minimum of 8."""
         self.font_size = max(self.font_size - 1, 8)
         self.apply_appearance()
-        self._save_settings()
+        self.app._save_settings()
 
     def increase_image_width(self):
         """Increase the image display width by 100 pixels, up to 1200px."""
         self.image_width = min(self.image_width + 100, 1200)
         self._photo_images.clear()
         self.render_text()
-        self._save_settings()
+        self.app._save_settings()
 
     def decrease_image_width(self):
         """Decrease the image display width by 100 pixels, down to 100px."""
         self.image_width = max(self.image_width - 100, 100)
         self._photo_images.clear()
         self.render_text()
-        self._save_settings()
+        self.app._save_settings()
 
     def toggle_dark_mode(self):
         """Toggle between light and dark color palettes."""
         self.dark_mode = not self.dark_mode
         self.apply_appearance()
-        self._save_settings()
+        self.app._save_settings()
+
+    def _make_photo_image(self, src: str):
+        """Load an episode image from cache or network and scale it.
+
+        Returns None on any failure so a broken image never blocks the
+        rest of the chapter from rendering.
+
+        Args:
+            src: The image source URL.
+
+        Returns:
+            A PhotoImage instance, or None on failure.
+        """
+        if src in self._photo_images:
+            return self._photo_images[src]
+        try:
+            from io import BytesIO
+
+            from PIL import Image, ImageTk
+
+            data = fetch_image_bytes(src)
+            img = Image.open(BytesIO(data))
+            img.load()
+            max_width = self.image_width
+            if img.width > max_width:
+                ratio = max_width / img.width
+                img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+        except Exception:
+            print(traceback.format_exc(), file=sys.stderr)
+            return None
+        self._photo_images[src] = photo
+        return photo
+
+    def _render_content(self, ep, tag):
+        for item in ep["content"]:
+            if item["type"] == "image":
+                photo = self._make_photo_image(item["src"])
+                if photo is not None:
+                    self.text.insert("end", "\n")
+                    self.text.image_create("end", image=photo)
+                    self.text.insert("end", "\n")
+            else:
+                # "end" (not "end-1c") always refers to the position AFTER
+                # Tk's mandatory trailing newline, one line past where
+                # .insert("end", ...) actually places new text -- confirmed
+                # live: on a widget with nothing yet on the line being
+                # written, text.index("end") reports one line further than
+                # where the text lands, which silently broke
+                # _span_at_index() for the first paragraph of every episode
+                # (right-click-to-add-glossary-term did nothing there).
+                # "end-1c" is the real insertion point.
+                start = self.text.index("end-1c")
+                self.text.insert("end", item["text"] + "\n", tag)
+                self._rendered_spans.append((start, self.text.index("end-1c"), tag, item["text"]))
+
+    def _render_interleaved_content(self, ep, original_tag, translated_tag):
+        """Render each source line immediately followed by its translated line, repeating (RETRANSLATION_DESIGN.md phase 1).
+
+        Walks ep["content"] the same way _render_content()/
+        _render_translated_content() do (a mixed text/image list, with a
+        separate line_idx counter that only advances on text items) rather
+        than zipping ep["lines"] against ep["content"] directly, since
+        ep["content"] also contains image items that ep["lines"] excludes
+        -- naive zipping would misalign every line after the first image.
+
+        Falls back to the plain (translated-only) rendering path -- via
+        _render_translated_view(), so needs_review-aware rendering still
+        applies there -- when build_interleaved_pairs() detects a length
+        mismatch, rather than pairing lines that don't actually
+        correspond. Reuses the existing "original"/"translated" tags; the
+        translated half of a needs_review=True pair gets "needs_review"
+        applied span-level (only the exact masked-term text, via
+        _apply_needs_review_spans()), not over the whole line -- no new
+        rendering path, no new tag.
+
+        Args:
+            ep: Episode dict.
+            original_tag: Tag for the source-language half of each pair
+                (normally "original").
+            translated_tag: Tag for the translated half of each pair
+                (normally "translated").
+        """
+        pairs = build_interleaved_pairs(ep.get("lines", []), ep.get("translated_lines", []))
+        if pairs is None:
+            logger.warning(
+                f"Interleaved view: source_lines ({len(ep.get('lines', []))}) and translated_lines ({len(ep.get('translated_lines', []))}) length mismatch for {ep.get('episode_title', 'unknown')} -- falling back to translated-only view; refresh this chapter to retranslate"
+            )
+            self._render_translated_view(ep, translated_tag)
+            return
+
+        needs_review_flags = ep.get("needs_review_flags")
+        review_aware = bool(needs_review_flags) and len(needs_review_flags) == len(pairs)
+        novel_id = _extract_novel_id(self.app.current_url) if getattr(self.app, "current_url", None) else None
+        # Full glossary, not build_mask_targets()'s unconfirmed-only
+        # filter -- see find_glossary_term_spans()'s docstring for why
+        # status must not gate span lookup here.
+        glossary = load_glossary(novel_id) if (review_aware and novel_id) else {"terms": []}
+
+        line_idx = 0
+        for item in ep["content"]:
+            if item["type"] == "image":
+                photo = self._make_photo_image(item["src"])
+                if photo is not None:
+                    self.text.insert("end", "\n")
+                    self.text.image_create("end", image=photo)
+                    self.text.insert("end", "\n")
+                continue
+
+            source_line, translated_line = pairs[line_idx]
+
+            start = self.text.index("end-1c")
+            self.text.insert("end", source_line + "\n", original_tag)
+            self._rendered_spans.append((start, self.text.index("end-1c"), original_tag, source_line))
+
+            start = self.text.index("end-1c")
+            self.text.insert("end", translated_line + "\n", translated_tag)
+            end = self.text.index("end-1c")
+            self._rendered_spans.append((start, end, translated_tag, source_line))
+            self._translated_line_index_by_span[(start, end)] = line_idx
+            if review_aware and needs_review_flags[line_idx]:
+                self._apply_needs_review_spans(start, translated_line, source_line, glossary)
+
+            line_idx += 1
+
+    def _render_translated_view(self, ep, tag):
+        """Dispatch to the needs_review-aware renderer when the cached episode has that data, else the plain one.
+
+        The on-disk cache (DESIGN.md Section 11) stores translated_lines as
+        plain List[str] plus a parallel needs_review_flags: List[bool] --
+        not TranslatedLine objects directly, since build_glossary.py's
+        extraction and other readers of ep["translated_lines"] need plain
+        joinable strings (see Section 11 for the full reasoning). This
+        reconstructs TranslatedLine objects from that pair, and recomputes
+        mask_targets fresh from the current glossary (via
+        build_mask_targets()) for the needs-review click-to-add pre-fill --
+        safe to recompute since mask_targets is only used here to resolve
+        "which word" for the dialog, not as a record of what happened at
+        translation time (that fact is needs_review_flags, which IS
+        persisted as-is, not recomputed).
+        """
+        needs_review_flags = ep.get("needs_review_flags")
+        translated_strs = ep.get("translated_lines", [])
+        if needs_review_flags and len(needs_review_flags) == len(translated_strs):
+            translated_lines = [TranslatedLine(text=t, needs_review=r) for t, r in zip(translated_strs, needs_review_flags)]
+            novel_id = _extract_novel_id(self.app.current_url) if getattr(self.app, "current_url", None) else None
+            # The full glossary, not build_mask_targets()'s filtered
+            # unconfirmed-only list -- find_glossary_term_spans() (span-
+            # level highlighting/click resolution) deliberately searches
+            # every term regardless of current status, since needs_review
+            # is a historical fact about translation time, not current
+            # glossary state. See find_glossary_term_spans()'s docstring.
+            glossary = load_glossary(novel_id) if novel_id else {"terms": []}
+            self._render_translated_content_from_translated_lines(ep, tag, translated_lines, glossary)
+        else:
+            self._render_translated_content(ep, tag)
+
+    def _render_translated_content(self, ep, tag):
+        translated_lines = ep.get("translated_lines", [])
+        expected = sum(1 for item in ep["content"] if item["type"] == "text")
+        if len(translated_lines) != expected:
+            # translated_lines is walked in lockstep with the text items in
+            # ep["content"] below -- if the counts don't match (e.g. a stale
+            # cache entry from before translate_lines() guaranteed alignment),
+            # every paragraph after the point of drift renders against the
+            # wrong translated line instead of its own. Surfacing this in the
+            # log is the only way to tell "wrong text showing" apart from a
+            # fresh translation bug, since the render itself has no way to
+            # detect misalignment from the text alone.
+            logger.warning(
+                f"translated_lines length ({len(translated_lines)}) != expected text item count ({expected}) for {ep.get('episode_title', 'unknown')} -- display will drift; refresh this chapter to retranslate"
+            )
+        line_idx = 0
+        for item in ep["content"]:
+            if item["type"] == "image":
+                photo = self._make_photo_image(item["src"])
+                if photo is not None:
+                    self.text.insert("end", "\n")
+                    self.text.image_create("end", image=photo)
+                    self.text.insert("end", "\n")
+            else:
+                line = translated_lines[line_idx] if line_idx < len(translated_lines) else item["text"]
+                # "end-1c", not "end" -- see _render_content()'s comment on
+                # the same pattern for why.
+                start = self.text.index("end-1c")
+                self.text.insert("end", line + "\n", tag)
+                # source_line is always the original Japanese text for this
+                # paragraph (item["text"]), even though the rendered/tagged
+                # text here is the translation -- needed so a right-click on
+                # translated text can still surface the Japanese source, e.g.
+                # for the glossary popup's reference context.
+                self._rendered_spans.append((start, self.text.index("end-1c"), tag, item["text"]))
+                line_idx += 1
+
+    def _render_translated_content_from_translated_lines(self, ep, tag, translated_lines, glossary):
+        """Render content using TranslatedLine output, span-level needs_review-aware.
+
+        Sibling to _render_translated_content(), which reads
+        ep["translated_lines"] (plain List[str]) -- this instead takes the
+        List[TranslatedLine] that translate_chunk_with_masking() produces
+        directly.
+
+        Span-level highlighting (not line-level): a needs_review=True
+        line's base text is inserted with the ordinary `tag` (normally
+        "translated"), then find_glossary_term_spans() locates the exact
+        masked-term substring(s) actually present in that line, and only
+        those spans get the "needs_review" tag added on top via
+        tag_add() -- the rest of the line keeps its normal styling. See
+        _apply_needs_review_spans() for the shared per-line span-tagging
+        logic (also used by _render_interleaved_content()).
+
+        Not currently called from render_text() -- there is no production
+        code path that produces List[TranslatedLine] yet
+        (translate_chunk_with_masking() has no live callers; see DESIGN.md
+        Section 10). This exists so the rendering logic is ready and
+        testable once that wiring (a separate, later task) lands, and so
+        it can be exercised directly against synthetic TranslatedLine data
+        in the meantime.
+
+        Args:
+            ep: Episode dict, for ep["content"] (paragraph/image structure)
+                and the source Japanese text of each paragraph.
+            tag: Base tag for non-flagged lines (normally "translated").
+            translated_lines: List[TranslatedLine], same length/order as
+                the text items in ep["content"].
+            glossary: Glossary dict as returned by load_glossary() --
+                the full glossary, not filtered by status. See
+                find_glossary_term_spans()'s docstring for why status
+                must not gate this search.
+        """
+        line_idx = 0
+        for item in ep["content"]:
+            if item["type"] == "image":
+                photo = self._make_photo_image(item["src"])
+                if photo is not None:
+                    self.text.insert("end", "\n")
+                    self.text.image_create("end", image=photo)
+                    self.text.insert("end", "\n")
+            else:
+                if line_idx < len(translated_lines):
+                    translated = translated_lines[line_idx]
+                    line_text = translated.text
+                    needs_review = translated.needs_review
+                else:
+                    line_text = item["text"]
+                    needs_review = False
+                # "end-1c", not "end" -- see _render_content()'s comment on
+                # the same pattern for why.
+                start = self.text.index("end-1c")
+                self.text.insert("end", line_text + "\n", tag)
+                end = self.text.index("end-1c")
+                self._rendered_spans.append((start, end, tag, item["text"]))
+                if needs_review:
+                    self._apply_needs_review_spans(start, line_text, item["text"], glossary)
+                line_idx += 1
+
+    def _apply_needs_review_spans(self, line_start, line_text, source_line, glossary):
+        """Tag the exact masked-term span(s) within an already-inserted needs_review line, and track them for click resolution.
+
+        Shared by _render_translated_content_from_translated_lines() and
+        _render_interleaved_content() -- both insert a needs_review=True
+        line's text with the ordinary translated tag first, then call this
+        to layer "needs_review" on top of only the term span(s)
+        find_glossary_term_spans() actually locates, via tag_add() rather
+        than re-inserting the text. Tk gives the later-added tag priority
+        for conflicting display attributes (confirmed directly: a tag
+        added via tag_add() after insert()'s tag wins), so "needs_review"'s
+        amber/underline styling correctly overrides "translated"'s blue
+        over just that span, leaving the rest of the line unaffected.
+
+        If find_glossary_term_spans() finds nothing (e.g. the exact raw
+        word isn't a literal substring of the rendered line for some
+        reason not yet seen in practice), nothing is tagged/tracked here --
+        needs_review=True still applies to _rendered_spans' base "tag" as
+        normal, so the line doesn't silently lose its needs_review fact,
+        it just has no clickable highlighted sub-span. Not expected to
+        happen in practice (splice_terms() always inserts the literal
+        source word), but not treated as an error if it does.
+
+        Args:
+            line_start: The Tk text index where line_text's insertion began.
+            line_text: The rendered (translated/spliced) line text.
+            source_line: The Japanese source text for this line, passed
+                through to open_word_glossary_popup() as explain_term()
+                context, same as every other span-click path.
+            glossary: Glossary dict as returned by load_glossary().
+        """
+        for span_start, span_end, word in find_glossary_term_spans(line_text, glossary):
+            tk_start = self.text.index(f"{line_start}+{span_start}c")
+            tk_end = self.text.index(f"{line_start}+{span_end}c")
+            self.text.tag_add("needs_review", tk_start, tk_end)
+            self._review_terms_by_span[(tk_start, tk_end)] = (word, source_line)
+
+    def _on_needs_review_click(self, event):
+        """Click on a needs_review-tagged span: open Add-to-Glossary pre-filled with the specific term clicked.
+
+        Reuses the existing open_word_glossary_popup() dialog (the same
+        one used by the right-click flow) rather than a new one, per
+        DESIGN.md Section 6. Pre-fills Source with the masked term whose
+        exact span was clicked (span-level, not line-level -- a line with
+        more than one flagged term now resolves to whichever one was
+        actually clicked, via _review_terms_by_span's per-span entries;
+        see _apply_needs_review_spans()). Target is left blank -- the raw
+        source word was spliced back into the line as a fallback (see
+        llm_translate.splice_terms()), not offered as a translation guess,
+        so prefilling Target with it would misrepresent an untranslated
+        placeholder as a proposed English target.
+
+        Args:
+            event: The Tk button-press event.
+        """
+        idx = self.text.index(f"@{event.x},{event.y}")
+        for (start, end), (word, source_line) in self._review_terms_by_span.items():
+            if self.text.compare(start, "<=", idx) and self.text.compare(idx, "<", end):
+                # Group C dialog, not yet extracted (Phase 3) -- reached via
+                # the back-reference rather than moved/duplicated here.
+                self.app.open_word_glossary_popup(word, "", context=source_line)
+                return
+
+    def _on_view_mode_change(self):
+        """Handle the Original/Translated/Both radio buttons: re-render and persist."""
+        self.render_text()
+        self.app._save_settings()
+
+    def render_text(self, restore_scroll_pos=None):
+        """Render the current episode content in the text widget.
+
+        Args:
+            restore_scroll_pos: Fraction (0.0-1.0) to scroll to after
+                rendering, instead of scrolling to the top. Used only when
+                resuming a previous session to the exact spot left off.
+        """
+        ep = self.app.episode
+        if ep is None:
+            return
+        mode = self.view_mode.get()
+        self.text.delete("1.0", "end")
+        self._rendered_spans = []
+        self._review_terms_by_span = {}
+        self._translated_line_index_by_span = {}
+
+        if mode in ("original", "both", "interleaved"):
+            self.text.insert("end", f"{ep['title']} — {ep['episode_title']}\n", "heading")
+        if mode in ("translated", "both"):
+            title = ep.get("translated_title", ep["title"])
+            episode_title = ep.get("translated_episode_title", ep["episode_title"])
+            self.text.insert("end", f"{title} — {episode_title}\n", "heading")
+
+        self.text.insert("end", f"by {ep['author']}\n\n", "original")
+        if mode in ("original", "both"):
+            self._render_content(ep, "original")
+        if mode == "both":
+            self.text.insert("end", "\n---- Translation ----\n\n", "heading")
+        if mode in ("translated", "both"):
+            self._render_translated_view(ep, "translated")
+        if mode == "interleaved":
+            self._render_interleaved_content(ep, "original", "translated")
+        if restore_scroll_pos is not None:
+            self.text.yview_moveto(restore_scroll_pos)
+        else:
+            self.text.see("1.0")
+
+    def _span_at_index(self, idx):
+        """Find the rendered paragraph span containing a text-widget index.
+
+        Args:
+            idx: A Tk text index (e.g. "12.34").
+
+        Returns:
+            The (start, end, tag, source_line) tuple from self._rendered_spans
+            whose range contains idx, or None if idx falls outside any
+            tracked paragraph (e.g. a heading, the byline, or an image).
+        """
+        for start, end, tag, source_line in self._rendered_spans:
+            if self.text.compare(start, "<=", idx) and self.text.compare(idx, "<", end):
+                return (start, end, tag, source_line)
+        return None
+
+    def _translated_span_after(self, original_span):
+        """Find the translated-line span immediately following an original-line span in _rendered_spans.
+
+        RETRANSLATION_DESIGN.md phase 3: _render_interleaved_content()
+        appends spans in strict (original, translated) pairs, one pair per
+        source line -- see its implementation. That ordering, not a tag
+        lookup, is what lets this resolve "the current translation of this
+        line" from an original-tagged span without a second tracking
+        structure (mirroring how _review_terms_by_span is a *separate*
+        dict built only in the needs_review-aware translated path, not
+        reused here since Interleaved mode doesn't populate it).
+
+        Args:
+            original_span: A (start, end, tag, source_line) tuple from
+                self._rendered_spans, expected to have tag == "original".
+
+        Returns:
+            The (start, end, tag, source_line) tuple for the very next
+            entry in self._rendered_spans, or None if original_span isn't
+            found or has no following entry (e.g. malformed input).
+        """
+        try:
+            idx = self._rendered_spans.index(original_span)
+        except ValueError:
+            return None
+        if idx + 1 >= len(self._rendered_spans):
+            return None
+        return self._rendered_spans[idx + 1]
+
+
+class ReaderApp:
+    """Tkinter-based desktop reader for Alphapolis novels.
+
+    Provides navigation, translation display, font controls, and dark mode.
+    """
+
+    def __init__(self, root, browser, start_url, target_lang="en", restore_scroll_pos=None):
+        """Initialize the reader application GUI.
+
+        Args:
+            root: The Tkinter root window.
+            browser: A BrowserWorker instance for fetching pages.
+            start_url: The initial episode URL to load.
+            target_lang: Target translation language code (default: en).
+            restore_scroll_pos: Fraction (0.0-1.0) to scroll to once start_url
+                finishes loading, if resuming a previous session. None means
+                scroll to the top as usual (a fresh/explicit URL was given).
+        """
+        self.root = root
+        self.browser = browser
+        self.target_lang = target_lang
+        self.backend = self._load_backend()
+        self.episode = None
+        # Never re-set by any code path other than display_episode() --
+        # explicitly initialized here (rather than left absent until the
+        # first episode loads) so no reader needs a hasattr(self,
+        # "current_url") guard; every such guard elsewhere in this file
+        # predates this initialization and is left as defensive but
+        # no longer strictly necessary.
+        self.current_url = None
+        self.cache = {}
+        # url -> threading.Event, one entry per fetch_and_translate() call
+        # currently in flight (real network fetch + real LLM translation
+        # running, cache not yet populated). Guards against the duplicate-
+        # fetch race documented in DESIGN.md: prefetch() (fired from
+        # display_episode() right after an episode finishes loading, to
+        # warm the next chapter in the background) and a navigation-
+        # triggered load_episode() (e.g. the user clicking Next) can both
+        # call fetch_and_translate() for the same URL before either has
+        # written to self.cache/disk -- self._prefetching only guards
+        # prefetch() against re-entering itself, and self._loading only
+        # guards load_episode() against overlapping *unrelated* loads,
+        # neither prevents this specific same-URL race between the two
+        # different call paths. A second concurrent call for a URL already
+        # in this dict waits on its Event instead of duplicating the real
+        # network fetch and real LLM translation pass -- see
+        # fetch_and_translate() for the wait/signal logic.
+        self._fetch_in_progress: Dict[str, threading.Event] = {}
+        self._restore_scroll_pos = restore_scroll_pos
+        # Tracks the currently-open Add-to-Glossary / Retranslate popup (at
+        # most one of each kind at a time), so a second click while one is
+        # already open raises/focuses it instead of opening a duplicate --
+        # found live: repeated clicks (e.g. during xdotool verification, or
+        # an impatient double-click) could otherwise stack multiple
+        # independent Toplevel windows, each with its own background
+        # lookup thread, confusing rather than just redundant. None when no
+        # popup of that kind is open; cleared via a <Destroy> binding on
+        # the Toplevel itself so it's reset regardless of how the window
+        # closed (Save, Cancel, Accept/Discard, or the window manager's
+        # close button).
+        self._glossary_popup = None
+        self._retranslate_popup = None
+        # (word, context) -> (google_guess, llm_guess, explanation),
+        # populated by open_word_glossary_popup()'s background lookup.
+        # Session-only (not persisted) -- avoids repeating a network
+        # round-trip if the user reopens the popup for the same word in
+        # the same sentence (e.g. after Cancel). Keyed with context, not
+        # just the word, since the same surface text can mean different
+        # things (or be a name vs. not) depending on the sentence.
+        self._word_guess_cache = {}
+
+        self._prefetching = set()
+        # True while a load_episode() worker thread is running. Prevents
+        # overlapping loads -- confirmed possible via rapid clicks on
+        # Previous/Next or the <Left>/<Right> key bindings (keyboard repeat
+        # fires go_prev()/go_next() directly, bypassing the toolbar buttons'
+        # disabled state entirely). Concurrent loads meant multiple
+        # simultaneous LLM translation requests hitting the same
+        # llama-server slots, which is suspected to have contributed to
+        # scrambled/misaligned translated output.
+        self._loading = False
+
+        root.title("Alphapolis Reader")
+        # Widened from 900 -> 990 (Refresh button) -> 1090 (Glossary... button)
+        # -> 1220 (Review Terms... button) to keep the toolbar from clipping
+        # Settings... off the right edge.
+        root.geometry("1220x700")
+
+        toolbar = ttk.Frame(root)
+        toolbar.pack(fill="x", padx=8, pady=6)
+
+        self.prev_btn = ttk.Button(toolbar, text="< Previous", command=self.go_prev)
+        self.prev_btn.pack(side="left")
+        self.next_btn = ttk.Button(toolbar, text="Next >", command=self.go_next)
+        self.next_btn.pack(side="left", padx=(6, 0))
+
+        # ReaderRenderer (REFACTOR_DESIGN.md Phase 2) owns view_mode and
+        # every appearance/font/image-size control below -- constructed
+        # here, before the widgets that reference it, since the toolbar
+        # itself wires directly into the renderer's StringVar/commands.
+        self.renderer = ReaderRenderer(self)
+
+        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
+        for value, label in (("original", "Original"), ("translated", "Translated"), ("both", "Both"), ("interleaved", "Interleaved")):
+            ttk.Radiobutton(toolbar, text=label, value=value, variable=self.renderer.view_mode, command=self.renderer._on_view_mode_change).pack(side="left")
+
+        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Button(toolbar, text="A-", width=3, command=self.renderer.decrease_font).pack(side="left")
+        ttk.Button(toolbar, text="A+", width=3, command=self.renderer.increase_font).pack(side="left", padx=(2, 0))
+        ttk.Button(toolbar, text="Dark", command=self.renderer.toggle_dark_mode).pack(side="left", padx=(6, 0))
+
+        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Button(toolbar, text="Img-", width=4, command=self.renderer.decrease_image_width).pack(side="left")
+        ttk.Button(toolbar, text="Img+", width=4, command=self.renderer.increase_image_width).pack(side="left", padx=(2, 0))
+
+        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Button(toolbar, text="Load Novel...", command=self.open_load_url_dialog).pack(side="left")
+        ttk.Button(toolbar, text="Refresh", command=self.refresh_current_episode).pack(side="left", padx=(6, 0))
+        ttk.Button(toolbar, text="Glossary...", command=self.open_glossary_dialog).pack(side="left", padx=(6, 0))
+        ttk.Button(toolbar, text="Review Terms...", command=self.open_term_review_dialog).pack(side="left", padx=(6, 0))
+        ttk.Button(toolbar, text="Settings...", command=self.open_settings_dialog).pack(side="left", padx=(6, 0))
+
+        url_bar = ttk.Frame(root)
+        url_bar.pack(fill="x", padx=8, pady=(0, 6))
+        ttk.Label(url_bar, text="URL:").pack(side="left")
+        self.url_var = tk.StringVar(value="")
+        self.url_entry = ttk.Entry(url_bar, textvariable=self.url_var, state="readonly")
+        self.url_entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
+
+        # Status bar docked at the bottom -- packed before the text widget so
+        # it claims its space first; the text widget then fills what remains.
+        status_bar = ttk.Frame(root)
+        status_bar.pack(side="bottom", fill="x", padx=8, pady=(0, 6))
+        self.status_label = ttk.Label(status_bar, text="")
+        self.status_label.pack(side="left")
+
+        text_frame = ttk.Frame(root)
+        text_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        text_scrollbar = ttk.Scrollbar(text_frame, orient="vertical")
+        text_scrollbar.pack(side="right", fill="y")
+
+        self.text = tk.Text(text_frame, wrap="word", padx=16, pady=12, borderwidth=0, highlightthickness=0, yscrollcommand=text_scrollbar.set)
+        self.text.pack(side="left", fill="both", expand=True)
+        text_scrollbar.config(command=self.text.yview)
+        self.text.bind("<Button-3>", self._on_text_right_click)
+        # Left-click specifically on a needs_review span (tag_bind, not the
+        # widget-wide right-click handler) opens Add-to-Glossary pre-filled
+        # with the flagged term -- a lower-friction path than "right-click,
+        # then pick Add to Glossary from a menu" for the specific case of a
+        # term the pipeline already flagged as needing attention.
+        self.text.tag_bind("needs_review", "<Button-1>", self.renderer._on_needs_review_click)
+        self.renderer.apply_appearance()
+
+        self.prev_btn.state(["disabled"])
+        self.next_btn.state(["disabled"])
+
+        root.bind("<Left>", lambda e: self.go_prev())
+        root.bind("<Right>", lambda e: self.go_next())
+        root.bind("<Prior>", lambda e: self.text.yview_scroll(-1, "pages"))
+        root.bind("<Next>", lambda e: self.text.yview_scroll(1, "pages"))
+        root.bind("<Control-equal>", lambda e: self.renderer.increase_font())
+        root.bind("<Control-minus>", lambda e: self.renderer.decrease_font())
+
+        self.load_episode(start_url)
+
+    def _load_backend(self) -> str:
+        """Load the saved translation backend setting."""
+        try:
+            state = load_reader_state()
+            return state.get("backend", DEFAULT_BACKEND)
+        except Exception:
+            return DEFAULT_BACKEND
+
+    def _save_backend(self) -> None:
+        """Save the current backend setting to state."""
+        try:
+            update_reader_state(backend=self.backend)
+        except Exception as e:
+            logger.debug(f"Failed to save backend setting: {e}")
+
+    def _save_settings(self) -> None:
+        """Persist current display settings (font, sizing, mode) to state.
+
+        Reads from self.renderer (REFACTOR_DESIGN.md Phase 2) -- these are
+        all ReaderRenderer-owned attributes now, read here via the explicit
+        back-reference rather than this method moving to the renderer
+        itself, since persistence-to-disk is a core-app-shell concern
+        (this method also isn't renderer-specific in spirit -- it's the
+        same "settings" bucket _save_backend() writes into).
+        """
+        try:
+            update_reader_state(
+                font_size=self.renderer.font_size,
+                image_width=self.renderer.image_width,
+                dark_mode=self.renderer.dark_mode,
+                font_family=self.renderer.font_family,
+                line_height=self.renderer.line_height,
+                paragraph_spacing=self.renderer.paragraph_spacing,
+                page_width_pct=self.renderer.page_width_pct,
+                text_align=self.renderer.text_align,
+                view_mode=self.renderer.view_mode.get(),
+            )
+        except Exception as e:
+            logger.debug(f"Failed to save display settings: {e}")
 
     def open_load_url_dialog(self):
         """Open a dialog window for loading a new episode by URL."""
@@ -1021,10 +1495,10 @@ class ReaderApp:
             ttk.Label(backend_row, text="(llama-server not running)", fg="#888").pack(side="left", padx=(4, 0))
 
         ttk.Label(win, text="Font").pack(anchor="w", **pad)
-        font_var = tk.StringVar(value=self.font_family)
-        font_choices = [f for f in FONT_CANDIDATES if f in self._available_fonts()]
-        if self.font_family not in font_choices:
-            font_choices.insert(0, self.font_family)
+        font_var = tk.StringVar(value=self.renderer.font_family)
+        font_choices = [f for f in FONT_CANDIDATES if f in self.renderer._available_fonts()]
+        if self.renderer.font_family not in font_choices:
+            font_choices.insert(0, self.renderer.font_family)
         font_combo = ttk.Combobox(win, textvariable=font_var, values=font_choices, state="readonly")
         font_combo.pack(fill="x", padx=10)
 
@@ -1043,34 +1517,34 @@ class ReaderApp:
             on_move(var.get())
             return scale
 
-        line_height_var = tk.DoubleVar(value=self.line_height)
+        line_height_var = tk.DoubleVar(value=self.renderer.line_height)
         make_slider("Line Height", line_height_var, 1.0, 2.5, resolution=0.1)
 
-        paragraph_spacing_var = tk.IntVar(value=self.paragraph_spacing)
+        paragraph_spacing_var = tk.IntVar(value=self.renderer.paragraph_spacing)
         make_slider("Paragraph Spacing (px)", paragraph_spacing_var, 0, 40)
 
-        page_width_var = tk.IntVar(value=self.page_width_pct)
+        page_width_var = tk.IntVar(value=self.renderer.page_width_pct)
         make_slider("Page Width (%)", page_width_var, 40, 100)
 
         ttk.Label(win, text="Text Alignment").pack(anchor="w", **pad)
-        align_var = tk.StringVar(value=self.text_align)
+        align_var = tk.StringVar(value=self.renderer.text_align)
         align_row = ttk.Frame(win)
         align_row.pack(anchor="w", padx=10)
         for value, label in (("left", "Left"), ("center", "Center"), ("right", "Right")):
             ttk.Radiobutton(align_row, text=label, value=value, variable=align_var).pack(side="left")
 
         def apply_and_close():
-            self.font_family = font_var.get()
-            self.line_height = line_height_var.get()
-            self.paragraph_spacing = paragraph_spacing_var.get()
-            self.page_width_pct = page_width_var.get()
-            self.text_align = align_var.get()
+            self.renderer.font_family = font_var.get()
+            self.renderer.line_height = line_height_var.get()
+            self.renderer.paragraph_spacing = paragraph_spacing_var.get()
+            self.renderer.page_width_pct = page_width_var.get()
+            self.renderer.text_align = align_var.get()
             self.backend = backend_var.get()
             self._save_backend()
             self._save_settings()
             win.destroy()
-            self.apply_appearance()
-            self.render_text()
+            self.renderer.apply_appearance()
+            self.renderer.render_text()
 
         ttk.Separator(win, orient="horizontal").pack(fill="x", padx=10, pady=(10, 0))
         ttk.Button(win, text="Clear Cache...", command=lambda: self._confirm_clear_cache(win)).pack(anchor="w", padx=10, pady=(8, 0))
@@ -2073,373 +2547,15 @@ class ReaderApp:
         # navigation (Next/Prev, loading a different URL) scrolls to top as normal.
         restore_scroll_pos = self._restore_scroll_pos
         self._restore_scroll_pos = None
-        self.render_text(restore_scroll_pos=restore_scroll_pos)
+        self.renderer.render_text(restore_scroll_pos=restore_scroll_pos)
 
         self.prev_btn.state(["!disabled"] if ep["prev_url"] else ["disabled"])
         self.next_btn.state(["!disabled"] if ep["next_url"] else ["disabled"])
         self.set_status(f"Chapter: {ep['episode_title']}")
+        logger.info(f"Displayed episode: {ep['episode_title']}")
 
         save_reader_state(url, self.target_lang)
         self.prefetch(ep.get("next_url"))
-
-    def _make_photo_image(self, src: str):
-        """Load an episode image from cache or network and scale it.
-
-        Returns None on any failure so a broken image never blocks the
-        rest of the chapter from rendering.
-
-        Args:
-            src: The image source URL.
-
-        Returns:
-            A PhotoImage instance, or None on failure.
-        """
-        if src in self._photo_images:
-            return self._photo_images[src]
-        try:
-            from io import BytesIO
-
-            from PIL import Image, ImageTk
-
-            data = fetch_image_bytes(src)
-            img = Image.open(BytesIO(data))
-            img.load()
-            max_width = self.image_width
-            if img.width > max_width:
-                ratio = max_width / img.width
-                img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
-            photo = ImageTk.PhotoImage(img)
-        except Exception:
-            print(traceback.format_exc(), file=sys.stderr)
-            return None
-        self._photo_images[src] = photo
-        return photo
-
-    def _render_content(self, ep, tag):
-        for item in ep["content"]:
-            if item["type"] == "image":
-                photo = self._make_photo_image(item["src"])
-                if photo is not None:
-                    self.text.insert("end", "\n")
-                    self.text.image_create("end", image=photo)
-                    self.text.insert("end", "\n")
-            else:
-                # "end" (not "end-1c") always refers to the position AFTER
-                # Tk's mandatory trailing newline, one line past where
-                # .insert("end", ...) actually places new text -- confirmed
-                # live: on a widget with nothing yet on the line being
-                # written, text.index("end") reports one line further than
-                # where the text lands, which silently broke
-                # _span_at_index() for the first paragraph of every episode
-                # (right-click-to-add-glossary-term did nothing there).
-                # "end-1c" is the real insertion point.
-                start = self.text.index("end-1c")
-                self.text.insert("end", item["text"] + "\n", tag)
-                self._rendered_spans.append((start, self.text.index("end-1c"), tag, item["text"]))
-
-    def _render_interleaved_content(self, ep, original_tag, translated_tag):
-        """Render each source line immediately followed by its translated line, repeating (RETRANSLATION_DESIGN.md phase 1).
-
-        Walks ep["content"] the same way _render_content()/
-        _render_translated_content() do (a mixed text/image list, with a
-        separate line_idx counter that only advances on text items) rather
-        than zipping ep["lines"] against ep["content"] directly, since
-        ep["content"] also contains image items that ep["lines"] excludes
-        -- naive zipping would misalign every line after the first image.
-
-        Falls back to the plain (translated-only) rendering path -- via
-        _render_translated_view(), so needs_review-aware rendering still
-        applies there -- when build_interleaved_pairs() detects a length
-        mismatch, rather than pairing lines that don't actually
-        correspond. Reuses the existing "original"/"translated" tags; the
-        translated half of a needs_review=True pair gets "needs_review"
-        applied span-level (only the exact masked-term text, via
-        _apply_needs_review_spans()), not over the whole line -- no new
-        rendering path, no new tag.
-
-        Args:
-            ep: Episode dict.
-            original_tag: Tag for the source-language half of each pair
-                (normally "original").
-            translated_tag: Tag for the translated half of each pair
-                (normally "translated").
-        """
-        pairs = build_interleaved_pairs(ep.get("lines", []), ep.get("translated_lines", []))
-        if pairs is None:
-            logger.warning(
-                f"Interleaved view: source_lines ({len(ep.get('lines', []))}) and translated_lines ({len(ep.get('translated_lines', []))}) length mismatch for {ep.get('episode_title', 'unknown')} -- falling back to translated-only view; refresh this chapter to retranslate"
-            )
-            self._render_translated_view(ep, translated_tag)
-            return
-
-        needs_review_flags = ep.get("needs_review_flags")
-        review_aware = bool(needs_review_flags) and len(needs_review_flags) == len(pairs)
-        novel_id = _extract_novel_id(self.current_url) if getattr(self, "current_url", None) else None
-        # Full glossary, not build_mask_targets()'s unconfirmed-only
-        # filter -- see find_glossary_term_spans()'s docstring for why
-        # status must not gate span lookup here.
-        glossary = load_glossary(novel_id) if (review_aware and novel_id) else {"terms": []}
-
-        line_idx = 0
-        for item in ep["content"]:
-            if item["type"] == "image":
-                photo = self._make_photo_image(item["src"])
-                if photo is not None:
-                    self.text.insert("end", "\n")
-                    self.text.image_create("end", image=photo)
-                    self.text.insert("end", "\n")
-                continue
-
-            source_line, translated_line = pairs[line_idx]
-
-            start = self.text.index("end-1c")
-            self.text.insert("end", source_line + "\n", original_tag)
-            self._rendered_spans.append((start, self.text.index("end-1c"), original_tag, source_line))
-
-            start = self.text.index("end-1c")
-            self.text.insert("end", translated_line + "\n", translated_tag)
-            end = self.text.index("end-1c")
-            self._rendered_spans.append((start, end, translated_tag, source_line))
-            self._translated_line_index_by_span[(start, end)] = line_idx
-            if review_aware and needs_review_flags[line_idx]:
-                self._apply_needs_review_spans(start, translated_line, source_line, glossary)
-
-            line_idx += 1
-
-    def _render_translated_view(self, ep, tag):
-        """Dispatch to the needs_review-aware renderer when the cached episode has that data, else the plain one.
-
-        The on-disk cache (DESIGN.md Section 11) stores translated_lines as
-        plain List[str] plus a parallel needs_review_flags: List[bool] --
-        not TranslatedLine objects directly, since build_glossary.py's
-        extraction and other readers of ep["translated_lines"] need plain
-        joinable strings (see Section 11 for the full reasoning). This
-        reconstructs TranslatedLine objects from that pair, and recomputes
-        mask_targets fresh from the current glossary (via
-        build_mask_targets()) for the needs-review click-to-add pre-fill --
-        safe to recompute since mask_targets is only used here to resolve
-        "which word" for the dialog, not as a record of what happened at
-        translation time (that fact is needs_review_flags, which IS
-        persisted as-is, not recomputed).
-        """
-        needs_review_flags = ep.get("needs_review_flags")
-        translated_strs = ep.get("translated_lines", [])
-        if needs_review_flags and len(needs_review_flags) == len(translated_strs):
-            translated_lines = [TranslatedLine(text=t, needs_review=r) for t, r in zip(translated_strs, needs_review_flags)]
-            novel_id = _extract_novel_id(self.current_url) if getattr(self, "current_url", None) else None
-            # The full glossary, not build_mask_targets()'s filtered
-            # unconfirmed-only list -- find_glossary_term_spans() (span-
-            # level highlighting/click resolution) deliberately searches
-            # every term regardless of current status, since needs_review
-            # is a historical fact about translation time, not current
-            # glossary state. See find_glossary_term_spans()'s docstring.
-            glossary = load_glossary(novel_id) if novel_id else {"terms": []}
-            self._render_translated_content_from_translated_lines(ep, tag, translated_lines, glossary)
-        else:
-            self._render_translated_content(ep, tag)
-
-    def _render_translated_content(self, ep, tag):
-        translated_lines = ep.get("translated_lines", [])
-        expected = sum(1 for item in ep["content"] if item["type"] == "text")
-        if len(translated_lines) != expected:
-            # translated_lines is walked in lockstep with the text items in
-            # ep["content"] below -- if the counts don't match (e.g. a stale
-            # cache entry from before translate_lines() guaranteed alignment),
-            # every paragraph after the point of drift renders against the
-            # wrong translated line instead of its own. Surfacing this in the
-            # log is the only way to tell "wrong text showing" apart from a
-            # fresh translation bug, since the render itself has no way to
-            # detect misalignment from the text alone.
-            logger.warning(
-                f"translated_lines length ({len(translated_lines)}) != expected text item count ({expected}) for {ep.get('episode_title', 'unknown')} -- display will drift; refresh this chapter to retranslate"
-            )
-        line_idx = 0
-        for item in ep["content"]:
-            if item["type"] == "image":
-                photo = self._make_photo_image(item["src"])
-                if photo is not None:
-                    self.text.insert("end", "\n")
-                    self.text.image_create("end", image=photo)
-                    self.text.insert("end", "\n")
-            else:
-                line = translated_lines[line_idx] if line_idx < len(translated_lines) else item["text"]
-                # "end-1c", not "end" -- see _render_content()'s comment on
-                # the same pattern for why.
-                start = self.text.index("end-1c")
-                self.text.insert("end", line + "\n", tag)
-                # source_line is always the original Japanese text for this
-                # paragraph (item["text"]), even though the rendered/tagged
-                # text here is the translation -- needed so a right-click on
-                # translated text can still surface the Japanese source, e.g.
-                # for the glossary popup's reference context.
-                self._rendered_spans.append((start, self.text.index("end-1c"), tag, item["text"]))
-                line_idx += 1
-
-    def _render_translated_content_from_translated_lines(self, ep, tag, translated_lines, glossary):
-        """Render content using TranslatedLine output, span-level needs_review-aware.
-
-        Sibling to _render_translated_content(), which reads
-        ep["translated_lines"] (plain List[str]) -- this instead takes the
-        List[TranslatedLine] that translate_chunk_with_masking() produces
-        directly.
-
-        Span-level highlighting (not line-level): a needs_review=True
-        line's base text is inserted with the ordinary `tag` (normally
-        "translated"), then find_glossary_term_spans() locates the exact
-        masked-term substring(s) actually present in that line, and only
-        those spans get the "needs_review" tag added on top via
-        tag_add() -- the rest of the line keeps its normal styling. See
-        _apply_needs_review_spans() for the shared per-line span-tagging
-        logic (also used by _render_interleaved_content()).
-
-        Not currently called from render_text() -- there is no production
-        code path that produces List[TranslatedLine] yet
-        (translate_chunk_with_masking() has no live callers; see DESIGN.md
-        Section 10). This exists so the rendering logic is ready and
-        testable once that wiring (a separate, later task) lands, and so
-        it can be exercised directly against synthetic TranslatedLine data
-        in the meantime.
-
-        Args:
-            ep: Episode dict, for ep["content"] (paragraph/image structure)
-                and the source Japanese text of each paragraph.
-            tag: Base tag for non-flagged lines (normally "translated").
-            translated_lines: List[TranslatedLine], same length/order as
-                the text items in ep["content"].
-            glossary: Glossary dict as returned by load_glossary() --
-                the full glossary, not filtered by status. See
-                find_glossary_term_spans()'s docstring for why status
-                must not gate this search.
-        """
-        line_idx = 0
-        for item in ep["content"]:
-            if item["type"] == "image":
-                photo = self._make_photo_image(item["src"])
-                if photo is not None:
-                    self.text.insert("end", "\n")
-                    self.text.image_create("end", image=photo)
-                    self.text.insert("end", "\n")
-            else:
-                if line_idx < len(translated_lines):
-                    translated = translated_lines[line_idx]
-                    line_text = translated.text
-                    needs_review = translated.needs_review
-                else:
-                    line_text = item["text"]
-                    needs_review = False
-                # "end-1c", not "end" -- see _render_content()'s comment on
-                # the same pattern for why.
-                start = self.text.index("end-1c")
-                self.text.insert("end", line_text + "\n", tag)
-                end = self.text.index("end-1c")
-                self._rendered_spans.append((start, end, tag, item["text"]))
-                if needs_review:
-                    self._apply_needs_review_spans(start, line_text, item["text"], glossary)
-                line_idx += 1
-
-    def _apply_needs_review_spans(self, line_start, line_text, source_line, glossary):
-        """Tag the exact masked-term span(s) within an already-inserted needs_review line, and track them for click resolution.
-
-        Shared by _render_translated_content_from_translated_lines() and
-        _render_interleaved_content() -- both insert a needs_review=True
-        line's text with the ordinary translated tag first, then call this
-        to layer "needs_review" on top of only the term span(s)
-        find_glossary_term_spans() actually locates, via tag_add() rather
-        than re-inserting the text. Tk gives the later-added tag priority
-        for conflicting display attributes (confirmed directly: a tag
-        added via tag_add() after insert()'s tag wins), so "needs_review"'s
-        amber/underline styling correctly overrides "translated"'s blue
-        over just that span, leaving the rest of the line unaffected.
-
-        If find_glossary_term_spans() finds nothing (e.g. the exact raw
-        word isn't a literal substring of the rendered line for some
-        reason not yet seen in practice), nothing is tagged/tracked here --
-        needs_review=True still applies to _rendered_spans' base "tag" as
-        normal, so the line doesn't silently lose its needs_review fact,
-        it just has no clickable highlighted sub-span. Not expected to
-        happen in practice (splice_terms() always inserts the literal
-        source word), but not treated as an error if it does.
-
-        Args:
-            line_start: The Tk text index where line_text's insertion began.
-            line_text: The rendered (translated/spliced) line text.
-            source_line: The Japanese source text for this line, passed
-                through to open_word_glossary_popup() as explain_term()
-                context, same as every other span-click path.
-            glossary: Glossary dict as returned by load_glossary().
-        """
-        for span_start, span_end, word in find_glossary_term_spans(line_text, glossary):
-            tk_start = self.text.index(f"{line_start}+{span_start}c")
-            tk_end = self.text.index(f"{line_start}+{span_end}c")
-            self.text.tag_add("needs_review", tk_start, tk_end)
-            self._review_terms_by_span[(tk_start, tk_end)] = (word, source_line)
-
-    def _on_needs_review_click(self, event):
-        """Click on a needs_review-tagged span: open Add-to-Glossary pre-filled with the specific term clicked.
-
-        Reuses the existing open_word_glossary_popup() dialog (the same
-        one used by the right-click flow) rather than a new one, per
-        DESIGN.md Section 6. Pre-fills Source with the masked term whose
-        exact span was clicked (span-level, not line-level -- a line with
-        more than one flagged term now resolves to whichever one was
-        actually clicked, via _review_terms_by_span's per-span entries;
-        see _apply_needs_review_spans()). Target is left blank -- the raw
-        source word was spliced back into the line as a fallback (see
-        llm_translate.splice_terms()), not offered as a translation guess,
-        so prefilling Target with it would misrepresent an untranslated
-        placeholder as a proposed English target.
-
-        Args:
-            event: The Tk button-press event.
-        """
-        idx = self.text.index(f"@{event.x},{event.y}")
-        for (start, end), (word, source_line) in self._review_terms_by_span.items():
-            if self.text.compare(start, "<=", idx) and self.text.compare(idx, "<", end):
-                self.open_word_glossary_popup(word, "", context=source_line)
-                return
-
-    def _on_view_mode_change(self):
-        """Handle the Original/Translated/Both radio buttons: re-render and persist."""
-        self.render_text()
-        self._save_settings()
-
-    def render_text(self, restore_scroll_pos=None):
-        """Render the current episode content in the text widget.
-
-        Args:
-            restore_scroll_pos: Fraction (0.0-1.0) to scroll to after
-                rendering, instead of scrolling to the top. Used only when
-                resuming a previous session to the exact spot left off.
-        """
-        ep = self.episode
-        if ep is None:
-            return
-        mode = self.view_mode.get()
-        self.text.delete("1.0", "end")
-        self._rendered_spans = []
-        self._review_terms_by_span = {}
-        self._translated_line_index_by_span = {}
-
-        if mode in ("original", "both", "interleaved"):
-            self.text.insert("end", f"{ep['title']} — {ep['episode_title']}\n", "heading")
-        if mode in ("translated", "both"):
-            title = ep.get("translated_title", ep["title"])
-            episode_title = ep.get("translated_episode_title", ep["episode_title"])
-            self.text.insert("end", f"{title} — {episode_title}\n", "heading")
-
-        self.text.insert("end", f"by {ep['author']}\n\n", "original")
-        if mode in ("original", "both"):
-            self._render_content(ep, "original")
-        if mode == "both":
-            self.text.insert("end", "\n---- Translation ----\n\n", "heading")
-        if mode in ("translated", "both"):
-            self._render_translated_view(ep, "translated")
-        if mode == "interleaved":
-            self._render_interleaved_content(ep, "original", "translated")
-        if restore_scroll_pos is not None:
-            self.text.yview_moveto(restore_scroll_pos)
-        else:
-            self.text.see("1.0")
 
     def _on_text_right_click(self, event):
         """Right-click on chapter text: offer to add the word/selection to the glossary.
@@ -2460,13 +2576,13 @@ class ReaderApp:
         sel_ranges = self.text.tag_ranges("sel")
         if sel_ranges:
             selected = self.text.get(sel_ranges[0], sel_ranges[1])
-            span = self._span_at_index(sel_ranges[0])
+            span = self.renderer._span_at_index(sel_ranges[0])
             tag = span[2] if span else "original"
             source_line = span[3] if span else ""
             prefill = self._prefill_for_word(selected, tag)
         else:
             idx = self.text.index("insert")
-            span = self._span_at_index(idx)
+            span = self.renderer._span_at_index(idx)
             if span is None:
                 return
             _, _, tag, source_line = span
@@ -2498,9 +2614,16 @@ class ReaderApp:
         # translated span at a resolvable position, so retranslate isn't
         # offered there for now -- a possible future extension, not
         # something this phase needs to solve.
-        if tag == "original" and self.view_mode.get() == "interleaved" and span is not None:
+        #
+        # self.renderer.view_mode/_rendered_spans (REFACTOR_DESIGN.md
+        # Phase 2): this method is a genuine hybrid per Phase 1's finding
+        # (reads renderer state, but also references Group C/D dialogs) --
+        # left on ReaderApp rather than forced into ReaderRenderer, since
+        # its full three-way dependency can't be resolved properly until
+        # Groups C/D are real components too (Phase 1 section 2).
+        if tag == "original" and self.renderer.view_mode.get() == "interleaved" and span is not None:
             hint_word = (selected.strip() if sel_ranges else prefill[0]) or ""
-            translated_span = self._translated_span_after(span)
+            translated_span = self.renderer._translated_span_after(span)
             if translated_span is not None and hint_word:
                 menu.add_command(
                     label="Retranslate this line...",
@@ -2508,51 +2631,6 @@ class ReaderApp:
                 )
 
         menu.tk_popup(event.x_root, event.y_root)
-
-    def _span_at_index(self, idx):
-        """Find the rendered paragraph span containing a text-widget index.
-
-        Args:
-            idx: A Tk text index (e.g. "12.34").
-
-        Returns:
-            The (start, end, tag, source_line) tuple from self._rendered_spans
-            whose range contains idx, or None if idx falls outside any
-            tracked paragraph (e.g. a heading, the byline, or an image).
-        """
-        for start, end, tag, source_line in self._rendered_spans:
-            if self.text.compare(start, "<=", idx) and self.text.compare(idx, "<", end):
-                return (start, end, tag, source_line)
-        return None
-
-    def _translated_span_after(self, original_span):
-        """Find the translated-line span immediately following an original-line span in _rendered_spans.
-
-        RETRANSLATION_DESIGN.md phase 3: _render_interleaved_content()
-        appends spans in strict (original, translated) pairs, one pair per
-        source line -- see its implementation. That ordering, not a tag
-        lookup, is what lets this resolve "the current translation of this
-        line" from an original-tagged span without a second tracking
-        structure (mirroring how _review_terms_by_span is a *separate*
-        dict built only in the needs_review-aware translated path, not
-        reused here since Interleaved mode doesn't populate it).
-
-        Args:
-            original_span: A (start, end, tag, source_line) tuple from
-                self._rendered_spans, expected to have tag == "original".
-
-        Returns:
-            The (start, end, tag, source_line) tuple for the very next
-            entry in self._rendered_spans, or None if original_span isn't
-            found or has no following entry (e.g. malformed input).
-        """
-        try:
-            idx = self._rendered_spans.index(original_span)
-        except ValueError:
-            return None
-        if idx + 1 >= len(self._rendered_spans):
-            return None
-        return self._rendered_spans[idx + 1]
 
     def _prefill_for_word(self, word, tag):
         """Build (source_prefill, target_prefill) for the glossary popup.
@@ -2821,7 +2899,7 @@ class ReaderApp:
 
         Accept is **session-only, not persisted**: it overwrites the
         translated_span's rendered text in the live tk.Text widget (and
-        updates self._rendered_spans so a later click on that line
+        updates self.renderer._rendered_spans so a later click on that line
         resolves consistently) for the remainder of this reading session.
         Reloading the chapter or restarting the app reverts it, since
         there is no line_overrides cache field yet -- that's phase 4. This
@@ -2833,8 +2911,8 @@ class ReaderApp:
         Args:
             source_line: The Japanese source line being retranslated.
             translated_span: The (start, end, tag, source_line) tuple from
-                self._rendered_spans for this line's current translated
-                text -- see _translated_span_after().
+                self.renderer._rendered_spans for this line's current
+                translated text -- see _translated_span_after().
             hint_word: The word/phrase the user selected in the original
                 line, passed to the engine as the retranslation hint.
         """
@@ -2949,8 +3027,13 @@ class ReaderApp:
                 self.text.delete(start, end)
                 self.text.insert(start, candidate + "\n", translated_tag)
                 new_end = self.text.index(f"{start}+{len(candidate) + 1}c")
-                idx = self._rendered_spans.index(translated_span)
-                self._rendered_spans[idx] = (start, new_end, translated_tag, source_line)
+                # self.renderer._rendered_spans/_translated_line_index_by_span
+                # (REFACTOR_DESIGN.md Phase 2): these tracking structures are
+                # ReaderRenderer-owned now -- written here via the explicit
+                # back-reference rather than left pointing at a stale/
+                # orphaned attribute on ReaderApp that no longer exists.
+                idx = self.renderer._rendered_spans.index(translated_span)
+                self.renderer._rendered_spans[idx] = (start, new_end, translated_tag, source_line)
 
                 # Write through to the shared episode dict (not just the
                 # live widget/_rendered_spans above) so the correction
@@ -2962,12 +3045,12 @@ class ReaderApp:
                 # written to the on-disk cache, so a reload/restart still
                 # reverts it -- that boundary (phase 4's territory) is
                 # unchanged by this fix.
-                line_idx = self._translated_line_index_by_span.pop((start, end), None)
+                line_idx = self.renderer._translated_line_index_by_span.pop((start, end), None)
                 if line_idx is not None and self.episode is not None:
                     translated_lines = self.episode.get("translated_lines")
                     if translated_lines is not None and 0 <= line_idx < len(translated_lines):
                         translated_lines[line_idx] = candidate
-                        self._translated_line_index_by_span[(start, new_end)] = line_idx
+                        self.renderer._translated_line_index_by_span[(start, new_end)] = line_idx
                     else:
                         logger.warning(
                             f"Retranslation accepted but translated_lines index {line_idx} out of range ({len(translated_lines) if translated_lines is not None else 'n/a'}) -- in-memory episode not updated, correction will not survive a view-mode switch"

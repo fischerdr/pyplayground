@@ -105,25 +105,16 @@ class TestBuildReviewTermMap:
         assert 0 not in result
 
 
-class _RenderHarness:
-    """Minimal stand-in exposing just what the render/click methods touch on self -- not a real ReaderApp."""
-
-    def __init__(self, text_widget):
-        self.text = text_widget
-        self._rendered_spans = []
-        self._review_terms_by_span = {}
-        self.popup_calls = []
-
-    def open_word_glossary_popup(self, source_prefill, target_prefill, context=None):
-        self.popup_calls.append((source_prefill, target_prefill, context))
-
-    _render_translated_content_from_translated_lines = ReaderApp._render_translated_content_from_translated_lines
-    _apply_needs_review_spans = ReaderApp._apply_needs_review_spans
-    _on_needs_review_click = ReaderApp._on_needs_review_click
-
-
 class TestRenderAndClick:
-    """Tk-level tests for the rendering/click-handling methods, against a real (headless) tk.Text widget.
+    """Tk-level tests for the rendering/click-handling methods, against a real ReaderRenderer + real (headless) tk.Text widget.
+
+    REFACTOR_DESIGN.md Phase 2: previously ran against a hand-rolled
+    _RenderHarness that copied a subset of ReaderApp's attributes by
+    hand and pulled its methods off ReaderApp via unbound-method
+    assignment; now constructs a real ReaderRenderer via the shared
+    conftest.py fixtures, so a new ReaderRenderer dependency surfaces as
+    a loud failure at construction time instead of a silent gap in a
+    hand-copied attribute list.
 
     Bug found and fixed while writing these tests, in pre-existing code, not
     just the new needs-review path: self.text.index("end") always refers to
@@ -132,7 +123,7 @@ class TestRenderAndClick:
     and _render_translated_content() both captured span start/end with
     plain "end", which meant _rendered_spans tracked every paragraph's
     range shifted by one line versus where its tag actually landed --
-    confirmed against the real, unmodified (pre-fix) ReaderApp._render_content(),
+    confirmed against the real, unmodified (pre-fix) ReaderRenderer._render_content(),
     not a hypothetical. Practical effect: the first paragraph of every
     rendered episode never matched in _span_at_index(), so right-click ->
     Add to Glossary silently did nothing there. Fixed by using "end-1c" (the
@@ -143,45 +134,26 @@ class TestRenderAndClick:
     since the needs-review tests alone wouldn't prove that path is fixed.
     """
 
-    def _make_widget(self):
-        # Deliberately NOT root.withdraw() -- a withdrawn window never gets
-        # real geometry in this environment (winfo_width()/height() stay at
-        # 1x1), which makes bbox()/dlineinfo() return None for every index
-        # past the very first character. pack()+update() below gives the
-        # widget real (if offscreen-in-CI-sense) dimensions so bbox-based
-        # click-coordinate tests are meaningful.
-        root = tk.Tk()
-        text = tk.Text(root, width=80, height=24)
-        text.pack()
-        text.tag_configure("needs_review", foreground="#b45309", underline=True)
-        text.tag_configure("translated", foreground="#1a56c4")
-        root.update()
-        return root, text
-
-    def test_needs_review_line_gets_needs_review_tag(self):
+    def test_needs_review_line_gets_needs_review_tag(self, renderer, fake_reader_app):
         """Checks via tag_ranges() rather than tag_names(start) -- see class docstring's note on the pre-existing index-offset quirk this surfaced; tag_ranges() reports what's actually tagged in the widget regardless of it.
 
         Span-level, not line-level (DESIGN.md's span-level highlighting
         entry): only the matched term text ("ケイト") gets tagged, not the
         whole line -- confirmed by checking the tagged text directly.
         """
-        root, text = self._make_widget()
-        try:
-            harness = _RenderHarness(text)
-            ep = {"content": [{"type": "text", "text": "ケイトが振り返った。"}]}
-            translated_lines = [TranslatedLine(text="Look, ケイト! So big!", needs_review=True)]
-            glossary = {"terms": [{"source": "ケイト", "type": "character", "status": "suggested"}]}
+        text = fake_reader_app.text
+        ep = {"content": [{"type": "text", "text": "ケイトが振り返った。"}]}
+        translated_lines = [TranslatedLine(text="Look, ケイト! So big!", needs_review=True)]
+        glossary = {"terms": [{"source": "ケイト", "type": "character", "status": "suggested"}]}
 
-            harness._render_translated_content_from_translated_lines(ep, "translated", translated_lines, glossary)
+        renderer._render_translated_content_from_translated_lines(ep, "translated", translated_lines, glossary)
 
-            start, end, tag, source = harness._rendered_spans[0]
-            assert tag == "translated"
-            assert text.tag_ranges("needs_review") != ()
-            assert text.get(*text.tag_ranges("needs_review")[:2]) == "ケイト"
-        finally:
-            root.destroy()
+        start, end, tag, source = renderer._rendered_spans[0]
+        assert tag == "translated"
+        assert text.tag_ranges("needs_review") != ()
+        assert text.get(*text.tag_ranges("needs_review")[:2]) == "ケイト"
 
-    def test_needs_review_span_resolves_even_after_term_confirmed_post_caching(self):
+    def test_needs_review_span_resolves_even_after_term_confirmed_post_caching(self, renderer, fake_reader_app):
         """Critical correctness requirement: a term confirmed AFTER an episode was cached with it spliced in must still resolve for span highlighting and click on that already-cached episode.
 
         needs_review_flags[i]=True is a historical fact about translation
@@ -191,325 +163,253 @@ class TestRenderAndClick:
         forward-looking) purpose. See find_glossary_term_spans()'s
         docstring.
         """
-        root, text = self._make_widget()
-        try:
-            harness = _RenderHarness(text)
-            ep = {"content": [{"type": "text", "text": "ケイトが振り返った。"}]}
-            translated_lines = [TranslatedLine(text="Look, ケイト! So big!", needs_review=True)]
-            # The term is now STATUS_CONFIRMED -- simulating a human
-            # confirming it sometime after this episode was cached with
-            # the raw spliced "ケイト" still sitting in the line.
-            glossary = {"terms": [{"source": "ケイト", "type": "character", "status": "confirmed", "confirmed_target": "Kate"}]}
+        text = fake_reader_app.text
+        ep = {"content": [{"type": "text", "text": "ケイトが振り返った。"}]}
+        translated_lines = [TranslatedLine(text="Look, ケイト! So big!", needs_review=True)]
+        # The term is now STATUS_CONFIRMED -- simulating a human
+        # confirming it sometime after this episode was cached with
+        # the raw spliced "ケイト" still sitting in the line.
+        glossary = {"terms": [{"source": "ケイト", "type": "character", "status": "confirmed", "confirmed_target": "Kate"}]}
 
-            harness._render_translated_content_from_translated_lines(ep, "translated", translated_lines, glossary)
+        renderer._render_translated_content_from_translated_lines(ep, "translated", translated_lines, glossary)
 
-            assert text.tag_ranges("needs_review") != ()
-            assert text.get(*text.tag_ranges("needs_review")[:2]) == "ケイト"
+        assert text.tag_ranges("needs_review") != ()
+        assert text.get(*text.tag_ranges("needs_review")[:2]) == "ケイト"
 
-            root.update_idletasks()
-            review_start = text.tag_ranges("needs_review")[0]
-            bbox = text.bbox(review_start)
-            assert bbox is not None
+        fake_reader_app.root.update_idletasks()
+        review_start = text.tag_ranges("needs_review")[0]
+        bbox = text.bbox(review_start)
+        assert bbox is not None
 
-            class _FakeEvent:
-                pass
+        class _FakeEvent:
+            pass
 
-            event = _FakeEvent()
-            event.x, event.y = bbox[0] + 1, bbox[1] + 1
-            harness._on_needs_review_click(event)
+        event = _FakeEvent()
+        event.x, event.y = bbox[0] + 1, bbox[1] + 1
+        renderer._on_needs_review_click(event)
 
-            assert harness.popup_calls == [("ケイト", "", "ケイトが振り返った。")]
-        finally:
-            root.destroy()
+        assert fake_reader_app.open_word_glossary_popup_calls == [("ケイト", "", "ケイトが振り返った。")]
 
-    def test_clean_line_gets_base_tag_not_needs_review(self):
-        root, text = self._make_widget()
-        try:
-            harness = _RenderHarness(text)
-            ep = {"content": [{"type": "text", "text": "ケイトが振り返った。"}]}
-            translated_lines = [TranslatedLine(text="Kate turned around.", needs_review=False)]
+    def test_clean_line_gets_base_tag_not_needs_review(self, renderer, fake_reader_app):
+        text = fake_reader_app.text
+        ep = {"content": [{"type": "text", "text": "ケイトが振り返った。"}]}
+        translated_lines = [TranslatedLine(text="Kate turned around.", needs_review=False)]
 
-            harness._render_translated_content_from_translated_lines(ep, "translated", translated_lines, {"terms": []})
+        renderer._render_translated_content_from_translated_lines(ep, "translated", translated_lines, {"terms": []})
 
-            start, end, tag, source = harness._rendered_spans[0]
-            assert tag == "translated"
-            assert text.tag_ranges("needs_review") == ()
-        finally:
-            root.destroy()
+        start, end, tag, source = renderer._rendered_spans[0]
+        assert tag == "translated"
+        assert text.tag_ranges("needs_review") == ()
 
-    def test_click_on_needs_review_span_prefills_correct_source_term(self):
+    def test_click_on_needs_review_span_prefills_correct_source_term(self, renderer, fake_reader_app):
         """Derives click coordinates from the tag's own reported range, not a hardcoded line-number guess."""
-        root, text = self._make_widget()
-        try:
-            harness = _RenderHarness(text)
-            ep = {
-                "content": [
-                    {"type": "text", "text": "ケイトが振り返った。"},
-                    {"type": "text", "text": "ルリが微笑んだ。"},
-                ]
-            }
-            translated_lines = [
-                TranslatedLine(text="Kate turned around.", needs_review=False),
-                TranslatedLine(text="Ruri smiled. ルリ", needs_review=True),
+        text = fake_reader_app.text
+        ep = {
+            "content": [
+                {"type": "text", "text": "ケイトが振り返った。"},
+                {"type": "text", "text": "ルリが微笑んだ。"},
             ]
-            glossary = {"terms": [{"source": "ルリ", "type": "character", "status": "suggested"}]}
+        }
+        translated_lines = [
+            TranslatedLine(text="Kate turned around.", needs_review=False),
+            TranslatedLine(text="Ruri smiled. ルリ", needs_review=True),
+        ]
+        glossary = {"terms": [{"source": "ルリ", "type": "character", "status": "suggested"}]}
 
-            harness._render_translated_content_from_translated_lines(ep, "translated", translated_lines, glossary)
+        renderer._render_translated_content_from_translated_lines(ep, "translated", translated_lines, glossary)
 
-            root.update_idletasks()
-            review_start = text.tag_ranges("needs_review")[0]
-            bbox = text.bbox(review_start)
-            assert bbox is not None, "needs_review span has no bounding box -- widget not realized"
-            x, y = bbox[0] + 1, bbox[1] + 1
+        fake_reader_app.root.update_idletasks()
+        review_start = text.tag_ranges("needs_review")[0]
+        bbox = text.bbox(review_start)
+        assert bbox is not None, "needs_review span has no bounding box -- widget not realized"
+        x, y = bbox[0] + 1, bbox[1] + 1
 
-            class _FakeEvent:
-                pass
+        class _FakeEvent:
+            pass
 
-            event = _FakeEvent()
-            event.x, event.y = x, y
-            harness._on_needs_review_click(event)
+        event = _FakeEvent()
+        event.x, event.y = x, y
+        renderer._on_needs_review_click(event)
 
-            assert harness.popup_calls == [("ルリ", "", "ルリが微笑んだ。")]
-        finally:
-            root.destroy()
+        assert fake_reader_app.open_word_glossary_popup_calls == [("ルリ", "", "ルリが微笑んだ。")]
 
-    def test_click_on_non_review_span_does_nothing(self):
-        root, text = self._make_widget()
-        try:
-            harness = _RenderHarness(text)
-            ep = {"content": [{"type": "text", "text": "ケイトが振り返った。"}]}
-            translated_lines = [TranslatedLine(text="Kate turned around.", needs_review=False)]
+    def test_click_on_non_review_span_does_nothing(self, renderer, fake_reader_app):
+        text = fake_reader_app.text
+        ep = {"content": [{"type": "text", "text": "ケイトが振り返った。"}]}
+        translated_lines = [TranslatedLine(text="Kate turned around.", needs_review=False)]
 
-            harness._render_translated_content_from_translated_lines(ep, "translated", translated_lines, {"terms": []})
+        renderer._render_translated_content_from_translated_lines(ep, "translated", translated_lines, {"terms": []})
 
-            root.update_idletasks()
-            start, end, tag, source = harness._rendered_spans[0]
-            bbox = text.bbox(start)
-            assert bbox is not None
+        fake_reader_app.root.update_idletasks()
+        start, end, tag, source = renderer._rendered_spans[0]
+        bbox = text.bbox(start)
+        assert bbox is not None
 
-            class _FakeEvent:
-                pass
+        class _FakeEvent:
+            pass
 
-            event = _FakeEvent()
-            event.x, event.y = bbox[0] + 1, bbox[1] + 1
-            harness._on_needs_review_click(event)
+        event = _FakeEvent()
+        event.x, event.y = bbox[0] + 1, bbox[1] + 1
+        renderer._on_needs_review_click(event)
 
-            assert harness.popup_calls == []
-        finally:
-            root.destroy()
-
-
-class _RightClickHarness:
-    """Minimal stand-in for the pre-existing right-click flow -- not a real ReaderApp."""
-
-    def __init__(self, text_widget):
-        self.text = text_widget
-        self._rendered_spans = []
-
-    def _make_photo_image(self, src):
-        return None
-
-    _render_content = ReaderApp._render_content
-    _render_translated_content = ReaderApp._render_translated_content
-    _span_at_index = ReaderApp._span_at_index
+        assert fake_reader_app.open_word_glossary_popup_calls == []
 
 
 class TestRightClickRegression:
-    """Regression coverage for the pre-existing right-click flow, on the first-paragraph case the end-1c fix addresses."""
+    """Regression coverage for the pre-existing right-click flow, on the first-paragraph case the end-1c fix addresses.
 
-    def _make_widget(self):
-        root = tk.Tk()
-        text = tk.Text(root, width=80, height=24)
-        text.pack()
-        text.tag_configure("original", foreground="#333333")
-        text.tag_configure("translated", foreground="#1a56c4")
-        root.update()
-        return root, text
+    REFACTOR_DESIGN.md Phase 2: previously ran against a hand-rolled
+    _RightClickHarness; now a real ReaderRenderer via the shared
+    conftest.py fixtures.
+    """
 
-    def test_first_paragraph_resolves_via_span_at_index(self):
+    def test_first_paragraph_resolves_via_span_at_index(self, renderer, fake_reader_app):
         """Before the end-1c fix, this returned None for the first paragraph specifically."""
-        root, text = self._make_widget()
-        try:
-            harness = _RightClickHarness(text)
-            ep = {"content": [{"type": "text", "text": "ケイトが振り返った。"}]}
+        text = fake_reader_app.text
+        ep = {"content": [{"type": "text", "text": "ケイトが振り返った。"}]}
 
-            harness._render_content(ep, "original")
-            root.update_idletasks()
+        renderer._render_content(ep, "original")
+        fake_reader_app.root.update_idletasks()
 
-            bbox = text.bbox("1.0")
-            assert bbox is not None, "first line has no bounding box -- widget not realized"
-            idx = text.index(f"@{bbox[0] + 1},{bbox[1] + 1}")
+        bbox = text.bbox("1.0")
+        assert bbox is not None, "first line has no bounding box -- widget not realized"
+        idx = text.index(f"@{bbox[0] + 1},{bbox[1] + 1}")
 
-            span = harness._span_at_index(idx)
+        span = renderer._span_at_index(idx)
 
-            assert span is not None
-            assert span[3] == "ケイトが振り返った。"
-        finally:
-            root.destroy()
+        assert span is not None
+        assert span[3] == "ケイトが振り返った。"
 
-    def test_second_paragraph_also_resolves_correctly(self):
+    def test_second_paragraph_also_resolves_correctly(self, renderer, fake_reader_app):
         """Guards against a fix that only shifts the bug rather than removing it."""
-        root, text = self._make_widget()
-        try:
-            harness = _RightClickHarness(text)
-            ep = {
-                "content": [
-                    {"type": "text", "text": "ケイトが振り返った。"},
-                    {"type": "text", "text": "ルリが微笑んだ。"},
-                ]
-            }
+        text = fake_reader_app.text
+        ep = {
+            "content": [
+                {"type": "text", "text": "ケイトが振り返った。"},
+                {"type": "text", "text": "ルリが微笑んだ。"},
+            ]
+        }
 
-            harness._render_content(ep, "original")
-            root.update_idletasks()
+        renderer._render_content(ep, "original")
+        fake_reader_app.root.update_idletasks()
 
-            first_bbox = text.bbox("1.0")
-            second_bbox = text.bbox("2.0")
-            assert first_bbox is not None and second_bbox is not None
+        first_bbox = text.bbox("1.0")
+        second_bbox = text.bbox("2.0")
+        assert first_bbox is not None and second_bbox is not None
 
-            first_idx = text.index(f"@{first_bbox[0] + 1},{first_bbox[1] + 1}")
-            second_idx = text.index(f"@{second_bbox[0] + 1},{second_bbox[1] + 1}")
+        first_idx = text.index(f"@{first_bbox[0] + 1},{first_bbox[1] + 1}")
+        second_idx = text.index(f"@{second_bbox[0] + 1},{second_bbox[1] + 1}")
 
-            first_span = harness._span_at_index(first_idx)
-            second_span = harness._span_at_index(second_idx)
+        first_span = renderer._span_at_index(first_idx)
+        second_span = renderer._span_at_index(second_idx)
 
-            assert first_span is not None and first_span[3] == "ケイトが振り返った。"
-            assert second_span is not None and second_span[3] == "ルリが微笑んだ。"
-        finally:
-            root.destroy()
+        assert first_span is not None and first_span[3] == "ケイトが振り返った。"
+        assert second_span is not None and second_span[3] == "ルリが微笑んだ。"
 
-    def test_translated_view_first_paragraph_also_resolves(self):
+    def test_translated_view_first_paragraph_also_resolves(self, renderer, fake_reader_app):
         """Same regression via _render_translated_content() -- both view paths had the identical bug."""
-        root, text = self._make_widget()
-        try:
-            harness = _RightClickHarness(text)
-            ep = {
-                "content": [{"type": "text", "text": "ケイトが振り返った。"}],
-                "translated_lines": ["Kate turned around."],
-            }
+        text = fake_reader_app.text
+        ep = {
+            "content": [{"type": "text", "text": "ケイトが振り返った。"}],
+            "translated_lines": ["Kate turned around."],
+        }
 
-            harness._render_translated_content(ep, "translated")
-            root.update_idletasks()
+        renderer._render_translated_content(ep, "translated")
+        fake_reader_app.root.update_idletasks()
 
-            bbox = text.bbox("1.0")
-            assert bbox is not None
-            idx = text.index(f"@{bbox[0] + 1},{bbox[1] + 1}")
+        bbox = text.bbox("1.0")
+        assert bbox is not None
+        idx = text.index(f"@{bbox[0] + 1},{bbox[1] + 1}")
 
-            span = harness._span_at_index(idx)
+        span = renderer._span_at_index(idx)
 
-            assert span is not None
-            assert span[3] == "ケイトが振り返った。"
-        finally:
-            root.destroy()
-
-
-class _DispatchHarness:
-    """Minimal stand-in for testing _render_translated_view()'s dispatch/reconstruction logic."""
-
-    def __init__(self, text_widget, current_url=None):
-        self.text = text_widget
-        self._rendered_spans = []
-        self._review_terms_by_span = {}
-        self.current_url = current_url
-        self.render_calls = []
-
-    def _make_photo_image(self, src):
-        return None
-
-    def _render_translated_content(self, ep, tag):
-        self.render_calls.append(("plain", ep, tag))
-
-    def _render_translated_content_from_translated_lines(self, ep, tag, translated_lines, glossary):
-        self.render_calls.append(("needs_review_aware", ep, tag, translated_lines, glossary))
-
-    _render_translated_view = ReaderApp._render_translated_view
+        assert span is not None
+        assert span[3] == "ケイトが振り返った。"
 
 
 class TestRenderTranslatedView:
-    """Tests for _render_translated_view()'s dispatch and TranslatedLine reconstruction from the cache shape."""
+    """Tests for _render_translated_view()'s dispatch and TranslatedLine reconstruction from the cache shape.
 
-    def _make_widget(self):
-        root = tk.Tk()
-        text = tk.Text(root, width=80, height=24)
-        text.pack()
-        root.update()
-        return root, text
+    REFACTOR_DESIGN.md Phase 2: previously ran against a hand-rolled
+    _DispatchHarness that stubbed the two renderer methods it dispatches
+    between; now monkeypatches those same two methods directly onto a
+    real ReaderRenderer instance, so the dispatch logic under test is
+    the real, unmodified method.
+    """
 
-    def test_dispatches_to_plain_renderer_when_no_needs_review_flags(self):
+    def test_dispatches_to_plain_renderer_when_no_needs_review_flags(self, renderer, fake_reader_app, monkeypatch):
         """An episode with no needs_review_flags (older cache, or LLM backend never used) falls back to the plain renderer."""
-        root, text = self._make_widget()
-        try:
-            harness = _DispatchHarness(text)
-            ep = {"translated_lines": ["Hello.", "World."]}
+        render_calls = []
+        monkeypatch.setattr(renderer, "_render_translated_content", lambda ep, tag: render_calls.append(("plain", ep, tag)))
+        monkeypatch.setattr(renderer, "_render_translated_content_from_translated_lines", lambda ep, tag, tl, g: render_calls.append(("needs_review_aware", ep, tag, tl, g)))
+        ep = {"translated_lines": ["Hello.", "World."]}
 
-            harness._render_translated_view(ep, "translated")
+        renderer._render_translated_view(ep, "translated")
 
-            assert len(harness.render_calls) == 1
-            assert harness.render_calls[0][0] == "plain"
-        finally:
-            root.destroy()
+        assert len(render_calls) == 1
+        assert render_calls[0][0] == "plain"
 
-    def test_dispatches_to_plain_renderer_on_length_mismatch(self):
+    def test_dispatches_to_plain_renderer_on_length_mismatch(self, renderer, fake_reader_app, monkeypatch):
         """A length mismatch between needs_review_flags and translated_lines falls back rather than zip()-truncating."""
-        root, text = self._make_widget()
-        try:
-            harness = _DispatchHarness(text)
-            ep = {"translated_lines": ["Hello.", "World."], "needs_review_flags": [False]}
+        render_calls = []
+        monkeypatch.setattr(renderer, "_render_translated_content", lambda ep, tag: render_calls.append(("plain", ep, tag)))
+        monkeypatch.setattr(renderer, "_render_translated_content_from_translated_lines", lambda ep, tag, tl, g: render_calls.append(("needs_review_aware", ep, tag, tl, g)))
+        ep = {"translated_lines": ["Hello.", "World."], "needs_review_flags": [False]}
 
-            harness._render_translated_view(ep, "translated")
+        renderer._render_translated_view(ep, "translated")
 
-            assert harness.render_calls[0][0] == "plain"
-        finally:
-            root.destroy()
+        assert render_calls[0][0] == "plain"
 
-    def test_reconstructs_translated_line_objects_from_cache_shape(self, mocker):
+    def test_reconstructs_translated_line_objects_from_cache_shape(self, renderer, fake_reader_app, mocker):
         """Plain strings + parallel bool flags reconstruct into the same TranslatedLine objects translate_chunk_with_masking() would have produced directly.
 
         Passes the full glossary dict through (not build_mask_targets()'s
         filtered/unconfirmed-only list) -- find_glossary_term_spans() needs
         every term regardless of status, see its docstring.
         """
-        root, text = self._make_widget()
-        try:
-            mocker.patch("pyplayground.webnovels.alphapolis_reader.load_glossary", return_value={"terms": [{"source": "音夢くん", "status": "suggested"}]})
-            mocker.patch("pyplayground.webnovels.alphapolis_reader._extract_novel_id", return_value="12345")
+        mocker.patch("pyplayground.webnovels.alphapolis_reader.load_glossary", return_value={"terms": [{"source": "音夢くん", "status": "suggested"}]})
+        mocker.patch("pyplayground.webnovels.alphapolis_reader._extract_novel_id", return_value="12345")
 
-            harness = _DispatchHarness(text, current_url="https://example.com/novel/12345/x/episode/1")
-            ep = {
-                "translated_lines": ["Kate turned around.", "音夢くん waved."],
-                "needs_review_flags": [False, True],
-                "lines": ["ケイトが振り返った。", "音夢くんが手を振った。"],
-            }
+        render_calls = []
+        mocker.patch.object(
+            renderer, "_render_translated_content_from_translated_lines", side_effect=lambda ep, tag, tl, g: render_calls.append(("needs_review_aware", ep, tag, tl, g))
+        )
 
-            harness._render_translated_view(ep, "translated")
+        fake_reader_app.current_url = "https://example.com/novel/12345/x/episode/1"
+        ep = {
+            "translated_lines": ["Kate turned around.", "音夢くん waved."],
+            "needs_review_flags": [False, True],
+            "lines": ["ケイトが振り返った。", "音夢くんが手を振った。"],
+        }
 
-            assert len(harness.render_calls) == 1
-            kind, call_ep, tag, translated_lines, glossary = harness.render_calls[0]
-            assert kind == "needs_review_aware"
-            assert translated_lines == [
-                TranslatedLine(text="Kate turned around.", needs_review=False),
-                TranslatedLine(text="音夢くん waved.", needs_review=True),
-            ]
-            assert glossary == {"terms": [{"source": "音夢くん", "status": "suggested"}]}
-        finally:
-            root.destroy()
+        renderer._render_translated_view(ep, "translated")
 
-    def test_no_current_url_falls_back_to_empty_glossary(self):
+        assert len(render_calls) == 1
+        kind, call_ep, tag, translated_lines, glossary = render_calls[0]
+        assert kind == "needs_review_aware"
+        assert translated_lines == [
+            TranslatedLine(text="Kate turned around.", needs_review=False),
+            TranslatedLine(text="音夢くん waved.", needs_review=True),
+        ]
+        assert glossary == {"terms": [{"source": "音夢くん", "status": "suggested"}]}
+
+    def test_no_current_url_falls_back_to_empty_glossary(self, renderer, fake_reader_app, mocker):
         """No current_url set means an empty glossary is passed rather than raising -- needs_review tagging still works from persisted flags, just without any term spans to highlight."""
-        root, text = self._make_widget()
-        try:
-            harness = _DispatchHarness(text, current_url=None)
-            ep = {
-                "translated_lines": ["Hello."],
-                "needs_review_flags": [True],
-                "lines": ["こんにちは。"],
-            }
+        render_calls = []
+        mocker.patch.object(
+            renderer, "_render_translated_content_from_translated_lines", side_effect=lambda ep, tag, tl, g: render_calls.append(("needs_review_aware", ep, tag, tl, g))
+        )
+        fake_reader_app.current_url = None
+        ep = {
+            "translated_lines": ["Hello."],
+            "needs_review_flags": [True],
+            "lines": ["こんにちは。"],
+        }
 
-            harness._render_translated_view(ep, "translated")
+        renderer._render_translated_view(ep, "translated")
 
-            kind, call_ep, tag, translated_lines, glossary = harness.render_calls[0]
-            assert glossary == {"terms": []}
-        finally:
-            root.destroy()
+        kind, call_ep, tag, translated_lines, glossary = render_calls[0]
+        assert glossary == {"terms": []}
 
 
 class _GlossaryDialogHarness:

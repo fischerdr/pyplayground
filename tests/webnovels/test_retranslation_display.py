@@ -19,9 +19,7 @@ Coverage tiers:
   - TestDefaultViewMode: confirms the new default (translated, not both).
 """
 
-import tkinter as tk
-
-from pyplayground.webnovels.alphapolis_reader import ReaderApp, build_interleaved_pairs
+from pyplayground.webnovels.alphapolis_reader import build_interleaved_pairs
 from pyplayground.webnovels.llm_translate import TranslatedLine  # noqa: F401  (kept for parity/future needs_review-aware tests)
 
 
@@ -60,91 +58,55 @@ class TestBuildInterleavedPairs:
         assert build_interleaved_pairs(source, translated) is None
 
 
-class _InterleaveHarness:
-    """Minimal stand-in for testing _render_interleaved_content(), matching test_alphapolis_reader.py's _DispatchHarness pattern."""
-
-    def __init__(self, text_widget, current_url=None):
-        self.text = text_widget
-        self._rendered_spans = []
-        self._review_terms_by_span = {}
-        self._translated_line_index_by_span = {}
-        self.fallback_calls = []
-        self.current_url = current_url
-
-    def _make_photo_image(self, src):
-        return None
-
-    def _render_translated_view(self, ep, tag):
-        self.fallback_calls.append((ep, tag))
-
-    _render_interleaved_content = ReaderApp._render_interleaved_content
-    _apply_needs_review_spans = ReaderApp._apply_needs_review_spans
-
-
 class TestRenderInterleavedContent:
-    """Tk-level tests for _render_interleaved_content(), against a real (headless) tk.Text widget."""
+    """Tk-level tests for _render_interleaved_content(), against a real ReaderRenderer + real (headless) tk.Text widget.
 
-    def _make_widget(self):
-        # Not root.withdraw() -- see test_alphapolis_reader.py's
-        # TestRenderAndClick._make_widget() for why a withdrawn window
-        # never gets real geometry in this environment.
-        root = tk.Tk()
-        text = tk.Text(root, width=80, height=24)
-        text.pack()
-        text.tag_configure("original", foreground="#333333")
-        text.tag_configure("translated", foreground="#1a56c4")
-        text.tag_configure("needs_review", foreground="#b45309", underline=True)
-        root.update()
-        return root, text
-
-    def test_pairs_rendered_in_source_then_translated_order(self):
-        root, text = self._make_widget()
-        try:
-            harness = _InterleaveHarness(text)
-            ep = {
-                "content": [
-                    {"type": "text", "text": "ケイトが振り返った。"},
-                    {"type": "text", "text": "ルリが微笑んだ。"},
-                ],
-                "lines": ["ケイトが振り返った。", "ルリが微笑んだ。"],
-                "translated_lines": ["Kate turned around.", "Ruri smiled."],
-            }
-
-            harness._render_interleaved_content(ep, "original", "translated")
-
-            texts_and_tags = [(tag, self._span_text(text, start, end)) for start, end, tag, _src in harness._rendered_spans]
-            assert texts_and_tags == [
-                ("original", "ケイトが振り返った。"),
-                ("translated", "Kate turned around."),
-                ("original", "ルリが微笑んだ。"),
-                ("translated", "Ruri smiled."),
-            ]
-        finally:
-            root.destroy()
+    REFACTOR_DESIGN.md Phase 2: previously ran against a hand-rolled
+    _InterleaveHarness; now a real ReaderRenderer via the shared
+    conftest.py fixtures (headless_text_widget/fake_reader_app/renderer).
+    """
 
     def _span_text(self, text, start, end):
         return text.get(start, end).rstrip("\n")
 
-    def test_mismatched_lengths_falls_back_to_render_translated_view(self):
-        root, text = self._make_widget()
-        try:
-            harness = _InterleaveHarness(text)
-            ep = {
-                "content": [{"type": "text", "text": "ケイトが振り返った。"}, {"type": "text", "text": "ルリが微笑んだ。"}],
-                "lines": ["ケイトが振り返った。", "ルリが微笑んだ。"],
-                "translated_lines": ["Kate turned around."],  # one short -- mismatch
-            }
+    def test_pairs_rendered_in_source_then_translated_order(self, renderer, fake_reader_app):
+        text = fake_reader_app.text
+        ep = {
+            "content": [
+                {"type": "text", "text": "ケイトが振り返った。"},
+                {"type": "text", "text": "ルリが微笑んだ。"},
+            ],
+            "lines": ["ケイトが振り返った。", "ルリが微笑んだ。"],
+            "translated_lines": ["Kate turned around.", "Ruri smiled."],
+        }
 
-            harness._render_interleaved_content(ep, "original", "translated")
+        renderer._render_interleaved_content(ep, "original", "translated")
 
-            assert harness.fallback_calls == [(ep, "translated")]
-            # Nothing was rendered by the interleaved path itself -- the
-            # fallback owns rendering entirely once invoked.
-            assert harness._rendered_spans == []
-        finally:
-            root.destroy()
+        texts_and_tags = [(tag, self._span_text(text, start, end)) for start, end, tag, _src in renderer._rendered_spans]
+        assert texts_and_tags == [
+            ("original", "ケイトが振り返った。"),
+            ("translated", "Kate turned around."),
+            ("original", "ルリが微笑んだ。"),
+            ("translated", "Ruri smiled."),
+        ]
 
-    def test_needs_review_flag_applies_needs_review_tag_to_translated_half_only(self):
+    def test_mismatched_lengths_falls_back_to_render_translated_view(self, renderer, fake_reader_app, monkeypatch):
+        fallback_calls = []
+        monkeypatch.setattr(renderer, "_render_translated_view", lambda ep, tag: fallback_calls.append((ep, tag)))
+        ep = {
+            "content": [{"type": "text", "text": "ケイトが振り返った。"}, {"type": "text", "text": "ルリが微笑んだ。"}],
+            "lines": ["ケイトが振り返った。", "ルリが微笑んだ。"],
+            "translated_lines": ["Kate turned around."],  # one short -- mismatch
+        }
+
+        renderer._render_interleaved_content(ep, "original", "translated")
+
+        assert fallback_calls == [(ep, "translated")]
+        # Nothing was rendered by the interleaved path itself -- the
+        # fallback owns rendering entirely once invoked.
+        assert renderer._rendered_spans == []
+
+    def test_needs_review_flag_applies_needs_review_tag_to_translated_half_only(self, renderer, fake_reader_app):
         """The translated half of a flagged pair gets span-level "needs_review" over the matched term text; _rendered_spans' base tag stays "translated" -- see DESIGN.md's span-level highlighting entry.
 
         No glossary term matches this line's translated text ("Kate ケイト"
@@ -154,24 +116,19 @@ class TestRenderInterleavedContent:
         separately by test_needs_review_span_only_covers_matched_term_text
         below, which seeds a matching glossary term.
         """
-        root, text = self._make_widget()
-        try:
-            harness = _InterleaveHarness(text)
-            ep = {
-                "content": [{"type": "text", "text": "ケイトが振り返った。"}],
-                "lines": ["ケイトが振り返った。"],
-                "translated_lines": ["Kate ケイト"],
-                "needs_review_flags": [True],
-            }
+        ep = {
+            "content": [{"type": "text", "text": "ケイトが振り返った。"}],
+            "lines": ["ケイトが振り返った。"],
+            "translated_lines": ["Kate ケイト"],
+            "needs_review_flags": [True],
+        }
 
-            harness._render_interleaved_content(ep, "original", "translated")
+        renderer._render_interleaved_content(ep, "original", "translated")
 
-            tags = [tag for _start, _end, tag, _src in harness._rendered_spans]
-            assert tags == ["original", "translated"]
-        finally:
-            root.destroy()
+        tags = [tag for _start, _end, tag, _src in renderer._rendered_spans]
+        assert tags == ["original", "translated"]
 
-    def test_needs_review_span_only_covers_matched_term_text(self, monkeypatch):
+    def test_needs_review_span_only_covers_matched_term_text(self, renderer, fake_reader_app, monkeypatch):
         """Span-level highlighting: only the exact masked-term text gets "needs_review" tagged, not the whole translated line."""
         import pyplayground.webnovels.alphapolis_reader as reader_module
 
@@ -181,87 +138,89 @@ class TestRenderInterleavedContent:
             lambda novel_id: {"terms": [{"source": "ケイト", "type": "character", "status": "confirmed"}]},
         )
 
-        root, text = self._make_widget()
-        try:
-            harness = _InterleaveHarness(text, current_url="https://www.alphapolis.co.jp/novel/12345/1/episode/1")
-            ep = {
-                "content": [{"type": "text", "text": "ケイトが振り返った。"}],
-                "lines": ["ケイトが振り返った。"],
-                "translated_lines": ["Because of ケイト, they were shocked."],
-                "needs_review_flags": [True],
-            }
+        text = fake_reader_app.text
+        fake_reader_app.current_url = "https://www.alphapolis.co.jp/novel/12345/1/episode/1"
+        ep = {
+            "content": [{"type": "text", "text": "ケイトが振り返った。"}],
+            "lines": ["ケイトが振り返った。"],
+            "translated_lines": ["Because of ケイト, they were shocked."],
+            "needs_review_flags": [True],
+        }
 
-            harness._render_interleaved_content(ep, "original", "translated")
+        renderer._render_interleaved_content(ep, "original", "translated")
 
-            (start, end), (word, source_line) = next(iter(harness._review_terms_by_span.items()))
-            assert word == "ケイト"
-            assert source_line == "ケイトが振り返った。"
-            assert text.get(start, end) == "ケイト"
-            assert "needs_review" in text.tag_names(start)
-            # The surrounding text must NOT carry needs_review -- confirms
-            # span-level, not line-level, highlighting.
-            assert "needs_review" not in text.tag_names("2.0")
-        finally:
-            root.destroy()
+        (start, end), (word, source_line) = next(iter(renderer._review_terms_by_span.items()))
+        assert word == "ケイト"
+        assert source_line == "ケイトが振り返った。"
+        assert text.get(start, end) == "ケイト"
+        assert "needs_review" in text.tag_names(start)
+        # The surrounding text must NOT carry needs_review -- confirms
+        # span-level, not line-level, highlighting.
+        assert "needs_review" not in text.tag_names("2.0")
 
-    def test_needs_review_flags_length_mismatch_ignored_not_applied(self):
+    def test_needs_review_flags_length_mismatch_ignored_not_applied(self, renderer, fake_reader_app):
         """A needs_review_flags list that doesn't match the paired-lines length shouldn't be trusted -- render normally rather than risk applying a flag to the wrong line."""
-        root, text = self._make_widget()
-        try:
-            harness = _InterleaveHarness(text)
-            ep = {
-                "content": [{"type": "text", "text": "ケイトが振り返った。"}, {"type": "text", "text": "ルリが微笑んだ。"}],
-                "lines": ["ケイトが振り返った。", "ルリが微笑んだ。"],
-                "translated_lines": ["Kate turned around.", "Ruri smiled."],
-                "needs_review_flags": [True],  # length 1, but 2 pairs -- mismatched
-            }
+        ep = {
+            "content": [{"type": "text", "text": "ケイトが振り返った。"}, {"type": "text", "text": "ルリが微笑んだ。"}],
+            "lines": ["ケイトが振り返った。", "ルリが微笑んだ。"],
+            "translated_lines": ["Kate turned around.", "Ruri smiled."],
+            "needs_review_flags": [True],  # length 1, but 2 pairs -- mismatched
+        }
 
-            harness._render_interleaved_content(ep, "original", "translated")
+        renderer._render_interleaved_content(ep, "original", "translated")
 
-            tags = [tag for _start, _end, tag, _src in harness._rendered_spans]
-            assert tags == ["original", "translated", "original", "translated"]
-        finally:
-            root.destroy()
+        tags = [tag for _start, _end, tag, _src in renderer._rendered_spans]
+        assert tags == ["original", "translated", "original", "translated"]
 
-    def test_image_items_interleaved_correctly_between_line_pairs(self):
+    def test_image_items_interleaved_correctly_between_line_pairs(self, renderer, fake_reader_app, monkeypatch):
         """ep["content"] can contain images between text paragraphs -- the line_idx counter must only advance on text items, not images, or every pair after an image misaligns."""
-        root, text = self._make_widget()
-        try:
-            harness = _InterleaveHarness(text)
-            ep = {
-                "content": [
-                    {"type": "text", "text": "ケイトが振り返った。"},
-                    {"type": "image", "src": "http://example.com/fake.png"},
-                    {"type": "text", "text": "ルリが微笑んだ。"},
-                ],
-                "lines": ["ケイトが振り返った。", "ルリが微笑んだ。"],
-                "translated_lines": ["Kate turned around.", "Ruri smiled."],
-            }
+        # Stubbed to avoid a real network fetch against the fake src --
+        # _make_photo_image() genuinely returns None on any failure (its
+        # own documented behavior), so this stub just skips paying a real
+        # (slow, non-deterministic) network round-trip to exercise that
+        # same None-on-failure path in this test.
+        monkeypatch.setattr(renderer, "_make_photo_image", lambda src: None)
+        text = fake_reader_app.text
+        ep = {
+            "content": [
+                {"type": "text", "text": "ケイトが振り返った。"},
+                {"type": "image", "src": "http://example.com/fake.png"},
+                {"type": "text", "text": "ルリが微笑んだ。"},
+            ],
+            "lines": ["ケイトが振り返った。", "ルリが微笑んだ。"],
+            "translated_lines": ["Kate turned around.", "Ruri smiled."],
+        }
 
-            harness._render_interleaved_content(ep, "original", "translated")
+        renderer._render_interleaved_content(ep, "original", "translated")
 
-            # _make_photo_image() is stubbed to return None (no real image
-            # fetch), so the image item contributes nothing to
-            # _rendered_spans -- only the two text pairs should appear,
-            # correctly paired despite the image sitting between them.
-            texts_and_tags = [(tag, self._span_text(text, start, end)) for start, end, tag, _src in harness._rendered_spans]
-            assert texts_and_tags == [
-                ("original", "ケイトが振り返った。"),
-                ("translated", "Kate turned around."),
-                ("original", "ルリが微笑んだ。"),
-                ("translated", "Ruri smiled."),
-            ]
-        finally:
-            root.destroy()
+        # With _make_photo_image() returning None, the image item
+        # contributes nothing to _rendered_spans -- only the two text
+        # pairs should appear, correctly paired despite the image
+        # sitting between them.
+        texts_and_tags = [(tag, self._span_text(text, start, end)) for start, end, tag, _src in renderer._rendered_spans]
+        assert texts_and_tags == [
+            ("original", "ケイトが振り返った。"),
+            ("translated", "Kate turned around."),
+            ("original", "ルリが微笑んだ。"),
+            ("translated", "Ruri smiled."),
+        ]
 
 
 class TestDefaultViewMode:
     """Confirms the RETRANSLATION_DESIGN.md phase 1 default-view-mode change."""
 
     def test_default_view_mode_is_translated_not_both(self):
-        """Grep-level regression guard: settings.get("view_mode", ...) must default to "translated", matching the design decision -- was "both" before this phase."""
+        """Grep-level regression guard: settings.get("view_mode", ...) must default to "translated", matching the design decision -- was "both" before this phase.
+
+        REFACTOR_DESIGN.md Phase 2: view_mode now lives in
+        ReaderRenderer.__init__, not ReaderApp.__init__ -- inspects the
+        renderer's constructor instead, source-of-truth updated to match
+        where the setting actually moved.
+        """
         import inspect
 
-        source = inspect.getsource(ReaderApp.__init__)
+        from pyplayground.webnovels.alphapolis_reader import ReaderRenderer
+
+        source = inspect.getsource(ReaderRenderer.__init__)
         assert 'settings.get("view_mode", "translated")' in source
         assert 'settings.get("view_mode", "both")' not in source

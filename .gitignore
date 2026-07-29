@@ -179,3 +179,4 @@ plans/
 # test docs
 docs/hydra/*
 novelfire*
+tests/webnovels/ui_automation/artifacts/*.png

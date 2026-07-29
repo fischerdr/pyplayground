@@ -4,7 +4,7 @@ Living record of decisions for the glossary/term-consistency rework and the
 Tkinter → web migration. Update this alongside code changes, not after —
 chat history is not the system of record.
 
-Last updated: 2026-07-28 (WM_DELETE_WINDOW app crash under Xvfb: confirmed real, open investigation, not fixed)
+Last updated: 2026-07-29 (synthetic test-fixture novels using real alphapolis.co.jp domain with fabricated IDs: confirmed real, fixed)
 
 ---
 
@@ -3145,3 +3145,130 @@ test suite avoid `windowclose`/WM_DELETE_WINDOW against this app entirely
 `xdo_helper.close_window()`'s docstring and `test_menu_smoke.py`). Left open
 here specifically so it doesn't get lost the way an earlier finding this
 session briefly did.
+
+---
+
+### 2026-07-29: synthetic test-fixture novels used the real alphapolis.co.jp domain with fabricated novel IDs -- confirmed real, fixed
+
+**The problem, stated plainly**: every synthetic test fixture built during
+Phase 2/3's live verification (novel IDs `777777777` and, from an earlier
+session, `888888887`) used episode URLs of the shape
+`https://www.alphapolis.co.jp/novel/<fake-id>/1/episode/<n>` -- a
+fabricated novel ID under the **real** Alphapolis domain, not a
+non-resolving placeholder. This repo's own `alphapolis_translate.py`
+docstring states plainly that Alphapolis' `robots.txt` disallows
+automated access and that this codebase's scraping is meant for
+personal, one-off use, not repeated/bulk automated requests. Every time
+one of these fixtures' on-disk cache got wiped (deliberately, e.g. by
+`refresh_current_episode()`'s auto-refresh path after a glossary edit,
+or as a side effect of an aborted live-verification run) and the app
+was subsequently launched against that URL, `fetch_and_translate()`'s
+cache-miss path runs unconditionally into `_do_fetch_and_translate()`,
+which logs "Fetching and translating episode: ..." and then calls
+`self.browser.fetch(url)` -- a real Playwright/Chromium navigation
+against the real Alphapolis site -- with nothing in between that could
+short-circuit it. A fabricated ID doesn't make this any safer: the
+request still leaves this machine and reaches Alphapolis' real
+infrastructure before failing (with a 404 or similar), which is exactly
+the kind of automated request the site's own policy asks not to be
+made, however small in volume.
+
+**Confirmed, not assumed, that this actually happened, and more than
+once**: grepped every `logs/app_log_*.log` file from this session for
+`"Fetching and translating episode"` lines. Found **5 separate
+occurrences** against
+`https://www.alphapolis.co.jp/novel/777777777/1/episode/1` (2026-07-29,
+across several live-verification runs in Phase 3's own checkpoints,
+each one a case where this fixture's cache had been wiped -- by an
+auto-refresh, or by an aborted/killed run -- and a subsequent launch or
+retry hit the cache-miss path before the cache was restored). Every
+other fetch logged this session was against the real novel
+`375266002` -- legitimate, expected traffic. No other fabricated novel
+ID (`999999998`, `999999997`, `12345`) ever triggered a real fetch
+attempt in this session's logs. Each of the 5 log files ends
+immediately at or shortly after the fetch-attempt line, consistent with
+the app being killed (via this session's own `kill -TERM`/`kill -9`
+cleanup calls, used because the app appeared stuck) before any response
+was logged -- meaning the exact server-side outcome of each request
+(whether it reached Alphapolis, what it received back, or whether the
+connection was torn down mid-flight by the kill) is not knowable from
+these logs alone. The blast radius is bounded (at most 5 attempted
+connections, all extremely short especially where killed quickly) but
+real, not zero, and not previously flagged as its own issue -- the one
+prior mention (`REFACTOR_DESIGN.md`'s Phase 3d entry) noted the
+resulting Playwright timeout as an expected consequence of refreshing a
+"non-existent" URL without registering that "non-existent" here meant
+"a fake path on a real site," not "a URL that cannot be reached at
+all."
+
+**A second, independent instance of the same pattern found during the
+retroactive sweep, not just the one already known**: `888888887`, a
+synthetic novel fixture predating this conversation (a "novel-switch
+repro" scenario, unreferenced by any current test or source file --
+confirmed via `grep -rn "888888887"` across the whole repo returning
+zero hits), had two cached episodes on disk, both also using
+`https://www.alphapolis.co.jp/novel/888888887/...`. Neither had
+actually triggered a fetch this session (no matching log lines), but
+both carried the identical latent risk the moment their cache aged out
+or got wiped.
+
+**Fix**: rebuilt all fixture cache entries for both `777777777` (3
+episodes) and `888888887` (1 episode, consolidating two slightly
+differently-shaped stale duplicates into one canonical entry) under
+`https://www.example.invalid/...` instead -- `example.invalid` is
+reserved by RFC 2606 specifically for this purpose (guaranteed to never
+resolve in DNS, unlike a real domain returning a 404, which still
+requires a live round-trip to reach). Confirmed directly, not assumed:
+`socket.gethostbyname("www.example.invalid")` raises `gaierror`
+immediately, and a real `requests.get()` against it fails with a local
+`NameResolutionError` before any packet leaves the machine. Rebuilt via
+`save_cached_episode()` (the real production function), not by hand-
+editing JSON, so the cache schema/hashing is exactly what the app would
+have produced itself. `_extract_novel_id()`'s regex
+(`r"/novel/(\d+)/"`) matches on path structure only, not domain, so the
+novel ID still resolves correctly (`777777777`/`888888887`) against the
+new URLs -- confirmed directly, not assumed.
+
+The old real-domain cache files for `777777777` were deleted outright
+(by the user, directly). The old real-domain cache files for
+`888888887` were invalidated in place (this repo's established
+technique for cache invalidation without deletion, per
+`agents-ui-testing.md`'s own documented pattern: overwrite with a
+mismatched `_cache_schema_version` and a placeholder in the `url`
+field) rather than deleted, since this session's own tooling permissions
+don't allow `rm`. Confirmed this is actually sufficient, not just
+assumed: `_load_cached_episodes_for_novel()` (the function
+`build_glossary_for_novel()` uses to enumerate a novel's cached
+episodes) does **not** check `_cache_schema_version` at all, so an
+invalidated entry still surfaces in its results -- but with the `url`
+field overwritten to a non-URL placeholder string containing no real
+domain, `_extract_novel_id()`/any fetch attempt reading that field finds
+nothing fetchable, closing the risk even though the file itself
+remains present.
+
+**Full sweep confirmed clean**: checked every cache file under
+`~/.cache/alphapolis_reader/` for any remaining entry combining
+`alphapolis.co.jp` with a known-fabricated novel ID (`777777777`,
+`888888887`, `999999998`, `999999997`, `12345`, `99999`) -- none found.
+Checked every glossary file under
+`~/.config/alphapolis_reader/glossaries/` for an embedded `url` field --
+confirmed glossary files never carry one (per `glossary.py`'s schema),
+so they carry no independent fetch risk regardless of novel ID.
+
+**Live-verified the fix, not just the file contents**: launched the
+real app against the new `https://www.example.invalid/novel/777777777/1/episode/1`
+URL under `pyplayground/webnovels/ui_testing/run_ui_tests.sh xvfb-keep`
+-- cache-hit succeeded, episode displayed and rendered correctly
+(screenshot confirmed, URL bar showing the new domain), whole-session
+log swept for `ERROR`/`CRITICAL`: clean. App terminated cleanly via
+`kill -TERM`, Xvfb/fluxbox torn down afterward.
+
+**Not done in this pass**: no change to any source file -- this was
+purely an on-disk test-fixture data issue, not a code defect. No
+retroactive fix attempted for whatever Alphapolis-side state the 5 real
+requests may have left (rate-limit counters, access logs, etc.) -- out
+of this repo's control and not something to speculate about further.
+Going forward, any new synthetic test-fixture novel created in this
+repo should use `example.invalid` (or another RFC 2606 reserved
+non-resolving domain) from the start, not a fabricated ID under the
+real Alphapolis domain.

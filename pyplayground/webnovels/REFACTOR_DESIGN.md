@@ -142,8 +142,222 @@ last — same discipline as every phased effort in the other two docs.
 
 - **Phase 1**: complete (2026-07-28, investigation and proposal only, see dated entry below). No code changes.
 - **Phase 2**: complete (2026-07-28, rendering extracted into `ReaderRenderer`; re-audited 2026-07-28, see dated entries below).
-- **Phase 3**: sub-plan defined (2026-07-29). **3a complete** (2026-07-29, `GlossaryCoordinator` built standalone). **3b complete** (2026-07-29, `open_word_glossary_popup()` wired). **3c complete** (2026-07-29, `open_term_review_dialog()` wired, see dated entry below). 3d-3g not started.
+- **Phase 3**: sub-plan defined (2026-07-29). **3a complete** (2026-07-29, `GlossaryCoordinator` built standalone). **3b complete** (2026-07-29, `open_word_glossary_popup()` wired). **3c complete** (2026-07-29, `open_term_review_dialog()` wired). **3d complete** (2026-07-29, `open_glossary_dialog()` wired, see dated entry below). 3e-3g not started.
 - **Phases 4-5**: not started, contingent on Phase 3's findings.
+
+### 2026-07-29: Phase 3d -- `open_glossary_dialog()` wired through `GlossaryCoordinator`
+
+Per the Phase 3 sub-plan's guardrails below: self-contained, did not
+read ahead into 3e-3g.
+
+**Mandatory first step, completed before any code change: full-repo
+call-site inventory.** Grepped the entire repository (not just
+`alphapolis_reader.py`/`tests/`) for every real call to `load_glossary`,
+`save_glossary`, `upsert_confirmed_term`, `merge_terms`,
+`make_confirmed_term`, `make_suggested_term`, and separately grepped the
+whole `tests/` tree (not just files with "glossary" in the name) for
+`monkeypatch.setattr`/`mocker.patch` targeting `load_glossary`/
+`save_glossary` at the `alphapolis_reader` module level. Confirmed via
+`grep -rln "from pyplayground.webnovels.glossary import"` that no
+directory outside `pyplayground/webnovels/` and `tests/` imports from
+`glossary.py` at all -- this is a genuinely complete inventory, not a
+narrowed one.
+
+| File:Line | Function | Called from | Status |
+|---|---|---|---|
+| `alphapolis_reader.py:930` | `load_glossary` | `_render_interleaved_content()` | Read-only rendering lookup -- deliberately not wired (Phase 1's explicit recommendation: rendering needs the *unfiltered* glossary, a different concern than write-coordination, not a load/write pair). |
+| `alphapolis_reader.py:985` | `load_glossary` | `_render_translated_view()` | Same as above -- read-only rendering lookup. |
+| `alphapolis_reader.py:1628` | `load_glossary` | `_do_fetch_and_translate()` | Read-only, builds prompt context for a live translation call. This function is the *other* side of the extraction-vs-dialog race named in `REFACTOR_DESIGN.md` §4/§5 -- Phase 3e's territory, not this step's call site to touch. |
+| `alphapolis_reader.py:1681` | `save_glossary` | `_do_fetch_and_translate()` (via `update_candidate_counts()`'s returned dict) | Write path for the count-building loop, not a dialog. Same reasoning -- Phase 3e's territory. |
+| `alphapolis_reader.py:1845` | `load_glossary` | `open_glossary_dialog()` (dialog-open load) | **Left as a direct call, deliberately** -- feeds `opened_updated_at`, which `GlossaryCoordinator.save_snapshot()` needs as a parameter (it has no way to know this on its own); the coordinator's own internal reload happens separately, inside `save_snapshot()`. |
+| `alphapolis_reader.py:2200` (post-wiring) | -- | `open_glossary_dialog()`'s `clear_glossary()` | **Wired this step** -- was `save_glossary(novel_id, glossary)` directly, now `GlossaryCoordinator(novel_id).clear()`. |
+| `alphapolis_reader.py:2224` (post-wiring) | -- | `open_glossary_dialog()`'s `save_and_close()` | **Wired this step** -- was the full reload/merge/write block (`load_glossary`+manual merge+`save_glossary`), now `GlossaryCoordinator(novel_id).save_snapshot(...)`. |
+| `alphapolis_reader.py:2100` | `make_confirmed_term` | `open_glossary_dialog()`'s `add_term()` | Pure constructor call, no read/write -- nothing to wire. |
+| `alphapolis_reader.py:2292` | `load_glossary` | `open_term_review_dialog()` (dialog-open load) | Already correct as of 3c -- untouched, not this step's concern. |
+| `alphapolis_reader.py:2937` | `load_glossary` | `open_retranslate_popup()` (prompt context) | Read-only, Group D territory (Phase 4, not Phase 3) -- confirmed no write pair. |
+| `alphapolis_translate.py:218` | `load_glossary` | `main()` (standalone CLI script) | Read-only, feeds `format_glossary_for_prompt()` for a one-shot translation, never writes. Deliberately not wired -- no write path exists here to coordinate. |
+| `compare_translations.py:170` | `load_glossary` | (translation-quality comparison script) | Same as above -- read-only, standalone script, no write path. |
+| `build_glossary.py:385` | `load_glossary` | `build_glossary_for_novel()` | **Deliberately not wired in this step** -- named explicitly, not silently skipped: this is the load-once/save-once-over-a-whole-episode-loop pattern `REFACTOR_DESIGN.md` §4/§5 already scopes as Phase 3e's territory (the extraction-vs-dialog race fix, via `GlossaryCoordinator.start_rebuild()`/`is_rebuild_running()`). A genuinely different write shape than `save_snapshot()`/`upsert_confirmed()`/`reject()`/`clear()` -- merges LLM extraction output in bulk across many episodes, a different trust level than a single human-reviewed term. |
+| `build_glossary.py:405` | `merge_terms` | `build_glossary_for_novel()` | Same call site -- bulk-merge trust level, per `glossary.py`'s own `merge_terms()` docstring (dedupes on `(type, source)`, a different, deliberately looser rule than `upsert_confirmed_term()`'s dedupe-by-source-alone for human-confirmed edits). Phase 3e's territory. |
+| `build_glossary.py:425` | `save_glossary` | `build_glossary_for_novel()` | Same -- Phase 3e's territory. |
+| `build_glossary.py:326` | `make_suggested_term` | `_to_suggested_term_dicts()` | Pure constructor, no read/write -- nothing to wire. |
+| `alphapolis_reader.py:2140-2182` (`rebuild_glossary()`, inside `open_glossary_dialog()`) | calls `build_glossary_for_novel()` directly | -- | The *other* existing call site of the same Phase-3e-territory function, reached from inside the dialog this step wires. **Left untouched deliberately** -- confirmed textually inside this step's own dialog, but `is_rebuild_running()`/`start_rebuild()` wiring for this exact call site is explicitly Phase 3e's job per the sub-plan, not 3d's, even though it lives inside the file/method 3d touches. |
+
+Nothing found that was neither already-wired nor explicitly justified --
+every real call site outside this step's two targets is either read-only
+(no write pair to coordinate) or Phase 3e's already-scoped territory.
+
+**Test-file mock-target inventory** (the whole `tests/` tree, not just
+"glossary"-named files):
+
+- `test_alphapolis_reader.py` -- three affected classes, all constructing
+  real `open_glossary_dialog()` instances, all retargeted this step:
+  `TestGlossaryDialogSelection._open_dialog()`,
+  `TestGlossaryDialogAutoRefresh._open_glossary_dialog()`, and
+  `TestGlossaryDialogMergeOnDivergence` (three tests, previously mocking
+  `load_glossary`/`save_glossary` together as one function called twice
+  from one module -- now genuinely two different module-level references,
+  since the dialog-open load stays in `alphapolis_reader` while the
+  reload-before-write moved into `glossary_coordinator`'s `save_snapshot()`;
+  this needed two separate mocks per test, not just a retarget, and one
+  assertion's expected `call_count` changed from `2` to `1` to match).
+- `test_retranslation_dialog.py:290,416` -- mocks `load_glossary` only,
+  for `open_retranslate_popup()`'s prompt-context read (Group D,
+  untouched by this step) -- confirmed **not** affected; different call
+  site entirely.
+- `test_term_review_dialog.py` -- already retargeted in Phase 3c; not
+  touched again (different dialog, unaffected by this step).
+- `test_glossary_coordinator.py` -- already targets `glossary_coordinator`
+  correctly (built directly against the coordinator since 3a).
+
+**A real mismatch found and resolved, not forced: `clear_glossary()`
+does not fit `save_snapshot()`'s contract.** `save_snapshot()` is built
+for an *edited* snapshot -- it always sets `honorific_policy_user_set =
+True` (the caller deliberately chose a policy) and never touches
+`context_notes`. `clear_glossary()`'s real behavior resets
+`honorific_policy_user_set` to `False` and `context_notes` to `""` --
+fields `save_snapshot()`'s contract doesn't cover, since a Clear is an
+unconditional reset the user explicitly asked for, not an edited
+snapshot to merge against a concurrent writer. Forcing Clear through
+`save_snapshot()` would have silently dropped both fields. Resolution:
+added a new, dedicated `GlossaryCoordinator.clear()` method (reload
+fresh via `load()`, same re-check discipline every other write path
+here uses, then reset `terms`/`honorific_policy`/
+`honorific_policy_user_set`/`context_notes`/`updated_at` and save) --
+a genuine extension of the coordinator's interface, not a workaround,
+matching this dialog's real, distinct write shape.
+
+**Dead-code sweep, per this step's mandatory second requirement**:
+- `flake8` caught two now-unused things after wiring:
+  `DEFAULT_HONORIFIC_POLICY`'s import in `alphapolis_reader.py`
+  (its only real call site was `clear_glossary()`'s direct reset, now
+  moved into `GlossaryCoordinator.clear()`) and the `datetime`/`timezone`
+  import (both `save_and_close()`'s and `clear_glossary()`'s
+  `datetime.now(timezone.utc).isoformat()` calls moved into the
+  coordinator too -- confirmed via `grep` that zero real usages of
+  either remained anywhere else in the file before removing). Both
+  removed.
+- Confirmed `load_glossary`/`save_glossary` are still genuinely needed
+  in `alphapolis_reader.py`'s own imports (rendering reads,
+  `_do_fetch_and_translate()`, `open_glossary_dialog()`'s own
+  `opened_updated_at`-feeding load, `open_term_review_dialog()`'s own
+  dialog-open load, `open_retranslate_popup()`'s prompt-context read) --
+  not removed.
+
+**Tests**: 8 new tests in `test_glossary_coordinator.py` --
+`TestClear` (4, unit tests against the new coordinator method directly:
+empties all terms, resets honorific policy/`honorific_policy_user_set`,
+resets `context_notes`, reloads fresh before writing) and
+`TestOpenGlossaryDialogRoutesThroughCoordinator` (4, driving the real,
+unmodified `open_glossary_dialog()` end-to-end through its actual
+Save/Clear Glossary buttons -- two "fails loudly if called directly"
+tests and two "on-disk result matches the user-visible pre-refactor
+shape" tests, same standard as 3b/3c). Plus the four
+`TestGlossaryDialogMergeOnDivergence` tests in `test_alphapolis_reader.py`,
+retargeted rather than newly written, since they already existed as the
+authoritative regression coverage for the exact logic being moved.
+
+**Confirmed load-bearing, not just passing incidentally**: reverted
+`alphapolis_reader.py`'s and `glossary_coordinator.py`'s wiring via
+`git stash` and re-ran the 8 new tests plus all three
+`TestGlossaryDialogMergeOnDivergence` tests -- all 11 failed cleanly
+(`AssertionError`s from the fail-loud guards, `AttributeError: no
+attribute 'clear'`, `KeyError`s from coordinator-aimed mocks never
+firing against the reverted direct-call code). Restored via
+`git stash pop`, confirmed via `grep` before continuing.
+
+**Checkpoint, confirmed, not assumed**:
+- Full `tests/webnovels/` suite: **265 passed** (up from 257 -- exactly
+  the 8 new tests, zero regressions), same 2 pre-existing flaky-crash
+  sources deselected (`TestFetchAndTranslateDuplicateGuard`'s duplicate-
+  fetch test, `TestPopupSingleInstanceGuard`'s leaked-thread test, both
+  named in 3c's own entry), same 6 live-display UI-automation tests
+  erroring only for lack of an Xvfb display in that offline run. Ran the
+  full suite 5 times total across this step (3 with the known flaky
+  sources deselected, 2 without) to check specifically for a *new* flaky
+  source introduced by this step -- all 5 passed clean, consistent with
+  3c's own flaky rate, not worse.
+- `black`/`isort`/`flake8` clean on all four touched files.
+- **Live verification**, via `pyplayground/webnovels/ui_testing/
+  run_ui_tests.sh xvfb-keep` (not manual `xdotool`), against novel
+  `777777777`'s real backlog (10 terms as of the end of 3c: 8
+  `suggested`, `鉄パイプ`/`弁護士` `confirmed`):
+  - **Stale-form-bug scenario**: selected `ケイト` (row A), edited its
+    Target field to "Kate" without saving, then clicked `ルリ` (row B)
+    without saving -- screenshots confirm B's form correctly showed its
+    own data (Source: ルリ, Note: female, Target: blank), not A's
+    unsaved "Kate" edit leaking across. `log_correlator.assert_clean()`
+    clean for the row-switch click.
+  - **Merge-on-divergence scenario**: simulated a concurrent writer by
+    confirming `教授` directly on disk (same technique 3c/`DESIGN.md`
+    established, since this dialog's `win.grab_set()` modality blocks
+    the interactive two-dialogs-open reproduction) while the real
+    dialog sat open with its now-stale in-memory snapshot (screenshot
+    confirms the Treeview still showed `教授` as "suggested" at that
+    point, proving the snapshot really was stale) -- edited a genuinely
+    unrelated term (`世紀末モヒカンムーブ`)'s Target field and clicked
+    Save. **On-disk read directly afterward confirmed both survived**:
+    `教授` stayed `confirmed`/`Professor` (not reverted by this
+    dialog's stale snapshot), `世紀末モヒカンムーブ` correctly gained
+    `confirmed_target: "apocalyptic mohawk move"` (the full text,
+    confirming an earlier screenshot's apparent truncation was a
+    display-scroll artifact, not a real data-loss bug). Log clean, and
+    the expected `"Glossary for novel 777777777 changed on disk while a
+    snapshot was held ... merging by source instead of overwriting"`
+    INFO line fired, correctly attributed to
+    `pyplayground.webnovels.glossary_coordinator` (not
+    `alphapolis_reader`) -- confirming the merge branch genuinely ran
+    inside the coordinator, not a leftover direct-call path.
+  - **An unexpected finding during this verification, investigated and
+    confirmed pre-existing, not a 3d regression**: after Save, several
+    *other* terms (`ケイト`, `ルリ`, `ダンジョン能力者`) also came back
+    `confirmed` on disk, not just the two terms this verification meant
+    to touch. Investigated rather than assumed: `open_glossary_dialog()`'s
+    `commit_selected_form()` runs on every row-selection change (the
+    existing `<<TreeviewSelect>>` binding), and `save_form_to_term()`
+    unconditionally sets `status = STATUS_CONFIRMED` on whatever term is
+    currently displayed -- confirmed via direct code read
+    (`alphapolis_reader.py`'s `save_form_to_term()`, unchanged by this
+    step) that this is the dialog's existing, pre-3d "edit anything,
+    Save commits everything you touched this session" contract, not
+    something 3d's wiring introduced. This verification's own row-by-row
+    navigation (clicking through `ケイト` -> `ルリ` -> `ダンジョン能力者`
+    -> `世紀末モヒカンムーブ` to demonstrate the stale-form-bug scenario)
+    touched each of those rows along the way, and each got committed as
+    confirmed by that pre-existing mechanism -- not a merge-logic defect.
+  - The synthetic novel's glossary file was backed up before this
+    verification and restored to its Phase-3c-ending state afterward
+    (unlike 3c's own backlog-progress data, this step's on-disk changes
+    were largely a side effect of test navigation rather than deliberate
+    backlog work, so restoring was the right call here). Dialog closed
+    via its own real Cancel button throughout (never `windowclose`). App
+    terminated via `kill -TERM` on the tracked PID, confirmed dead.
+    Whole-session log swept for `ERROR`/`CRITICAL`: none found.
+    Xvfb/fluxbox confirmed torn down cleanly after the run.
+- **Environment note carried forward from 3c, reconfirmed**: no
+  `ttk.Combobox` interaction was needed in this step's live verification
+  (this dialog's own Type combobox wasn't exercised this time), so the
+  keyboard-navigation workaround wasn't re-tested here, but remains the
+  documented approach for any future combobox interaction in this
+  dialog's own live verification.
+
+**Net result**: `open_glossary_dialog()`'s Save and Clear Glossary
+actions now route through `GlossaryCoordinator.save_snapshot()`/`clear()`;
+on-disk behavior (including the merge-on-divergence and stale-form-bug
+cases) is unchanged from the user's perspective, confirmed both by test
+and by a real live sequence. A genuine coordinator-interface gap
+(`clear()`) was found and filled with a dedicated method, not forced
+into an ill-fitting one. The mandatory call-site inventory found nothing
+outside this step's two targets that was neither already-wired nor
+explicitly justified.
+
+**Not done in this step, deliberately, per the guardrails**: no changes
+to the extraction-vs-dialog race fix or rebuild-tracking wiring (3e,
+including `rebuild_glossary()`'s own `build_glossary_for_novel()` call,
+confirmed textually inside this step's dialog but explicitly out of
+scope), no `extracted_episode_urls` schema work (3f), no final
+harness/sweep confirmation (3g). Stopped here as instructed rather than
+reading ahead.
 
 ### 2026-07-29: Phase 3c -- `open_term_review_dialog()` wired through `GlossaryCoordinator`
 

@@ -31,6 +31,18 @@ source instead; TestReject below was updated to match, plus a new test
 confirming this explicitly against a term object sourced from an
 independent load_glossary() call (the exact shape that broke identity
 matching).
+
+Phase 3d: TestOpenGlossaryDialogRoutesThroughCoordinator drives the real,
+unmodified open_glossary_dialog() end-to-end through its actual Save and
+Clear Glossary paths -- the highest-risk conversion in Phase 3, since
+save_and_close() is the dialog save_snapshot() was originally lifted
+from. clear_glossary() does NOT route through save_snapshot() -- a new,
+dedicated GlossaryCoordinator.clear() method was added instead (see its
+docstring), since a Clear is an unconditional reset the user explicitly
+asked for, not an edited snapshot to merge against a concurrent writer,
+and forcing it through save_snapshot()'s contract would silently lose
+context_notes/honorific_policy_user_set. TestClear covers the new method
+directly.
 """
 
 import threading
@@ -39,7 +51,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from pyplayground.webnovels.alphapolis_reader import ReaderApp
-from pyplayground.webnovels.glossary import STATUS_CONFIRMED, TERM_TYPE_CHARACTER, TERM_TYPE_GENERAL, make_confirmed_term, make_suggested_term
+from pyplayground.webnovels.glossary import DEFAULT_HONORIFIC_POLICY, STATUS_CONFIRMED, TERM_TYPE_CHARACTER, TERM_TYPE_GENERAL, make_confirmed_term, make_suggested_term
 from pyplayground.webnovels.glossary_coordinator import GlossaryCoordinator
 
 
@@ -274,6 +286,60 @@ class TestReject:
         result = coordinator.reject(term["source"])
 
         assert "ハードキャッチ" not in {t["source"] for t in result["terms"]}
+
+
+class TestClear:
+    """Tests for the dedicated Clear method (REFACTOR_DESIGN.md Phase 3d) -- NOT routed through save_snapshot(), see clear()'s docstring."""
+
+    def test_clear_empties_all_terms(self, mocker):
+        existing = _glossary_at_open()
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.load_glossary", return_value=existing)
+        saved = {}
+        mocker.patch(
+            "pyplayground.webnovels.glossary_coordinator.save_glossary",
+            side_effect=lambda novel_id, g: saved.update(glossary=dict(g)),
+        )
+
+        coordinator = GlossaryCoordinator("375266002")
+        result = coordinator.clear()
+
+        assert result["terms"] == []
+        assert saved["glossary"]["terms"] == []
+
+    def test_clear_resets_honorific_policy_to_default_and_unsets_user_set_flag(self, mocker):
+        existing = _glossary_at_open()
+        existing["honorific_policy"] = "keep"
+        existing["honorific_policy_user_set"] = True
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.load_glossary", return_value=existing)
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.save_glossary")
+
+        coordinator = GlossaryCoordinator("375266002")
+        result = coordinator.clear()
+
+        assert result["honorific_policy"] == DEFAULT_HONORIFIC_POLICY
+        assert result["honorific_policy_user_set"] is False
+
+    def test_clear_resets_context_notes(self, mocker):
+        existing = _glossary_at_open()
+        existing["context_notes"] = "some prior extraction context"
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.load_glossary", return_value=existing)
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.save_glossary")
+
+        coordinator = GlossaryCoordinator("375266002")
+        result = coordinator.clear()
+
+        assert result["context_notes"] == ""
+
+    def test_clear_reloads_fresh_before_writing(self, mocker):
+        """clear() should reload via load(), not operate on a stale caller-held snapshot -- same re-check discipline as every other write path here."""
+        existing = _glossary_at_open()
+        load_mock = mocker.patch("pyplayground.webnovels.glossary_coordinator.load_glossary", return_value=existing)
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.save_glossary")
+
+        coordinator = GlossaryCoordinator("375266002")
+        coordinator.clear()
+
+        assert load_mock.call_count == 1
 
 
 class TestRebuildTracking:
@@ -682,3 +748,185 @@ def _find_toplevel_by_title_prefix(root, prefix):
         if isinstance(child, tk.Toplevel) and child.title().startswith(prefix):
             return child
     return None
+
+
+class _GlossaryDialogHarness:
+    """Minimal stand-in exposing exactly what open_glossary_dialog() touches on self.
+
+    Same shape as test_alphapolis_reader.py's own _GlossaryDialogHarness
+    -- duplicated here (not imported), per this file's existing
+    convention of small, private test helpers staying local rather than
+    cross-imported between test files.
+    """
+
+    def __init__(self, root, current_url):
+        self.root = root
+        self.current_url = current_url
+        self.refresh_calls = []
+
+    def set_status(self, msg):
+        pass
+
+    def refresh_current_episode(self):
+        self.refresh_calls.append(self.current_url)
+
+    open_glossary_dialog = ReaderApp.open_glossary_dialog
+    _maybe_refresh_after_glossary_edit = ReaderApp._maybe_refresh_after_glossary_edit
+
+
+def _make_glossary_dialog_glossary(terms):
+    return {"novel_id": "375266002", "title": "Test Novel", "honorific_policy": "keep", "terms": terms, "context_notes": "", "updated_at": "2026-01-01T00:00:00+00:00"}
+
+
+class TestOpenGlossaryDialogRoutesThroughCoordinator:
+    """REFACTOR_DESIGN.md Phase 3d: open_glossary_dialog()'s Save and Clear Glossary actions now route through GlossaryCoordinator.
+
+    Same standard as 3b/3c: drives the real, unmodified dialog end-to-end
+    through its actual Save/Clear Glossary buttons, with monkeypatched
+    load_glossary()/save_glossary() in alphapolis_reader configured to
+    fail loudly if called directly -- confirms the write genuinely goes
+    through the coordinator, not just that a write happens to land
+    correctly.
+    """
+
+    def test_save_fails_loudly_if_dialog_calls_glossary_functions_directly(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+        import pyplayground.webnovels.glossary_coordinator as coordinator_module
+
+        glossary = _make_glossary_dialog_glossary([make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="鉄パイプ", target="iron pipe")])
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+
+        def _fail_if_called_directly(*args, **kwargs):
+            raise AssertionError("open_glossary_dialog() must not call save_glossary() directly -- it must route through GlossaryCoordinator (REFACTOR_DESIGN.md Phase 3d)")
+
+        monkeypatch.setattr(reader_module, "save_glossary", _fail_if_called_directly)
+
+        save_snapshot_calls = []
+        monkeypatch.setattr(
+            coordinator_module.GlossaryCoordinator,
+            "save_snapshot",
+            lambda self, **kwargs: save_snapshot_calls.append((self.novel_id, kwargs)) or {"terms": [], "updated_at": ""},
+        )
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "375266002")
+
+        root = tk.Tk()
+        try:
+            harness = _GlossaryDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/375266002/1/episode/1")
+            harness.open_glossary_dialog()
+            root.update()
+
+            win = _find_toplevel_by_title_prefix(root, "Glossary")
+            save_btn = _find_button_by_text(win, "Save")
+            assert save_btn is not None
+            save_btn.invoke()
+
+            assert len(save_snapshot_calls) == 1
+            novel_id, kwargs = save_snapshot_calls[0]
+            assert novel_id == "375266002"
+            assert kwargs["honorific_policy"] == "keep"
+        finally:
+            root.destroy()
+
+    def test_clear_glossary_fails_loudly_if_dialog_calls_save_glossary_directly(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+        import pyplayground.webnovels.glossary_coordinator as coordinator_module
+
+        glossary = _make_glossary_dialog_glossary([make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="鉄パイプ", target="iron pipe")])
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+
+        def _fail_if_called_directly(*args, **kwargs):
+            raise AssertionError(
+                "open_glossary_dialog()'s clear_glossary() must not call save_glossary() directly -- it must route through GlossaryCoordinator.clear() (REFACTOR_DESIGN.md Phase 3d)"
+            )
+
+        monkeypatch.setattr(reader_module, "save_glossary", _fail_if_called_directly)
+        monkeypatch.setattr(reader_module.messagebox, "askyesno", lambda *a, **k: True)
+
+        clear_calls = []
+        monkeypatch.setattr(coordinator_module.GlossaryCoordinator, "clear", lambda self: clear_calls.append(self.novel_id) or {"terms": [], "updated_at": ""})
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "375266002")
+
+        root = tk.Tk()
+        try:
+            harness = _GlossaryDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/375266002/1/episode/1")
+            harness.open_glossary_dialog()
+            root.update()
+
+            win = _find_toplevel_by_title_prefix(root, "Glossary")
+            clear_btn = _find_button_by_text(win, "Clear Glossary")
+            assert clear_btn is not None
+            clear_btn.invoke()
+
+            assert clear_calls == ["375266002"]
+        finally:
+            root.destroy()
+
+    def test_save_result_matches_pre_refactor_on_disk_shape(self, monkeypatch, mocker):
+        """The on-disk result of Save is unchanged from the user's perspective, now produced via the coordinator instead of the dialog's own direct calls."""
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        glossary = _make_glossary_dialog_glossary([make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="鉄パイプ", target="iron pipe")])
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.load_glossary", return_value=glossary)
+        saved = {}
+        mocker.patch(
+            "pyplayground.webnovels.glossary_coordinator.save_glossary",
+            side_effect=lambda novel_id, g: saved.update(novel_id=novel_id, glossary=dict(g, terms=[dict(t) for t in g["terms"]])),
+        )
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "375266002")
+
+        root = tk.Tk()
+        try:
+            harness = _GlossaryDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/375266002/1/episode/1")
+            harness.open_glossary_dialog()
+            root.update()
+
+            win = _find_toplevel_by_title_prefix(root, "Glossary")
+            save_btn = _find_button_by_text(win, "Save")
+            assert save_btn is not None
+            save_btn.invoke()
+
+            assert saved["novel_id"] == "375266002"
+            saved_terms = {t["source"]: t for t in saved["glossary"]["terms"]}
+            assert saved_terms["鉄パイプ"]["confirmed_target"] == "iron pipe"
+            assert saved["glossary"]["honorific_policy"] == "keep"
+        finally:
+            root.destroy()
+
+    def test_clear_result_matches_pre_refactor_on_disk_shape(self, monkeypatch, mocker):
+        """The on-disk result of Clear Glossary is unchanged from the user's perspective, now produced via GlossaryCoordinator.clear()."""
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        glossary = _make_glossary_dialog_glossary(
+            [
+                make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="鉄パイプ", target="iron pipe"),
+                make_confirmed_term(term_type=TERM_TYPE_CHARACTER, source="ケイト", target="Kate"),
+            ]
+        )
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.load_glossary", return_value=glossary)
+        saved = {}
+        mocker.patch(
+            "pyplayground.webnovels.glossary_coordinator.save_glossary",
+            side_effect=lambda novel_id, g: saved.update(novel_id=novel_id, glossary=dict(g, terms=[dict(t) for t in g["terms"]])),
+        )
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "375266002")
+        monkeypatch.setattr(reader_module.messagebox, "askyesno", lambda *a, **k: True)
+
+        root = tk.Tk()
+        try:
+            harness = _GlossaryDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/375266002/1/episode/1")
+            harness.open_glossary_dialog()
+            root.update()
+
+            win = _find_toplevel_by_title_prefix(root, "Glossary")
+            clear_btn = _find_button_by_text(win, "Clear Glossary")
+            assert clear_btn is not None
+            clear_btn.invoke()
+
+            assert saved["novel_id"] == "375266002"
+            assert saved["glossary"]["terms"] == []
+            assert saved["glossary"]["honorific_policy"] == DEFAULT_HONORIFIC_POLICY
+            assert saved["glossary"]["honorific_policy_user_set"] is False
+        finally:
+            root.destroy()

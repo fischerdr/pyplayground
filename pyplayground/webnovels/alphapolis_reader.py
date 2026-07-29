@@ -36,7 +36,6 @@ import threading
 import time
 import tkinter as tk
 import traceback
-from datetime import datetime, timezone
 from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Any, Dict, List, Optional, Tuple
@@ -48,7 +47,6 @@ from pyplayground.utils.config_utils import load_json_config, save_json_config
 from pyplayground.utils.logging_utils import get_logger, setup_logging
 from pyplayground.webnovels.build_glossary import build_glossary_for_novel
 from pyplayground.webnovels.glossary import (
-    DEFAULT_HONORIFIC_POLICY,
     HONORIFIC_POLICIES,
     STATUS_CONFIRMED,
     STATUS_SUGGESTED,
@@ -2194,12 +2192,12 @@ class ReaderApp:
             ):
                 return
             logger.info(f"User cleared glossary for novel {novel_id}")
-            glossary["terms"] = []
-            glossary["honorific_policy"] = DEFAULT_HONORIFIC_POLICY
-            glossary["honorific_policy_user_set"] = False
-            glossary["context_notes"] = ""
-            glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
-            save_glossary(novel_id, glossary)
+            # Routed through GlossaryCoordinator.clear() (REFACTOR_DESIGN.md
+            # Phase 3d) -- a dedicated method, not save_snapshot(), since a
+            # Clear is an unconditional reset the user explicitly asked
+            # for, not an edited snapshot to merge against a concurrent
+            # writer. See GlossaryCoordinator.clear()'s docstring.
+            GlossaryCoordinator(novel_id).clear()
             disk_write_happened["value"] = True
             close_dialog()
             self.open_glossary_dialog()
@@ -2211,54 +2209,25 @@ class ReaderApp:
             commit_selected_form()
             local_terms = [t for t in terms if t.get("source")]
 
-            # Re-check-before-write: reload the glossary fresh, right
-            # before writing, and compare updated_at against what this
-            # dialog loaded at open time. If another writer (most
-            # notably open_term_review_dialog(), which writes
-            # immediately per Confirm/Reject rather than batching like
-            # this dialog does) touched the file in the meantime, a
-            # blind overwrite of `local_terms` over the current on-disk
-            # state would silently revert that writer's changes -- the
-            # exact cross-dialog stale-overwrite bug documented in
-            # DESIGN.md. Merging instead of aborting: aborting would
-            # lose everything typed in this dialog session with no easy
-            # way to reapply it, and a merge is achievable here because
-            # both dialogs identify terms by `source`, a stable,
-            # comparable key.
-            current_glossary = load_glossary(novel_id)
-            if current_glossary.get("updated_at") != opened_updated_at:
-                logger.info(
-                    f"Glossary for novel {novel_id} changed on disk while this dialog was open (updated_at {opened_updated_at!r} -> {current_glossary.get('updated_at')!r}) -- merging by source instead of overwriting"
-                )
-                current_by_source = {t.get("source"): t for t in current_glossary.get("terms", []) if t.get("source")}
-                local_by_source = {t.get("source"): t for t in local_terms}
-                merged_by_source = dict(current_by_source)
-                # Only let this dialog's copy win for sources it actually
-                # touched this session (edited_sources) -- NOT every
-                # source merely present in `local_by_source`. This
-                # dialog's in-memory `terms` is a full snapshot loaded at
-                # open time, so it still contains every term the user
-                # never looked at; blindly applying all of `local_by_source`
-                # would silently overwrite whatever the concurrent writer
-                # changed on exactly those untouched terms -- reproducing
-                # the very bug this merge exists to fix, just one layer
-                # deeper. Confirmed live: shipping this without the
-                # edited_sources filter reproduced the original bug
-                # through the merge path itself.
-                for source in edited_sources:
-                    if source in local_by_source:
-                        merged_by_source[source] = local_by_source[source]
-                for source in deleted_sources:
-                    merged_by_source.pop(source, None)
-                final_terms = list(merged_by_source.values())
-            else:
-                final_terms = local_terms
-
-            glossary["terms"] = final_terms
-            glossary["honorific_policy"] = honorific_var.get()
-            glossary["honorific_policy_user_set"] = True
-            glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
-            save_glossary(novel_id, glossary)
+            # Routed through GlossaryCoordinator.save_snapshot()
+            # (REFACTOR_DESIGN.md Phase 3d) instead of this dialog's own
+            # reload/merge/write block -- save_snapshot() is the
+            # re-check-before-write, merge-on-divergence logic originally
+            # written here (the fix for the cross-dialog stale-overwrite
+            # bug documented in DESIGN.md), lifted into the coordinator
+            # verbatim back in Phase 3a. edited_sources/deleted_sources
+            # are still tracked locally by this dialog's own
+            # save_form_to_term()/delete_selected() (both still directly
+            # above), since only this dialog's UI knows what the user
+            # actually touched this session -- the coordinator has no way
+            # to know that on its own.
+            GlossaryCoordinator(novel_id).save_snapshot(
+                opened_at=opened_updated_at,
+                local_terms=local_terms,
+                edited_sources=edited_sources,
+                deleted_sources=deleted_sources,
+                honorific_policy=honorific_var.get(),
+            )
             disk_write_happened["value"] = True
             close_dialog()
             self.set_status("Glossary saved")

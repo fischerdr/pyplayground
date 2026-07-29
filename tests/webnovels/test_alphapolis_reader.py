@@ -479,10 +479,16 @@ class TestGlossaryDialogSelection:
         }
 
     def _open_dialog(self, mocker, glossary):
+        # open_glossary_dialog()'s own dialog-open load is still a direct
+        # alphapolis_reader.load_glossary() call (untouched by Phase 3d);
+        # Save now routes through GlossaryCoordinator.save_snapshot(),
+        # which reloads/saves via glossary_coordinator's own module-level
+        # references -- both must be patched to match each real call site.
         mocker.patch("pyplayground.webnovels.alphapolis_reader.load_glossary", return_value=glossary)
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.load_glossary", return_value=glossary)
         save_calls = []
         mocker.patch(
-            "pyplayground.webnovels.alphapolis_reader.save_glossary",
+            "pyplayground.webnovels.glossary_coordinator.save_glossary",
             side_effect=lambda novel_id, g: save_calls.append((novel_id, dict(g, terms=[dict(t) for t in g["terms"]]))),
         )
         mocker.patch("pyplayground.webnovels.alphapolis_reader._extract_novel_id", return_value="375266002")
@@ -710,8 +716,12 @@ class TestGlossaryDialogAutoRefresh:
         # mocked, since real /novel/{id}/ URLs already exercise it
         # correctly without needing a stub, including the
         # different-novel-than-displayed case (two different real URLs).
+        # Save now routes through GlossaryCoordinator.save_snapshot()
+        # (Phase 3d) -- its own load/save calls happen in
+        # glossary_coordinator's module namespace, not alphapolis_reader's.
         mocker.patch("pyplayground.webnovels.alphapolis_reader.load_glossary", return_value=glossary)
-        mocker.patch("pyplayground.webnovels.alphapolis_reader.save_glossary")
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.load_glossary", return_value=glossary)
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.save_glossary")
 
         root = tk.Tk()
         harness = _GlossaryDialogHarness(root, current_url=current_url)
@@ -823,13 +833,21 @@ class TestGlossaryDialogMergeOnDivergence:
     def test_concurrent_confirm_survives_a_save_that_edited_an_unrelated_term(self, mocker):
         """The exact original reproduction: edit 鉄パイプ, Save -- ハードキャッチ's concurrent Confirm must survive, not revert."""
         url = "https://www.alphapolis.co.jp/novel/375266002/x/episode/1"
+        # Dialog-open load (alphapolis_reader.load_glossary(), untouched by
+        # Phase 3d) gets the at-open snapshot; the reload-before-write
+        # inside GlossaryCoordinator.save_snapshot() (glossary_coordinator's
+        # own load_glossary() reference) gets the post-concurrent-write
+        # version -- two separate mocks now, since these are two different
+        # module-level references as of Phase 3d, not one function called
+        # twice from the same module.
+        mocker.patch("pyplayground.webnovels.alphapolis_reader.load_glossary", return_value=self._make_glossary_at_open())
         load_glossary_mock = mocker.patch(
-            "pyplayground.webnovels.alphapolis_reader.load_glossary",
-            side_effect=[self._make_glossary_at_open(), self._make_glossary_after_concurrent_confirm()],
+            "pyplayground.webnovels.glossary_coordinator.load_glossary",
+            return_value=self._make_glossary_after_concurrent_confirm(),
         )
         saved = {}
         mocker.patch(
-            "pyplayground.webnovels.alphapolis_reader.save_glossary",
+            "pyplayground.webnovels.glossary_coordinator.save_glossary",
             side_effect=lambda novel_id, g: saved.update(novel_id=novel_id, glossary=dict(g, terms=[dict(t) for t in g["terms"]])),
         )
 
@@ -868,7 +886,9 @@ class TestGlossaryDialogMergeOnDivergence:
             assert save_btn is not None
             save_btn.invoke()
 
-            assert load_glossary_mock.call_count == 2, "save_and_close() must reload the glossary fresh before writing, not rely solely on the open-time snapshot"
+            assert (
+                load_glossary_mock.call_count == 1
+            ), "GlossaryCoordinator.save_snapshot() must reload the glossary fresh before writing, not rely solely on the open-time snapshot"
             saved_terms = {t["source"]: t for t in saved["glossary"]["terms"]}
 
             assert saved_terms["鉄パイプ"]["confirmed_target"] == "iron pipe EDITED", "the edit made in this dialog must still be applied"
@@ -881,10 +901,14 @@ class TestGlossaryDialogMergeOnDivergence:
         """When updated_at hasn't changed between open and Save, no merge branch should be needed -- plain overwrite is correct and sufficient."""
         url = "https://www.alphapolis.co.jp/novel/375266002/x/episode/1"
         glossary = self._make_glossary_at_open()
+        # Same glossary (same updated_at) for both the dialog-open load
+        # and GlossaryCoordinator.save_snapshot()'s internal reload --
+        # this test is specifically about the no-divergence case.
         mocker.patch("pyplayground.webnovels.alphapolis_reader.load_glossary", return_value=glossary)
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.load_glossary", return_value=glossary)
         saved = {}
         mocker.patch(
-            "pyplayground.webnovels.alphapolis_reader.save_glossary",
+            "pyplayground.webnovels.glossary_coordinator.save_glossary",
             side_effect=lambda novel_id, g: saved.update(glossary=dict(g, terms=[dict(t) for t in g["terms"]])),
         )
 
@@ -906,13 +930,14 @@ class TestGlossaryDialogMergeOnDivergence:
     def test_explicit_delete_wins_over_a_concurrently_unrelated_change_even_on_divergence(self, mocker):
         """A term explicitly deleted in this dialog must stay deleted after a merge, not get resurrected from the fresher on-disk copy."""
         url = "https://www.alphapolis.co.jp/novel/375266002/x/episode/1"
+        mocker.patch("pyplayground.webnovels.alphapolis_reader.load_glossary", return_value=self._make_glossary_at_open())
         mocker.patch(
-            "pyplayground.webnovels.alphapolis_reader.load_glossary",
-            side_effect=[self._make_glossary_at_open(), self._make_glossary_after_concurrent_confirm()],
+            "pyplayground.webnovels.glossary_coordinator.load_glossary",
+            return_value=self._make_glossary_after_concurrent_confirm(),
         )
         saved = {}
         mocker.patch(
-            "pyplayground.webnovels.alphapolis_reader.save_glossary",
+            "pyplayground.webnovels.glossary_coordinator.save_glossary",
             side_effect=lambda novel_id, g: saved.update(glossary=dict(g, terms=[dict(t) for t in g["terms"]])),
         )
 

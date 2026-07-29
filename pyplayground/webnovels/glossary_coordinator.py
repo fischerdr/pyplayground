@@ -58,7 +58,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 from pyplayground.utils.logging_utils import get_logger
 from pyplayground.webnovels.build_glossary import build_glossary_for_novel
-from pyplayground.webnovels.glossary import load_glossary, save_glossary, upsert_confirmed_term
+from pyplayground.webnovels.glossary import DEFAULT_HONORIFIC_POLICY, load_glossary, save_glossary, upsert_confirmed_term
 
 logger = get_logger(__name__)
 
@@ -159,6 +159,32 @@ class GlossaryCoordinator:
         current_glossary["terms"] = final_terms
         current_glossary["honorific_policy"] = honorific_policy
         current_glossary["honorific_policy_user_set"] = True
+        current_glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
+        save_glossary(self.novel_id, current_glossary)
+        return current_glossary
+
+    def clear(self) -> Dict[str, Any]:
+        """Reload the glossary fresh and reset it to empty -- all terms removed, honorific policy back to default.
+
+        Lifted from open_glossary_dialog()'s clear_glossary() (Phase 3d).
+        Deliberately NOT routed through save_snapshot(): a Clear is an
+        unconditional reset the user explicitly asked for, not an edited
+        snapshot to reconcile against a concurrent writer -- forcing it
+        through save_snapshot()'s merge-on-divergence contract would
+        either lose context_notes/honorific_policy_user_set (fields that
+        contract doesn't touch, since it's designed for "the user set a
+        deliberate policy," not "the user reset everything") or require
+        stretching that method's parameters for a shape it wasn't built
+        for. A dedicated method is the correct fit, not a workaround.
+
+        Returns:
+            The final (empty) glossary dict as written to disk.
+        """
+        current_glossary = self.load()
+        current_glossary["terms"] = []
+        current_glossary["honorific_policy"] = DEFAULT_HONORIFIC_POLICY
+        current_glossary["honorific_policy_user_set"] = False
+        current_glossary["context_notes"] = ""
         current_glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
         save_glossary(self.novel_id, current_glossary)
         return current_glossary

@@ -142,8 +142,131 @@ last — same discipline as every phased effort in the other two docs.
 
 - **Phase 1**: complete (2026-07-28, investigation and proposal only, see dated entry below). No code changes.
 - **Phase 2**: complete (2026-07-28, rendering extracted into `ReaderRenderer`; re-audited 2026-07-28, see dated entries below).
-- **Phase 3**: sub-plan defined (2026-07-29, see dated entry below), not started. Broken into checkpointed sub-steps 3a-3g rather than one task.
+- **Phase 3**: sub-plan defined (2026-07-29). **3a complete** (2026-07-29, `GlossaryCoordinator` built standalone, see dated entry below). 3b-3g not started.
 - **Phases 4-5**: not started, contingent on Phase 3's findings.
+
+### 2026-07-29: Phase 3a -- `GlossaryCoordinator` built standalone, zero behavior change
+
+Per the Phase 3 sub-plan's guardrails below: self-contained, did not read
+ahead into 3b-3g, stopped at this step's own checkpoint.
+
+**What was built**: `pyplayground/webnovels/glossary_coordinator.py`,
+a new `GlossaryCoordinator` class implementing Phase 1 section 4's
+proposed interface (`load()`, `save_snapshot()`, `upsert_confirmed()`,
+`reject()`, `is_rebuild_running()`/`start_rebuild()`, `notify_edited()`).
+Line references in Phase 1's original proposal had shifted since that
+investigation (`save_and_close()` proposed at l.1736-1791, actually at
+l.2210-2264 now; `reject_selected()` similarly shifted to ~l.2481-2492)
+-- confirmed via `grep` against the real file before lifting anything,
+not assumed from the old references.
+
+**Logic lifted verbatim, not redesigned**:
+- `save_snapshot()` is `open_glossary_dialog()`'s `save_and_close()`
+  merge-on-divergence logic (`alphapolis_reader.py:2210-2264`) --
+  re-check `updated_at` against what was loaded at open time, merge by
+  `source` on divergence, only letting the caller's copy win for
+  `edited_sources` (not every source in a stale full snapshot), with
+  `deleted_sources` popped last so explicit deletes survive the merge.
+  Copied logic exactly; only the surrounding shape changed (a class
+  method taking `opened_at`/`local_terms`/`edited_sources`/
+  `deleted_sources`/`honorific_policy` as explicit parameters instead of
+  reading them from a dialog's closure).
+- `reject()` is `open_term_review_dialog()`'s `reject_selected()`
+  real-delete-by-identity logic (`alphapolis_reader.py:2481-2492`) --
+  matches by object identity (`t is not term_identity`), same as the
+  original; documented explicitly in the method's docstring that this
+  only works correctly against a term object obtained from this same
+  coordinator's own `load()` call, not an independently-reloaded copy.
+- `upsert_confirmed()` wraps `glossary.upsert_confirmed_term()`
+  reload-then-write, matching `open_term_review_dialog()`'s
+  `confirm_selected()`'s write shape.
+
+**New in this step, no existing equivalent to lift**:
+`is_rebuild_running()`/`start_rebuild()` generalize
+`open_glossary_dialog()`'s dialog-local `rebuild_state = {"running":
+False}` dict (`alphapolis_reader.py:2132`) into coordinator-owned state
+that will be visible across all three dialogs and
+`_do_fetch_and_translate()` once wired (Phase 3e depends on this being
+shared, not dialog-local). `start_rebuild()` wraps
+`build_glossary_for_novel()` on a background thread, same pattern as
+`open_glossary_dialog()`'s existing `rebuild_glossary()`, but leaves any
+UI-thread marshaling (e.g. Tk's `root.after()`) to the caller, since the
+coordinator has no widget/event-loop reference of its own.
+`notify_edited()` is a documented no-op placeholder in this step --
+Phase 1's proposed forwarding-to-a-registered-callback behavior is 3b-3d's
+job, not built here, since there is no dialog wired to it yet to register
+one.
+
+**Not wired into any dialog, confirmed via `git diff` scope check**:
+`open_glossary_dialog()`, `open_term_review_dialog()`,
+`open_word_glossary_popup()`, and `_do_fetch_and_translate()` are
+byte-for-byte unchanged -- `alphapolis_reader.py` does not appear in this
+step's diff at all. This is the step's own explicit requirement, not
+just a side effect: `GlossaryCoordinator` exists and is fully tested, but
+nothing calls it yet.
+
+**Tests**: new `tests/webnovels/test_glossary_coordinator.py`, 12 tests,
+all against the coordinator directly (no Tk, no dialog harness --
+deliberately, since nothing is wired to a dialog yet):
+- `TestSaveSnapshotMergeOnDivergence` (3): the exact same three scenarios
+  as `test_alphapolis_reader.py`'s `TestGlossaryDialogMergeOnDivergence`
+  (concurrent-confirm-survives-an-unrelated-edit, no-divergence-saves-
+  normally, explicit-delete-wins-over-divergence), same fixtures,
+  confirming the lifted logic behaves identically to the dialog it was
+  copied from -- not just "passes some test," the same regression
+  coverage re-derived against the new call shape.
+- `TestUpsertConfirmed` (2), `TestReject` (2): correctness of the
+  reload-then-write and delete-by-identity paths.
+- `TestRebuildTracking` (4): `is_rebuild_running()` correctly reports
+  `True` while a background rebuild runs and clears on completion
+  (via a real background thread gated by a `threading.Event`, not a
+  synchronous stand-in), a second `start_rebuild()` call while one is
+  already running is confirmed a genuine no-op (the mocked
+  `build_glossary_for_novel()` is call-counted, not just assumed not to
+  fire again), and a raised exception inside the background worker still
+  clears `_rebuild_in_progress` rather than leaving it stuck `True`.
+- `TestNotifyEdited` (1): confirms the current no-op placeholder doesn't
+  raise.
+
+**Checkpoint, per the Phase 3 sub-plan below -- confirmed, not assumed**:
+- Full `tests/webnovels/` suite: **252 passed** (up from 240 before this
+  task -- exactly the 12 new coordinator tests, zero regressions), 1
+  pre-existing unrelated Python 3.14/`mock`/threading segfault deselected
+  (same one noted in the Phase 2 audit entry, confirmed still unrelated
+  to this change), 6 live-display UI-automation tests erroring only
+  because no Xvfb display was up for that particular offline run (not a
+  real failure -- see the live check below, which ran the same suite
+  successfully against a real display).
+- `black`/`isort`/`flake8` clean on both new files.
+  `mypy`: one "missing return type annotation" note on
+  `start_rebuild()`'s nested `worker()` closure, consistent with this
+  file's/`alphapolis_reader.py`'s existing untyped-nested-closure
+  convention -- not fixed here, same treatment as every prior session
+  touching this codebase.
+- **Live sanity check**, via `pyplayground/webnovels/ui_testing/
+  run_ui_tests.sh xvfb` (not manual `xdotool`): ran
+  `test_menu_smoke.py`'s full 6-test suite against the real app and the
+  real novel 375266002 -- all four toolbar dialogs (Load Novel, Glossary,
+  Review Terms, Settings) opened and closed cleanly, context menu
+  discovery still worked, all 6 passed. Screenshots visually inspected
+  (not just the passing assertions): `toolbar_glossary_after.png` shows
+  the real Glossary dialog rendering 8 real confirmed terms with Save/
+  Cancel/Add Term/Add Character/Delete/Rebuild Glossary all present, and
+  `toolbar_review_terms_after.png` correctly shows "No unconfirmed terms
+  to review for this novel" (consistent with every term in that novel's
+  glossary already being confirmed, per the Glossary dialog screenshot).
+  App stdout log swept for `ERROR`/`CRITICAL`: none found. Xvfb/fluxbox
+  confirmed torn down cleanly after the run (`pgrep` empty for both).
+
+**Net result**: `GlossaryCoordinator` exists, is fully tested in
+isolation, and changes nothing about how any dialog currently behaves --
+exactly this step's scope, no more.
+
+**Not done in this step, deliberately, per the guardrails**: no wiring
+of any dialog through the coordinator (3b-3d), no extraction-vs-dialog
+race fix (3e), no `extracted_episode_urls` schema work (3f), no final
+harness/sweep confirmation (3g). Stopped here as instructed rather than
+reading ahead.
 
 ## Phase 3 sub-plan (2026-07-29) -- broken into checkpointed chunks
 

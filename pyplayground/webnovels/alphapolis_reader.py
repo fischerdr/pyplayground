@@ -65,6 +65,7 @@ from pyplayground.webnovels.glossary import (
     update_candidate_counts,
     upsert_confirmed_term,
 )
+from pyplayground.webnovels.glossary_coordinator import GlossaryCoordinator
 from pyplayground.webnovels.ja_tokenize import find_ja_word_at
 from pyplayground.webnovels.llm_translate import BACKEND_GOOGLE, BACKEND_LLM, DEFAULT_BACKEND, TranslatedLine, check_llm_available, explain_term, retranslate_line_with_hint
 from pyplayground.webnovels.llm_translate import translate_chunk as llm_translate_chunk
@@ -2866,15 +2867,18 @@ class ReaderApp:
                         honorific_override=honorific_var.get() or None,
                     )
 
-                glossary = load_glossary(novel_id)
-                # upsert, not merge_terms() -- a human confirming this
+                # Routed through GlossaryCoordinator (REFACTOR_DESIGN.md
+                # Phase 3b) instead of calling load_glossary()/
+                # upsert_confirmed_term()/save_glossary() directly --
+                # upsert, not merge_terms(), a human confirming this
                 # source word via this dialog should replace any existing
                 # entry for it (regardless of that entry's type), not
                 # coexist alongside it. See upsert_confirmed_term()'s
-                # docstring for the bug this fixes.
-                glossary["terms"] = upsert_confirmed_term(glossary.get("terms", []), new_term)
-                glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
-                save_glossary(novel_id, glossary)
+                # docstring for the bug this fixes. A fresh coordinator is
+                # constructed here rather than cached on self, matching
+                # how novel_id itself is already re-derived fresh on every
+                # open of this dialog rather than cached.
+                GlossaryCoordinator(novel_id).upsert_confirmed(new_term)
                 logger.info(f"Added glossary term via right-click for novel {novel_id}: {source!r} -> {target!r}")
                 win.destroy()
                 self.set_status("Term added to glossary")

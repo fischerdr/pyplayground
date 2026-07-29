@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Tests for glossary_coordinator.py (REFACTOR_DESIGN.md Phase 3a).
+"""Tests for glossary_coordinator.py (REFACTOR_DESIGN.md Phase 3a/3b).
 
-Standalone unit tests against GlossaryCoordinator directly -- no Tk, no
-dialog harness, since this step deliberately does not wire the coordinator
-into any dialog yet. save_snapshot()'s merge-on-divergence scenarios mirror
-tests/webnovels/test_alphapolis_reader.py's TestGlossaryDialogMergeOnDivergence
-exactly (same fixtures, same three scenarios), confirming the logic lifted
-into the coordinator behaves identically to the original
-open_glossary_dialog().save_and_close() it was copied from.
+Phase 3a: standalone unit tests against GlossaryCoordinator directly -- no
+Tk, no dialog harness, since that step deliberately did not wire the
+coordinator into any dialog yet. save_snapshot()'s merge-on-divergence
+scenarios mirror tests/webnovels/test_alphapolis_reader.py's
+TestGlossaryDialogMergeOnDivergence exactly (same fixtures, same three
+scenarios), confirming the logic lifted into the coordinator behaves
+identically to the original open_glossary_dialog().save_and_close() it
+was copied from.
+
+Phase 3b: TestOpenWordGlossaryPopupRoutesThroughCoordinator drives the
+real, unmodified open_word_glossary_popup() (via the reader_app_shell
+fixture) end-to-end through its actual Save button, confirming the
+dialog's on-disk write now happens via GlossaryCoordinator.upsert_confirmed()
+rather than direct load_glossary()/upsert_confirmed_term()/save_glossary()
+calls -- a test that would fail if the dialog reverted to calling those
+glossary.py functions directly instead of going through the coordinator.
 """
 
 import threading
@@ -307,3 +316,149 @@ class TestNotifyEdited:
         coordinator = GlossaryCoordinator("375266002")
         coordinator.notify_edited(True)
         coordinator.notify_edited(False)
+
+
+def _find_button_by_text(win, text):
+    """Recursively search a dialog's widget tree for a ttk.Button with the given text.
+
+    Local to this file rather than imported from
+    test_alphapolis_reader.py -- a small, private helper duplicated once
+    rather than cross-importing a test-only symbol from another test
+    file.
+    """
+    from tkinter import ttk
+
+    for child in win.winfo_children():
+        if isinstance(child, ttk.Button) and child.cget("text") == text:
+            return child
+        found = _find_button_by_text(child, text)
+        if found is not None:
+            return found
+    return None
+
+
+class _SyncThread:
+    """threading.Thread stand-in that runs its target synchronously in the calling thread instead of a real thread.
+
+    open_word_glossary_popup()'s fetch_guesses() normally runs on a real
+    background thread and schedules build_form() via self.root.after(0,
+    ...) once it returns. Outside a real mainloop() (as in a test), that
+    after() call races the test thread and can hit Tk's C-layer "main
+    thread is not in main loop" RuntimeError -- confirmed live: the
+    background thread raised exactly that (silently, as an unhandled
+    thread exception) when this test first tried polling root.update()
+    in a loop and waiting for the real thread to finish on its own.
+    check_llm_available()/translate_chunk() are already mocked to return
+    instantly/deterministically, so there is no real concurrency worth
+    testing here -- same fix already established in
+    test_retranslation_dialog.py's TestAcceptSurvivesModeSwitch for the
+    identical pattern in open_retranslate_popup(): run the "background"
+    work synchronously, then a single root.update() pumps the now-main-
+    thread-scheduled after() callback safely.
+    """
+
+    def __init__(self, target, daemon=True):
+        self._target = target
+
+    def start(self):
+        self._target()
+
+
+class TestOpenWordGlossaryPopupRoutesThroughCoordinator:
+    """REFACTOR_DESIGN.md Phase 3b: open_word_glossary_popup()'s Save path now routes through GlossaryCoordinator.upsert_confirmed().
+
+    Drives the real, unmodified open_word_glossary_popup() end-to-end
+    (via the reader_app_shell fixture -- real ReaderApp method, real Tk
+    widgets, real Save button click) rather than calling the coordinator
+    directly, so this test would fail if the dialog reverted to calling
+    glossary.load_glossary()/upsert_confirmed_term()/glossary.save_glossary()
+    directly instead of GlossaryCoordinator.upsert_confirmed().
+    check_llm_available() is mocked False (avoids a real explain_term()/LLM
+    call) and translate_chunk() is mocked to a synchronous fake (avoids a
+    real Google Translate network call) -- same mocking pattern already
+    established in test_retranslation_dialog.py's TestPopupSingleInstanceGuard
+    for this exact dialog.
+    """
+
+    def test_save_writes_via_coordinator_upsert_confirmed_not_direct_glossary_calls(self, reader_app_shell, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "375266002")
+        monkeypatch.setattr(reader_module, "check_llm_available", lambda: False)
+        monkeypatch.setattr(reader_module, "translate_chunk", lambda *a, **k: "translated")
+        monkeypatch.setattr(reader_module.threading, "Thread", _SyncThread)
+
+        # Fail loudly if the dialog ever calls these directly again --
+        # confirms the write genuinely goes through the coordinator, not
+        # just that *a* write happens to land correctly.
+        def _fail_if_called_directly(*args, **kwargs):
+            raise AssertionError(
+                "open_word_glossary_popup() must not call glossary.py functions directly -- it must route through GlossaryCoordinator (REFACTOR_DESIGN.md Phase 3b)"
+            )
+
+        monkeypatch.setattr(reader_module, "load_glossary", _fail_if_called_directly)
+        monkeypatch.setattr(reader_module, "save_glossary", _fail_if_called_directly)
+        monkeypatch.setattr(reader_module, "upsert_confirmed_term", _fail_if_called_directly)
+
+        upsert_calls = []
+        monkeypatch.setattr(reader_module.GlossaryCoordinator, "upsert_confirmed", lambda self, new_term: upsert_calls.append((self.novel_id, new_term)) or {"terms": []})
+
+        reader_app_shell.current_url = "https://www.alphapolis.co.jp/novel/375266002/1/episode/1"
+        reader_app_shell.open_word_glossary_popup("鉄パイプ", "iron pipe", context="鉄パイプを持っていた。")
+
+        win = reader_app_shell._glossary_popup
+        assert win is not None
+
+        # fetch_guesses() ran synchronously (via _SyncThread above) and
+        # scheduled build_form() via root.after(0, ...) -- pump the event
+        # loop once so that callback actually runs and replaces the
+        # "Looking up translations..." status label with the real form.
+        reader_app_shell.root.update()
+        save_btn = _find_button_by_text(win, "Save")
+        assert save_btn is not None, "Save button never appeared -- build_form() did not run"
+
+        save_btn.invoke()
+
+        assert len(upsert_calls) == 1, "GlossaryCoordinator.upsert_confirmed() must have been called exactly once"
+        novel_id, new_term = upsert_calls[0]
+        assert novel_id == "375266002"
+        assert new_term["source"] == "鉄パイプ"
+        assert new_term["confirmed_target"] == "iron pipe"
+
+    def test_save_result_matches_pre_refactor_on_disk_shape(self, reader_app_shell, monkeypatch, mocker):
+        """The on-disk result of Save is unchanged from the user's perspective, now produced via the coordinator instead of the dialog's own direct calls."""
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "375266002")
+        monkeypatch.setattr(reader_module, "check_llm_available", lambda: False)
+        monkeypatch.setattr(reader_module, "translate_chunk", lambda *a, **k: "translated")
+        monkeypatch.setattr(reader_module.threading, "Thread", _SyncThread)
+
+        existing_glossary = {
+            "title": "Test Novel",
+            "honorific_policy": "keep",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "terms": [],
+        }
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.load_glossary", return_value=existing_glossary)
+        saved = {}
+        mocker.patch(
+            "pyplayground.webnovels.glossary_coordinator.save_glossary",
+            side_effect=lambda novel_id, g: saved.update(novel_id=novel_id, glossary=dict(g, terms=[dict(t) for t in g["terms"]])),
+        )
+
+        reader_app_shell.current_url = "https://www.alphapolis.co.jp/novel/375266002/1/episode/1"
+        reader_app_shell.open_word_glossary_popup("ハードキャッチ", "Hard Catch", context="")
+
+        win = reader_app_shell._glossary_popup
+        reader_app_shell.root.update()
+        save_btn = _find_button_by_text(win, "Save")
+        assert save_btn is not None, "Save button never appeared -- build_form() did not run"
+
+        save_btn.invoke()
+
+        assert saved["novel_id"] == "375266002"
+        saved_terms = {t["source"]: t for t in saved["glossary"]["terms"]}
+        assert saved_terms["ハードキャッチ"]["status"] == STATUS_CONFIRMED
+        assert saved_terms["ハードキャッチ"]["confirmed_target"] == "Hard Catch"
+        assert saved_terms["ハードキャッチ"]["type"] == TERM_TYPE_GENERAL

@@ -142,8 +142,168 @@ last — same discipline as every phased effort in the other two docs.
 
 - **Phase 1**: complete (2026-07-28, investigation and proposal only, see dated entry below). No code changes.
 - **Phase 2**: complete (2026-07-28, rendering extracted into `ReaderRenderer`; re-audited 2026-07-28, see dated entries below).
-- **Phase 3**: sub-plan defined (2026-07-29). **3a complete** (2026-07-29, `GlossaryCoordinator` built standalone, see dated entry below). 3b-3g not started.
+- **Phase 3**: sub-plan defined (2026-07-29). **3a complete** (2026-07-29, `GlossaryCoordinator` built standalone). **3b complete** (2026-07-29, `open_word_glossary_popup()` wired through the coordinator, see dated entry below). 3c-3g not started.
 - **Phases 4-5**: not started, contingent on Phase 3's findings.
+
+### 2026-07-29: Phase 3b -- `open_word_glossary_popup()` wired through `GlossaryCoordinator`
+
+Per the Phase 3 sub-plan's guardrails below: self-contained, did not read
+ahead into 3c-3g, stopped at this step's own checkpoint.
+
+**Known gap from 3a's own findings, addressed before live verification**:
+novel 375266002's glossary has zero unconfirmed terms (all 8 confirmed,
+per 3a's live evidence) -- not usable to exercise a meaningful Save.
+**Approach used: the existing synthetic novel `777777777`** (from Phase
+2's live verification, still on disk with a real cache entry and a
+real, pre-existing `suggested`-status `鉄パイプ` term) -- right-clicked
+a *different*, genuinely new word (`ケイト`, the character name from
+that same cached episode) via drag-select + "Add to Glossary...", not a
+hand-constructed `suggested` term read directly off disk. This is a
+manually-triggered right-click add, not an organically-extracted
+`suggested` term from a real `build_glossary_for_novel()` run -- stated
+plainly, not implied otherwise. The glossary file was backed up before
+this verification and restored to its exact prior state afterward (this
+step makes no lasting change to that fixture).
+
+**Mismatch check, per this step's own requirement -- none found.**
+Read `open_word_glossary_popup()`'s real `save_and_close()`
+(`alphapolis_reader.py:2856-2881` before this step's edit) directly
+before assuming 3a's `upsert_confirmed()` interface fit: the dialog's
+existing save path was `load_glossary(novel_id)` ->
+`upsert_confirmed_term(glossary.get("terms", []), new_term)` -> set
+`updated_at` -> `save_glossary(novel_id, glossary)` -- exactly the same
+four-step shape `GlossaryCoordinator.upsert_confirmed()` already
+implements against `self.novel_id`. No redesign needed on either side;
+this was a clean drop-in.
+
+**What changed**: `save_and_close()`'s body (inside
+`open_word_glossary_popup()`) now reads
+`GlossaryCoordinator(novel_id).upsert_confirmed(new_term)` in place of
+its own direct `load_glossary()`/`upsert_confirmed_term()`/
+`save_glossary()` calls. A fresh `GlossaryCoordinator` is constructed
+per dialog-open, not cached on `ReaderApp` -- matches how `novel_id`
+itself is already re-derived fresh on every open of this dialog rather
+than cached on `self`; a shared, longer-lived instance would need
+invalidation-on-novel-switch logic this coordinator doesn't have a
+reason to carry yet (its only per-instance state,
+`_rebuild_in_progress`, isn't touched by this dialog at all). Revisit if
+a later step's `is_rebuild_running()` wiring (Phase 3e) needs a
+longer-lived instance instead -- not needed here.
+
+**`notify_edited()` decision, stated explicitly per this step's own
+question**: remains a documented no-op, unchanged from 3a. Reason found
+during this step, not assumed going in: `open_word_glossary_popup()`
+**does not call `_maybe_refresh_after_glossary_edit()` at all today** --
+confirmed via `grep`/direct read of the full method, and cross-checked
+against `DESIGN.md`'s 2026-07-27 auto-refresh entry, which explicitly
+names "both dialogs" (`open_glossary_dialog()` and
+`open_term_review_dialog()`) as the ones wired to that mechanism, never
+mentioning this one. This is a genuine, pre-existing gap in the
+codebase -- a right-click "Add to Glossary" save does not currently
+trigger the same auto-refresh-the-displayed-episode behavior the other
+two dialogs get -- found as a side effect of this step's own
+investigation, not something this step was scoped to fix (the Phase 3
+sub-plan does not mention it, and fixing it would mean deciding
+`_maybe_refresh_after_glossary_edit()`'s Group A dependency shape for a
+dialog this step isn't otherwise touching, out of scope). Flagged here
+so it isn't lost; a natural fit for 3b/3c/3d's own eventual
+`notify_edited()` wiring once that's actually decided, or a standalone
+fix if it's judged worth doing before then.
+
+**Not touched, confirmed via reading the diff before finishing**:
+`open_glossary_dialog()`, `open_term_review_dialog()`,
+`_do_fetch_and_translate()`, rebuild-tracking, and
+`extracted_episode_urls` are all unchanged -- only
+`open_word_glossary_popup()`'s `save_and_close()` body and the module's
+import list (adding `GlossaryCoordinator`) changed in
+`alphapolis_reader.py`.
+
+**Tests**: 2 new tests in `tests/webnovels/test_glossary_coordinator.py`'s
+`TestOpenWordGlossaryPopupRoutesThroughCoordinator`, both driving the
+real, unmodified `open_word_glossary_popup()` end-to-end (via the
+existing `reader_app_shell` fixture -- real `ReaderApp` method, real Tk
+widgets, real Save button click), not calling the coordinator directly:
+
+- `test_save_writes_via_coordinator_upsert_confirmed_not_direct_glossary_calls`:
+  monkeypatches `load_glossary`/`save_glossary`/`upsert_confirmed_term`
+  in `alphapolis_reader` to raise loudly if called directly, confirming
+  the write genuinely goes through `GlossaryCoordinator.upsert_confirmed()`
+  and not just that *a* write happens to land correctly.
+- `test_save_result_matches_pre_refactor_on_disk_shape`: confirms the
+  on-disk result (status, `confirmed_target`, type) is unchanged from
+  the user's perspective, now produced via the coordinator.
+
+**Confirmed load-bearing, not just passing incidentally**: re-ran both
+tests with `alphapolis_reader.py`'s wiring change reverted (`git
+stash` on that one file) -- both failed cleanly (`AttributeError:
+module ... has no attribute 'GlossaryCoordinator'` and a `KeyError` on
+the never-populated `saved` dict), confirming these are genuine
+regression tests, not tests that would pass regardless of the wiring.
+Restored the wiring immediately after via `git stash pop`, confirmed via
+`grep` that the real change was back in place before continuing.
+
+**A real Tk/threading gotcha found and worked around, not a code bug**:
+`open_word_glossary_popup()`'s `fetch_guesses()` runs its network/LLM
+lookups on a real background `threading.Thread` and schedules
+`build_form()` via `self.root.after(0, ...)` once it returns. Outside a
+real `mainloop()` (as in a test), that `after()` call races the test
+thread and can raise Tk's C-layer `RuntimeError: main thread is not in
+main loop` -- confirmed live, the first version of this test's poll-loop
+(`root.update()` in a loop waiting for the real thread) hit exactly this,
+silently, as an unhandled thread exception. Not a bug in
+`open_word_glossary_popup()` itself: `check_llm_available()`/
+`translate_chunk()` are already mocked to return instantly/
+deterministically, so there's no real concurrency worth testing here.
+Fixed using the exact same pattern already established in
+`test_retranslation_dialog.py`'s `TestAcceptSurvivesModeSwitch` for the
+identical situation in `open_retranslate_popup()`: a `_SyncThread`
+stand-in that runs the target synchronously in the calling thread
+instead of a real thread, then a single `root.update()` safely pumps the
+now-main-thread-scheduled callback.
+
+**Checkpoint, confirmed, not assumed**:
+- Full `tests/webnovels/` suite: **254 passed** (up from 252 -- exactly
+  the 2 new tests, zero regressions), same 1 pre-existing unrelated
+  segfault deselected, same 6 live-display UI-automation tests erroring
+  only for lack of an Xvfb display in that particular offline run.
+- `black`/`isort`/`flake8` clean on both touched files.
+- **Live verification**, via `pyplayground/webnovels/ui_testing/
+  run_ui_tests.sh xvfb-keep` (not manual `xdotool`), against the real
+  app and the synthetic novel 777777777 described above: drag-selected
+  "ケイトが振り返った。" in Interleaved mode, right-clicked, screenshotted
+  the real context menu (`01_context_menu.png`), clicked "Add to
+  Glossary...", waited out the real background reference-lookup thread,
+  edited Source to `ケイト` and Target to `Kate` (screenshot
+  `04_source_fixed.png` confirms the form state right before Save),
+  clicked Save. **On-disk glossary file read directly afterward**:
+  `ケイト` present as a new `status: confirmed` character term with
+  `confirmed_target: "Kate"`, `origin: "user"` -- and the pre-existing
+  `鉄パイプ` `suggested` term untouched, confirming the coordinator's
+  write didn't disturb unrelated existing data.
+  `log_correlator.assert_clean()` for the Save click's time window:
+  clean, and the expected `"Added glossary term via right-click for
+  novel 777777777: 'ケイト' -> 'Kate'"` INFO line confirmed present at
+  the exact click timestamp -- positive confirmation, not just absence
+  of errors. Whole-session log swept for `ERROR`/`CRITICAL`: none found.
+  Dialog closed via its own real Save button throughout (never
+  `windowclose`). App terminated via `kill -TERM` on the tracked PID,
+  confirmed dead. The synthetic novel's glossary file was backed up
+  before this verification and restored to its exact original content
+  afterward. Xvfb/fluxbox confirmed torn down cleanly after the run.
+
+**Net result**: `open_word_glossary_popup()`'s Save path now routes
+through `GlossaryCoordinator.upsert_confirmed()`; on-disk behavior is
+unchanged from the user's perspective, confirmed both by test and by a
+real live write. One real, pre-existing gap found and documented (no
+auto-refresh call from this dialog) -- not fixed here, out of this
+step's scope.
+
+**Not done in this step, deliberately, per the guardrails**: no changes
+to `open_glossary_dialog()` or `open_term_review_dialog()` (3c/3d), no
+extraction-vs-dialog race fix (3e), no `extracted_episode_urls` schema
+work (3f), no final harness/sweep confirmation (3g), and no fix for the
+`notify_edited()`/auto-refresh gap found above. Stopped here as
+instructed rather than reading ahead.
 
 ### 2026-07-29: Phase 3a -- `GlossaryCoordinator` built standalone, zero behavior change
 

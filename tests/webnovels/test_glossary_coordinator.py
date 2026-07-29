@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Tests for glossary_coordinator.py (REFACTOR_DESIGN.md Phase 3a/3b).
+"""Tests for glossary_coordinator.py (REFACTOR_DESIGN.md Phase 3a/3b/3c).
 
 Phase 3a: standalone unit tests against GlossaryCoordinator directly -- no
 Tk, no dialog harness, since that step deliberately did not wire the
@@ -18,12 +18,28 @@ dialog's on-disk write now happens via GlossaryCoordinator.upsert_confirmed()
 rather than direct load_glossary()/upsert_confirmed_term()/save_glossary()
 calls -- a test that would fail if the dialog reverted to calling those
 glossary.py functions directly instead of going through the coordinator.
+
+Phase 3c: TestOpenTermReviewDialogRoutesThroughCoordinator drives the
+real, unmodified open_term_review_dialog() end-to-end through its actual
+Confirm/Reject buttons, same fail-loud-on-direct-call standard as 3b.
+Also fixed a real mismatch found in this step: reject() originally
+matched by Python object identity (mirroring reject_selected()'s own
+`t is not term` filter), which cannot work against a coordinator method
+that reloads the glossary fresh internally -- see reject()'s docstring
+in glossary_coordinator.py for the full account. reject() now matches by
+source instead; TestReject below was updated to match, plus a new test
+confirming this explicitly against a term object sourced from an
+independent load_glossary() call (the exact shape that broke identity
+matching).
 """
 
 import threading
 import time
+import tkinter as tk
+from tkinter import ttk
 
-from pyplayground.webnovels.glossary import STATUS_CONFIRMED, TERM_TYPE_CHARACTER, TERM_TYPE_GENERAL, make_confirmed_term
+from pyplayground.webnovels.alphapolis_reader import ReaderApp
+from pyplayground.webnovels.glossary import STATUS_CONFIRMED, TERM_TYPE_CHARACTER, TERM_TYPE_GENERAL, make_confirmed_term, make_suggested_term
 from pyplayground.webnovels.glossary_coordinator import GlossaryCoordinator
 
 
@@ -198,7 +214,18 @@ class TestUpsertConfirmed:
 
 
 class TestReject:
-    """Tests for the real-delete-by-identity path."""
+    """Tests for the real-delete-by-source path.
+
+    REFACTOR_DESIGN.md Phase 3c: reject() originally matched by Python
+    object identity (mirroring reject_selected()'s own `t is not term`
+    filter), which only works for a caller mutating the same in-memory
+    dict it loaded once -- reject() reloads fresh via load() internally,
+    so an object from an independent, earlier load_glossary() call can
+    never match by identity even with identical content (confirmed
+    directly: two separate load_glossary() calls produce equal-content,
+    non-identical dicts). Fixed to match by source instead, same
+    precedent as upsert_confirmed_term()'s dedupe-by-source rule.
+    """
 
     def test_reject_removes_the_term_entirely_not_just_its_status(self, mocker):
         existing = _glossary_at_open()
@@ -210,13 +237,8 @@ class TestReject:
         )
 
         coordinator = GlossaryCoordinator("375266002")
-        # reject() matches by identity -- must operate on the exact object
-        # returned by this coordinator's own load(), matching
-        # reject_selected()'s `t is not term` filter exactly.
-        loaded = coordinator.load()
-        target = next(t for t in loaded["terms"] if t["source"] == "ハードキャッチ")
 
-        result = coordinator.reject(target)
+        result = coordinator.reject("ハードキャッチ")
 
         assert "ハードキャッチ" not in {t["source"] for t in result["terms"]}
         assert len(result["terms"]) == 1
@@ -228,13 +250,30 @@ class TestReject:
         mocker.patch("pyplayground.webnovels.glossary_coordinator.save_glossary")
 
         coordinator = GlossaryCoordinator("375266002")
-        loaded = coordinator.load()
-        target = next(t for t in loaded["terms"] if t["source"] == "ハードキャッチ")
 
-        result = coordinator.reject(target)
+        result = coordinator.reject("ハードキャッチ")
 
         remaining = {t["source"] for t in result["terms"]}
         assert remaining == {"鉄パイプ"}
+
+    def test_reject_by_source_works_even_against_a_term_object_from_a_separate_load_call(self, mocker):
+        """The exact case that broke identity-based matching: a term read from one load_glossary() call, rejected via a coordinator that reloads internally."""
+        existing = _glossary_at_open()
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.load_glossary", return_value=existing)
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.save_glossary")
+
+        coordinator = GlossaryCoordinator("375266002")
+        # A caller-side load, independent of the coordinator's own
+        # internal reload inside reject() -- same shape as
+        # open_term_review_dialog()'s dialog-open-time load_glossary()
+        # call.
+        caller_side_glossary = _glossary_at_open()
+        term = next(t for t in caller_side_glossary["terms"] if t["source"] == "ハードキャッチ")
+        assert term is not existing["terms"][1], "sanity check: these must be genuinely different objects for this test to mean anything"
+
+        result = coordinator.reject(term["source"])
+
+        assert "ハードキャッチ" not in {t["source"] for t in result["terms"]}
 
 
 class TestRebuildTracking:
@@ -326,8 +365,6 @@ def _find_button_by_text(win, text):
     rather than cross-importing a test-only symbol from another test
     file.
     """
-    from tkinter import ttk
-
     for child in win.winfo_children():
         if isinstance(child, ttk.Button) and child.cget("text") == text:
             return child
@@ -398,7 +435,11 @@ class TestOpenWordGlossaryPopupRoutesThroughCoordinator:
 
         monkeypatch.setattr(reader_module, "load_glossary", _fail_if_called_directly)
         monkeypatch.setattr(reader_module, "save_glossary", _fail_if_called_directly)
-        monkeypatch.setattr(reader_module, "upsert_confirmed_term", _fail_if_called_directly)
+        # upsert_confirmed_term is no longer imported into alphapolis_reader
+        # at all as of Phase 3c (both open_word_glossary_popup() and
+        # open_term_review_dialog() now route through the coordinator) --
+        # nothing left to patch here; load_glossary/save_glossary above
+        # already cover the direct-call-fallback case for this dialog.
 
         upsert_calls = []
         monkeypatch.setattr(reader_module.GlossaryCoordinator, "upsert_confirmed", lambda self, new_term: upsert_calls.append((self.novel_id, new_term)) or {"terms": []})
@@ -462,3 +503,182 @@ class TestOpenWordGlossaryPopupRoutesThroughCoordinator:
         assert saved_terms["ハードキャッチ"]["status"] == STATUS_CONFIRMED
         assert saved_terms["ハードキャッチ"]["confirmed_target"] == "Hard Catch"
         assert saved_terms["ハードキャッチ"]["type"] == TERM_TYPE_GENERAL
+
+
+class _ReviewDialogHarness:
+    """Minimal stand-in exposing exactly what open_term_review_dialog() touches on self.
+
+    Same shape as test_term_review_dialog.py's own _ReviewDialogHarness
+    -- duplicated here (not imported) per this file's existing convention
+    of small, private test helpers staying local rather than cross-
+    imported between test files.
+    """
+
+    def __init__(self, root, current_url):
+        self.root = root
+        self.current_url = current_url
+        self.refresh_calls = []
+
+    def set_status(self, msg):
+        pass
+
+    def refresh_current_episode(self):
+        self.refresh_calls.append(self.current_url)
+
+    open_term_review_dialog = ReaderApp.open_term_review_dialog
+    _maybe_refresh_after_glossary_edit = ReaderApp._maybe_refresh_after_glossary_edit
+
+
+def _make_review_glossary(terms):
+    return {"novel_id": "375266002", "title": "Test Novel", "terms": terms, "context_notes": "", "updated_at": ""}
+
+
+class TestOpenTermReviewDialogRoutesThroughCoordinator:
+    """REFACTOR_DESIGN.md Phase 3c: open_term_review_dialog()'s Confirm/Reject actions now route through GlossaryCoordinator.
+
+    Same standard as 3b: drives the real, unmodified dialog end-to-end
+    through its actual Confirm/Reject buttons, with monkeypatched
+    load_glossary()/save_glossary() in alphapolis_reader configured to
+    fail loudly if called directly -- confirms the write genuinely goes
+    through the coordinator, not just that a write happens to land
+    correctly.
+    """
+
+    def test_confirm_fails_loudly_if_dialog_calls_glossary_functions_directly(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+        import pyplayground.webnovels.glossary_coordinator as coordinator_module
+
+        glossary = _make_review_glossary([make_suggested_term(TERM_TYPE_GENERAL, "鉄パイプ", "iron pipe")])
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+
+        def _fail_if_called_directly(*args, **kwargs):
+            raise AssertionError("open_term_review_dialog() must not call save_glossary() directly -- it must route through GlossaryCoordinator (REFACTOR_DESIGN.md Phase 3c)")
+
+        monkeypatch.setattr(reader_module, "save_glossary", _fail_if_called_directly)
+
+        upsert_calls = []
+        monkeypatch.setattr(
+            coordinator_module.GlossaryCoordinator, "upsert_confirmed", lambda self, new_term: upsert_calls.append((self.novel_id, new_term)) or {"terms": [], "updated_at": ""}
+        )
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "375266002")
+
+        root = tk.Tk()
+        try:
+            harness = _ReviewDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/375266002/1/episode/1")
+            harness.open_term_review_dialog()
+            root.update()
+
+            win = _find_toplevel_by_title_prefix(root, "Review Terms")
+            tree = win.winfo_children()[0].winfo_children()[0]
+            tree.selection_set("0")
+            tree.event_generate("<<TreeviewSelect>>")
+            root.update()
+
+            confirm_btn = _find_button_by_text(win, "Confirm")
+            assert confirm_btn is not None
+            confirm_btn.invoke()
+
+            assert len(upsert_calls) == 1
+            novel_id, new_term = upsert_calls[0]
+            assert novel_id == "375266002"
+            assert new_term["source"] == "鉄パイプ"
+        finally:
+            root.destroy()
+
+    def test_reject_fails_loudly_if_dialog_calls_glossary_functions_directly(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+        import pyplayground.webnovels.glossary_coordinator as coordinator_module
+
+        glossary = _make_review_glossary([make_suggested_term(TERM_TYPE_GENERAL, "鉄パイプ", "iron pipe")])
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+
+        def _fail_if_called_directly(*args, **kwargs):
+            raise AssertionError("open_term_review_dialog() must not call save_glossary() directly -- it must route through GlossaryCoordinator (REFACTOR_DESIGN.md Phase 3c)")
+
+        monkeypatch.setattr(reader_module, "save_glossary", _fail_if_called_directly)
+        monkeypatch.setattr(reader_module.messagebox, "askyesno", lambda *a, **k: True)
+
+        reject_calls = []
+        monkeypatch.setattr(coordinator_module.GlossaryCoordinator, "reject", lambda self, source: reject_calls.append((self.novel_id, source)) or {"terms": [], "updated_at": ""})
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "375266002")
+
+        root = tk.Tk()
+        try:
+            harness = _ReviewDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/375266002/1/episode/1")
+            harness.open_term_review_dialog()
+            root.update()
+
+            win = _find_toplevel_by_title_prefix(root, "Review Terms")
+            tree = win.winfo_children()[0].winfo_children()[0]
+            tree.selection_set("0")
+            tree.event_generate("<<TreeviewSelect>>")
+            root.update()
+
+            reject_btn = _find_button_by_text(win, "Reject")
+            assert reject_btn is not None
+            reject_btn.invoke()
+
+            assert reject_calls == [("375266002", "鉄パイプ")]
+        finally:
+            root.destroy()
+
+    def test_confirm_after_type_correction_persists_the_corrected_type(self, monkeypatch, mocker):
+        """The 弁護士 case from the Phase 3 prep step's real extraction: a term misclassified as character, corrected to term, then confirmed -- the correction must survive."""
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+        import pyplayground.webnovels.glossary_coordinator as coordinator_module
+
+        glossary = _make_review_glossary([make_suggested_term(TERM_TYPE_CHARACTER, "弁護士", "lawyer")])
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(coordinator_module, "load_glossary", lambda novel_id: glossary)
+        saved = {}
+        mocker.patch(
+            "pyplayground.webnovels.glossary_coordinator.save_glossary",
+            side_effect=lambda novel_id, g: saved.update(novel_id=novel_id, glossary=dict(g, terms=[dict(t) for t in g["terms"]])),
+        )
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "375266002")
+
+        root = tk.Tk()
+        try:
+            harness = _ReviewDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/375266002/1/episode/1")
+            harness.open_term_review_dialog()
+            root.update()
+
+            win = _find_toplevel_by_title_prefix(root, "Review Terms")
+            tree_frame = win.winfo_children()[0]
+            tree = tree_frame.winfo_children()[0]
+            tree.selection_set("0")
+            tree.event_generate("<<TreeviewSelect>>")
+            root.update()
+
+            form = tree_frame.winfo_children()[-1]
+            type_combo = None
+            for w in form.winfo_children():
+                if isinstance(w, ttk.Combobox):
+                    type_combo = w
+            assert type_combo is not None, "type Combobox not found -- 弁護士 was originally classified as character, form should show that as the current selection"
+            # The real extraction misclassified this as character --
+            # correct it to term (this dialog's whole reason for editable
+            # type, per build_form()'s own docstring on the character-vs-
+            # term misclassification problem).
+            type_combo.set(TERM_TYPE_GENERAL)
+
+            confirm_btn = _find_button_by_text(win, "Confirm")
+            assert confirm_btn is not None
+            confirm_btn.invoke()
+
+            assert saved["novel_id"] == "375266002"
+            confirmed = saved["glossary"]["terms"][0]
+            assert confirmed["source"] == "弁護士"
+            assert (
+                confirmed["type"] == TERM_TYPE_GENERAL
+            ), "the type correction (character -> term) made in this dialog must persist, not silently revert to the original misclassification"
+            assert confirmed["status"] == STATUS_CONFIRMED
+        finally:
+            root.destroy()
+
+
+def _find_toplevel_by_title_prefix(root, prefix):
+    for child in root.winfo_children():
+        if isinstance(child, tk.Toplevel) and child.title().startswith(prefix):
+            return child
+    return None

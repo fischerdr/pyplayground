@@ -63,7 +63,6 @@ from pyplayground.webnovels.glossary import (
     make_confirmed_term,
     save_glossary,
     update_candidate_counts,
-    upsert_confirmed_term,
 )
 from pyplayground.webnovels.glossary_coordinator import GlossaryCoordinator
 from pyplayground.webnovels.ja_tokenize import find_ja_word_at
@@ -2468,11 +2467,21 @@ class ReaderApp:
                         pronoun_style=term.get("pronoun_style"),
                         honorific_override=term.get("honorific_override"),
                     )
-                # Same write path the manual "Add to Glossary" dialog uses
-                # (dedup-bug fix) -- not a third way of confirming a term.
-                glossary["terms"] = upsert_confirmed_term(glossary.get("terms", []), new_term)
-                glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
-                save_glossary(novel_id, glossary)
+                # Routed through GlossaryCoordinator (REFACTOR_DESIGN.md
+                # Phase 3c) instead of calling load_glossary()/
+                # upsert_confirmed_term()/save_glossary() directly -- same
+                # write path the manual "Add to Glossary" dialog uses
+                # (dedup-bug fix), not a third way of confirming a term.
+                # The coordinator does its own independent reload/save
+                # (avoiding a stale-snapshot write), so this dialog's own
+                # in-memory `glossary["terms"]` is updated separately,
+                # from the coordinator's returned result, purely so
+                # refresh_tree() (which reads `glossary`, not disk) keeps
+                # reflecting the current state without a full dialog
+                # reload after every single action.
+                updated_glossary = GlossaryCoordinator(novel_id).upsert_confirmed(new_term)
+                glossary["terms"] = updated_glossary["terms"]
+                glossary["updated_at"] = updated_glossary["updated_at"]
                 edited["value"] = True
                 logger.info(f"Confirmed term via review dialog for novel {novel_id}: {term.get('source')!r} -> {target!r}")
                 clear_form()
@@ -2486,9 +2495,18 @@ class ReaderApp:
                 if not messagebox.askyesno("Review Terms", f"Reject {term.get('source')!r}? This removes it from the glossary entirely.", parent=win):
                     return
                 source = term.get("source", "")
-                glossary["terms"] = [t for t in glossary.get("terms", []) if t is not term]
-                glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
-                save_glossary(novel_id, glossary)
+                # Routed through GlossaryCoordinator.reject() (Phase 3c),
+                # matched by source rather than object identity -- see
+                # GlossaryCoordinator.reject()'s docstring for why identity
+                # matching (this dialog's own original `t is not term`
+                # filter) cannot work against a coordinator method that
+                # reloads the glossary fresh internally. Same
+                # in-memory-mirroring reasoning as confirm_selected() above
+                # for why `glossary["terms"]` is still updated here, not
+                # just left to a full dialog reload.
+                updated_glossary = GlossaryCoordinator(novel_id).reject(source)
+                glossary["terms"] = updated_glossary["terms"]
+                glossary["updated_at"] = updated_glossary["updated_at"]
                 edited["value"] = True
                 logger.info(f"Rejected term via review dialog for novel {novel_id}: {source!r}")
                 clear_form()

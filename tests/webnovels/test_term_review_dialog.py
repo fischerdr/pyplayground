@@ -143,14 +143,21 @@ class TestTermReviewDialogConfirm:
     """Tests for the Confirm action."""
 
     def test_confirm_writes_via_upsert_confirmed_term_and_persists(self, monkeypatch):
-        """Confirming must go through the same upsert_confirmed_term() path the manual Add-to-Glossary dialog uses -- not a third write path."""
+        """Confirming must go through the same upsert_confirmed_term() path the manual Add-to-Glossary dialog uses (now via GlossaryCoordinator, REFACTOR_DESIGN.md Phase 3c) -- not a third write path."""
         import pyplayground.webnovels.alphapolis_reader as reader_module
+        import pyplayground.webnovels.glossary_coordinator as coordinator_module
 
         glossary = _make_glossary([make_suggested_term(TERM_TYPE_GENERAL, "鉄パイプ", "iron pipe")])
         saved = {}
 
+        # open_term_review_dialog()'s own dialog-open load still calls the
+        # module-level load_glossary() directly; Confirm/Reject now route
+        # through GlossaryCoordinator, which reloads/saves via its own
+        # module's load_glossary()/save_glossary() references -- both must
+        # be patched, matching each real call site.
         monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
-        monkeypatch.setattr(reader_module, "save_glossary", lambda novel_id, g: saved.update(novel_id=novel_id, glossary=dict(g)))
+        monkeypatch.setattr(coordinator_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(coordinator_module, "save_glossary", lambda novel_id, g: saved.update(novel_id=novel_id, glossary=dict(g)))
         monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "12345")
 
         root = tk.Tk()
@@ -187,12 +194,14 @@ class TestTermReviewDialogConfirm:
 
     def test_confirm_with_edited_target_uses_edited_value_not_candidate(self, monkeypatch):
         import pyplayground.webnovels.alphapolis_reader as reader_module
+        import pyplayground.webnovels.glossary_coordinator as coordinator_module
 
         glossary = _make_glossary([make_suggested_term(TERM_TYPE_GENERAL, "鉄パイプ", "iron pipe")])
         saved = {}
 
         monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
-        monkeypatch.setattr(reader_module, "save_glossary", lambda novel_id, g: saved.update(glossary=dict(g)))
+        monkeypatch.setattr(coordinator_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(coordinator_module, "save_glossary", lambda novel_id, g: saved.update(glossary=dict(g)))
         monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "12345")
 
         root = tk.Tk()
@@ -231,12 +240,14 @@ class TestTermReviewDialogConfirm:
 
     def test_type_change_then_confirm_uses_new_type(self, monkeypatch):
         import pyplayground.webnovels.alphapolis_reader as reader_module
+        import pyplayground.webnovels.glossary_coordinator as coordinator_module
 
         glossary = _make_glossary([make_suggested_term(TERM_TYPE_GENERAL, "音夢くん", "Otomu-kun")])
         saved = {}
 
         monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
-        monkeypatch.setattr(reader_module, "save_glossary", lambda novel_id, g: saved.update(glossary=dict(g)))
+        monkeypatch.setattr(coordinator_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(coordinator_module, "save_glossary", lambda novel_id, g: saved.update(glossary=dict(g)))
         monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "12345")
 
         root = tk.Tk()
@@ -280,6 +291,7 @@ class TestTermReviewDialogReject:
 
     def test_reject_removes_term_entirely(self, monkeypatch):
         import pyplayground.webnovels.alphapolis_reader as reader_module
+        import pyplayground.webnovels.glossary_coordinator as coordinator_module
 
         glossary = _make_glossary(
             [
@@ -290,7 +302,8 @@ class TestTermReviewDialogReject:
         saved = {}
 
         monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
-        monkeypatch.setattr(reader_module, "save_glossary", lambda novel_id, g: saved.update(glossary=dict(g)))
+        monkeypatch.setattr(coordinator_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(coordinator_module, "save_glossary", lambda novel_id, g: saved.update(glossary=dict(g)))
         monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "12345")
         monkeypatch.setattr(reader_module.messagebox, "askyesno", lambda *a, **k: True)
 
@@ -414,6 +427,7 @@ class TestTermReviewDialogAutoRefresh:
     def test_multiple_confirms_in_one_session_trigger_exactly_one_refresh_on_close(self, monkeypatch):
         """The exact scenario from the task: confirming several terms in a row must fire one refresh, not one per Confirm."""
         import pyplayground.webnovels.alphapolis_reader as reader_module
+        import pyplayground.webnovels.glossary_coordinator as coordinator_module
 
         url = "https://www.alphapolis.co.jp/novel/12345/1/episode/1"
         glossary = _make_glossary(
@@ -424,7 +438,15 @@ class TestTermReviewDialogAutoRefresh:
             ]
         )
         monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
-        monkeypatch.setattr(reader_module, "save_glossary", lambda novel_id, g: None)
+        # GlossaryCoordinator.upsert_confirmed() reloads via its own
+        # load_glossary() reference before writing -- must return the
+        # SAME glossary dict the dialog itself is holding (not a fresh
+        # copy) so this test's row-renumbering assumption (each Confirm
+        # removes the just-confirmed term, refresh_tree() re-numbers
+        # remaining rows back to iid "0") still holds against the
+        # dialog's own in-memory `glossary["terms"]` mirror.
+        monkeypatch.setattr(coordinator_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(coordinator_module, "save_glossary", lambda novel_id, g: None)
         monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "12345")
 
         root = tk.Tk()
@@ -463,10 +485,16 @@ class TestTermReviewDialogAutoRefresh:
 
     def test_editing_a_different_novel_than_displayed_does_not_refresh(self, monkeypatch):
         import pyplayground.webnovels.alphapolis_reader as reader_module
+        import pyplayground.webnovels.glossary_coordinator as coordinator_module
 
         glossary = _make_glossary([make_suggested_term(TERM_TYPE_GENERAL, "鉄パイプ", "iron pipe")])
         monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
-        monkeypatch.setattr(reader_module, "save_glossary", lambda novel_id, g: None)
+        # GlossaryCoordinator.upsert_confirmed() (invoked by the Confirm
+        # click below) reloads/saves via its own module's references --
+        # patched here too so this test's Confirm doesn't silently write
+        # to the real on-disk glossary file for novel_id "12345".
+        monkeypatch.setattr(coordinator_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(coordinator_module, "save_glossary", lambda novel_id, g: None)
         # Real _extract_novel_id() (not mocked to a fixed value here) so
         # the two different URLs below actually resolve to two different
         # novel_ids -- a fixed-return mock would make this test unable to

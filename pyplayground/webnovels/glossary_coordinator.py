@@ -20,13 +20,26 @@ redesigning them:
   source rather than blindly overwriting, letting the caller's copy win
   only for sources it actually touched (edited_sources) with explicit
   deletes (deleted_sources) applied last so they survive the merge.
-- reject()'s real-delete-by-identity is open_term_review_dialog()'s
-  reject_selected() (currently ~l.2481-2492): removes the term from the
-  glossary entirely (not a status change), since a rejected term must not
-  linger at any non-confirmed status -- build_mask_targets() masks
-  anything that isn't STATUS_CONFIRMED, so leaving it in the glossary at
-  any other status would keep it masked forever with no way to un-flag
-  it.
+- reject()'s real-delete is open_term_review_dialog()'s reject_selected()
+  (currently ~l.2481-2492): removes the term from the glossary entirely
+  (not a status change), since a rejected term must not linger at any
+  non-confirmed status -- build_mask_targets() masks anything that isn't
+  STATUS_CONFIRMED, so leaving it in the glossary at any other status
+  would keep it masked forever with no way to un-flag it. Phase 3c found
+  and fixed a real mismatch here: reject()'s first version (built in 3a)
+  matched by Python object identity, mirroring reject_selected()'s own
+  `t is not term` filter exactly -- but that filter only works because
+  reject_selected() mutates the *same* in-memory glossary dict it loaded
+  once at dialog-open time, in the same local scope. A coordinator method
+  that reloads fresh via load_glossary() internally (as every other
+  write path here deliberately does, to avoid stale-snapshot bugs) can
+  never produce a term object with the same identity as one from a
+  caller's separate, earlier load_glossary() call -- confirmed directly,
+  not assumed: two independent load_glossary() calls against the same
+  on-disk file produce equal-content but not identical term dicts.
+  reject() now matches by source (a stable, comparable key, same
+  precedent as upsert_confirmed_term()'s own dedupe-by-source rule) --
+  see reject()'s docstring for the full account.
 
 upsert_confirmed() and start_rebuild()/is_rebuild_running() are thinner:
 the former is a reload-then-write wrapper (no snapshot to reconcile,
@@ -173,8 +186,8 @@ class GlossaryCoordinator:
         save_glossary(self.novel_id, current_glossary)
         return current_glossary
 
-    def reject(self, term_identity: Dict[str, Any]) -> Dict[str, Any]:
-        """Reload the glossary fresh and delete one term from it entirely, by identity.
+    def reject(self, source: str) -> Dict[str, Any]:
+        """Reload the glossary fresh and delete one term from it entirely, matched by source.
 
         Real delete, not a status change -- lifted from
         open_term_review_dialog()'s reject_selected(). A rejected term
@@ -183,19 +196,29 @@ class GlossaryCoordinator:
         other status would keep it masked forever with no way to un-flag
         it.
 
+        Matches by source, not object identity. reject_selected()'s
+        original code matched by identity (`t is not term`), which only
+        works there because it mutates the same in-memory glossary dict
+        it loaded once at dialog-open time, in the same local scope. This
+        method reloads the glossary fresh via load() first (same
+        re-check-before-write discipline every other write path here
+        uses), so a term object from an earlier, separate load_glossary()
+        call -- e.g. the caller's own dialog-open-time load -- can never
+        be the same Python object as anything in the freshly-reloaded
+        list, even with identical content. Matching by source instead
+        sidesteps this entirely, and follows the same precedent
+        upsert_confirmed_term() already established (dedupe-by-source,
+        not by identity or (type, source)) for exactly this "a human
+        acted on one specific term" trust level.
+
         Args:
-            term_identity: The term dict to remove, matched by identity
-                (the same object reference the caller read from a prior
-                load(), not a copy) -- matches reject_selected()'s own
-                `t is not term` filter exactly, so this only works
-                correctly against a term object obtained from this same
-                coordinator's load() call, not a freshly-reloaded copy.
+            source: The source text of the term to remove.
 
         Returns:
             The final glossary dict as written to disk.
         """
         current_glossary = self.load()
-        current_glossary["terms"] = [t for t in current_glossary.get("terms", []) if t is not term_identity]
+        current_glossary["terms"] = [t for t in current_glossary.get("terms", []) if t.get("source") != source]
         current_glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
         save_glossary(self.novel_id, current_glossary)
         return current_glossary

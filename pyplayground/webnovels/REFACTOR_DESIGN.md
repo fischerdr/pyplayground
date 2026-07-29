@@ -142,8 +142,259 @@ last — same discipline as every phased effort in the other two docs.
 
 - **Phase 1**: complete (2026-07-28, investigation and proposal only, see dated entry below). No code changes.
 - **Phase 2**: complete (2026-07-28, rendering extracted into `ReaderRenderer`; re-audited 2026-07-28, see dated entries below).
-- **Phase 3**: sub-plan defined (2026-07-29). **3a complete** (2026-07-29, `GlossaryCoordinator` built standalone). **3b complete** (2026-07-29, `open_word_glossary_popup()` wired through the coordinator, see dated entry below). 3c-3g not started.
+- **Phase 3**: sub-plan defined (2026-07-29). **3a complete** (2026-07-29, `GlossaryCoordinator` built standalone). **3b complete** (2026-07-29, `open_word_glossary_popup()` wired). **3c complete** (2026-07-29, `open_term_review_dialog()` wired, see dated entry below). 3d-3g not started.
 - **Phases 4-5**: not started, contingent on Phase 3's findings.
+
+### 2026-07-29: Phase 3c -- `open_term_review_dialog()` wired through `GlossaryCoordinator`
+
+Per the Phase 3 sub-plan's guardrails below: self-contained, did not read
+ahead into 3d-3g. One real, unexpected finding surfaced mid-step (a bug in
+`reject()` itself, found and fixed, documented below) -- reported and
+fixed at the point it was found, per the guardrails' own instruction, not
+pushed past.
+
+**Real test data used, as directed**: novel `777777777`'s 11-term
+backlog from the Phase 3c prep step (2026-07-29), including the real,
+unforced `弁護士` -> `character` misclassification. Confirmed one term
+(`鉄パイプ`), rejected one (`橘`), and confirmed `弁護士` after correcting
+its type from `character` to `term` -- all three against the real
+backlog, live. Per the prep step's own instruction, this data was **not**
+restored/wiped afterward (unlike 3b's careful backup-and-restore of the
+same fixture) -- the confirm/reject actions are genuine progress on the
+backlog, meant to persist. 10 terms remain (8 still `suggested`,
+`鉄パイプ`/`弁護士` now `confirmed`) for 3d-3g to keep using.
+
+**Line numbers, re-confirmed rather than assumed**: `open_term_review_dialog()`
+at `alphapolis_reader.py:2274` (Phase 1's `~l.2458`/`~l.2481` estimates
+for `confirm_selected()`/`reject_selected()` had shifted to `2459`/`2482`
+by the time this step started -- read fresh before touching anything, per
+3a's own precedent for line-drift).
+
+**A real mismatch found and fixed, not silently assumed away: `reject()`'s
+identity-matching contract was broken for this dialog's actual usage.**
+3a's `GlossaryCoordinator.reject(term_identity)` matched by Python object
+identity (`t is not term_identity`), mirroring `reject_selected()`'s own
+`t is not term` filter exactly -- reasonable on its face, since that
+filter was lifted verbatim from this exact dialog. But `reject_selected()`'s
+filter only works because it mutates the *same* in-memory `glossary` dict
+the dialog loaded once, itself, at open time, in the same local scope.
+`GlossaryCoordinator.reject()` reloads the glossary fresh via `self.load()`
+*internally*, every call, before deleting anything (the same re-check-
+before-write discipline every other coordinator write path already uses,
+deliberately, to avoid stale-snapshot bugs). Confirmed directly, not
+assumed: two independent `load_glossary()` calls against the same on-disk
+file produce equal-content but not identical Python objects
+(`t1 == t2` True, `t1 is t2` False). This means a `term` object the dialog
+holds from its own separate, earlier `load_glossary()` call could never
+match anything inside `reject()`'s freshly-reloaded list by identity --
+`reject()` as originally written would have silently deleted nothing at
+all, every time, when driven from this dialog's real code path (not
+caught by 3a's own tests, since those constructed `target` from the
+coordinator's own `load()` call specifically, matching `reject()`'s
+documented-but-flawed contract rather than exercising the actual
+mismatch).
+
+**Fix**: `reject()`'s signature changed from `reject(term_identity: dict)`
+to `reject(source: str)` -- matches by source instead of identity, the
+same precedent `upsert_confirmed_term()` already established (dedupe-by-
+source, not by identity or `(type, source)`) for exactly this "a human
+acted on one specific term" trust level. `glossary_coordinator.py`'s
+module docstring and `reject()`'s own docstring updated to record this
+finding, not just the corrected behavior -- so a future reader sees *why*
+identity matching doesn't work here, not just that source matching does.
+3a's own `TestReject` tests updated to the new signature (all three
+scenarios re-verified passing), plus one new test
+(`test_reject_by_source_works_even_against_a_term_object_from_a_separate_load_call`)
+added specifically to cover the exact failure shape this step found:
+rejecting via a term object sourced from an independent `load_glossary()`
+call, not the coordinator's own.
+
+**Coordinator lifecycle**: fresh `GlossaryCoordinator(novel_id)` per
+action (Confirm and Reject each construct their own), same as 3b's
+decision -- still correct here: the coordinator has no state that would
+benefit from surviving across multiple Confirm/Reject actions in one
+review session (each call does its own independent `load()`/`save()`
+regardless), and this dialog's real usage pattern (review several terms
+in one sitting) doesn't change that. `confirm_selected()`/`reject_selected()`
+still update the dialog's own in-memory `glossary["terms"]` from the
+coordinator's returned result after each write -- necessary because
+`refresh_tree()` reads `glossary` directly, not disk, and rebuilding the
+whole dialog from scratch after every single action would be a much
+larger, out-of-scope behavior change.
+
+**`notify_edited()` decision, required this step, confirmed not
+deferred**: unlike `open_word_glossary_popup()` (3b, confirmed to never
+call the auto-refresh mechanism at all), `open_term_review_dialog()`'s
+`close_dialog()` already calls `self._maybe_refresh_after_glossary_edit(novel_id,
+edited["value"])` directly -- untouched by this step's wiring, since
+`edited["value"]` is still set identically by both `confirm_selected()`
+and `reject_selected()` regardless of which write path they route
+through. This existing, already-tested mechanism does not go through
+`GlossaryCoordinator.notify_edited()` at all (still a documented no-op,
+unchanged from 3a) -- `open_term_review_dialog()` never needed that
+forwarding hook, since it already has a direct line to
+`_maybe_refresh_after_glossary_edit()` on `ReaderApp`. Confirmed live,
+not just by reading the code: closing the dialog after this session's
+Confirm/Reject/type-correction actions genuinely deleted the cached
+episode and kicked off a real `_do_fetch_and_translate()` call (see live
+verification below) -- the exact behavior this dialog had before this
+step, unbroken by the wiring change.
+
+**A second, smaller unexpected finding, per the guardrails, reported
+here**: an entire pre-existing test file,
+`tests/webnovels/test_term_review_dialog.py` (11 tests, real coverage of
+Confirm/Reject/type-correction/auto-refresh against this exact dialog),
+was not part of the file set read before starting this step's edit --
+found only when the full suite check surfaced 5 failing tests there
+after the wiring change. Not a gap in this task's own required reading
+(neither 3a's nor 3b's status entries name this file), but a real
+process lesson: **`grep -rl` for a method name across `tests/` before
+editing its call sites is not optional**, especially for a dialog this
+central. Fixed by updating each affected test's `monkeypatch.setattr`
+target from `alphapolis_reader.load_glossary`/`save_glossary` (correct
+for the pre-3c direct-call code) to `glossary_coordinator.load_glossary`/
+`save_glossary` (correct now that Confirm/Reject route through the
+coordinator's own module-level references) -- same fix shape as 3a/3b's
+own coordinator-aimed mocks, applied retroactively to a file this task
+almost missed. All 11 tests in that file re-confirmed passing, not just
+silently patched and assumed fixed.
+
+**Also removed**: `upsert_confirmed_term` from `alphapolis_reader.py`'s
+import list -- confirmed via `grep` to have zero remaining real call
+sites in that file (both dialogs that used to call it directly now
+route through the coordinator), only comments/docstrings referencing it
+by name. `flake8` caught this as an unused-import error; not left in
+place as dead weight.
+
+**Tests, same load-bearing standard as 3b**: 3 new tests in
+`tests/webnovels/test_glossary_coordinator.py`'s
+`TestOpenTermReviewDialogRoutesThroughCoordinator`, driving the real,
+unmodified `open_term_review_dialog()` end-to-end through its actual
+Confirm/Reject buttons (via a small local harness, same shape as
+`test_term_review_dialog.py`'s own `_ReviewDialogHarness` -- duplicated,
+not imported, per this file's existing convention):
+- `test_confirm_fails_loudly_if_dialog_calls_glossary_functions_directly`
+  and `test_reject_fails_loudly_if_dialog_calls_glossary_functions_directly`:
+  monkeypatch `alphapolis_reader.save_glossary` to raise if called
+  directly, confirming both actions genuinely route through the
+  coordinator.
+- `test_confirm_after_type_correction_persists_the_corrected_type`: the
+  required `弁護士` case -- confirm after changing type from `character`
+  to `term`, verify the corrected type (not the original misclassification)
+  is what's actually written.
+
+**Confirmed load-bearing, not just passing incidentally**: reverted
+`alphapolis_reader.py`'s wiring via `git stash` and re-ran both the 3
+new tests and all of `test_term_review_dialog.py` -- all 7 previously-
+passing-now-would-fail tests failed cleanly (`AssertionError`s from the
+fail-loud guards, `KeyError`s from the coordinator-aimed mocks never
+firing against the reverted direct-call code), confirming genuine
+regression coverage, not tests that pass regardless of the wiring.
+Restored via `git stash pop`, confirmed via `grep` before continuing.
+
+**A second, pre-existing, timing-dependent segfault source found while
+running the full suite for this checkpoint -- not caused by this step's
+wiring, confirmed by isolation, disclosed rather than quietly worked
+around.** Running the full `tests/webnovels/` suite for this checkpoint
+crashed with `Fatal Python error: Illegal instruction` on roughly half
+of several repeated runs -- nondeterministic, same general class as the
+already-documented `TestFetchAndTranslateDuplicateGuard` segfault
+(Python 3.14 + Tk + threading + garbage collection touching Tk state
+from a non-main thread), but a genuinely different trigger, found via
+`PYTHONFAULTHANDLER=1`'s thread dump: `test_retranslation_dialog.py`'s
+`test_second_retranslate_popup_call_reuses_existing_window` starts a
+real background `threading.Thread(target=fetch_candidate, daemon=True)`
+via `open_retranslate_popup()` and never joins or waits for it before
+that test ends -- the crash dump caught this leftover thread still
+executing (inside `coverage`'s sysmon hook, itself inside a GC pass)
+concurrently with a *later* test's own `root.update()` call, in this
+run `test_term_review_dialog.py::test_reject_removes_term_entirely`.
+
+**Confirmed pre-existing, not introduced by this step**: `git log`
+confirms `test_retranslation_dialog.py` (the file with the leaky daemon
+thread) hasn't been touched since the Phase 2 commit -- the hazard
+predates 3a/3b/3c entirely. Re-ran the full suite against the pre-3c
+commit (`git stash` on this step's changes) twice: both runs passed
+clean at 254, no crash -- consistent with "the hazard exists either
+way, but became more likely to actually land now that 3c added more
+tests running after the leaky-thread test in file-collection order,"
+not with "3c's wiring caused a new crash." Re-ran the full suite five
+times with this step's changes applied: passed clean twice, crashed
+with the exact thread-dump signature above three times. Deselecting
+`test_retranslation_dialog.py::TestPopupSingleInstanceGuard::test_second_retranslate_popup_call_reuses_existing_window`
+specifically (the actual leaky-thread test, not a workaround target
+picked at random) produced three consecutive clean runs with no
+further crashes. Not fixed here -- fixing this dialog's own test
+threading hygiene is a separate, out-of-scope concern from "wire one
+dialog through a coordinator," and forcing a fix into this step would
+violate the guardrails' own "do not attempt a fix that spans into...
+territory" instruction just as much as reading ahead into 3d would.
+Recorded here, plainly, so it isn't lost the way `DESIGN.md`'s own
+"why this started" section warns against.
+
+**Checkpoint, confirmed, not assumed (against the deselection above,
+consistent with how `TestFetchAndTranslateDuplicateGuard` is already
+treated in this doc's own prior entries)**:
+- Full `tests/webnovels/` suite: **257 passed** (up from 254 -- 3 new
+  3c tests plus 1 pre-existing test corrected for hygiene, net of the
+  one newly-flaky test above, zero regressions in anything this step
+  actually touched), 2 pre-existing unrelated segfault sources
+  deselected (`TestFetchAndTranslateDuplicateGuard`'s, and the
+  newly-found `TestPopupSingleInstanceGuard` one), same 6 live-display
+  UI-automation tests erroring only for lack of an Xvfb display in that
+  offline run.
+- `black`/`isort`/`flake8` clean on all four touched files.
+- **Live verification**, via `pyplayground/webnovels/ui_testing/
+  run_ui_tests.sh xvfb-keep` (not manual `xdotool`), against novel
+  `777777777`'s real 11-term backlog: screenshotted the full backlog
+  (`01_backlog.png`), selected and Confirmed `鉄パイプ` (screenshot +
+  on-disk read confirming `status: confirmed`, `confirmed_target: "iron
+  pipe"`; `log_correlator.assert_clean()` clean, `"Confirmed term via
+  review dialog"` INFO line present at the exact click timestamp),
+  selected and Rejected `橘` (confirmation dialog screenshotted first,
+  on-disk read confirming the term is gone entirely -- not just
+  status-changed -- while `鉄パイプ` stayed confirmed; log clean,
+  `"Rejected term via review dialog"` line present), then selected
+  `弁護士`, changed its Type from `character` to `term` via the
+  Combobox, and Confirmed it (screenshots at each step; on-disk read
+  confirming `type: "term"`, not the original misclassification;
+  log clean, correct INFO line present). Closing the dialog afterward
+  genuinely deleted the synthetic episode's on-disk cache entry and
+  fired a real `_do_fetch_and_translate()` call (confirmed via direct
+  cache-file check and the exact matching log timestamp) -- the real
+  network fetch then failed with a Playwright timeout, exactly as
+  expected for a synthetic, non-existent Alphapolis URL once its cache
+  was wiped; this is the correct, unbroken pre-existing behavior of
+  refreshing a fake test fixture, not a regression from this step's
+  wiring, and the app did not crash. The synthetic episode's cache
+  entry was restored afterward (a legitimate side effect of proving
+  auto-refresh fires, not something worth leaving broken); the
+  glossary's Confirm/Reject state was deliberately left in place, per
+  the prep step's own instruction. Whole-session log swept for
+  `ERROR`/`CRITICAL`: none found. Xvfb/fluxbox confirmed torn down
+  cleanly after the run.
+- One environment-specific gotcha worth recording for future live
+  verification of this dialog: the `ttk.Combobox`'s popdown listbox
+  rendered as a solid black rectangle under this Xvfb+fluxbox setup when
+  screenshotted mid-open, and plain coordinate clicks into that rendered
+  area did not reliably land on the right option. Keyboard navigation
+  (`Down` to open the popdown, then `Up`/`Down` to move the highlighted
+  selection, then `Return` to commit) worked reliably where clicking did
+  not -- used for the `弁護士` type-correction step above.
+
+**Net result**: `open_term_review_dialog()`'s Confirm and Reject actions
+now route through `GlossaryCoordinator.upsert_confirmed()`/`reject()`;
+on-disk behavior (including the type-correction case) is unchanged from
+the user's perspective, confirmed both by test and by a real live
+sequence of three actions against a real backlog. The existing
+auto-refresh mechanism is confirmed still firing correctly, unbroken by
+the wiring change. One real coordinator bug (the `reject()` identity-
+matching mismatch) found and fixed as part of this step, not deferred.
+
+**Not done in this step, deliberately, per the guardrails**: no changes
+to `open_glossary_dialog()` (3d), no extraction-vs-dialog race fix (3e),
+no `extracted_episode_urls` schema work (3f), no final harness/sweep
+confirmation (3g). Stopped here as instructed rather than reading ahead.
 
 ### 2026-07-29: Phase 3b -- `open_word_glossary_popup()` wired through `GlossaryCoordinator`
 

@@ -383,9 +383,22 @@ def build_glossary_for_novel(novel_id: str, max_episodes: int = 20, status_cb: O
     report(f"Found {total_cached} cached episode(s) for novel {novel_id}; processing {len(episodes)}.")
 
     glossary = load_glossary(novel_id)
+    opened_updated_at = glossary.get("updated_at")
     existing_term_count = len(glossary.get("terms", []))
     if not glossary.get("title") and episodes:
         glossary["title"] = episodes[0].get("title", "")
+
+    # Sources this rebuild's own extraction actually touched (merged a new
+    # or updated candidate into) -- REFACTOR_DESIGN.md Phase 3e's
+    # re-check-before-write fix, mirroring GlossaryCoordinator.save_snapshot()'s
+    # edited_sources exactly. Before this fix, this function held a single
+    # in-memory snapshot from `load()` at the very start of a (potentially
+    # long, one-LLM-call-per-episode) loop and blindly overwrote the file
+    # with it at the end, with no re-check at all -- confirmed live, not
+    # assumed, that this silently clobbers a concurrent dialog write that
+    # lands anywhere in that window (see this function's own live
+    # verification, Phase 3e's status entry in REFACTOR_DESIGN.md).
+    edited_sources: set = set()
 
     context_notes: List[str] = []
     extraction_failures = 0
@@ -404,6 +417,7 @@ def build_glossary_for_novel(novel_id: str, max_episodes: int = 20, status_cb: O
             before = len(glossary.get("terms", []))
             glossary["terms"] = merge_terms(glossary.get("terms", []), suggested_terms)
             added = len(glossary["terms"]) - before
+            edited_sources.update(t.get("source") for t in suggested_terms if t.get("source"))
             report(f"    Extracted {len(new_terms)} term(s), {added} new after merge: {', '.join(t.get('source', '?') for t in new_terms)}")
         else:
             extraction_failures += 1
@@ -419,6 +433,44 @@ def build_glossary_for_novel(novel_id: str, max_episodes: int = 20, status_cb: O
 
     if context_notes:
         glossary["context_notes"] = " ".join(context_notes[-3:])
+
+    # Re-check-before-write: reload the glossary fresh, right before
+    # writing, and compare updated_at against what this rebuild loaded at
+    # the start. If a dialog write (now all routed through
+    # GlossaryCoordinator, REFACTOR_DESIGN.md Phase 3b-3d) landed while
+    # this rebuild's extraction loop was running, a blind overwrite of
+    # this rebuild's in-memory `glossary` over the current on-disk state
+    # would silently revert that write -- the same cross-writer
+    # stale-overwrite bug class DESIGN.md documents for the dialogs,
+    # applied here to the rebuild path. Merging by source instead of
+    # aborting: aborting would discard this entire (potentially
+    # expensive, one-LLM-call-per-episode) rebuild's results. Only
+    # edited_sources (sources this rebuild's own extraction actually
+    # touched) are allowed to win on divergence -- everything else falls
+    # through to the freshly-reloaded on-disk copy, so a concurrent
+    # dialog write to an untouched source survives intact. Same pattern
+    # as GlossaryCoordinator.save_snapshot(), independently applied here
+    # rather than imported from glossary_coordinator.py to avoid a
+    # circular import (glossary_coordinator.py already imports
+    # build_glossary_for_novel() from this module).
+    current_glossary = load_glossary(novel_id)
+    if current_glossary.get("updated_at") != opened_updated_at:
+        logger.info(
+            f"Glossary for novel {novel_id} changed on disk while this rebuild was running (updated_at {opened_updated_at!r} -> {current_glossary.get('updated_at')!r}) -- merging by source instead of overwriting"
+        )
+        current_by_source = {t.get("source"): t for t in current_glossary.get("terms", []) if t.get("source")}
+        local_by_source = {t.get("source"): t for t in glossary.get("terms", []) if t.get("source")}
+        merged_by_source = dict(current_by_source)
+        for source in edited_sources:
+            if source in local_by_source:
+                merged_by_source[source] = local_by_source[source]
+        glossary["terms"] = list(merged_by_source.values())
+        # honorific_policy/context_notes are this rebuild's own derived
+        # values (from this run's actual extraction), not a per-source
+        # merge target -- kept as this rebuild computed them, same as
+        # before this fix, since a concurrent dialog write doesn't have
+        # a comparable "its own extraction-derived policy suggestion" to
+        # reconcile against.
 
     glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
 

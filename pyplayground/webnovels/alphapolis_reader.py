@@ -45,7 +45,6 @@ from bs4 import BeautifulSoup
 
 from pyplayground.utils.config_utils import load_json_config, save_json_config
 from pyplayground.utils.logging_utils import get_logger, setup_logging
-from pyplayground.webnovels.build_glossary import build_glossary_for_novel
 from pyplayground.webnovels.glossary import (
     HONORIFIC_POLICIES,
     STATUS_CONFIRMED,
@@ -2141,7 +2140,22 @@ class ReaderApp:
             # from the updated file once done -- see the module-level
             # comment on `dirty` above for why. Warn first if there are
             # unsaved edits so a rebuild doesn't silently discard them.
-            if rebuild_state["running"]:
+            #
+            # Routed through GlossaryCoordinator.start_rebuild()/
+            # is_rebuild_running() (REFACTOR_DESIGN.md Phase 3e) instead
+            # of calling build_glossary_for_novel() directly -- this is
+            # the shared, coordinator-owned tracking state the
+            # extraction-vs-dialog race fix depends on (a per-dialog
+            # local dict, as this used to be, is invisible to
+            # upsert_confirmed()/reject()/save_snapshot()/clear() calls
+            # from the other two dialogs, or a second open instance of
+            # this same dialog). rebuild_state["running"] below is kept
+            # as a dialog-local mirror purely for this dialog's own UI
+            # (disabling buttons, showing "Rebuilding..." status) --
+            # GlossaryCoordinator has no widget/event-loop reference of
+            # its own to drive that.
+            coordinator = GlossaryCoordinator(novel_id)
+            if rebuild_state["running"] or coordinator.is_rebuild_running():
                 return
             if dirty["value"]:
                 if not messagebox.askyesno(
@@ -2159,25 +2173,20 @@ class ReaderApp:
             def status_cb(message):
                 self.root.after(0, lambda: rebuild_status.config(text=message))
 
-            def worker():
-                try:
-                    build_glossary_for_novel(novel_id, status_cb=status_cb)
-                except Exception as e:
-                    full_trace = traceback.format_exc()
-                    logger.error(f"Glossary rebuild failed for novel {novel_id}: {e}", exc_info=True)
-                    print(full_trace, file=sys.stderr)
-                    self.root.after(0, lambda: messagebox.showerror("Rebuild Glossary", f"Rebuild failed:\n{full_trace}", parent=win))
-                finally:
-                    rebuild_state["running"] = False
+            def on_complete(error):
+                rebuild_state["running"] = False
 
-                    def reload_dialog():
-                        disk_write_happened["value"] = True
-                        close_dialog()
-                        self.open_glossary_dialog()
+                def finish_on_ui_thread():
+                    if error is not None:
+                        full_trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+                        messagebox.showerror("Rebuild Glossary", f"Rebuild failed:\n{full_trace}", parent=win)
+                    disk_write_happened["value"] = True
+                    close_dialog()
+                    self.open_glossary_dialog()
 
-                    self.root.after(0, reload_dialog)
+                self.root.after(0, finish_on_ui_thread)
 
-            threading.Thread(target=worker, daemon=True).start()
+            coordinator.start_rebuild(status_cb=status_cb, on_complete=on_complete)
 
         rebuild_btn = ttk.Button(btn_row, text="Rebuild Glossary", command=rebuild_glossary)
         rebuild_btn.pack(side="left", padx=(12, 0))

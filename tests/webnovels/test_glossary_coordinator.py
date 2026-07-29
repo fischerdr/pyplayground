@@ -413,6 +413,76 @@ class TestRebuildTracking:
             time.sleep(0.05)
         assert coordinator.is_rebuild_running() is False, "a raised exception in the background worker must still clear _rebuild_in_progress, not leave it stuck True"
 
+    def _run_rebuild_and_join_its_thread(self, coordinator, on_complete):
+        """start_rebuild(), then join the actual background thread it spawns before returning.
+
+        start_rebuild() doesn't expose its internal threading.Thread, and
+        on_complete() fires inside the worker's own finally block --
+        slightly *before* the thread function fully returns and the
+        Thread object itself terminates. Waiting only on an Event set by
+        on_complete() (an earlier version of this test did) leaves a real
+        race window where mocker.patch's own automatic un-patching (this
+        test's teardown) can run concurrently with the tail end of that
+        still-finishing thread touching mock internals -- confirmed live:
+        this reproduced a real, if rare, Illegal instruction crash in a
+        full-suite run (Python 3.14 + Tk + threading + GC, the same
+        general class of hazard already documented for two other,
+        pre-existing tests elsewhere in this suite, but a third distinct
+        trigger, introduced by these new tests specifically). Comparing
+        the set of alive threads before/after start_rebuild() and
+        joining the new one directly closes that window, rather than
+        deselecting these tests the way the two pre-existing hazards
+        were handled -- this one is fully within this test's own control
+        to fix outright.
+        """
+        threads_before = set(threading.enumerate())
+        coordinator.start_rebuild(on_complete=on_complete)
+        new_threads = set(threading.enumerate()) - threads_before
+        for t in new_threads:
+            t.join(timeout=5)
+
+    def test_on_complete_called_with_none_on_success(self, mocker):
+        mocker.patch(
+            "pyplayground.webnovels.glossary_coordinator.build_glossary_for_novel",
+            return_value={"terms": []},
+        )
+        complete_calls = []
+
+        def on_complete(error):
+            complete_calls.append(error)
+
+        coordinator = GlossaryCoordinator("375266002")
+        self._run_rebuild_and_join_its_thread(coordinator, on_complete)
+
+        assert complete_calls == [None], "on_complete() must be called with None (no error) on a successful rebuild"
+
+    def test_on_complete_called_with_the_exception_on_failure(self, mocker):
+        exc = RuntimeError("simulated extraction failure")
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.build_glossary_for_novel", side_effect=exc)
+        complete_calls = []
+
+        def on_complete(error):
+            complete_calls.append(error)
+
+        coordinator = GlossaryCoordinator("375266002")
+        self._run_rebuild_and_join_its_thread(coordinator, on_complete)
+
+        assert complete_calls == [exc], "on_complete() must be called with the actual raised exception on failure"
+
+    def test_on_complete_is_optional_and_does_not_raise_when_omitted(self, mocker):
+        mocker.patch(
+            "pyplayground.webnovels.glossary_coordinator.build_glossary_for_novel",
+            return_value={"terms": []},
+        )
+        coordinator = GlossaryCoordinator("375266002")
+        coordinator.start_rebuild()  # no on_complete passed -- must not raise
+
+        for _ in range(50):
+            if not coordinator.is_rebuild_running():
+                break
+            time.sleep(0.05)
+        assert coordinator.is_rebuild_running() is False
+
 
 class TestNotifyEdited:
     """Tests for the current no-op placeholder -- confirms it doesn't raise or require a registered callback yet."""

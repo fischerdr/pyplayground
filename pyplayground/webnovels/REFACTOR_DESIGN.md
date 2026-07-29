@@ -142,8 +142,231 @@ last — same discipline as every phased effort in the other two docs.
 
 - **Phase 1**: complete (2026-07-28, investigation and proposal only, see dated entry below). No code changes.
 - **Phase 2**: complete (2026-07-28, rendering extracted into `ReaderRenderer`; re-audited 2026-07-28, see dated entries below).
-- **Phase 3**: sub-plan defined (2026-07-29). **3a complete** (2026-07-29, `GlossaryCoordinator` built standalone). **3b complete** (2026-07-29, `open_word_glossary_popup()` wired). **3c complete** (2026-07-29, `open_term_review_dialog()` wired). **3d complete** (2026-07-29, `open_glossary_dialog()` wired, see dated entry below). 3e-3g not started.
+- **Phase 3**: sub-plan defined (2026-07-29). **3a complete** (2026-07-29, `GlossaryCoordinator` built standalone). **3b complete** (2026-07-29, `open_word_glossary_popup()` wired). **3c complete** (2026-07-29, `open_term_review_dialog()` wired). **3d complete** (2026-07-29, `open_glossary_dialog()` wired). **3e complete** (2026-07-29, extraction-vs-dialog race fixed, see dated entry below). 3f-3g not started.
 - **Phases 4-5**: not started, contingent on Phase 3's findings.
+
+### 2026-07-29: Phase 3e -- extraction-vs-dialog race fixed
+
+Per the Phase 3 sub-plan's guardrails below: self-contained, did not
+read ahead into 3f/3g.
+
+**Mandatory first step, same discipline as 3d: line numbers re-confirmed
+directly, not assumed.** `build_glossary.py:385/405/425` matched 3d's
+own table exactly -- no drift this time. Read the full
+`build_glossary_for_novel()` (`build_glossary.py:340-432`) and
+`rebuild_glossary()` (`alphapolis_reader.py:2138-2180`, inside
+`open_glossary_dialog()`) fresh before touching either.
+
+**The design question this step was required to answer explicitly,
+answered by proof, not assumption: a dialog write proceeding
+concurrently with a rebuild is NOT already safe by construction.**
+Before writing any fix, wrote a standalone reproduction script driving
+the real (unmocked) `GlossaryCoordinator.upsert_confirmed()` against a
+real `build_glossary_for_novel()` call running on a background thread
+with a slow, controllable mocked `extract_glossary_terms()` --
+confirmed live, not assumed: the dialog's write (routed through the
+coordinator, which *does* reload fresh before writing, the same
+discipline 3a-3d's fix already relies on) was **completely discarded**
+by the rebuild's own final `save_glossary()` call. Root cause:
+`build_glossary_for_novel()` had a single `load_glossary()` call at the
+very start of its per-episode extraction loop and one `save_glossary()`
+call at the very end, with **zero re-check-before-write logic** --
+unlike every dialog write path, it had no idea the coordinator's write
+ever happened, and blindly overwrote the file with its own
+stale-at-load-time view. This settles the question the sub-plan asked
+to have proven: `save_snapshot()`/`upsert_confirmed()`/`reject()`/
+`clear()` reloading fresh on their own side is necessary but not
+sufficient -- the *other* writer in the race (the rebuild) also needed
+the same discipline, and did not have it.
+
+**Fix**: `build_glossary_for_novel()` now tracks `edited_sources` (the
+set of sources its own extraction actually merged a term into this
+run -- same concept as `save_snapshot()`'s `edited_sources`, tracking
+what *this specific writer* touched, not everything it happened to
+load). Right before its final write, it reloads the glossary fresh and
+compares `updated_at` against what it loaded at the very start
+(`opened_updated_at`); on divergence, merges by source -- only
+`edited_sources` are allowed to win, everything else falls through to
+the freshly-reloaded on-disk copy. Same merge-by-source shape as
+`GlossaryCoordinator.save_snapshot()`, **independently implemented in
+`build_glossary.py` rather than imported from `glossary_coordinator.py`**
+-- `glossary_coordinator.py` already imports `build_glossary_for_novel`
+from `build_glossary.py`, so importing the reverse direction would
+create a circular import. Re-ran the exact reproduction script against
+the fix: both the concurrent dialog write and the rebuild's own
+extraction result survived.
+
+**`is_rebuild_running()`/`start_rebuild()` (built in 3a, unused until
+now) actually wired to a real call site.** `rebuild_glossary()` (inside
+`open_glossary_dialog()`) previously called `build_glossary_for_novel()`
+directly on its own `threading.Thread`, entirely bypassing the
+coordinator's shared state -- meaning `is_rebuild_running()` had no way
+to ever report `True` for a real rebuild triggered from the UI, making
+3a's own tracking state dead code in practice. Now constructs a
+`GlossaryCoordinator(novel_id)` and calls `start_rebuild()`, checking
+`is_rebuild_running()` (in addition to this dialog's own
+`rebuild_state["running"]` local flag, kept for the dialog's own
+button-disabling/status-text UI, which the coordinator has no
+widget/event-loop reference to drive itself) before starting.
+
+**A real interface gap found and filled, not forced: `start_rebuild()`
+had no completion callback.** `rebuild_glossary()`'s pre-existing
+behavior needed to know when the rebuild finished and whether it failed
+(to show `messagebox.showerror` and reload the dialog) -- `start_rebuild()`
+as built in 3a only exposed `status_cb` (progress messages) and logged/
+printed failures internally, with no way for a caller to learn the
+outcome short of polling `is_rebuild_running()`, which doesn't carry an
+error. Added an optional `on_complete(error: Optional[Exception])`
+callback, invoked exactly once in the same `finally` block that clears
+`_rebuild_in_progress` -- a genuine, minimal interface extension (same
+class of fix as 3d's `clear()` addition), not a workaround. `rebuild_glossary()`
+now reconstructs the full traceback from the passed exception
+(`traceback.format_exception()`) for the error dialog, matching the
+original's `traceback.format_exc()` output inside the same `except`
+block it used to run in.
+
+**The other explicit design question, answered: dialogs do NOT check
+`is_rebuild_running()` and defer.** Given the fix above makes the race
+correct regardless of write ordering (both sides now reload-fresh-and-
+merge-by-source), deferring would add blocking/waiting UI complexity
+with no correctness benefit -- consistent with how the dialogs never
+deferred against *each other* either (3a-3d's fix was "reconcile,"
+never "block"). `is_rebuild_running()` remains available for a caller
+that wants to show/avoid a duplicate-rebuild-request message (its
+original, still-valid purpose per 3a), not as a write-gating check.
+
+**Dead-code sweep**: removed `alphapolis_reader.py`'s now-unused
+`build_glossary_for_novel` import (its only real call site,
+`rebuild_glossary()`, now goes through `GlossaryCoordinator.start_rebuild()`
+instead) -- confirmed via `grep` that zero real calls remained, only a
+comment referencing the name.
+
+**A third flaky-crash source found and fixed (not deselected) during
+this step's own test-writing, per the guardrails' instruction to
+investigate unexpected behavior rather than push forward.** Running the
+full suite surfaced a nondeterministic `Fatal Python error: Illegal
+instruction` -- same general class as the two already-documented
+Python 3.14/Tk/threading/GC hazards (`TestFetchAndTranslateDuplicateGuard`,
+`TestPopupSingleInstanceGuard`), but a genuinely different, third
+trigger, introduced by this step's own new `on_complete` tests.
+Root-caused via the crash's thread dump: those tests waited on a
+`threading.Event` set *inside* `start_rebuild()`'s worker's `finally`
+block, then returned -- but the underlying `threading.Thread` object
+itself hadn't necessarily finished unwinding yet at that instant,
+leaving a real window where `mocker.patch`'s own automatic teardown
+(unpatching `build_glossary_for_novel` at test end) could run
+concurrently with the tail end of that still-finishing thread touching
+`unittest.mock` internals. Unlike the two pre-existing hazards (left
+deselected, since fixing Tk/threading fragility in code this task
+doesn't own is out of scope), this one was fully within these new
+tests' own control: fixed by capturing the actual new `threading.Thread`
+object `start_rebuild()` spawns (via a before/after `threading.enumerate()`
+diff) and joining it directly, closing the race at its source rather
+than deselecting a test this step itself introduced. Confirmed fixed by
+running the full suite 5 times after the fix, all clean (270 passed
+each time) -- no longer reproduces.
+
+**Tests**: 5 new -- `TestRebuildTracking` gained 3 (`on_complete` called
+with `None` on success, called with the actual exception on failure,
+and confirmed optional/non-raising when omitted). New
+`tests/webnovels/test_build_glossary.py` (this module's first-ever test
+file) has 2: `TestRaceWithConcurrentDialogWrite`'s
+`test_concurrent_dialog_write_and_rebuild_extraction_both_survive` (the
+actual regression test the sub-plan required -- a real background
+thread running the real `build_glossary_for_novel()` against a
+controllable slow extraction stand-in, with a real, unmocked
+`GlossaryCoordinator.upsert_confirmed()` call landing mid-flight for a
+genuinely unrelated source, confirming both writes survive) and
+`test_rebuild_result_alone_survives_when_no_concurrent_write_happens`
+(sanity check: the new merge-on-divergence logic doesn't change
+behavior when there's no actual race).
+
+**Confirmed load-bearing, not just passing incidentally**: reverted
+`build_glossary.py`'s and `glossary_coordinator.py`'s changes via
+`git stash` and re-ran the race regression test plus all three new
+`on_complete` tests -- all 3 (`on_complete`) failed with
+`TypeError: ... unexpected keyword argument 'on_complete'` and the race
+test failed with the exact expected `AssertionError` (the concurrent
+write no longer survives without the fix). Restored via `git stash pop`,
+confirmed via `grep` before continuing.
+
+**Checkpoint, confirmed, not assumed**:
+- Full `tests/webnovels/` suite: **270 passed** (up from 265 -- exactly
+  the 5 new tests, zero regressions), same 2 pre-existing flaky-crash
+  sources deselected (unrelated to this step, named in 3d's own entry),
+  same 6 live-display UI-automation tests erroring only for lack of an
+  Xvfb display in that offline run. Ran the full suite 5 times
+  specifically to confirm the third flaky source (found and fixed
+  above) stays fixed -- all 5 clean.
+- `black`/`isort`/`flake8` clean on all touched/added files.
+- **Live verification**, via a real running app under
+  `pyplayground/webnovels/ui_testing/run_ui_tests.sh xvfb-keep`, against
+  novel `777777777`'s real 3-episode cache: since a real LLM-driven
+  rebuild's timing can't be controlled precisely enough to reliably land
+  a concurrent write mid-flight (confirmed directly -- a first live
+  attempt using the real LLM finished a 3-episode rebuild in under 20
+  seconds, too fast to reliably interleave with a manual concurrent
+  write timed by hand), launched the real app with
+  `build_glossary.extract_glossary_terms` patched to a deterministic,
+  controllable 8-second-per-episode stand-in (same technique as this
+  step's own automated regression test, and consistent with this
+  session's established precedent for reproducing timing-sensitive
+  races via a controllable stand-in rather than hoping real timing
+  cooperates) -- opened the real Glossary dialog, clicked the real
+  "Rebuild Glossary" button, confirmed via the log that extraction was
+  genuinely mid-flight (episode 3/3 extracting), then made a real
+  `GlossaryCoordinator.upsert_confirmed()` call for a genuinely
+  different, unrelated source (`刑法204条`) -- simulating the concurrent
+  dialog write directly rather than through the interactive UI, since
+  this dialog's `win.grab_set()` modality (per 3c/3d's own established
+  precedent for this exact situation) blocks a second interactive
+  action while it's open. **On-disk read directly afterward confirmed
+  both survived**: `刑法204条` correctly `confirmed`/`"Article 204 of
+  the Penal Code"` (the concurrent write, not clobbered), and the
+  rebuild's own extraction result (`ハードキャッチ`) also correctly
+  present. The expected `"Glossary for novel 777777777 changed on disk
+  while this rebuild was running ... merging by source instead of
+  overwriting"` INFO line fired, correctly attributed to
+  `pyplayground.webnovels.build_glossary` (not `glossary_coordinator`,
+  confirming the new merge logic genuinely ran inside
+  `build_glossary_for_novel()` itself, not a leftover different path).
+  `log_correlator.assert_clean()` for the concurrent-write action's time
+  window: clean. Whole-session log swept for `ERROR`/`CRITICAL`: none
+  found up to the point of intentional app termination (the subsequent
+  auto-refresh's real network fetch against the synthetic novel's
+  non-existent URL was not waited out to completion, consistent with
+  this fixture's established "cache-hit short-circuits before any real
+  fetch" pattern -- this run's own cache-invalidating side effects were
+  restored afterward, see below). App terminated via `kill -TERM`
+  (escalated to `kill -9` after a `SIGTERM` grace period, since this
+  particular process was mid-network-fetch and slower to exit than
+  prior sessions' terminations) on the tracked PID.
+- The synthetic novel's glossary and all three episode cache entries
+  were backed up before this verification and fully restored to their
+  Phase-3d-ending state afterward (this run's real rebuild and the
+  earlier, aborted real-LLM attempt both mutated on-disk state as a
+  side effect of exercising the real code paths, not deliberate backlog
+  progress -- restoring was the right call, same reasoning as 3d's own
+  entry). Xvfb/fluxbox confirmed torn down cleanly after the run.
+
+**Net result**: the extraction-vs-dialog race named in `DESIGN.md`'s
+background-extraction investigation entry is fixed -- proven unsafe
+before the fix (live reproduction), proven safe after (the same
+reproduction, plus a live run through the real app). `is_rebuild_running()`/
+`start_rebuild()`, built but unused since 3a, are now wired to the one
+real call site that needed them. A genuine coordinator-adjacent
+interface gap (`start_rebuild()`'s missing completion callback) was
+found and filled. A third flaky test-suite crash source was found and
+fixed at its root, not deselected, since it was fully within this
+step's own new tests' control.
+
+**Not done in this step, deliberately, per the guardrails**: no changes
+to `extracted_episode_urls`/incremental-extraction work (3f) -- the
+rebuild still reprocesses every cached episode every time, unchanged;
+this step's fix addresses correctness under concurrency, not
+incremental cost, and the sub-plan explicitly separates the two. No
+final harness/sweep confirmation (3g). Stopped here as instructed
+rather than reading ahead.
 
 ### 2026-07-29: Phase 3d -- `open_glossary_dialog()` wired through `GlossaryCoordinator`
 

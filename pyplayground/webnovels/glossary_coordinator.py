@@ -253,7 +253,11 @@ class GlossaryCoordinator:
         """Whether a background glossary rebuild is currently in progress for this novel."""
         return self._rebuild_in_progress
 
-    def start_rebuild(self, status_cb: Optional[Callable[[str], None]] = None) -> None:
+    def start_rebuild(
+        self,
+        status_cb: Optional[Callable[[str], None]] = None,
+        on_complete: Optional[Callable[[Optional[Exception]], None]] = None,
+    ) -> None:
         """Run build_glossary_for_novel() on a background thread, tracking is_rebuild_running() for the duration.
 
         Mirrors open_glossary_dialog()'s existing rebuild_glossary(),
@@ -272,6 +276,15 @@ class GlossaryCoordinator:
                 Tk's root.after()) are responsible for doing so themselves
                 -- this coordinator has no widget/event-loop reference of
                 its own.
+            on_complete: Optional callback invoked exactly once when the
+                rebuild finishes, with the raised exception if it failed
+                (None on success) -- always called, in the same finally
+                block that clears is_rebuild_running(), so a caller
+                doesn't have to poll is_rebuild_running() to find out the
+                rebuild ended or to learn whether it failed (needed for
+                rebuild_glossary()'s existing error-dialog/reload-the-
+                dialog UX, which this coordinator has no way to drive on
+                its own). Same UI-thread-marshaling caveat as status_cb.
         """
         if self._rebuild_in_progress:
             return
@@ -279,13 +292,17 @@ class GlossaryCoordinator:
         self._rebuild_in_progress = True
 
         def worker():
+            error = None
             try:
                 build_glossary_for_novel(self.novel_id, status_cb=status_cb)
             except Exception as e:
+                error = e
                 logger.error(f"Glossary rebuild failed for novel {self.novel_id}: {e}", exc_info=True)
                 print(traceback.format_exc(), file=sys.stderr)
             finally:
                 self._rebuild_in_progress = False
+                if on_complete:
+                    on_complete(error)
 
         threading.Thread(target=worker, daemon=True).start()
 

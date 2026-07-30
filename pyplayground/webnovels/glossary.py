@@ -178,6 +178,12 @@ def _empty_glossary(novel_id: str) -> Dict[str, Any]:
         "terms": [],
         "context_notes": "",
         "updated_at": "",
+        # URLs of cached episodes build_glossary_for_novel() has already
+        # run extraction against -- lets a rebuild skip them instead of
+        # re-running an LLM call per already-processed episode every time
+        # (REFACTOR_DESIGN.md Phase 3f). Plain additive field, same
+        # .setdefault()-on-load precedent as honorific_policy above.
+        "extracted_episode_urls": [],
     }
 
 
@@ -203,6 +209,7 @@ def load_glossary(novel_id: str) -> Dict[str, Any]:
         loaded: Dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         loaded.setdefault("honorific_policy", DEFAULT_HONORIFIC_POLICY)
         loaded.setdefault("honorific_policy_user_set", False)
+        loaded.setdefault("extracted_episode_urls", [])
         return loaded
     except (json.JSONDecodeError, OSError) as e:
         logger.error(f"Failed to load glossary for novel {novel_id}: {e}")

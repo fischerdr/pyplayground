@@ -142,8 +142,142 @@ last — same discipline as every phased effort in the other two docs.
 
 - **Phase 1**: complete (2026-07-28, investigation and proposal only, see dated entry below). No code changes.
 - **Phase 2**: complete (2026-07-28, rendering extracted into `ReaderRenderer`; re-audited 2026-07-28, see dated entries below).
-- **Phase 3**: sub-plan defined (2026-07-29). **3a complete** (2026-07-29, `GlossaryCoordinator` built standalone). **3b complete** (2026-07-29, `open_word_glossary_popup()` wired). **3c complete** (2026-07-29, `open_term_review_dialog()` wired). **3d complete** (2026-07-29, `open_glossary_dialog()` wired). **3e complete** (2026-07-29, extraction-vs-dialog race fixed, see dated entry below). 3f-3g not started.
+- **Phase 3**: sub-plan defined (2026-07-29). **3a complete** (2026-07-29, `GlossaryCoordinator` built standalone). **3b complete** (2026-07-29, `open_word_glossary_popup()` wired). **3c complete** (2026-07-29, `open_term_review_dialog()` wired). **3d complete** (2026-07-29, `open_glossary_dialog()` wired). **3e complete** (2026-07-29, extraction-vs-dialog race fixed, see dated entry below). **3f complete** (2026-07-30, non-incremental extraction fixed, see dated entry below). 3g not started.
 - **Phases 4-5**: not started, contingent on Phase 3's findings.
+
+### 2026-07-30: Phase 3f -- non-incremental extraction fixed
+
+Per the Phase 3 sub-plan's guardrails: self-contained, did not read
+ahead into 3g.
+
+**Schema decision, confirmed rather than assumed, per this step's own
+requirement**: checked `glossary.py`'s existing `honorific_policy`
+precedent directly before assuming the same shape applies --
+`_empty_glossary()` defaults it, `load_glossary()` calls
+`loaded.setdefault("honorific_policy", DEFAULT_HONORIFIC_POLICY)` on an
+older on-disk file with no such key, and there is no
+`CACHE_SCHEMA_VERSION`-style version field anywhere in this module at
+all (that concept exists only for the separate episode-cache schema in
+`alphapolis_reader.py`, a different file/concern). Confirmed glossary
+data is treated as disposable/additive throughout this doc (§9's own
+"no backward compatibility... clean schema cutover" note, `context_notes`
+and `honorific_policy_user_set` both added the same additive way
+historically). No version bump needed or added -- `extracted_episode_urls`
+is a plain new key, defaulted in `_empty_glossary()` and
+`.setdefault()`'d in `load_glossary()`, identical in shape to
+`honorific_policy`.
+
+**Wiring**: `build_glossary_for_novel()` now reads
+`glossary.get("extracted_episode_urls", [])` into `already_extracted`
+right after its initial `load_glossary()` call, and the per-episode
+loop skips (with a `report()` line, same visibility as every other
+skip/process line) any cached episode whose `url` is already in that
+set -- before, not after, calling `extract_glossary_terms()`, so a
+skipped episode never reaches the LLM at all. Every episode that
+actually reaches `extract_glossary_terms()` (regardless of whether it
+yields any terms -- a zero-term episode was still genuinely processed
+and shouldn't be re-run forever) has its `url` appended to
+`newly_extracted_urls`. Before the final save,
+`glossary["extracted_episode_urls"]` is set to the union of
+`already_extracted` and `newly_extracted_urls` -- and, matching the
+existing re-check-before-write branch's own reasoning (3e), unioned
+against the freshly-reloaded on-disk copy's own
+`extracted_episode_urls` too, rather than overwritten, on the
+divergence path -- so a hypothetical future concurrent writer to this
+field (nothing currently writes it except this function) can't have its
+own record silently dropped by this rebuild's save, same discipline as
+every other field this merge branch already protects.
+
+**Tests**: `TestIncrementalExtraction` in `test_build_glossary.py`, two
+new tests --
+`test_second_rebuild_with_no_new_episodes_does_not_reextract_anything`
+(first rebuild extracts from both of 2 cached episodes; a second
+rebuild against the identical cached-episode set makes
+`extract_glossary_terms` calls: 0, confirmed via `Mock.call_count`, not
+just "the term count didn't change") and
+`test_new_episode_added_between_rebuilds_only_extracts_the_new_one` (a
+third episode added between two rebuilds results in exactly one new
+extraction call, for the new episode's own lines specifically --
+checked via `call_args`, not just the call count).
+
+**Confirmed load-bearing, not just passing incidentally**: reverted
+`build_glossary.py`'s and `glossary.py`'s changes via `git stash` and
+re-ran both new tests -- both failed cleanly
+(`AssertionError: second rebuild ... must not re-invoke extraction at
+all`, actual call count 2 instead of the expected 0; and the equivalent
+mismatch for the second test), confirming genuine regression coverage.
+Restored via `git stash pop`.
+
+**Checkpoint, confirmed, not assumed**:
+- Full `tests/webnovels/` suite: **275 passed** (up from 273 -- exactly
+  the 2 new tests, zero regressions), same 6 live-display
+  UI-automation tests erroring only for lack of an Xvfb display in that
+  particular offline run (confirmed unrelated to this step by checking
+  no stray `Alphapolis Reader` window existed on the display used).
+- `black`/`isort`/`flake8` clean on all three touched files.
+- **Live verification**, via `pyplayground/webnovels/ui_testing/
+  run_ui_tests.sh xvfb-keep`, against novel `777777777`'s real 3-episode
+  cache and real 10-term backlog (backed up before this verification,
+  restored to its exact prior state afterward): opened the real
+  Glossary dialog, clicked the real "Rebuild Glossary" button. Log
+  confirmed all 3 cached episodes genuinely extracted from
+  (`[1/3] Extracting terms from: Chapter 2`, `[2/3] ... Chapter 3`,
+  `[3/3] ... Chapter 1`, 12 total terms saved, 2 new), and
+  `extracted_episode_urls` on disk afterward held exactly the 3 real
+  cached episode URLs. Relaunched the app fresh and triggered a second
+  real rebuild against the same fixture with no new episodes added --
+  log showed `[1/2] Skipping already-extracted episode: Chapter 2` and
+  `[2/2] Skipping already-extracted episode: Chapter 3`
+  (episode 1's cache entry had been evicted by the first run's
+  auto-refresh-driven re-fetch attempt against the fixture's
+  non-resolving URL, an expected, unrelated side effect of this
+  fixture's own established behavior, not a defect in this step's
+  fix -- confirmed by the term count and `extracted_episode_urls`
+  staying unchanged at 12/3 afterward), **zero**
+  `Extracting terms from:` lines for either of the two episodes it
+  found the second time -- the required checkpoint evidence.
+- **A UI-testing-tooling issue found and worked around, not a code
+  defect, documented rather than silently routed past**: this step's
+  own auto-refresh (firing after the rebuild, same documented mechanism
+  as 3d/3e) triggered the real fetch-failure Error dialog (the exact
+  scenario this session's separate `logger.error()` fix, `DESIGN.md`
+  2026-07-29, was built and verified against -- confirmed working
+  correctly here too, as an incidental positive side-confirmation: the
+  structured log correctly captured the failure via `ERROR - [worker]`
+  both times). Locating and clicking that dialog's real Close button
+  via `xdotool` coordinate clicks failed repeatedly this run (unlike
+  the prior investigation's successful click) -- screenshotting the
+  dialog via this session's normal `xdo_helper.screenshot()` path
+  reliably timed out against this specific window both times, and a
+  direct raw `xwd` capture (bypassing the wrapper) showed only the Text
+  widget's scrolled traceback content and its own horizontal scrollbar,
+  never the Close button itself, across multiple scroll positions and
+  a full sweep of plausible bottom-of-window coordinates. Not
+  identified as an app-side bug (the button reliably worked the same
+  way in the prior, separate investigation) -- most likely a
+  window-manager/stacking or screenshot-timing quirk specific to this
+  environment's Xvfb+fluxbox setup when a second Toplevel dialog is
+  raised, not chased further since `xdotool windowclose` (the only
+  other way to dismiss it) is confirmed to crash the whole app for any
+  Toplevel dialog, not just the main window (this doc's own 2026-07-28
+  WM_DELETE_WINDOW entry) -- correctly avoided rather than used as a
+  workaround. Resolved by terminating the whole app process via
+  `kill -TERM` (escalated to `kill -9` after a grace period) instead,
+  which this session has always treated as an acceptable, safe
+  teardown path distinct from window-close. Xvfb/fluxbox confirmed torn
+  down cleanly afterward.
+
+**Net result**: `build_glossary_for_novel()` now skips episodes already
+present in a glossary's `extracted_episode_urls`, confirmed via both
+unit tests and two real live rebuilds against the same fixture -- the
+first processes everything, the second makes zero new LLM extraction
+calls against an unchanged episode set. The schema change is a plain
+additive field, confirmed (not assumed) to need no version bump,
+matching the `honorific_policy` precedent exactly.
+
+**Not done in this step, deliberately, per the guardrails**: no final
+harness/sweep confirmation (3g) -- stopped here as instructed rather
+than reading ahead.
 
 ### 2026-07-29: Phase 3e -- extraction-vs-dialog race fixed
 

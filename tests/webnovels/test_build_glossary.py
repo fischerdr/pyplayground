@@ -142,3 +142,74 @@ class TestRaceWithConcurrentDialogWrite:
 
         final = store.load(novel_id)
         assert {t["source"] for t in final["terms"]} == {"魔導書"}
+
+
+class TestIncrementalExtraction:
+    """Phase 3f: build_glossary_for_novel() must not re-run extraction on episodes it has already processed.
+
+    Before this fix, every rebuild re-processed up to max_episodes cached
+    episodes via a real LLM call each, regardless of whether anything new
+    had been cached since the last rebuild -- confirmed real and growing
+    cost (DESIGN.md's background-extraction investigation entry).
+    extracted_episode_urls is a plain, additive glossary field (same
+    .setdefault()-on-load precedent as honorific_policy) tracking which
+    episode URLs a rebuild has already extracted from.
+    """
+
+    def test_second_rebuild_with_no_new_episodes_does_not_reextract_anything(self, mocker):
+        novel_id = "999999996"
+        store = _FakeGlossaryStore(_make_glossary(novel_id))
+
+        mocker.patch.object(build_glossary, "load_glossary", store.load)
+        mocker.patch.object(build_glossary, "save_glossary", store.save)
+        mocker.patch.object(
+            build_glossary,
+            "_load_cached_episodes_for_novel",
+            return_value=[
+                {"lines": ["line1"], "translated_lines": ["line1"], "episode_title": "ep1", "url": "u1"},
+                {"lines": ["line2"], "translated_lines": ["line2"], "episode_title": "ep2", "url": "u2"},
+            ],
+        )
+        extract_mock = mocker.patch.object(
+            build_glossary,
+            "extract_glossary_terms",
+            return_value={"terms": [{"source": "魔導書", "type": "term", "target": "grimoire"}]},
+        )
+
+        build_glossary.build_glossary_for_novel(novel_id)
+        assert extract_mock.call_count == 2, "first rebuild must extract from both (new) episodes"
+
+        extract_mock.reset_mock()
+        build_glossary.build_glossary_for_novel(novel_id)
+        assert extract_mock.call_count == 0, "second rebuild against the same, already-extracted episode set must not re-invoke extraction at all"
+
+        final = store.load(novel_id)
+        assert set(final["extracted_episode_urls"]) == {"u1", "u2"}
+
+    def test_new_episode_added_between_rebuilds_only_extracts_the_new_one(self, mocker):
+        novel_id = "999999995"
+        store = _FakeGlossaryStore(_make_glossary(novel_id))
+
+        mocker.patch.object(build_glossary, "load_glossary", store.load)
+        mocker.patch.object(build_glossary, "save_glossary", store.save)
+        episodes = [{"lines": ["line1"], "translated_lines": ["line1"], "episode_title": "ep1", "url": "u1"}]
+        cached_episodes_mock = mocker.patch.object(build_glossary, "_load_cached_episodes_for_novel", return_value=episodes)
+        extract_mock = mocker.patch.object(
+            build_glossary,
+            "extract_glossary_terms",
+            return_value={"terms": [{"source": "魔導書", "type": "term", "target": "grimoire"}]},
+        )
+
+        build_glossary.build_glossary_for_novel(novel_id)
+        assert extract_mock.call_count == 1
+
+        extract_mock.reset_mock()
+        episodes.append({"lines": ["line2"], "translated_lines": ["line2"], "episode_title": "ep2", "url": "u2"})
+        cached_episodes_mock.return_value = episodes
+
+        build_glossary.build_glossary_for_novel(novel_id)
+        assert extract_mock.call_count == 1, "only the genuinely new episode should be extracted from, not both again"
+        assert extract_mock.call_args.args == (["line2"], ["line2"])
+
+        final = store.load(novel_id)
+        assert set(final["extracted_episode_urls"]) == {"u1", "u2"}

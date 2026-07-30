@@ -388,6 +388,14 @@ def build_glossary_for_novel(novel_id: str, max_episodes: int = 20, status_cb: O
     if not glossary.get("title") and episodes:
         glossary["title"] = episodes[0].get("title", "")
 
+    # Skip episodes already extracted from in a prior rebuild -- avoids
+    # re-running an LLM call per episode on every invocation regardless of
+    # whether anything new was cached since the last rebuild (confirmed
+    # real and growing cost, DESIGN.md's background-extraction
+    # investigation entry; REFACTOR_DESIGN.md Phase 3f).
+    already_extracted = set(glossary.get("extracted_episode_urls", []))
+    newly_extracted_urls: List[str] = []
+
     # Sources this rebuild's own extraction actually touched (merged a new
     # or updated candidate into) -- REFACTOR_DESIGN.md Phase 3e's
     # re-check-before-write fix, mirroring GlossaryCoordinator.save_snapshot()'s
@@ -403,14 +411,19 @@ def build_glossary_for_novel(novel_id: str, max_episodes: int = 20, status_cb: O
     context_notes: List[str] = []
     extraction_failures = 0
     for i, episode in enumerate(episodes, 1):
+        url = episode.get("url", "unknown")
         source_lines = episode.get("lines", [])
         translated_lines = episode.get("translated_lines", [])
         if not source_lines or not translated_lines:
-            report(f"[{i}/{len(episodes)}] Skipping episode with no translated text (url={episode.get('url', 'unknown')}).")
+            report(f"[{i}/{len(episodes)}] Skipping episode with no translated text (url={url}).")
+            continue
+        if url in already_extracted:
+            report(f"[{i}/{len(episodes)}] Skipping already-extracted episode: {episode.get('episode_title', 'unknown')}")
             continue
 
         report(f"[{i}/{len(episodes)}] Extracting terms from: {episode.get('episode_title', 'unknown')}")
         result = extract_glossary_terms(source_lines, translated_lines)
+        newly_extracted_urls.append(url)
         new_terms = result.get("terms", [])
         if new_terms:
             suggested_terms = _to_suggested_term_dicts(new_terms)
@@ -470,7 +483,15 @@ def build_glossary_for_novel(novel_id: str, max_episodes: int = 20, status_cb: O
         # merge target -- kept as this rebuild computed them, same as
         # before this fix, since a concurrent dialog write doesn't have
         # a comparable "its own extraction-derived policy suggestion" to
-        # reconcile against.
+        # reconcile against. extracted_episode_urls is unioned against
+        # the freshly-reloaded copy rather than overwritten, so a
+        # concurrent writer's own record of already-extracted episodes
+        # (nothing currently writes this field except this function, but
+        # unioning costs nothing and avoids re-introducing a lost-update
+        # gap here too) can never be dropped by this rebuild's save.
+        glossary["extracted_episode_urls"] = sorted(set(current_glossary.get("extracted_episode_urls", [])) | already_extracted | set(newly_extracted_urls))
+    else:
+        glossary["extracted_episode_urls"] = sorted(already_extracted | set(newly_extracted_urls))
 
     glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
 

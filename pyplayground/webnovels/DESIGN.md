@@ -4,7 +4,7 @@ Living record of decisions for the glossary/term-consistency rework and the
 Tkinter → web migration. Update this alongside code changes, not after —
 chat history is not the system of record.
 
-Last updated: 2026-07-29 (fetch-failure path never logged via logger.error() -- confirmed real, fixed)
+Last updated: 2026-07-29 (documented known limitation: no multi-spelling/variation support in the term data model)
 
 ---
 
@@ -839,6 +839,37 @@ predate this work, confirmed via `git stash`).
 **Not done in this pass** (see explicitly-out-of-scope list above,
 unchanged): count-building loop, promotion/gate logic, and the
 `build_glossary.py` `mask_targets` producer itself remain future work.
+
+### 2026-07-29: known limitation — no support for multiple source spellings resolving to one confirmed term
+
+The glossary matches terms by literal `source` string only.
+`build_mask_targets()` and the masking/splicing pipeline it feeds
+(§4/§10) all operate on exact substring matches against a term's single
+`source` field — there is no mechanism for a second, alternate spelling
+of the same entity to resolve to the same `confirmed_target`.
+
+**This is not a new discovery — it's a known omission from day one, now
+confirmed to matter in practice.** §2's original reference-UX
+screenshots (the existing MTL site studied at the very start of this
+redesign) explicitly showed a **Variation** field in its term editor,
+built for exactly this case. This project's term data model (§3, §9)
+never carried a `Variation`-equivalent field forward into the schema
+that was actually implemented — an omission, not a regression.
+
+**Concrete evidence it matters**: during Phase 3's real-data
+verification (novel `375266002`, 2026-07-29), a character confirmed as
+`ケイト` → `Kate` did not get masked/translated consistently in an
+episode where the same character was instead written as `糧品瑠羽`
+(kanji) rather than `ケイト` (katakana). The confirmed term simply
+doesn't apply to the alternate spelling — not a bug in the masking
+logic itself, which is working exactly as designed against a single
+`source` string; the gap is that the schema gives it only one string to
+match against per term.
+
+**Not urgent, not blocking anything currently queued.** If a fix is
+ever considered later (not scoped now, no plan attached to this entry):
+the natural shape is a `variations: List[str]` field on each term,
+checked alongside `source` in `build_mask_targets()`'s lookup.
 
 ## 10. `mask_targets` producer — implemented (2026-07-25)
 

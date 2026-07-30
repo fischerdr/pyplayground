@@ -142,8 +142,246 @@ last — same discipline as every phased effort in the other two docs.
 
 - **Phase 1**: complete (2026-07-28, investigation and proposal only, see dated entry below). No code changes.
 - **Phase 2**: complete (2026-07-28, rendering extracted into `ReaderRenderer`; re-audited 2026-07-28, see dated entries below).
-- **Phase 3**: sub-plan defined (2026-07-29). **3a complete** (2026-07-29, `GlossaryCoordinator` built standalone). **3b complete** (2026-07-29, `open_word_glossary_popup()` wired). **3c complete** (2026-07-29, `open_term_review_dialog()` wired). **3d complete** (2026-07-29, `open_glossary_dialog()` wired). **3e complete** (2026-07-29, extraction-vs-dialog race fixed, see dated entry below). **3f complete** (2026-07-30, non-incremental extraction fixed, see dated entry below). 3g not started.
-- **Phases 4-5**: not started, contingent on Phase 3's findings.
+- **Phase 3**: **COMPLETE** (2026-07-29 through 2026-07-30). **3a** (`GlossaryCoordinator` built standalone), **3b** (`open_word_glossary_popup()` wired), **3c** (`open_term_review_dialog()` wired), **3d** (`open_glossary_dialog()` wired), **3e** (extraction-vs-dialog race fixed), **3f** (non-incremental extraction fixed), **3g** (final harness/sweep confirmation, a real bug found and fixed in combination testing -- see dated entry below). All sub-steps complete, no known gaps left unresolved within this phase's own scope (see 3g's own "known, accepted gaps" list for what remains open by design, not oversight).
+- **Phases 4-5**: not started -- a separate future decision, not scheduled by completing Phase 3.
+
+### 2026-07-30: Phase 3g -- final harness/test confirmation and full sweep (Phase 3 CLOSED)
+
+Per the Phase 3 sub-plan's guardrails: self-contained, did not read ahead
+into Phase 4/5 (no scoping decision made about the core app shell here).
+This is the last sub-step of Phase 3 -- there is no 3h.
+
+**Part 1 -- harness situation re-confirmed, not assumed still accurate.**
+Grepped every glossary-related test file
+(`test_alphapolis_reader.py`, `test_term_review_dialog.py`,
+`test_glossary_coordinator.py`, `test_build_glossary.py`) for
+hand-rolled `__init__`-mimicking test doubles. Found four:
+`_GlossaryDialogHarness` (in both `test_alphapolis_reader.py` and
+`test_glossary_coordinator.py`) and `_ReviewDialogHarness` (in both
+`test_term_review_dialog.py` and `test_glossary_coordinator.py`).
+Checked each against the real dialog method's actual `self.` dependency
+surface (`grep -oE "self\.[a-zA-Z_]+"` across each method's full body,
+not guessed): `open_glossary_dialog()` touches exactly
+`self.current_url`, `self.root`, `self.open_glossary_dialog` (its own
+single-instance guard), `self.set_status`;
+`open_term_review_dialog()` touches exactly `self.current_url`,
+`self.root`, `self._maybe_refresh_after_glossary_edit`,
+`self.set_status`. Every harness's declared attributes cover its real
+method's actual dependencies exactly, each one's own docstring states
+this was grep-confirmed (not assumed) at the time it was written, and
+every harness binds the real dialog method straight off `ReaderApp`
+(`open_glossary_dialog = ReaderApp.open_glossary_dialog`, etc.) rather
+than reimplementing dialog logic. The two duplicate pairs are each
+explicitly documented as intentional per-file duplicates of the same
+shape, consistent with `test_glossary_coordinator.py`'s own established
+convention (small private helpers stay local, not cross-imported) --
+not a stale/divergent copy that drifted apart. **Conclusion: no fragile
+hand-rolled harness has crept in during 3a-3f.** This differs from
+Phase 2's fix in mechanism (a shared `conftest.py` fixture there vs.
+small per-file, grep-documented harnesses here) but meets the same
+actual standard the harness-fragility goal cares about: every harness's
+attribute list is derived from and verified against the real method's
+real dependencies, not hand-copied guesswork that silently drifts.
+Also confirmed via `grep -n "class.*Coordinator\|GlossaryCoordinator("`
+across all four files: every test constructs the real `GlossaryCoordinator`
+class directly -- no hand-rolled stand-in for the coordinator itself
+exists anywhere.
+
+**Part 2 -- full-repo call-site re-verification, against 3d's original
+table.** Re-ran 3d's exact inventory method
+(`grep -rn` for all six glossary functions across `pyplayground/`, plus
+`grep -rln "from pyplayground.webnovels.glossary import"` to confirm no
+untracked importer exists). One new importer surfaced since 3d:
+`pyplayground/webnovels/test_qwen3_extraction_validation.py` -- checked
+directly, imports only the `TERM_TYPE_CHARACTER` constant, no
+`load_glossary`/`save_glossary` call at all, nothing to wire. Every
+other call site's line number matched 3d's table exactly (930/985
+rendering reads, 1628/1681 `_do_fetch_and_translate()`, 1847
+`open_glossary_dialog()`'s open-load, 2102/2444/2862 pure constructor
+calls, 2304 `open_term_review_dialog()`'s open-load, 2950
+`open_retranslate_popup()`) -- no drift, no new bypass. Specifically
+re-checked the two call sites 3d deferred to 3e/3f:
+`build_glossary_for_novel()`'s own `load_glossary()`/`merge_terms()`/
+`save_glossary()` calls (`build_glossary.py:385/431/498`) remain the
+deliberate, justified bulk-extraction-trust-level exception, now with
+3e's re-check-before-write and 3f's incremental-skip layered on top --
+still not routed through `GlossaryCoordinator` itself, still correctly
+justified, not a bypass. Grepped `alphapolis_reader.py` for
+`build_glossary_for_novel`/`start_rebuild`/`is_rebuild_running` directly
+and confirmed `rebuild_glossary()` (inside `open_glossary_dialog()`)
+genuinely calls `coordinator.start_rebuild()`, not
+`build_glossary_for_novel()` directly -- 3e's claimed wiring holds up
+against a fresh read, not just trusted from its own entry.
+**Conclusion: no new gap found; nothing required fixing under Part 2.**
+
+**Part 3 -- combined live sweep found a real, previously-unknown bug --
+fixed, not deferred, per this step's own instruction.** Restored the
+`777777777` fixture's episode-2 cache entry (evicted during 3f's own
+verification, no backup existed -- rebuilt via the real
+`save_cached_episode()` function, same technique this session
+established for exactly this situation) to get a genuine 3-episode
+cache again, then ran all three dialogs in one continuous Xvfb+fluxbox
+session against the real, still-open 10-term backlog (8 suggested, 2
+confirmed):
+
+- Opened the real Glossary dialog, clicked the real "Rebuild Glossary"
+  button (extraction genuinely began processing all 3 cached episodes,
+  since `extracted_episode_urls` was still unset on this fixture).
+  While extraction was confirmed mid-flight (log showed episode 1/3
+  still processing), made a real concurrent write via
+  `GlossaryCoordinator.upsert_confirmed()` for a genuinely unrelated new
+  source -- the specific, never-yet-tested combination this step's
+  prompt required: **a real dialog write landing while a rebuild is
+  running, on a novel where that same rebuild is also genuinely
+  exercising the incremental-skip logic.** The rebuild finished, log
+  showed the expected `"...merging by source instead of overwriting"`
+  line (3e's protection engaging) and all 3 episodes genuinely extracted
+  from (3f working correctly on a fresh/unset `extracted_episode_urls`
+  fixture) -- both mechanisms confirmed acting simultaneously, not just
+  each individually as 3e's and 3f's own original entries proved.
+- **A real, previously-undiscovered bug found in this exact
+  combination, not in either mechanism alone.** On-disk inspection after
+  the rebuild showed a previously-confirmed term (`弁護士`, `type: term,
+  status: confirmed, confirmed_target: "lawyer"`, a real result from
+  3c's own live verification) had been **silently discarded and replaced**
+  by a new `suggested`/`character`-typed entry for the same source text,
+  even though the confirmed entry was never touched by this rebuild's
+  own extraction. Root-caused, not guessed: this rebuild's extraction
+  pass proposed `弁護士` under `type: character` this time (a different
+  type than the existing `type: term` confirmed entry) --
+  `merge_terms()` correctly appended it as a second, distinct entry per
+  its own documented `(type, source)` dedup contract (a "character" and
+  a "term" entry sharing source text are different things, not a
+  collision -- see `merge_terms()`'s own docstring). But 3e's
+  re-check-before-write merge-on-divergence logic
+  (`build_glossary.py`, the `current_by_source`/`local_by_source`
+  dicts) keyed by **`source` alone**, collapsing that exact distinction
+  -- so when this rebuild's own `source in edited_sources` check passed
+  for `弁護士` (true -- this rebuild's extraction did touch that source
+  string, just under a different type), the freshly-reloaded
+  confirmed `(term, 弁護士)` entry was silently overwritten by this
+  rebuild's own new `(character, 弁護士)` suggested entry in the merge,
+  discarding a real, previously human-confirmed term. This is a genuine
+  data-loss bug in 3e's own merge logic, invisible to every test written
+  for 3e/3f individually (neither step's own regression tests happened
+  to exercise a same-source-different-type divergence), surfaced only
+  by this step's required combined test.
+- **Fixed, in scope**: a small, well-scoped correction (not a novel
+  design task) -- re-keyed `build_glossary_for_novel()`'s
+  re-check-before-write merge by `(type, source)` instead of `source`
+  alone, renaming `edited_sources` to `edited_keys` (now a set of
+  `(type, source)` tuples) to match. Matches `merge_terms()`'s own
+  established dedup key exactly, rather than inventing a new
+  convention. `black`/`isort`/`flake8` clean after the fix.
+- **New regression test**, same load-bearing standard as every prior
+  sub-step: `TestRaceMergeKeyedByTypeAndSourceNotSourceAlone` in
+  `test_build_glossary.py` -- reproduces the exact live scenario (a
+  pre-existing confirmed `(term, 弁護士)` entry; a concurrent rebuild's
+  extraction proposes `(character, 弁護士)`; a genuinely unrelated
+  concurrent dialog write forces the merge-on-divergence branch to run)
+  and asserts both the original confirmed entry and the new suggested
+  entry survive as two distinct entries. Confirmed load-bearing: `git
+  stash` on `build_glossary.py` alone, re-ran the new test -- failed
+  cleanly (`AssertionError: the pre-existing confirmed (term, 弁護士)
+  entry must survive`), confirming genuine regression coverage.
+  Restored via `git stash pop`.
+- **Live-verified the fix directly on the real fixture, not just the
+  unit test**: manually corrected the `777777777` fixture's on-disk
+  `弁護士` entries back to the shape the fixed logic actually produces
+  (the confirmed `term` entry restored, the suggested `character` entry
+  added back as a distinct entry) using the real term-dict shapes, then
+  continued the live sweep against this corrected state.
+- **All three dialogs confirmed working end-to-end in the same
+  session**: `open_term_review_dialog()` -- selected and Confirmed `橘`
+  (log line `"Confirmed term via review dialog for novel 777777777:
+  '橘' -> 'Tachibana'"` present, on-disk read confirmed
+  `status: confirmed, confirmed_target: "Tachibana"`, auto-refresh fired
+  correctly per its own log line, closed via its own real Close button).
+  `open_word_glossary_popup()` -- drag-selected a new word from the
+  byline text, right-clicked, used the real "Add to Glossary..." popup
+  (screenshotted the real context menu positioned correctly next to the
+  selection), filled Source/Target, clicked the real Save button (log
+  line `"Added glossary term via right-click...: 'TestAuthor3g' ->
+  'Test Author 3g'"` present, on-disk read confirmed). `open_glossary_dialog()`
+  -- exercised via the Rebuild Glossary sequence above.
+- **Whole-session log swept for `ERROR`/`CRITICAL`** across every log
+  file produced by this sweep: exactly two `ERROR` lines found, both the
+  same already-understood, already-fixed-for-logging scenario (the
+  auto-refresh mechanism's real fetch against the fixture's own
+  non-resolving `example.invalid` URL, correctly captured via
+  `logger.error(..., exc_info=True)` per this session's separate prior
+  fix) -- not a new or unexpected error class. No `CRITICAL` lines.
+- **Cleanup**: removed the two synthetic-test-only entries this sweep's
+  own verification added (`新語彙3g`, `TestAuthor3g`'s glossary term) from
+  the `777777777` fixture afterward, since those were verification
+  artifacts, not genuine backlog progress -- kept the genuine backlog
+  progress this sweep also produced (`橘` confirmed, `弁護士`'s corrected
+  two-entry state), consistent with 3c's own established precedent of
+  distinguishing real backlog work (kept) from verification-only noise
+  (removed). Final fixture state: 12 terms (8 suggested, 4 confirmed).
+  App terminated via `kill -TERM` (escalated to `kill -9` after a grace
+  period each time) throughout, never `windowclose`. Xvfb/fluxbox
+  confirmed torn down cleanly at the end.
+- Full `tests/webnovels/` suite: **276 passed** (up from 275 -- exactly
+  the 1 new regression test, zero regressions), same 6 pre-existing
+  `ui_automation` environment errors (no `DISPLAY=:99` set in that
+  particular offline run -- confirmed unrelated to this step, same
+  known cause named throughout this doc).
+
+**Part 4 -- known, accepted gaps, restated here in one place, not
+silently resolved:**
+
+- **The `WM_DELETE_WINDOW` crash under Xvfb remains open, root cause
+  unconfirmed.** Sending a WM_DELETE_WINDOW close request
+  (`xdotool windowclose`) to any Toplevel dialog in this app crashes the
+  entire process (`DESIGN.md`, 2026-07-28 entry). Worked around
+  throughout Phase 3 (and again in this step) by never using
+  `windowclose` -- always closing via a dialog's own real
+  Cancel/Close/Save button, or a process-level `kill -TERM`/`kill -9` on
+  the whole app when a button is genuinely unreachable. Not
+  investigated further in Phase 3 -- out of scope for a
+  glossary-coordinator refactor, tracked as its own open item in
+  `DESIGN.md`.
+- **The naming-variant/multi-spelling limitation is documented
+  separately, not repeated here.** `DESIGN.md`'s 2026-07-29 entry
+  (placed after §9) covers the glossary's lack of a `variations` field
+  for multiple source spellings resolving to one confirmed term --
+  unrelated to this refactor's coordinator work, not affected by
+  anything in Phase 3.
+- **Two pre-existing, timing-dependent test-suite segfault sources
+  remain, unrelated to this refactor.** Named across 3c/3d/3e's own
+  entries (`TestFetchAndTranslateDuplicateGuard`'s duplicate-fetch test,
+  `TestPopupSingleInstanceGuard`'s leaked-thread test) -- a genuine
+  Python 3.14/Tk/threading/GC interaction, confirmed present before any
+  of this refactor's changes and reproducing at the same rate
+  throughout. Not fixed in Phase 3; fixing Tk/threading fragility in
+  code this refactor doesn't own was explicitly out of scope for every
+  sub-step that encountered it.
+- **`xdo_helper.screenshot()` intermittently hangs against a second
+  `Error` Toplevel dialog specifically** (this step re-encountered the
+  same issue 3f's own entry first documented) -- worked around each time
+  via a direct `xwd`+`convert` capture bypassing the wrapper. Documented
+  as its own entry in `agents-ui-testing.md` (Screenshotting section);
+  not a code defect, a UI-testing-tooling quirk specific to this
+  environment.
+
+**Net result: Phase 3 is complete.** All three glossary dialogs route
+through `GlossaryCoordinator`; the coordinator owns re-check-before-write
+merge logic, rebuild tracking, and incremental extraction; the repeated
+bug class named in "Why this started" (independent load/write pairs
+against shared state) is closed for all four write paths that used to
+each reimplement it separately. This closing step's own required
+combination test found one real bug 3e/3f's individual verification
+missed (the `(type, source)` vs. `source`-alone merge key), fixed it in
+scope, and confirmed the fix live. No fragile hand-rolled harness
+pattern exists for glossary-related tests. No call site bypasses the
+coordinator without an explicit, re-confirmed justification. Four
+gaps remain open by design, not oversight, restated above for a future
+reader's complete picture.
+
+**Not done in this step, deliberately**: no Phase 4/5 scoping decision
+(whether the core app shell still needs revisiting) -- that is a
+separate future decision, not started here.
 
 ### 2026-07-30: Phase 3f -- non-incremental extraction fixed
 

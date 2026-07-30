@@ -396,17 +396,25 @@ def build_glossary_for_novel(novel_id: str, max_episodes: int = 20, status_cb: O
     already_extracted = set(glossary.get("extracted_episode_urls", []))
     newly_extracted_urls: List[str] = []
 
-    # Sources this rebuild's own extraction actually touched (merged a new
-    # or updated candidate into) -- REFACTOR_DESIGN.md Phase 3e's
-    # re-check-before-write fix, mirroring GlossaryCoordinator.save_snapshot()'s
-    # edited_sources exactly. Before this fix, this function held a single
-    # in-memory snapshot from `load()` at the very start of a (potentially
-    # long, one-LLM-call-per-episode) loop and blindly overwrote the file
-    # with it at the end, with no re-check at all -- confirmed live, not
+    # (type, source) keys this rebuild's own extraction actually touched
+    # (merged a new or updated candidate into) -- REFACTOR_DESIGN.md Phase
+    # 3e's re-check-before-write fix, mirroring
+    # GlossaryCoordinator.save_snapshot()'s edited_sources in spirit, but
+    # keyed by (type, source) rather than source alone -- confirmed live
+    # (Phase 3g's combined 3e+3f sweep) that a source-only key silently
+    # discarded a previously-confirmed term when this rebuild's own
+    # extraction proposed the *same source under a different type*
+    # (glossary.py's own merge_terms() docstring documents this exact
+    # scenario as a legitimate case: a "character" and a "term" entry
+    # sharing source text are different things, not a collision). Before
+    # this fix, this function held a single in-memory snapshot from
+    # `load()` at the very start of a (potentially long,
+    # one-LLM-call-per-episode) loop and blindly overwrote the file with
+    # it at the end, with no re-check at all -- confirmed live, not
     # assumed, that this silently clobbers a concurrent dialog write that
     # lands anywhere in that window (see this function's own live
     # verification, Phase 3e's status entry in REFACTOR_DESIGN.md).
-    edited_sources: set = set()
+    edited_keys: set = set()
 
     context_notes: List[str] = []
     extraction_failures = 0
@@ -430,7 +438,7 @@ def build_glossary_for_novel(novel_id: str, max_episodes: int = 20, status_cb: O
             before = len(glossary.get("terms", []))
             glossary["terms"] = merge_terms(glossary.get("terms", []), suggested_terms)
             added = len(glossary["terms"]) - before
-            edited_sources.update(t.get("source") for t in suggested_terms if t.get("source"))
+            edited_keys.update((t.get("type", TERM_TYPE_GENERAL), t.get("source")) for t in suggested_terms if t.get("source"))
             report(f"    Extracted {len(new_terms)} term(s), {added} new after merge: {', '.join(t.get('source', '?') for t in new_terms)}")
         else:
             extraction_failures += 1
@@ -455,29 +463,34 @@ def build_glossary_for_novel(novel_id: str, max_episodes: int = 20, status_cb: O
     # this rebuild's in-memory `glossary` over the current on-disk state
     # would silently revert that write -- the same cross-writer
     # stale-overwrite bug class DESIGN.md documents for the dialogs,
-    # applied here to the rebuild path. Merging by source instead of
-    # aborting: aborting would discard this entire (potentially
+    # applied here to the rebuild path. Merging by (type, source) instead
+    # of aborting: aborting would discard this entire (potentially
     # expensive, one-LLM-call-per-episode) rebuild's results. Only
-    # edited_sources (sources this rebuild's own extraction actually
-    # touched) are allowed to win on divergence -- everything else falls
-    # through to the freshly-reloaded on-disk copy, so a concurrent
-    # dialog write to an untouched source survives intact. Same pattern
-    # as GlossaryCoordinator.save_snapshot(), independently applied here
+    # edited_keys ((type, source) pairs this rebuild's own extraction
+    # actually touched) are allowed to win on divergence -- everything
+    # else falls through to the freshly-reloaded on-disk copy, so a
+    # concurrent dialog write to an untouched term survives intact. Keyed
+    # by (type, source), not source alone -- confirmed live (Phase 3g)
+    # that a source-only key collapses merge_terms()'s own (type, source)
+    # distinction, silently discarding a real, previously-confirmed term
+    # whenever this rebuild's extraction proposed the same source text
+    # under a different type. Same pattern as
+    # GlossaryCoordinator.save_snapshot(), independently applied here
     # rather than imported from glossary_coordinator.py to avoid a
     # circular import (glossary_coordinator.py already imports
     # build_glossary_for_novel() from this module).
     current_glossary = load_glossary(novel_id)
     if current_glossary.get("updated_at") != opened_updated_at:
         logger.info(
-            f"Glossary for novel {novel_id} changed on disk while this rebuild was running (updated_at {opened_updated_at!r} -> {current_glossary.get('updated_at')!r}) -- merging by source instead of overwriting"
+            f"Glossary for novel {novel_id} changed on disk while this rebuild was running (updated_at {opened_updated_at!r} -> {current_glossary.get('updated_at')!r}) -- merging by (type, source) instead of overwriting"
         )
-        current_by_source = {t.get("source"): t for t in current_glossary.get("terms", []) if t.get("source")}
-        local_by_source = {t.get("source"): t for t in glossary.get("terms", []) if t.get("source")}
-        merged_by_source = dict(current_by_source)
-        for source in edited_sources:
-            if source in local_by_source:
-                merged_by_source[source] = local_by_source[source]
-        glossary["terms"] = list(merged_by_source.values())
+        current_by_key = {(t.get("type", TERM_TYPE_GENERAL), t.get("source")): t for t in current_glossary.get("terms", []) if t.get("source")}
+        local_by_key = {(t.get("type", TERM_TYPE_GENERAL), t.get("source")): t for t in glossary.get("terms", []) if t.get("source")}
+        merged_by_key = dict(current_by_key)
+        for key in edited_keys:
+            if key in local_by_key:
+                merged_by_key[key] = local_by_key[key]
+        glossary["terms"] = list(merged_by_key.values())
         # honorific_policy/context_notes are this rebuild's own derived
         # values (from this run's actual extraction), not a per-source
         # merge target -- kept as this rebuild computed them, same as

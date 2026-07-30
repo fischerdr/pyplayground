@@ -378,6 +378,59 @@ Asking the human operator to click a menu item directly (see
 already watching live -- the Xvfb technique above is for when the
 verification needs to run unattended and produce a saved screenshot.
 
+### `xdo_helper.screenshot()` reliably timing out against a second `Error` Toplevel dialog
+
+Encountered live while verifying a fetch-failure error path against this
+app's own `show_error()` dialog (a plain `tk.Toplevel` with a `Text` widget
+and a Close button, per its own docstring). `xdo_helper.screenshot()` hung
+and timed out (120s) repeatedly against this specific window on more than
+one occasion, weeks apart, on an otherwise-working Xvfb+fluxbox display
+where the main app window and other dialogs (Glossary, etc.) had already
+been screenshotted successfully in the same session. The tool's own error
+message points at a plausible cause that did not apply here (no GNOME
+permission dialog exists under Xvfb) -- this is a different, unexplained
+failure mode specific to this one window/moment, not the same root cause
+as the shared-desktop GNOME-approval case the message is worded for.
+
+**What worked instead**: a direct, raw `xwd -id <window-id> -out
+<file>.xwd` call (bypassing `xdo_helper.screenshot()`'s wrapper/retry logic
+entirely), followed by `convert <file>.xwd <file>.png` -- this succeeded
+immediately every time the wrapped call hung. Not fully explained why the
+wrapper's own equivalent path fails where the raw call succeeds; flagged
+here as a working fallback, not a diagnosed fix.
+
+```bash
+DISPLAY=:99 timeout 15 xwd -id <window-id> -out /tmp/out.xwd
+convert /tmp/out.xwd /tmp/out.png   # ImageMagick v7: use "magick convert" instead
+```
+
+**A second, related issue on the same dialog**: even once captured this
+way, repeated `xdotool click`/`mousemove` attempts at the Close button's
+expected coordinates (calculated from the dialog's known `pack(pady=(0,8))`
+layout, and previously confirmed reliable against the exact same dialog in
+an earlier, separate investigation) did not register -- swept a wide grid
+of plausible x/y values near the bottom of the 700x400 window and none
+landed, even though the raw `xwd` capture showed only the `Text` widget's
+own horizontal scrollbar in that region, with the Close button itself
+never appearing in any captured region regardless of scroll position. Not
+resolved or root-caused further -- most likely a window-stacking/timing
+quirk specific to a *second* similarly-shaped `Toplevel` appearing in the
+same session (the first investigation's dialog was the only such dialog
+open all session; this later one appeared after a Glossary dialog was
+already open), but this is a guess, not a confirmed explanation.
+
+**Do not reach for `xdotool windowclose` as the resolution when a dialog's
+own Close button can't be clicked.** Re-confirmed this session: that sends
+WM_DELETE_WINDOW, which crashes the *entire app* for any Toplevel dialog,
+not just the main window (see "A crash the module deliberately works
+around" above) -- the risk applies exactly as much to a stuck `Error`
+dialog as to any other. When a dialog's own button is genuinely
+unreachable and the underlying verification evidence has already been
+fully gathered by other means (log file contents, on-disk state), the
+safe resolution is a process-level `kill -TERM` (escalating to `kill -9`
+after a grace period) on the whole app, exactly as in ordinary teardown --
+not fighting the stuck dialog further, and not `windowclose`.
+
 ---
 
 ## Clicking, typing, and mouse movement

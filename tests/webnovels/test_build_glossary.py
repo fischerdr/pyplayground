@@ -144,6 +144,82 @@ class TestRaceWithConcurrentDialogWrite:
         assert {t["source"] for t in final["terms"]} == {"魔導書"}
 
 
+class TestRaceMergeKeyedByTypeAndSourceNotSourceAlone:
+    """Phase 3g's combined live sweep found a real bug in Phase 3e's merge-on-divergence logic.
+
+    build_glossary_for_novel()'s re-check-before-write merge used to key
+    by source alone (current_by_source/local_by_source), collapsing the
+    (type, source) distinction glossary.py's own merge_terms() documents
+    as deliberate (a "character" and a "term" entry sharing source text
+    are different things, not a collision -- see merge_terms()'s
+    docstring). Live-reproduced: a rebuild's extraction proposed the same
+    source under a different type than an existing, previously-confirmed
+    term of that source -- the source-only merge key silently discarded
+    the confirmed entry entirely, replacing it with the new suggested
+    one, even though the confirmed entry was never in edited_keys for
+    this run and should have survived untouched (same as any other
+    concurrent-write-to-an-untouched-entry case this merge logic exists
+    to protect).
+    """
+
+    def test_confirmed_term_under_one_type_survives_extraction_of_same_source_under_a_different_type(self, mocker):
+        novel_id = "999999994"
+        existing_confirmed = make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="弁護士", target="lawyer")
+        store = _FakeGlossaryStore(_make_glossary(novel_id, terms=[existing_confirmed]))
+
+        mocker.patch.object(build_glossary, "load_glossary", store.load)
+        mocker.patch.object(build_glossary, "save_glossary", store.save)
+        mocker.patch.object(
+            build_glossary,
+            "_load_cached_episodes_for_novel",
+            return_value=[{"lines": ["line1"], "translated_lines": ["line1"], "episode_title": "ep1", "url": "u1"}],
+        )
+
+        extraction_started = threading.Event()
+        release_extraction = threading.Event()
+
+        def slow_extract_glossary_terms(source_lines, translated_lines):
+            extraction_started.set()
+            release_extraction.wait(timeout=5)
+            # Same source text as the existing confirmed term, but a
+            # different type -- exactly the live-reproduced scenario.
+            return {"terms": [{"source": "弁護士", "type": "character", "target": "lawyer"}]}
+
+        mocker.patch.object(build_glossary, "extract_glossary_terms", side_effect=slow_extract_glossary_terms)
+
+        import pyplayground.webnovels.glossary_coordinator as coordinator_module
+
+        mocker.patch.object(coordinator_module, "load_glossary", store.load)
+        mocker.patch.object(coordinator_module, "save_glossary", store.save)
+
+        rebuild_thread = threading.Thread(target=build_glossary.build_glossary_for_novel, args=(novel_id,))
+        rebuild_thread.start()
+
+        assert extraction_started.wait(timeout=5), "extraction never started -- test setup issue, not the race itself"
+
+        # A concurrent write to a genuinely unrelated term, forcing this
+        # rebuild's re-check-before-write merge branch to actually run
+        # (same technique TestRaceWithConcurrentDialogWrite uses).
+        coordinator = GlossaryCoordinator(novel_id)
+        coordinator.upsert_confirmed(make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="鉄パイプ", target="iron pipe"))
+
+        release_extraction.set()
+        rebuild_thread.join(timeout=5)
+        assert not rebuild_thread.is_alive(), "rebuild thread did not finish -- test setup issue"
+
+        final = store.load(novel_id)
+        by_key = {(t.get("type"), t["source"]): t for t in final["terms"]}
+
+        assert (TERM_TYPE_GENERAL, "弁護士") in by_key, "the pre-existing confirmed (term, 弁護士) entry must survive -- it was never in edited_keys for this run"
+        assert by_key[(TERM_TYPE_GENERAL, "弁護士")]["status"] == STATUS_CONFIRMED
+        assert by_key[(TERM_TYPE_GENERAL, "弁護士")]["confirmed_target"] == "lawyer"
+
+        assert (
+            "character",
+            "弁護士",
+        ) in by_key, "the rebuild's own new suggested (character, 弁護士) entry must also be present, per merge_terms()'s own (type, source) dedup contract"
+
+
 class TestIncrementalExtraction:
     """Phase 3f: build_glossary_for_novel() must not re-run extraction on episodes it has already processed.
 

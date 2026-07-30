@@ -30,6 +30,7 @@ Coverage tiers:
     episode dict).
 """
 
+import logging
 import threading
 import time
 import tkinter as tk
@@ -1105,3 +1106,63 @@ class TestFetchAndTranslateDuplicateGuard:
         ), f"the real LLM translation pass must only run once (2 translate_lines() calls per run: body + title), ran with count {translate_call_count['value']}"
         assert len(results) == 2
         assert results[0] is results[1], "both callers must receive the same episode dict, not two independently-produced (and possibly differently-translated) copies"
+
+
+class _LoadEpisodeHarness:
+    """Minimal stand-in exposing exactly what load_episode()'s worker() touches on self.
+
+    Not a full ReaderApp -- fetch_and_translate is overridden per-test to
+    raise, so no real browser/Playwright object is needed.
+    """
+
+    def __init__(self, root):
+        self.root = root
+        self._loading = False
+        self.status_label = ttk.Label(root)
+        self.prev_btn = ttk.Button(root)
+        self.next_btn = ttk.Button(root)
+        self.text = tk.Text(root)
+
+    load_episode = ReaderApp.load_episode
+    set_status = ReaderApp.set_status
+    show_error = ReaderApp.show_error
+
+
+class TestLoadEpisodeFetchFailureLogging:
+    """Regression coverage for the missing logger.error() call (DESIGN.md).
+
+    Found while investigating what happens when _do_fetch_and_translate()'s
+    Playwright fetch fails. load_episode()'s worker() previously only
+    print()ed the traceback to stderr on a fetch failure, leaving zero
+    trace in the app's structured log file -- meaning log_correlator.
+    assert_clean() would report "clean" for a run that actually failed.
+    The user-facing show_error() dialog already worked correctly and is
+    untouched; this covers the added logger.error(..., exc_info=True) call
+    specifically.
+    """
+
+    def test_fetch_failure_is_logged_via_logger_error(self, caplog):
+        root = tk.Tk()
+        try:
+            harness = _LoadEpisodeHarness(root)
+
+            def failing_fetch_and_translate(url, progress_cb=None):
+                raise RuntimeError("Browser fetch failed:\nsimulated DNS failure")
+
+            harness.fetch_and_translate = failing_fetch_and_translate
+
+            with caplog.at_level(logging.ERROR, logger="pyplayground.webnovels.alphapolis_reader"):
+                harness.load_episode("https://www.example.invalid/novel/1/1/episode/1")
+                deadline = time.time() + 5
+                while harness._loading and time.time() < deadline:
+                    root.update()
+                    time.sleep(0.05)
+                root.update()
+
+            assert not harness._loading, "worker() must clear _loading even after a fetch failure"
+            error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+            assert error_records, "a fetch failure must produce at least one logger.error() record, not just a print() to stderr"
+            assert any("https://www.example.invalid/novel/1/1/episode/1" in r.message for r in error_records)
+            assert any(r.exc_info for r in error_records), "the logged error must include exc_info so the traceback is captured in the structured log"
+        finally:
+            root.destroy()

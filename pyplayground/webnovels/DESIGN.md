@@ -4,7 +4,7 @@ Living record of decisions for the glossary/term-consistency rework and the
 Tkinter → web migration. Update this alongside code changes, not after —
 chat history is not the system of record.
 
-Last updated: 2026-07-29 (synthetic test-fixture novels using real alphapolis.co.jp domain with fabricated IDs: confirmed real, fixed)
+Last updated: 2026-07-29 (fetch-failure path never logged via logger.error() -- confirmed real, fixed)
 
 ---
 
@@ -3272,3 +3272,107 @@ Going forward, any new synthetic test-fixture novel created in this
 repo should use `example.invalid` (or another RFC 2606 reserved
 non-resolving domain) from the start, not a fabricated ID under the
 real Alphapolis domain.
+
+### 2026-07-29: fetch-failure exceptions were never logged via `logger.error()` -- confirmed real, fixed
+
+**How found**: while investigating what a user actually sees when
+`_do_fetch_and_translate()`'s Playwright fetch fails (timeout, DNS
+failure, HTTP error), traced the full exception-handling chain --
+`BrowserWorker.run()`'s inner try/except puts `("error", traceback)` on
+a queue, `BrowserWorker.fetch()` re-raises it as a `RuntimeError`, and
+`load_episode()`'s inner `worker()` (`alphapolis_reader.py`, ~line
+1739) is where it's actually caught. That handler did show a real,
+visible Tk error dialog (`show_error()`) with the full traceback and
+set the status bar to "Error" -- not a silent hang, and not a generic
+unhelpful message. But it only called `print(full_trace,
+file=sys.stderr)`, never `logger.error(..., exc_info=True)`, in direct
+violation of this project's own mandated logging pattern (every
+exception must be logged, not just printed).
+
+**Why this matters beyond one call site**: this session's entire
+testing methodology -- `log_correlator.assert_clean()`,
+`wait_for_log_line()`, every Phase 3 dual-verification checkpoint --
+assumes a clean structured log means nothing went wrong. This finding
+proved that assumption false for an entire category of real failures:
+a fetch error produced zero trace in `logs/app_log_*.log`, only in an
+ephemeral stderr stream nothing captures or checks. `assert_clean()`
+would report "clean" on a run that had actually failed -- a blind spot
+in the safety net itself, not a peripheral bug.
+
+**Scope check performed before fixing**: grepped the whole
+`pyplayground/webnovels/` tree for the same
+`print(traceback.format_exc(), file=sys.stderr)` /
+`print(full_trace, file=sys.stderr)` pattern in background-thread/
+worker exception handlers, not just the one call site the investigation
+happened to look at. Found five real gaps in `alphapolis_reader.py`,
+all missing `logger.error(..., exc_info=True)` entirely:
+
+- `_make_photo_image()` (~line 861) -- failed episode image load.
+- `_do_fetch_and_translate()`'s image-prefetch loop (~line 1689) --
+  failed image prefetch mid-translation.
+- `load_episode()`'s `worker()` (~line 1741) -- the original finding,
+  the fetch-failure path a user actually hits.
+- `prefetch()`'s `worker()` (~line 2526) -- silent-by-design background
+  prefetch, but a failure here previously left literally zero trace
+  anywhere in the app's own structured log.
+- `main()`'s `BrowserWorker()` startup failure (~line 3107) -- app
+  fails to start Playwright/the browser at all.
+
+One additional site (`glossary_coordinator.py`'s `start_rebuild()`
+worker) already had a correct `logger.error(..., exc_info=True)` call
+alongside its `print()` -- left untouched, already correct. A sixth
+`print(..., file=sys.stderr)` in `build_glossary.py`'s CLI argument
+parser was confirmed out of scope -- that's user-input validation in a
+CLI entry point (`sys.exit(2)` on bad input), exactly the case
+`CLAUDE.md` exempts ("print() ... except CLI tools"), not a swallowed
+background-thread exception.
+
+**Fix**: added `logger.error(f"...", exc_info=True)` immediately
+alongside the existing `print(..., file=sys.stderr)` at each of the
+five gaps -- additive, not a replacement; the existing user-facing
+`show_error()` dialog behavior and the stderr output (still useful when
+running from a terminal) are both left exactly as they were.
+
+**Regression test**: added
+`TestLoadEpisodeFetchFailureLogging.test_fetch_failure_is_logged_via_logger_error`
+(`tests/webnovels/test_alphapolis_reader.py`) -- a minimal
+`_LoadEpisodeHarness` drives the real, unmodified `load_episode()`
+against a `fetch_and_translate` stand-in that raises, and asserts via
+`caplog` that a `logger.error()` record was actually produced, with
+`exc_info` set. Confirmed load-bearing: reverted
+`alphapolis_reader.py`'s fix via `git stash`, re-ran the test, watched
+it fail cleanly (`assert []` -- no error records at all), then restored
+the fix.
+
+**Live-verified the fix, not just the unit test**: reproduced the same
+real Playwright DNS failure from the original investigation (an
+invalidated cache entry for novel `777777777`'s episode 1 under
+`https://www.example.invalid/...`) under
+`pyplayground/webnovels/ui_testing/run_ui_tests.sh xvfb-keep`. Before
+the fix, the structured log's last line was always
+`[_do_fetch_and_translate] - Fetching and translating episode: ...`,
+with the actual failure appearing nowhere in it. After the fix, the
+same run's log now contains a real
+`ERROR - [worker] - Failed to load episode https://www.example.invalid/... : Browser fetch failed:`
+line immediately following, with the full nested traceback attached via
+`exc_info=True` -- confirmed directly by reading the log file, not
+assumed. App terminated cleanly via `kill -TERM`, cache file restored
+from backup, Xvfb/fluxbox torn down afterward.
+
+**Verification**: `black`/`isort`/`flake8` clean on both touched files;
+full `tests/webnovels/` suite passes (273 passed; the only failures
+were 6 pre-existing `ui_automation` environment errors from a stale
+duplicate window ID left on a different Xvfb display by unrelated
+manual testing, confirmed unrelated by checking no `Alphapolis Reader`
+window existed on the display this session actually used).
+
+**Not done in this pass, queued separately**: the error dialog itself
+(`show_error()`) still shows a raw, unfiltered, ~40-line double-nested
+Python/Playwright traceback with the actual root cause
+(`net::ERR_NAME_NOT_RESOLVED`, etc.) buried at the very end, requiring
+scrolling to find. This is a real but lower-stakes UX issue -- it
+doesn't undermine the log-based safety net the way the missing
+`logger.error()` call did, since the dialog was never silent to begin
+with. No urgency; worth trimming to a user-friendly summary (with the
+full trace kept available, collapsed/secondary) whenever there's a
+natural moment for UI polish, not fixed here.

@@ -857,7 +857,8 @@ class ReaderRenderer:
                 ratio = max_width / img.width
                 img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
             photo = ImageTk.PhotoImage(img)
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to load episode image {src}: {e}", exc_info=True)
             print(traceback.format_exc(), file=sys.stderr)
             return None
         self._photo_images[src] = photo
@@ -1685,7 +1686,8 @@ class ReaderApp:
             if item["type"] == "image":
                 try:
                     fetch_image_bytes(item["src"])
-                except Exception:
+                except Exception as e:
+                    logger.error(f"Failed to prefetch episode image {item['src']}: {e}", exc_info=True)
                     print(traceback.format_exc(), file=sys.stderr)
         self.cache[url] = ep
         save_cached_episode(url, ep)
@@ -1736,8 +1738,9 @@ class ReaderApp:
             try:
                 ep = self.fetch_and_translate(url, progress_cb=progress_cb)
                 self.root.after(0, lambda: self.display_episode(url, ep))
-            except Exception:
+            except Exception as e:
                 full_trace = traceback.format_exc()
+                logger.error(f"Failed to load episode {url}: {e}", exc_info=True)
                 print(full_trace, file=sys.stderr)  # always visible in the console too
                 self.root.after(0, lambda: self.show_error(full_trace))
                 self.root.after(0, lambda: self.set_status("Error"))
@@ -2522,7 +2525,8 @@ class ReaderApp:
         def worker():
             try:
                 self.fetch_and_translate(url)
-            except Exception:
+            except Exception as e:
+                logger.error(f"Failed to prefetch episode {url}: {e}", exc_info=True)
                 print(traceback.format_exc(), file=sys.stderr)
             finally:
                 self._prefetching.discard(url)
@@ -3102,8 +3106,9 @@ def main():
 
     try:
         browser = BrowserWorker()
-    except Exception:
+    except Exception as e:
         full_trace = traceback.format_exc()
+        logger.error(f"Failed to start browser worker: {e}", exc_info=True)
         print(full_trace, file=sys.stderr)
         # Show it in a window too, in case this was launched without a
         # visible console (e.g. double-clicked rather than run from a shell).

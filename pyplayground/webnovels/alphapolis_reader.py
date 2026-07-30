@@ -1954,11 +1954,12 @@ class ReaderApp:
         def refresh_tree(select_index=None):
             tree.delete(*tree.get_children())
             for i, t in enumerate(terms):
+                target_display = t.get("confirmed_target") or best_candidate_for_term(t) or ""
                 tree.insert(
                     "",
                     "end",
                     iid=str(i),
-                    values=(t.get("source", ""), t.get("confirmed_target") or "", t.get("type", TERM_TYPE_GENERAL), t.get("status", STATUS_SUGGESTED)),
+                    values=(t.get("source", ""), target_display, t.get("type", TERM_TYPE_GENERAL), t.get("status", STATUS_SUGGESTED)),
                 )
             if select_index is not None and 0 <= select_index < len(terms):
                 tree.selection_set(str(select_index))
@@ -1976,10 +1977,28 @@ class ReaderApp:
         # the row the form was actually showing. See on_select_with_commit.
         displayed_index: Dict[str, Optional[int]] = {"value": None}
 
+        # Snapshot of each field's value as build_form() initialized it for
+        # the currently displayed row (post-fallback for target, since a
+        # suggested term's field is pre-filled from best_candidate_for_term()
+        # rather than left blank) -- save_form_to_term() diffs the live form
+        # against this to tell "user actually typed something" apart from
+        # "user merely selected this row and moved on." Without this check,
+        # every row a user ever clicks through gets unconditionally
+        # confirmed on Save (STATUS_CONFIRMED, candidates overwritten with
+        # origin="user") purely from being displayed once -- confirmed live
+        # against novel 375266002's real glossary before this fix landed:
+        # selecting three suggested rows in sequence with zero typing, then
+        # Save, flipped all three to confirmed and (pre-fallback) blanked
+        # their confirmed_target and clobbered their LLM-origin candidate
+        # with an empty user-origin one, permanently destroying the
+        # suggestion. Keyed by field name, mirroring form_vars.
+        initial_values: Dict[str, str] = {}
+
         def clear_form():
             for widget in form.winfo_children():
                 widget.destroy()
             form_vars.clear()
+            initial_values.clear()
             displayed_index["value"] = None
 
         def build_form(term, index):
@@ -1987,6 +2006,17 @@ class ReaderApp:
             displayed_index["value"] = index
             pad = {"padx": 4, "pady": (6, 0)}
             term_type = term.get("type", TERM_TYPE_GENERAL)
+            # Same fallback as refresh_tree()'s target_display -- a
+            # suggested term's field is pre-filled from its best candidate,
+            # not left blank, so that pre-filled value (not "") is what
+            # counts as "unchanged" for this row.
+            initial_values["type"] = term_type
+            initial_values["source"] = term.get("source", "")
+            initial_values["target"] = term.get("confirmed_target") or best_candidate_for_term(term) or ""
+            initial_values["note"] = term.get("note") or ""
+            initial_values["gender"] = term.get("gender") or ""
+            initial_values["pronoun_style"] = term.get("pronoun_style") or ""
+            initial_values["honorific_override"] = term.get("honorific_override") or ""
 
             ttk.Label(form, text="Type").grid(row=0, column=0, sticky="w", **pad)
             form_vars["type"] = tk.StringVar(value=term_type)
@@ -1997,7 +2027,7 @@ class ReaderApp:
             ttk.Entry(form, textvariable=form_vars["source"], width=22).grid(row=1, column=1, **pad)
 
             ttk.Label(form, text="Target").grid(row=2, column=0, sticky="w", **pad)
-            form_vars["target"] = tk.StringVar(value=term.get("confirmed_target") or "")
+            form_vars["target"] = tk.StringVar(value=initial_values["target"])
             ttk.Entry(form, textvariable=form_vars["target"], width=22).grid(row=2, column=1, **pad)
 
             ttk.Label(form, text="Note").grid(row=3, column=0, sticky="w", **pad)
@@ -2032,6 +2062,34 @@ class ReaderApp:
             form.grid_slaves(row=0, column=1)[0].bind("<<ComboboxSelected>>", apply_type_change)
 
             def save_form_to_term(idx):
+                # Only treat this row as edited if some field's live value
+                # actually differs from what build_form() initialized it to
+                # -- merely selecting a row and moving to the next one (the
+                # <<TreeviewSelect>> path, via commit_selected_form()) must
+                # not silently confirm a suggested term the user never
+                # touched. Confirmed live as a real bug, not hypothetical:
+                # before this check existed, clicking through unconfirmed
+                # rows with zero typing and then Save flipped every visited
+                # row to STATUS_CONFIRMED and overwrote its LLM-origin
+                # candidate with an empty user-origin one, permanently
+                # losing the suggestion. Compared against initial_values
+                # (not the term dict directly) since the Target field is
+                # pre-filled from best_candidate_for_term() for a suggested
+                # term, not blank -- the unedited state is that pre-filled
+                # text, not "".
+                current = {
+                    "type": form_vars["type"].get(),
+                    "source": form_vars["source"].get().strip(),
+                    "target": form_vars["target"].get().strip(),
+                    "note": form_vars["note"].get().strip(),
+                }
+                if current["type"] == TERM_TYPE_CHARACTER:
+                    current["gender"] = form_vars["gender"].get()
+                    current["pronoun_style"] = form_vars["pronoun_style"].get().strip()
+                    current["honorific_override"] = form_vars["honorific_override"].get()
+                if all(current[k] == initial_values.get(k, "") for k in current):
+                    return
+
                 t = terms[idx]
                 # Track both the source this term had when the dialog
                 # loaded it and whatever it's being renamed to (if
@@ -2040,21 +2098,21 @@ class ReaderApp:
                 # under the *new* key, and must not treat the *old* key as
                 # still protected (it no longer describes this term).
                 edited_sources.add(t.get("source", ""))
-                t["type"] = form_vars["type"].get()
-                t["source"] = form_vars["source"].get().strip()
+                t["type"] = current["type"]
+                t["source"] = current["source"]
                 edited_sources.add(t["source"])
                 # Editing a term in this dialog is a deliberate human action,
                 # same trust level as "Highlight -> Add Term" -- confirm it
                 # immediately rather than leaving it in the suggested queue.
-                target = form_vars["target"].get().strip()
+                target = current["target"]
                 t["confirmed_target"] = target
                 t["status"] = STATUS_CONFIRMED
                 t["candidates"] = [{"target": target, "count": 1, "origin": "user"}]
-                t["note"] = form_vars["note"].get().strip() or None
+                t["note"] = current["note"] or None
                 if t["type"] == TERM_TYPE_CHARACTER:
-                    t["gender"] = form_vars["gender"].get() or None
-                    t["pronoun_style"] = form_vars["pronoun_style"].get().strip() or None
-                    t["honorific_override"] = form_vars["honorific_override"].get() or None
+                    t["gender"] = current.get("gender") or None
+                    t["pronoun_style"] = current.get("pronoun_style") or None
+                    t["honorific_override"] = current.get("honorific_override") or None
                 else:
                     t.pop("gender", None)
                     t.pop("pronoun_style", None)

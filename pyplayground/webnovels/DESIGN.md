@@ -4,7 +4,7 @@ Living record of decisions for the glossary/term-consistency rework and the
 Tkinter → web migration. Update this alongside code changes, not after —
 chat history is not the system of record.
 
-Last updated: 2026-07-29 (documented known limitation: no multi-spelling/variation support in the term data model)
+Last updated: 2026-07-30 (fixed `open_glossary_dialog()` blank-Target display bug and a related no-dirty-check data-loss bug found while implementing it)
 
 ---
 
@@ -2974,6 +2974,157 @@ item 1 turned out to have nothing to display for, and item 2 was a
 "don't build this" decision. No changes to `glossary.py`'s schema or
 any term-shape handling -- confirmed via `git diff` scope check that
 this task touched only `DESIGN.md`.
+
+### 2026-07-30: `open_glossary_dialog()` blank-Target display bug -- fixed; independently found a second, pre-existing no-dirty-check bug in the same commit path and fixed that too
+
+A user opened `open_glossary_dialog()` for novel 375266002 and reported
+every `STATUS_SUGGESTED` row's Target column empty (screenshot-confirmed:
+`ルリ`, `橘`, `オトム`, `サメ`, `ルタ`, and every extracted term/character
+row showed a blank Target while Status read "suggested"). This revisits
+the 2026-07-28 entry above's item 2 decision ("candidate display in
+`open_glossary_dialog()` -- decided against") -- see the explicit
+reconciliation below; it is not a silent reversal.
+
+**Root cause (display bug): confirmed by direct code read, not
+assumed.** `refresh_tree()`'s Treeview row population and `build_form()`'s
+Target field both read `t.get("confirmed_target")` only
+(`alphapolis_reader.py`, then lines 1961 and 2000). By the §9 term data
+model, `confirmed_target` is `null` for every `STATUS_SUGGESTED` term --
+`make_suggested_term()` never sets it; only a human confirming a term
+does. The real LLM guess lives in `candidates[0]["target"]`
+(e.g. `ルリ` -> `{"target": "Ruri", "count": 1, "origin": "llm"}`,
+verified against the real on-disk `375266002.json`). This is exactly the
+data `best_candidate_for_term()` (`glossary.py`) already exists to
+surface, and exactly what `open_term_review_dialog()` already does with
+it (its own Treeview and form both call `best_candidate_for_term()`) --
+`open_glossary_dialog()` was simply never wired to it.
+
+**Reconciling with the 2026-07-28 "decided against" entry.** That
+decision was about *building candidate-ranking UI* (multiple candidates,
+counts, a picker) in `open_glossary_dialog()` -- explicitly to avoid
+duplicating `open_term_review_dialog()`'s dedicated job. This fix does not
+add that: it adds a single-value *display fallback* so a field that would
+otherwise render nothing shows the best candidate instead, using the same
+`best_candidate_for_term()` call already imported into this file for the
+review dialog. No ranking UI, no picker, no candidate list exposed. An
+empty Target field for a term that has a real suggested translation
+available is a worse default than showing that suggestion, regardless of
+which dialog it's in -- the original decision's reasoning (avoid
+duplicating review-dialog functionality) doesn't extend to "leave a
+useful, already-computed value invisible."
+
+**Root cause (correctness bug, found independently while implementing the
+above, not requested): `save_form_to_term()` had no dirty/edited check at
+all.** It ran unconditionally every time `commit_selected_form()` fired --
+which happens on every `<<TreeviewSelect>>`, i.e. every time the user
+selects a *different* row, regardless of whether anything in the
+previously-displayed row's form was actually changed. Confirmed live
+against the real, current `375266002.json` *before* writing any fix
+(file backed up first via `cp`, restored via `cp` back immediately after
+each check, `md5sum` used to confirm byte-identical restoration -- same
+discipline as the 2026-07-27 stale-form entry's live-glossary check):
+opened the dialog, selected `ケイト` (confirmed) then `ルリ` (suggested)
+then `橘` (suggested) in sequence with zero typed input, clicked Save,
+read the on-disk JSON directly. Both suggested rows flipped to
+`STATUS_CONFIRMED` with `confirmed_target=""`, and -- this is the
+destructive part -- `candidates` was overwritten from the real LLM
+extraction:
+
+```json
+// before (on disk, from build_glossary_for_novel() extraction)
+{"target": "Ruri", "count": 1, "origin": "llm"}
+
+// after (Save, zero typed edits, row merely selected then deselected)
+{"target": "", "count": 1, "origin": "user"}
+```
+
+i.e. simply looking at a suggested term's row in this dialog and then
+clicking a different row destroyed that term's LLM-extracted candidate
+permanently and replaced it with an empty, falsely user-attributed one.
+This bug predates this task -- `save_form_to_term()`'s unconditional
+write is unrelated to and untouched by the display fix above -- but
+shipping the display fix *alone*, without this one, would have made it
+materially worse in practice, not just left it as-is: before the display
+fix, a click-through-and-Save at least produced a visibly wrong, obviously
+suspicious empty Target that a human reviewer might notice next time they
+opened the dialog. After the display fix alone, the same accidental
+click-through would have silently written the *correct-looking* value
+(the same suggestion that was already on screen) into `confirmed_target`
+and flipped the status to confirmed -- outwardly indistinguishable from a
+real, deliberate human confirmation. Same underlying bug, but invisible
+instead of merely wrong. Both had to land together.
+
+**This is a distinct failure class from the 2026-07-27 stale-form-on-
+row-switch bug above, not the same bug rediscovered.** That bug was about
+*which row's data* got displayed and committed after a selection-race
+(`commit_selected_form()` reading a freshly re-read `tree.selection()`
+instead of `displayed_index`, so a genuine edit could land on the wrong
+row). This bug is about *whether a commit should happen at all* --
+`save_form_to_term()` had (and, for the row-identity question, still has)
+no problem figuring out *which* row it's committing to; the defect is
+that it commits unconditionally regardless of whether the user changed
+anything in that row's form. Both bugs live in the same row-navigation
+commit path (`on_select_with_commit` -> `commit_selected_form` ->
+`save_form_to_term`), which is presumably why the first bug's fix
+(`displayed_index`) didn't also catch this one -- fixing *which* row gets
+committed says nothing about *whether* a commit was warranted.
+
+**Fix.** `build_form()` now also populates a new closure-local
+`initial_values` dict with each field's value exactly as displayed
+(the same fallback-to-best-candidate value for Target, not blank).
+`save_form_to_term()` now builds a `current` dict from the live
+`form_vars` and compares it against `initial_values` field-by-field
+before doing anything else; if every field matches, it returns
+immediately -- no `edited_sources` mutation, no `STATUS_CONFIRMED`
+write, no `candidates` overwrite, no `dirty["value"] = True`. Only a
+genuine mismatch (real typed edit, or a Type change via
+`apply_type_change`, which already called `save_form_to_term()`
+directly) proceeds to write. `refresh_tree()` gets the same
+`best_candidate_for_term()` fallback as `build_form()`'s Target field, so
+the Treeview column and the side-panel form agree with each other.
+
+**Test coverage**: 4 new tests in `tests/webnovels/test_alphapolis_reader.py`'s
+new `TestGlossaryDialogSuggestedTermDisplayAndNoOpSave` class, reusing the
+existing `_GlossaryDialogHarness`/`_find_button_by_text` pattern from the
+2026-07-27 stale-form entry's test class rather than inventing a new one:
+
+- `test_suggested_row_shows_best_candidate_in_tree` -- proves the Treeview
+  column fix: a suggested term's row shows its LLM candidate (`"Ruri"`),
+  not blank.
+- `test_suggested_row_prefills_target_form_field` -- proves the form-field
+  fix: selecting that row pre-fills the Target entry with the same value,
+  not blank.
+- `test_clicking_through_suggested_rows_without_editing_does_not_confirm_them`
+  -- the core regression for the no-dirty-check bug: selects three rows
+  (suggested, suggested, confirmed) in sequence with no typed input, saves,
+  and asserts both suggested rows are still `STATUS_SUGGESTED` with
+  `confirmed_target is None` and their original `candidates` entry
+  (`origin: "llm"`) byte-for-byte intact -- this is the exact scenario
+  that destroyed data live, reproduced as a permanent regression test
+  rather than only a one-off manual check.
+- `test_editing_a_suggested_rows_target_still_confirms_it` -- the
+  necessary positive-case counterpart: a real typed edit to a suggested
+  term's Target field still promotes it to `STATUS_CONFIRMED` with the
+  new value and a correctly-rebuilt `origin: "user"` candidate, proving
+  the no-op check didn't overcorrect into never confirming anything.
+
+All 4 pass; full `tests/webnovels/` suite re-run after (280 passed, up
+from 276 before this task's test additions; the pre-existing
+`test_menu_smoke.py` `ui_automation` failures are unrelated Xvfb/xdotool
+window-matching flakiness, not caused by this change -- confirmed by
+running that file in isolation and seeing the same errors independent of
+this diff). `black`/`isort`/`flake8` clean on both changed files.
+
+**Live verification discipline, per this doc's established pattern**:
+`~/.config/alphapolis_reader/glossaries/375266002.json` -- the real,
+current, production glossary, not a fixture -- was backed up (`cp`) before
+the very first live reproduction attempt (i.e. before any fix existed),
+and restored (`cp` back) immediately after each live check, both the
+pre-fix reproduction (confirming the bug was real) and the post-fix
+verification (confirming `ルリ`/`橘` survive a click-through-and-Save
+unchanged, and that a genuine edit to `ルリ` still confirms correctly).
+Final state confirmed byte-identical to the pre-task backup via `md5sum`
+after all live checks concluded.
 
 ### 2026-07-28: background glossary extraction -- investigated (Steps 1-2), proposal only (Step 3), nothing implemented
 

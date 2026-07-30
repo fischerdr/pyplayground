@@ -37,7 +37,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from pyplayground.webnovels.alphapolis_reader import ReaderApp, build_review_term_map
-from pyplayground.webnovels.glossary import STATUS_CONFIRMED, TERM_TYPE_CHARACTER, TERM_TYPE_GENERAL, make_confirmed_term
+from pyplayground.webnovels.glossary import STATUS_CONFIRMED, STATUS_SUGGESTED, TERM_TYPE_CHARACTER, TERM_TYPE_GENERAL, make_confirmed_term, make_suggested_term
 from pyplayground.webnovels.llm_translate import BACKEND_LLM, TranslatedLine
 
 
@@ -669,6 +669,174 @@ class TestGlossaryDialogSelection:
             assert "オレ" not in remaining_sources, "Delete should have removed the selected row (オレ)"
             assert "ハードキャッチ" in remaining_sources
             assert "鉄パイプ" in remaining_sources
+        finally:
+            root.destroy()
+
+
+class TestGlossaryDialogSuggestedTermDisplayAndNoOpSave:
+    """Regression coverage for the blank-Target-for-suggested-terms display bug and its fix's own edited-detection risk.
+
+    Two things landed together, and both need direct coverage:
+
+    1. The Target column/form field only ever read confirmed_target
+       (always None for a STATUS_SUGGESTED term), so a suggested row's
+       real LLM-guessed translation -- sitting in candidates -- never
+       displayed. Fixed by falling back to best_candidate_for_term(),
+       matching what open_term_review_dialog() already did.
+
+    2. That fix alone would have made things worse: save_form_to_term()
+       had no dirty-comparison at all -- it ran unconditionally on every
+       <<TreeviewSelect>>-triggered commit_selected_form() call, for
+       *any* previously-displayed row, confirmed or not. Confirmed live
+       against the real on-disk novel 375266002 glossary before this fix:
+       merely clicking through three suggested rows with zero typing,
+       then Save, flipped all three to STATUS_CONFIRMED and overwrote
+       their real LLM candidate with an empty user-origin one --
+       permanently destroying the suggestion. Adding the display fallback
+       without also fixing this would have made every suggested row's
+       *displayed* guess (rather than an empty string) the thing that got
+       silently confirmed on mere navigation, which is a smaller but
+       still real instance of the same bug. Fixed by diffing the form's
+       live values against initial_values (a snapshot taken at
+       build_form() time, post-fallback) and no-op'ing save_form_to_term()
+       entirely when nothing actually changed.
+    """
+
+    def _make_glossary(self):
+        return {
+            "title": "Test Novel",
+            "honorific_policy": "keep",
+            "terms": [
+                make_suggested_term(term_type=TERM_TYPE_CHARACTER, source="ルリ", target="Ruri"),
+                make_suggested_term(term_type=TERM_TYPE_GENERAL, source="鉄パイプ", target="iron pipe"),
+                make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="ハードキャッチ", target="Hard Catch"),
+            ],
+        }
+
+    def _open_dialog(self, mocker, glossary):
+        mocker.patch("pyplayground.webnovels.alphapolis_reader.load_glossary", return_value=glossary)
+        mocker.patch("pyplayground.webnovels.glossary_coordinator.load_glossary", return_value=glossary)
+        save_calls = []
+        mocker.patch(
+            "pyplayground.webnovels.glossary_coordinator.save_glossary",
+            side_effect=lambda novel_id, g: save_calls.append((novel_id, dict(g, terms=[dict(t) for t in g["terms"]]))),
+        )
+        mocker.patch("pyplayground.webnovels.alphapolis_reader._extract_novel_id", return_value="375266002")
+
+        root = tk.Tk()
+        harness = _GlossaryDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/375266002/x/episode/1")
+        harness.open_glossary_dialog()
+        root.update()
+
+        win = root.winfo_children()[0]
+        tree = None
+        form_container = None
+        for body in win.winfo_children():
+            for child in body.winfo_children():
+                if isinstance(child, ttk.Treeview):
+                    tree = child
+                elif isinstance(child, ttk.Frame):
+                    form_container = child
+        assert tree is not None, "Treeview not found in dialog"
+        assert form_container is not None, "form Frame not found in dialog"
+        return root, win, tree, form_container, save_calls
+
+    def test_suggested_row_shows_best_candidate_in_tree(self, mocker):
+        """A suggested term's Target column shows its LLM guess, not blank."""
+        root, win, tree, form_container, _ = self._open_dialog(mocker, self._make_glossary())
+        try:
+            values = tree.item("0", "values")
+            assert values[0] == "ルリ"
+            assert values[1] == "Ruri", f"Target column should show the LLM's suggested candidate, got {values[1]!r}"
+        finally:
+            root.destroy()
+
+    def test_suggested_row_prefills_target_form_field(self, mocker):
+        """Selecting a suggested term pre-fills its Target field with the LLM guess, not blank."""
+        root, win, tree, form_container, _ = self._open_dialog(mocker, self._make_glossary())
+        try:
+            tree.selection_set("0")
+            root.update()
+            values = self._form_values(form_container)
+            assert values["target"] == "Ruri"
+        finally:
+            root.destroy()
+
+    def _form_values(self, form_container):
+        values = {}
+        for widget in form_container.winfo_children():
+            info = widget.grid_info()
+            row = info.get("row")
+            if isinstance(widget, ttk.Entry) and row in (1, 2, 3):
+                label = {1: "source", 2: "target", 3: "note"}[row]
+                values[label] = widget.get()
+        return values
+
+    def test_clicking_through_suggested_rows_without_editing_does_not_confirm_them(self, mocker):
+        """The core regression: select 3 rows in sequence, type nothing, Save -- suggested rows must stay suggested.
+
+        This is the exact scenario confirmed live against the real
+        375266002.json before the fix: selecting rows 0 (suggested), 1
+        (suggested), 2 (confirmed) in sequence with no typed edits, then
+        Save, previously flipped both suggested rows to STATUS_CONFIRMED
+        with an empty confirmed_target and a clobbered candidates list.
+        """
+        root, win, tree, form_container, save_calls = self._open_dialog(mocker, self._make_glossary())
+        try:
+            tree.selection_set("0")
+            root.update()
+            tree.selection_set("1")
+            root.update()
+            tree.selection_set("2")
+            root.update()
+
+            save_btn = _find_button_by_text(win, "Save")
+            assert save_btn is not None
+            save_btn.invoke()
+
+            assert len(save_calls) == 1
+            _novel_id, saved_glossary = save_calls[0]
+            saved_terms = {t["source"]: t for t in saved_glossary["terms"]}
+
+            ruri = saved_terms["ルリ"]
+            assert ruri["status"] == STATUS_SUGGESTED, "merely navigating through this row must not confirm it"
+            assert ruri["confirmed_target"] is None
+            assert ruri["candidates"] == [{"target": "Ruri", "count": 1, "origin": "llm"}], "the original LLM candidate must survive untouched"
+
+            pipe = saved_terms["鉄パイプ"]
+            assert pipe["status"] == STATUS_SUGGESTED
+            assert pipe["confirmed_target"] is None
+            assert pipe["candidates"] == [{"target": "iron pipe", "count": 1, "origin": "llm"}]
+        finally:
+            root.destroy()
+
+    def test_editing_a_suggested_rows_target_still_confirms_it(self, mocker):
+        """The positive case: a genuine typed edit must still promote and save correctly."""
+        root, win, tree, form_container, save_calls = self._open_dialog(mocker, self._make_glossary())
+        try:
+            tree.selection_set("0")
+            root.update()
+
+            for widget in form_container.winfo_children():
+                info = widget.grid_info()
+                if isinstance(widget, ttk.Entry) and info.get("row") == 2:
+                    widget.delete(0, "end")
+                    widget.insert(0, "Ruri-chan")
+
+            tree.selection_set("1")
+            root.update()
+
+            save_btn = _find_button_by_text(win, "Save")
+            save_btn.invoke()
+
+            assert len(save_calls) == 1
+            _novel_id, saved_glossary = save_calls[0]
+            saved_terms = {t["source"]: t for t in saved_glossary["terms"]}
+
+            ruri = saved_terms["ルリ"]
+            assert ruri["status"] == STATUS_CONFIRMED
+            assert ruri["confirmed_target"] == "Ruri-chan"
+            assert ruri["candidates"] == [{"target": "Ruri-chan", "count": 1, "origin": "user"}]
         finally:
             root.destroy()
 

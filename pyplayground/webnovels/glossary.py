@@ -229,6 +229,35 @@ def save_glossary(novel_id: str, glossary: Dict[str, Any]) -> None:
     logger.debug(f"Saved glossary for novel {novel_id} to {path}")
 
 
+def mixed_case_note(target: str) -> Optional[str]:
+    """Return a capitalization-reinforcement note if `target` has 2+ capitalized words, else None.
+
+    Shared by format_glossary_for_prompt() (below) and
+    global_vocabulary.format_global_vocabulary_for_prompt() -- public
+    (not underscore-prefixed) since it's a deliberate cross-module helper,
+    not module-private.
+
+    Narrowed to the actual documented failure pattern (RETRANSLATION_DESIGN.md's
+    2026-07-31 entry): a multi-word target like "Hard Catch" lost its
+    casing on the chunk-translation path, while ordinary single-capitalized
+    words/names (e.g. "Kate") were honored reliably with no reinforcement
+    needed. A blanket "contains both upper and lower case" test would also
+    fire on every ordinary capitalized name, adding prompt noise with no
+    evidence it helps there.
+
+    Args:
+        target: The confirmed/global translation text to check.
+
+    Returns:
+        "(keep this exact capitalization)" if 2+ words in `target` start
+        with an uppercase letter, else None.
+    """
+    capitalized_words = [w for w in target.split() if w and w[0].isupper()]
+    if len(capitalized_words) >= 2:
+        return "(keep this exact capitalization)"
+    return None
+
+
 def format_glossary_for_prompt(glossary: Dict[str, Any]) -> str:
     """Render a glossary dict into compact text suitable for prompt injection.
 
@@ -287,6 +316,10 @@ def format_glossary_for_prompt(glossary: Dict[str, Any]) -> str:
                 details.append(f"{honorific} honorific")
         elif term.get("note"):
             details.append(term["note"])
+
+        capitalization_note = mixed_case_note(target)
+        if capitalization_note:
+            details.append(capitalization_note)
 
         if details:
             entry += f" ({'; '.join(details)})"

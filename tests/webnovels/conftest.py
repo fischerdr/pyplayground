@@ -143,6 +143,7 @@ class _ReaderAppShell:
     _prefill_for_word = ReaderApp._prefill_for_word
     open_word_glossary_popup = ReaderApp.open_word_glossary_popup
     open_retranslate_popup = ReaderApp.open_retranslate_popup
+    _open_remember_globally_popup = ReaderApp._open_remember_globally_popup
 
 
 @pytest.fixture

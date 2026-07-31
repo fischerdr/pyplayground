@@ -9,7 +9,7 @@ words the model got wrong), not about per-novel proper-noun/term
 consistency. Conflating the two would repeat the same flag-means-two-
 things mistake `DESIGN.md` §11 already caught once for `needs_review`.
 
-Last updated: 2026-07-27 (Accept survives same-session view-mode switch, found and fixed)
+Last updated: 2026-07-31 (Phase 5 -- global vocabulary-notes store -- implemented)
 
 ---
 
@@ -85,20 +85,18 @@ open questions, not forgotten — just not being decided pre-emptively:
   hint path initially.
 - Exact popup dialog field layout/wording beyond "old vs. new,
   Accept/Discard, optional remember checkbox."
-- **Does injected context (confirmed glossary now, vocabulary notes in
+- ~~Does injected context (confirmed glossary now, vocabulary notes in
   phase 5) reliably get honored on short single-line retranslation
   prompts, or is this systematically weaker than the multi-line chunk
-  prompts masking was validated against?** Phase 2's live testing (see
-  its dated status entry) found the glossary override applied correctly
-  in 4 of 5 identical repeats of one case (`彼` → `"Kenji"`) -- the one
-  miss looks like ordinary sampling noise at `temperature=0.1`, not a
-  systematic issue, but 5 repeats of a single case is not enough to
-  close this either way. Matters beyond phase 2 specifically because
-  phase 5's vocabulary-notes injection is the same shape of risk (inject
-  context into a prompt, trust the model to honor it) on the same
-  short-prompt structure -- phase 3/5 should not assume this is settled
-  without a few more repeats, ideally across more than one term/case,
-  before leaning on it.
+  prompts masking was validated against?~~ **Answered 2026-07-31, see
+  that dated entry: yes, reliably, on the single-line path (10/10 live).
+  The chunk path is measurably weaker (7/10) but the gap has a specific,
+  named cause (character-type terms with unconventional internal
+  capitalization, e.g. `Hard Catch`), not a general single-line-vs-chunk
+  effect** -- retracting the "systematically weaker" framing this bullet
+  originally worried about. Phase 5's vocabulary-notes injection can
+  proceed on the same mechanism with the specific caveat documented
+  below, not a blanket "unproven" flag.
 
 ## Phases
 
@@ -140,7 +138,13 @@ depends on.
 - **Phase 1**: complete (2026-07-26, see dated entry below).
 - **Phase 2**: complete (2026-07-26, see dated entry below).
 - **Phase 3**: complete (2026-07-26, see dated entry below).
-- **Phases 4–5**: not started.
+- **Phase 4**: not started (`line_overrides` cache-persistence field --
+  still explicitly out of scope; Phase 5 below was built without it, per
+  Phase 5's own scope note).
+- **Phase 5**: complete (2026-07-31, see dated entry below) -- the global
+  vocabulary-notes store, built directly on Phase 2's confirmed-glossary
+  injection mechanism and the 2026-07-31 reliability finding's proposed
+  mixed-case fix.
 - **2026-07-26**: a real `needs_review` scope gap in `splice_terms()` was
   found and fixed on genuine (non-synthetic) reading -- unrelated to this
   feature, belongs to and is documented in `DESIGN.md`'s dated entry of
@@ -745,3 +749,392 @@ per the task's own explicit framing. No changes to
 `retranslate_line_with_hint()`, `translate_chunk_with_masking()`,
 `build_mask_targets()`, or the menu-gating/dialog-opening logic --
 confirmed via `git diff` scope check, same discipline as phase 3.
+
+### 2026-07-31: glossary-context reliability re-tested properly -- 10/10 single-line, 7/10 chunk-path, quantified with a named failure pattern
+
+Investigation only, no code changes. Replaces the "Explicitly deferred"
+section's one-data-point placeholder (4/5 repeats of a single `彼` →
+`"Kenji"` case, against Qwen3-14B chat-completions -- a different model
+than production) with a real answer: a real test set, run against the
+actual production model (`mradermacher/translategemma-12b-it-GGUF:Q4_K_M`,
+confirmed live via `/v1/models` immediately before testing) and the actual
+production function (`retranslate_line_with_hint()`), not a standalone
+HTTP call built to resemble it.
+
+**Test set construction, and an honest limitation of it.** Novel
+375266002's real, currently-confirmed glossary
+(`~/.config/alphapolis_reader/glossaries/375266002.json`, grep-checked
+fresh rather than assumed from memory) has exactly 3 `status: "confirmed"`
+terms: `ケイト` → `"Kate"` (character), `バッターボックスに立` →
+`"batting box"` (term), `ハードキャッチ` → `"Hard Catch"` (character,
+despite the skill-name-shaped source text -- glossary's own type tag,
+not a mistake made here). Grepping all 14 cached episodes for this novel
+for verbatim occurrences of these 3 terms found exactly **one** real hit
+(`バッターボックスに立`, in the "contact" episode) -- `ケイト` and
+`ハードキャッチ` appear in zero cached source lines. This glossary is
+evidently seeded/test data (consistent with the `"Test Novel"` title
+already visible in its own file, and with this doc's phase 3 entry using
+a synthetic `ケイト`→`"Kate"` term for its own live UI verification), not
+organically extracted from real reading. Rather than block on finding a
+novel with richer real confirmed-term coverage, built 10 test cases using
+the one real cached line as-is (case 1) plus 9 constructed sentences using
+the same 3 confirmed terms and other real character names already present
+in this novel's glossary as suggested/unconfirmed entries (`ルリ`/Ruri,
+`橘`/Tachibana) for narrative plausibility -- documented here as
+constructed, not represented as organic reading. Varied deliberately
+across: term type (character name vs. general term), single vs. multiple
+occurrence within one line, line length/complexity (short/medium/long,
+plus one dialogue-quote-embedded case), and one case with two different
+confirmed terms co-occurring in the same line to check whether hinting one
+term causes the model to also honor an unhinted second confirmed term
+present in the same glossary context.
+
+**Step 2 result -- `retranslate_line_with_hint()`, single-line path:
+10/10.** Every case, including the multi-occurrence and dual-term cases,
+produced the confirmed `confirmed_target` string verbatim in the output.
+The one real cached-line case (`バッターボックスに立` → `"batting box"`
+in a 81-character, name-dense sentence) succeeded cleanly, matching the 9
+constructed cases -- no evidence the real-vs-constructed distinction
+mattered to the outcome. The dual-term case (case 9, hint on `ケイト`)
+also spontaneously honored the second, unhinted confirmed term
+(`バッターボックスに立` → `"batting box"`) despite only one term being
+named in the hint -- the glossary context in the prompt was applied
+generally, not narrowly scoped to just the hinted word.
+
+**Step 4 result -- `translate_chunk_with_masking()`, chunk-shaped path:
+7/10, same 10 source lines, same `glossary_text`, `mask_targets=[]`**
+(correct equivalent for confirmed terms: `glossary.py`'s masking rule only
+masks `status != "confirmed"` terms, so these 3 confirmed terms are never
+masked on either path -- both rely purely on `glossary_text` prompt
+injection, isolating prompt-shape as the only real variable between step 2
+and step 4). All 3 misses were the same term: `ハードキャッチ` →
+`"Hard Catch"` came back lowercased (`"hard catch"`) in all 3 lines that
+used it (cases 5, 6, 10); `ケイト`→`"Kate"` and
+`バッターボックスに立`→`"batting box"` were honored 7/7 across every
+chunk-path case that used them, with correct casing every time.
+
+**Pattern found, not random: casing on one specific term, not term type or
+line shape in general.** The failure correlates cleanly with which
+*specific* confirmed term is present (`ハードキャッチ`/`Hard Catch`),
+not with term type (the other character-type term, `ケイト`/`Kate`, was
+honored 3/3 on the chunk path), not with occurrence count (case 10's
+double-occurrence line failed both instances identically -- consistent
+substitution, not a first-vs-second-occurrence split), and not with line
+length (case 5's short line failed the same way as case 6's long one).
+Best-supported explanation: `"Hard Catch"` is capitalized like a proper
+skill/move name, but its glossary line renders as plain prose
+(`- ハードキャッチ -> Hard Catch (keep honorific)`) with nothing marking
+the capitalization as load-bearing, and in the chunk path this one term
+has to compete for the model's attention against a whole paragraph's
+worth of ordinary translation decisions rather than being the sole,
+explicitly-hinted focus the single-line prompt gives it
+(`"Pay particular attention to accurately translating this word/phrase:
+{hint}"`). The single-line path never lowercased it (cases 5, 6, 10 -- the three
+`ハードキャッチ` cases -- all 3/3 correct on the hinted path), consistent
+with the explicit per-line hint being the load-bearing difference, not
+some deeper chunk-path defect in glossary injection generally (the other
+2 confirmed terms were honored at 100% on both paths).
+
+**Net read, replacing the old "4/5, probably noise" placeholder:** the
+single-line, explicitly-hinted path (`retranslate_line_with_hint()`) is
+reliable at 10/10 on this test set and is not the weaker case this doc's
+open question worried it might be. The chunk path, run without a specific
+per-term hint, is measurably weaker (7/10) but the weakness is
+term-specific (unconventional capitalization inside an otherwise-plain
+glossary gloss) rather than a general property of multi-line JSON-array
+prompts losing injected context -- the doc's original worry ("short
+single-line prompts are systematically weaker") is not what this data
+shows; if anything the opposite (single-line, hinted path outperformed
+chunk path here).
+
+**Caveat on sample size, stated plainly:** 10 cases, one glossary, one
+novel, one session, `temperature=0.1` (low but nonzero) -- this is a real
+measurement, not a proof. In particular the "always exactly lowercased,
+never something else" pattern for `ハードキャッチ` across 3/3 misses is
+suggestive but not confirmed as deterministic without repeat trials of
+the same case (phase 2's own earlier entry already documents a case where
+a single trial's apparent finding didn't hold up under repeats -- the same
+caution applies here and repeats were not run this session due to time,
+not because it was assumed unnecessary).
+
+**Proposed next steps, not implemented here (measurement only, per task
+scope):**
+
+1. If phase 5's vocabulary-notes injection reuses the chunk-path prompt
+   shape for confirmed-style entries, consider flagging terms with
+   internal capitalization (mixed-case multi-word terms specifically,
+   like `Hard Catch`) for either (a) the single-line hinted retranslation
+   path preferentially, since it measured 100% on exactly this term, or
+   (b) a light prompt reinforcement for that class of term specifically
+   (e.g. `(keep this exact capitalization)` appended in
+   `format_glossary_for_prompt()`'s parenthetical for terms whose
+   confirmed_target contains internal uppercase mid-word) rather than a
+   blanket prompt-engineering change applied to all confirmed terms.
+2. Before leaning further on this finding: repeat the 3 `ハードキャッチ`
+   chunk-path cases several more times each to confirm the miss is
+   deterministic-per-term rather than this session's particular sample,
+   the same correction this doc's phase 2 entry already had to make once
+   for a different case.
+3. Accepting the limitation as-is (chunk-path casing drift on
+   unconventionally-capitalized terms, correctable via the existing
+   phase-3 Accept/Discard-and-retry-via-hint flow, which already measured
+   100%) is also a reasonable scope decision for phase 5 if 1-2 are judged
+   not worth the complexity -- not a recommendation made here, just noted
+   as the do-nothing option's actual cost given what this data shows.
+
+### 2026-07-31: Phase 5 (global vocabulary-notes store) — implemented
+
+**Interface decision, stated plainly: module-level functions in a new
+`global_vocabulary.py`, no class.** `GlossaryCoordinator` exists because
+it holds real per-call state (`novel_id`, `_rebuild_in_progress`) needed
+across its methods -- the global store has no per-novel scoping (one
+file, process-wide) and no backgrounded operation (every write is an
+instant reload-then-save, the exact shape `GlossaryCoordinator.upsert_confirmed()`/
+`reject()`/`clear()` already use as thin wrappers over `glossary.py`'s
+own module functions). A `GlobalVocabularyCoordinator` class would have
+had a no-op `__init__` and zero instance attributes -- pure ceremony.
+`global_vocabulary.py` plays the role `glossary.py` plays (module
+functions + a dumb JSON file), not the role `glossary_coordinator.py`
+plays; there is nothing here that needs a coordinator layer, because
+nothing here needs scoping or shared cross-call state.
+
+**Storage**: `~/.config/alphapolis_reader/global_vocabulary.json` --
+a single flat file, sibling to (not inside) `GLOSSARY_DIR`. Schema:
+`{"updated_at": str, "entries": [{"source", "target", "note", "added_at",
+"updated_at"}, ...]}`. Deliberately no `status`/`candidates`/`origin`/
+`type` fields -- both write paths (the retranslation dialog's checkbox,
+the glossary dialog's "Apply Globally" action) are human-confirmed-only;
+there is no LLM-extraction/review-queue path feeding this store the way
+`build_glossary.py` feeds per-novel `STATUS_SUGGESTED` entries, so every
+entry that exists here is trusted on write. Dedup key: `source`, same
+precedent as `upsert_confirmed_term()`. `upsert_global_entry()` reloads
+the store fresh immediately before writing -- the same discipline
+`GlossaryCoordinator`'s simple write methods use, verified by a real
+concurrent-write test (`test_reloads_fresh_before_write`: a second
+writer's addition, written directly to disk between two
+`upsert_global_entry()` calls in the same test, survives).
+
+**Precedence rule**: `format_global_vocabulary_for_prompt(store,
+current_novel_glossary)` excludes any entry whose source is
+`STATUS_CONFIRMED` in the current novel's own glossary -- per-novel
+confirmed terms always win over a same-source global note. An
+unconfirmed (merely `STATUS_SUGGESTED`) per-novel term does *not*
+suppress the global note, only a real confirmation does. Verified both
+by unit test and live: the combined prompt built during live
+verification below correctly excluded `バッターボックスに立` (already
+per-novel-confirmed) from the global block while including a different
+global-only entry for the same session.
+
+**Mixed-case reinforcement, narrowed rule (a real decision point, not the
+literal broad rule originally sketched)**: `glossary.mixed_case_note()`
+fires only on targets with 2+ capitalized words (e.g. `"Hard Catch"`),
+not on any target that merely mixes upper/lower case. This deliberately
+exempts ordinary single-capitalized words/names (e.g. `"Kate"`), which
+the 2026-07-31 reliability finding showed were already honored 100% with
+no reinforcement needed -- the broader literal rule would have added
+prompt noise to every ordinary capitalized name with no evidence it
+helps there. Shared by both formatters (`glossary.format_glossary_for_prompt()`
+and `global_vocabulary.format_global_vocabulary_for_prompt()`) via one
+function living in `glossary.py`, rather than duplicated or split across
+a third shared module -- `global_vocabulary.py` already imports
+`STATUS_CONFIRMED`/`MAX_TERMS_IN_PROMPT` from `glossary.py`, so one more
+import added no new dependency edge.
+
+**Whole-line-vs-single-term UI wrinkle, resolved with a second small
+popup, not silent derivation.** The retranslation dialog's "remember
+this" checkbox (`accept_and_close()`, `alphapolis_reader.py`) corrects a
+whole line (`candidate`), not a clean term pair -- silently writing
+`hint_word -> candidate` (a full sentence as "target") would pollute the
+global store with nonsensical lookup-table rows. When checked, Accept
+now opens `_open_remember_globally_popup()`: Source pre-fills from
+`hint_word` (the word/phrase the user already flagged), Target pre-fills
+via a word-level `difflib.SequenceMatcher` diff between the
+pre-correction and corrected translation when the diff is a single
+contiguous replacement (`_diff_single_substring()`), else is left blank
+with an explicit "(could not auto-detect -- please fill in)" hint. The
+user must confirm/edit before Save Globally writes anything -- a
+pre-fill, not an auto-decision, same idiom as this file's existing
+click-to-use reference buttons.
+
+**Real bug found and fixed during implementation, not just in testing**:
+the sub-popup was originally parented on the retranslation popup's own
+`Toplevel` (`win`). `accept_and_close()` destroys `win` immediately after
+opening the sub-popup as part of its existing (unchanged) session-apply
+flow -- since a Tk `Toplevel`'s children are destroyed along with it,
+this silently killed the "Remember Globally" popup before a user could
+ever interact with it, defeating the whole fire-and-forget design. Fixed
+by parenting the sub-popup on `self.root` instead. Caught by a
+unit test attempting to locate the popup after Accept (`StopIteration`
+on an empty search), then confirmed and reproduced live (see below)
+before the fix, and confirmed fixed live afterward.
+
+**"Apply Globally" action and the click-to-use reference field**: added
+to `open_glossary_dialog()`'s `build_form()`, right after the Note field.
+Both are `type=="term"`-only per the design's scope decision (character
+entries never globally eligible -- a name is only correct for one
+story). The reference field (`Global: {target}` button, or a greyed
+`Global: (none)` label) is shown for every term-typed row regardless of
+status; the "Apply Globally" button is additionally gated on
+`status==STATUS_CONFIRMED` (an unconfirmed row has no `confirmed_target`
+yet worth promoting). Same `ttk.Button`-when-available/`ttk.Label`-when-not
+idiom as `open_word_glossary_popup()`'s Google/LLM reference buttons,
+reused a third time in this codebase for the same "click to use, don't
+silently auto-fill" pattern.
+
+**Call-site wiring: only the two live-reader paths, not all four
+existing `format_glossary_for_prompt()` call sites.** `_do_fetch_and_translate()`
+(the main chunk-translation hot path) and `open_retranslate_popup()`'s
+`fetch_candidate()` were wired; `alphapolis_translate.py` (standalone CLI)
+and `compare_translations.py` (Google-vs-LLM quality comparison) were
+deliberately left unwired -- both are dev/debugging tools whose purpose
+is isolated, reproducible measurement against exactly the per-novel
+glossary, and silently injecting a second data source would make that
+purpose murkier, not better. A small independent follow-up if CLI parity
+is ever wanted. Implemented as a standalone `format_global_vocabulary_for_prompt()`
+call, concatenated by each wired call site with `format_glossary_for_prompt()`'s
+output (`glossary_text + "\n\n" + global_text` when both are non-empty)
+-- not a parameter added to `format_glossary_for_prompt()` itself, keeping
+per-novel rendering and cross-store precedence independently testable and
+matching the existing "callers pre-format and concatenate" boundary
+`llm_translate.py` already relies on (that module still has zero import
+of either `glossary.py` or `global_vocabulary.py`).
+
+**Live verification, via a real running app under Xvfb+fluxbox (`DISPLAY=:99`,
+`run_ui_tests.sh xvfb-keep`) against novel 375266002's real seeded
+glossary and the real production model (`mradermacher/translategemma-12b-it-GGUF:Q4_K_M`,
+confirmed live via `/v1/models`), not a synthetic harness:**
+
+- **Scenario A (Apply Globally)**: launched the app against episode
+  7800089 (a real cache hit, "Displayed episode:" confirmed in the log).
+  Opened the Glossary dialog, selected the confirmed `type=="term"` row
+  (`バッターボックスに立` -> `"batting box"`) -- screenshot confirmed a
+  real, clickable `Global: (none)` label (greyed) and an "Apply Globally"
+  button present. Clicked it; a confirmation messagebox appeared
+  (dismissed via Return). Read `global_vocabulary.json` directly (not
+  just trusted the UI) -- confirmed the entry `{"source":
+  "バッターボックスに立", "target": "batting box", ...}` was written,
+  with the app log showing the matching `INFO` line and no ERROR/CRITICAL
+  output. Re-selected the same row afterward: the reference field now
+  showed a real, dark/enabled `Global: batting box` button (not the
+  earlier greyed placeholder), confirming the reference field reflects a
+  just-written entry without needing a dialog reopen. Separately selected
+  the confirmed *character*-typed row (`ハードキャッチ`, despite its
+  skill-name-shaped source) and confirmed via screenshot that neither the
+  reference field nor "Apply Globally" appear at all for a character
+  row -- the character-exclusion rule holds live, not just in a unit
+  test.
+- **Scenario B (retranslation dialog's "remember this" checkbox)**:
+  switched to Interleaved mode, drag-selected `バッターボックスに立つの`
+  in the real source line, right-clicked, selected "Retranslate this
+  line..." -- a real live call to translategemma returned a genuine
+  candidate ("...stood Katsuo-kun..." vs. the baseline "...was
+  Katsuo-kun..."). "Also remember this for next time" was checked by
+  default; clicked Accept. Confirmed live (full-screen root capture, not
+  a per-window screenshot, since Tk `Toplevel` windows in this Xvfb setup
+  don't always report accurate window-relative geometry through the
+  per-window screenshot path) that the "Remember Globally" popup opened
+  as **its own independent top-level window**, not a child destroyed
+  along with the retranslation popup -- the exact bug described above,
+  confirmed both broken (before the `self.root` reparenting fix) and
+  fixed (after) via this same live sequence. Source pre-filled correctly
+  (`バッターボックスに立つの`); Target correctly showed "(could not
+  auto-detect -- please fill in)" for this particular correction (a
+  multi-word, non-single-contiguous diff against the baseline -- the diff
+  heuristic's honest blank-fallback case, not a bug). Typed a target
+  (`"stood at the plate"`), clicked Save Globally -- the app log recorded
+  the real `INFO` write, and `global_vocabulary.json` showed the new
+  entry alongside Scenario A's, both present. Zero ERROR/CRITICAL log
+  lines across the entire session.
+- **Scenario C (a subsequent real translation call actually reflects a
+  global note, not just that the prompt string contains it)**: seeded one
+  more global entry directly (`テスト用語` -> `"Hard Catch"` -- the exact
+  same target string the 2026-07-31 reliability finding's chunk-path
+  miss was about, deliberately reused so this check closes the loop on
+  that finding specifically) and constructed a short test sentence
+  (`彼はテスト用語を成功させた。`) using it. Built the real combined
+  `glossary_text` exactly as `_do_fetch_and_translate()`/`fetch_candidate()`
+  now do (`format_glossary_for_prompt(novel_glossary)` + `"\n\n"` +
+  `format_global_vocabulary_for_prompt(load_global_vocabulary(),
+  novel_glossary)`) and confirmed by inspection that the precedence
+  exclusion held in this real combined string too: the per-novel-confirmed
+  `バッターボックスに立` entry from Scenario A did **not** appear in the
+  global block, exactly as the precedence rule requires, while the
+  distinct `バッターボックスに立つの`/`テスト用語` global-only entries
+  did. Ran the real `retranslate_line_with_hint()` (the single-line,
+  hinted path) 5 times: **5/5 correctly returned "Hard Catch" with exact
+  casing**, e.g. `"He succeeded at Hard Catch."` every time. Ran the same
+  sentence through the real `translate_chunk_with_masking()` (the chunk
+  path, `mask_targets=[]` since this term is not per-novel-confirmed and
+  therefore never masked) with the same combined `glossary_text`, 5
+  times: **5/5 also correctly returned "Hard Catch" with exact casing**,
+  e.g. `"He succeeded in the Hard Catch."` -- a genuine, direct empirical
+  answer to the 2026-07-31 finding's open question (proposed next step
+  #1): the mixed-case reinforcement note **does** measurably close the
+  chunk-path gap for this term, at least on this sample (5/5 vs. the
+  earlier unreinforced 0/3 for the same target string). Caveat stated
+  plainly, matching this doc's own established discipline: 5 repeats of
+  one sentence is a real result, not a large-sample proof -- worth
+  broader confirmation later if this mechanism is leaned on further, not
+  assumed settled from one session.
+
+**Not done in this pass**: no `line_overrides` cache-persistence field
+(Phase 4, still not started, unaffected by this work). No CLI-path
+wiring (`alphapolis_translate.py`/`compare_translations.py`), per the
+scope decision above. No broadening of the mixed-case rule beyond the
+narrowed 2+-capitalized-word test -- the literal any-upper-and-lower
+version discussed during planning was explicitly rejected in favor of
+the narrower rule, per direct instruction, not left as an open question.
+
+**Test coverage**: `tests/webnovels/test_global_vocabulary.py` (new, 17
+tests): load/save roundtrip, missing/corrupt file handling, upsert
+dedup-by-source, upsert reload-fresh-before-write (a real concurrent-write
+simulation, not just a mock-call-count assertion), `get_global_entry`
+hit/miss, and `format_global_vocabulary_for_prompt()`'s precedence
+(confirmed-exclusion, suggested-non-exclusion, `None`-novel-glossary
+path), mixed-case reinforcement, and note rendering.
+`tests/webnovels/test_glossary.py` extended (+6): `mixed_case_note()`'s
+narrowed rule including an explicit `"Kate"`-does-not-trigger regression
+guard, and `format_glossary_for_prompt()` carrying the same reinforcement
+for per-novel confirmed terms. `tests/webnovels/test_glossary_coordinator.py`
+extended (+5, new `TestGlobalVocabularyReferenceAndApplyGlobally` class):
+drives the real, unmodified `open_glossary_dialog()` end-to-end through
+its actual Treeview selection and buttons -- Apply Globally absent for
+character rows, absent for unconfirmed term rows, present and writes via
+`upsert_global_entry()` for confirmed term rows, reference button/label
+shown correctly for entry-exists vs. entry-missing. New
+`tests/webnovels/test_retranslation_remember_globally.py` (12 tests):
+`_diff_single_substring()`'s single-contiguous-replacement detection
+(including the real `醤油顔`/`ノーズボン`-style before/after examples
+from Phase 2's own live testing) and the ambiguous-diff blank-fallback
+case, plus the full checkbox-to-popup flow driven through the real
+`accept_and_close()`/`_open_remember_globally_popup()` methods (via
+`conftest.py`'s `_ReaderAppShell`, extended with a new
+`_open_remember_globally_popup = ReaderApp._open_remember_globally_popup`
+binding) -- checkbox gating, Source/Target pre-fill (both the
+successfully-diffed and the correctly-blank cases), Save Globally's real
+`upsert_global_entry()` call with user-edited (not just pre-filled)
+values, Skip writing nothing, and the outer session-apply behavior
+proceeding independently of the sub-popup's outcome either way.
+
+Full `tests/webnovels/` suite re-run (excluding the separate, always-manual
+`ui_automation/` directory, unaffected by this change): 320 passed, no
+regressions. `black`/`isort`/`flake8` clean on every touched file.
+`mypy`: `global_vocabulary.py` and `glossary.py` both clean (zero errors);
+`alphapolis_reader.py` went from 418 to 444 errors (+26), consistent with
+this file's existing, previously-documented untyped-method convention --
+not fixed here, same treatment as every prior phase entry touching this
+file.
+
+**Not anticipated going in, found during this task**: the sub-popup
+parenting bug described above (a real, live-reproduced data-loss-shaped
+bug -- the "remember this" write path would have silently never worked
+in practice, since the popup meant to collect the term pair was destroyed
+before a user could ever see it) was not anticipated by the plan and was
+caught by a unit test before it was ever run live, then confirmed and
+fixed against the real app. The `SequenceMatcher`-based diff heuristic's
+character-level-vs-word-level distinction (character-level diffing
+splits a clean word-for-word substitution like "dark"->"tanned" into a
+spurious insert+delete pair, since the two words share a letter) was
+also not anticipated and was caught by the diff helper's own unit tests
+failing against real phase-2 before/after examples, not assumed correct
+from the implementation alone.

@@ -51,7 +51,15 @@ import tkinter as tk
 from tkinter import ttk
 
 from pyplayground.webnovels.alphapolis_reader import ReaderApp
-from pyplayground.webnovels.glossary import DEFAULT_HONORIFIC_POLICY, STATUS_CONFIRMED, TERM_TYPE_CHARACTER, TERM_TYPE_GENERAL, make_confirmed_term, make_suggested_term
+from pyplayground.webnovels.glossary import (
+    DEFAULT_HONORIFIC_POLICY,
+    STATUS_CONFIRMED,
+    STATUS_SUGGESTED,
+    TERM_TYPE_CHARACTER,
+    TERM_TYPE_GENERAL,
+    make_confirmed_term,
+    make_suggested_term,
+)
 from pyplayground.webnovels.glossary_coordinator import GlossaryCoordinator
 
 
@@ -508,6 +516,17 @@ def _find_button_by_text(win, text):
         if found is not None:
             return found
     return None
+
+
+def _find_widgets_by_type(win, widget_type, found=None):
+    """Recursively collect every widget of `widget_type` in a dialog's widget tree, in tree order."""
+    if found is None:
+        found = []
+    for child in win.winfo_children():
+        if isinstance(child, widget_type):
+            found.append(child)
+        _find_widgets_by_type(child, widget_type, found)
+    return found
 
 
 class _SyncThread:
@@ -998,5 +1017,155 @@ class TestOpenGlossaryDialogRoutesThroughCoordinator:
             assert saved["glossary"]["terms"] == []
             assert saved["glossary"]["honorific_policy"] == DEFAULT_HONORIFIC_POLICY
             assert saved["glossary"]["honorific_policy_user_set"] is False
+        finally:
+            root.destroy()
+
+
+class TestGlobalVocabularyReferenceAndApplyGlobally:
+    """RETRANSLATION_DESIGN.md Phase 5 additions to open_glossary_dialog()'s build_form().
+
+    Covers the global-vocabulary click-to-use reference field and the
+    "Apply Globally" action, both term-typed-row-only (character entries
+    are never globally eligible -- a name is only correct for one
+    specific story). Same standard as the coordinator-routing tests
+    above: drives the real, unmodified dialog end-to-end through its
+    actual widgets, not a reimplementation of the logic under test.
+    """
+
+    def _select_row(self, win, index):
+        tree = win.winfo_children()[1].winfo_children()[0]
+        tree.selection_set(str(index))
+        tree.event_generate("<<TreeviewSelect>>")
+        win.update()
+
+    def test_apply_globally_button_absent_for_character_type_rows(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        term = make_confirmed_term(term_type=TERM_TYPE_CHARACTER, source="ハードキャッチ", target="Hard Catch")
+        glossary = _make_glossary_dialog_glossary([term])
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(reader_module, "get_global_entry", lambda source: None)
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "375266002")
+
+        root = tk.Tk()
+        try:
+            harness = _GlossaryDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/375266002/1/episode/1")
+            harness.open_glossary_dialog()
+            root.update()
+
+            win = _find_toplevel_by_title_prefix(root, "Glossary")
+            self._select_row(win, 0)
+
+            assert _find_button_by_text(win, "Apply Globally") is None
+        finally:
+            root.destroy()
+
+    def test_apply_globally_button_absent_for_unconfirmed_term_rows(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        term = make_suggested_term(TERM_TYPE_GENERAL, "鉄パイプ", "iron pipe")
+        assert term["status"] == STATUS_SUGGESTED
+        glossary = _make_glossary_dialog_glossary([term])
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(reader_module, "get_global_entry", lambda source: None)
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "375266002")
+
+        root = tk.Tk()
+        try:
+            harness = _GlossaryDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/375266002/1/episode/1")
+            harness.open_glossary_dialog()
+            root.update()
+
+            win = _find_toplevel_by_title_prefix(root, "Glossary")
+            self._select_row(win, 0)
+
+            assert _find_button_by_text(win, "Apply Globally") is None
+        finally:
+            root.destroy()
+
+    def test_apply_globally_button_present_and_writes_via_upsert_global_entry(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        term = make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="バッターボックスに立", target="batting box")
+        glossary = _make_glossary_dialog_glossary([term])
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(reader_module, "get_global_entry", lambda source: None)
+        monkeypatch.setattr(reader_module.messagebox, "showinfo", lambda *a, **k: None)
+
+        calls = []
+        monkeypatch.setattr(reader_module, "upsert_global_entry", lambda source, target, note=None: calls.append((source, target, note)))
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "375266002")
+
+        root = tk.Tk()
+        try:
+            harness = _GlossaryDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/375266002/1/episode/1")
+            harness.open_glossary_dialog()
+            root.update()
+
+            win = _find_toplevel_by_title_prefix(root, "Glossary")
+            self._select_row(win, 0)
+
+            apply_btn = _find_button_by_text(win, "Apply Globally")
+            assert apply_btn is not None, "Apply Globally must be offered for a confirmed term-typed row"
+            apply_btn.invoke()
+
+            assert calls == [("バッターボックスに立", "batting box", None)]
+        finally:
+            root.destroy()
+
+    def test_reference_button_shown_and_sets_target_on_click_when_global_entry_exists(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        term = make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="醤油顔", target="dark complexion")
+        glossary = _make_glossary_dialog_glossary([term])
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(reader_module, "get_global_entry", lambda source: {"source": "醤油顔", "target": "plain-featured", "note": None})
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "375266002")
+
+        root = tk.Tk()
+        try:
+            harness = _GlossaryDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/375266002/1/episode/1")
+            harness.open_glossary_dialog()
+            root.update()
+
+            win = _find_toplevel_by_title_prefix(root, "Glossary")
+            self._select_row(win, 0)
+
+            ref_btn = _find_button_by_text(win, "Global: plain-featured")
+            assert ref_btn is not None, "click-to-use reference button must be offered when a matching global entry exists"
+            ref_btn.invoke()
+
+            # ttk.Combobox is a ttk.Entry subclass, so this list also
+            # picks up the honorific-policy and type comboboxes ahead of
+            # the form's own Source/Target/Note entries -- confirmed by
+            # inspection: [0]=honorific policy, [1]=type, [2]=source,
+            # [3]=target, [4]=note. Target reading the global reference's
+            # value confirms the click set form_vars["target"].
+            entries = _find_widgets_by_type(win, ttk.Entry)
+            assert entries[3].get() == "plain-featured"
+        finally:
+            root.destroy()
+
+    def test_reference_label_shown_when_no_global_entry_exists(self, monkeypatch):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        term = make_confirmed_term(term_type=TERM_TYPE_GENERAL, source="鉄パイプ", target="iron pipe")
+        glossary = _make_glossary_dialog_glossary([term])
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: glossary)
+        monkeypatch.setattr(reader_module, "get_global_entry", lambda source: None)
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "375266002")
+
+        root = tk.Tk()
+        try:
+            harness = _GlossaryDialogHarness(root, current_url="https://www.alphapolis.co.jp/novel/375266002/1/episode/1")
+            harness.open_glossary_dialog()
+            root.update()
+
+            win = _find_toplevel_by_title_prefix(root, "Glossary")
+            self._select_row(win, 0)
+
+            assert _find_button_by_text(win, "Global: (none)") is None
+            labels = [w.cget("text") for w in _find_widgets_by_type(win, ttk.Label)]
+            assert "Global: (none)" in labels
         finally:
             root.destroy()

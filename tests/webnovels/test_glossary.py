@@ -19,6 +19,7 @@ from pyplayground.webnovels.glossary import (
     make_confirmed_term,
     make_suggested_term,
     merge_terms,
+    mixed_case_note,
     update_candidate_counts,
     upsert_confirmed_term,
 )
@@ -134,6 +135,51 @@ class TestFormatGlossaryForPrompt:
 
         assert "male" in rendered
         assert "casual, uses 'ore'" in rendered
+
+    def test_mixed_case_confirmed_target_gets_reinforcement_note(self):
+        """RETRANSLATION_DESIGN.md's 2026-07-31 finding.
+
+        A multi-word capitalized target must carry the capitalization-
+        reinforcement note in the per-novel formatter too, not just the
+        global one.
+        """
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_confirmed_term(TERM_TYPE_CHARACTER, "ハードキャッチ", "Hard Catch")]
+
+        rendered = format_glossary_for_prompt(glossary)
+
+        assert "(keep this exact capitalization)" in rendered
+
+    def test_single_word_confirmed_target_gets_no_reinforcement_note(self):
+        glossary = _empty_glossary("1")
+        glossary["terms"] = [make_confirmed_term(TERM_TYPE_CHARACTER, "ケイト", "Kate")]
+
+        rendered = format_glossary_for_prompt(glossary)
+
+        assert "(keep this exact capitalization)" not in rendered
+
+
+class TestMixedCaseNote:
+    """Tests for mixed_case_note() -- RETRANSLATION_DESIGN.md's 2026-07-31 finding's capitalization-reinforcement helper."""
+
+    def test_multi_word_capitalized_target_gets_note(self):
+        """The documented failure case: 2+ capitalized words triggers the reinforcement note."""
+        assert mixed_case_note("Hard Catch") == "(keep this exact capitalization)"
+
+    def test_single_capitalized_word_gets_no_note(self):
+        """Ordinary single-capitalized names must not trigger the reinforcement note.
+
+        E.g. "Kate" was honored reliably in the 2026-07-31 investigation
+        with no reinforcement needed -- the narrowed rule deliberately
+        excludes this case, not the broader "any upper+lower mix" test.
+        """
+        assert mixed_case_note("Kate") is None
+
+    def test_all_lowercase_target_gets_no_note(self):
+        assert mixed_case_note("iron pipe") is None
+
+    def test_all_uppercase_single_word_gets_no_note(self):
+        assert mixed_case_note("TOKAREV") is None
 
 
 class TestMergeTerms:

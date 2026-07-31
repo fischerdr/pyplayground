@@ -26,6 +26,7 @@ Usage:
     python alphapolis_reader.py "<url>" es      # translate to Spanish instead of English
 """
 
+import difflib
 import hashlib
 import json
 import queue
@@ -45,6 +46,7 @@ from bs4 import BeautifulSoup
 
 from pyplayground.utils.config_utils import load_json_config, save_json_config
 from pyplayground.utils.logging_utils import get_logger, setup_logging
+from pyplayground.webnovels.global_vocabulary import format_global_vocabulary_for_prompt, get_global_entry, load_global_vocabulary, upsert_global_entry
 from pyplayground.webnovels.glossary import (
     HONORIFIC_POLICIES,
     STATUS_CONFIRMED,
@@ -630,6 +632,47 @@ def build_interleaved_pairs(source_lines: List[str], translated_lines: List[str]
     if len(source_lines) != len(translated_lines):
         return None
     return list(zip(source_lines, translated_lines))
+
+
+def _diff_single_substring(before: str, after: str) -> Optional[str]:
+    """Return the single contiguous replacement substring that turns `before` into `after`, or None if ambiguous.
+
+    RETRANSLATION_DESIGN.md phase 5: used to pre-fill the "remember
+    globally" popup's Target field from a whole-line retranslation
+    (candidate) versus its pre-correction baseline (current_translation).
+    A whole-line correction isn't itself a clean term pair, so this is a
+    best-effort pre-fill, not an authoritative extraction -- the popup
+    always leaves the field editable and the user must confirm it before
+    anything is written to the global store.
+
+    Only handles the single-contiguous-replacement case (one "replace"
+    opcode from a word-level difflib.SequenceMatcher, with the rest of
+    the line unchanged) -- a correction touching multiple non-contiguous
+    spots in the line has no single unambiguous "the corrected term" to
+    extract, so this returns None rather than guessing. Diffing is done
+    word-level, not character-level: a character-level diff of e.g.
+    "dark"->"tanned" (which share the letter "a") splits into an
+    insert+delete pair rather than one clean replace op, since the
+    matcher greedily aligns the shared character -- word-level diffing
+    treats each whole word as one atomic unit, avoiding that false split.
+
+    Args:
+        before: The original (possibly incorrect) translation.
+        after: The corrected translation.
+
+    Returns:
+        The replacement substring from `after`, or None if the diff
+        isn't a single contiguous replacement.
+    """
+    before_words = before.split()
+    after_words = after.split()
+    matcher = difflib.SequenceMatcher(a=before_words, b=after_words)
+    replace_ops = [op for op in matcher.get_opcodes() if op[0] != "equal"]
+    if len(replace_ops) != 1 or replace_ops[0][0] != "replace":
+        return None
+    _, _, _, b_start, b_end = replace_ops[0]
+    substring = " ".join(after_words[b_start:b_end]).strip()
+    return substring or None
 
 
 # ---------------------------------------------------------------------------
@@ -1627,6 +1670,9 @@ class ReaderApp:
             if novel_id:
                 glossary = load_glossary(novel_id)
                 glossary_text = format_glossary_for_prompt(glossary)
+                global_text = format_global_vocabulary_for_prompt(load_global_vocabulary(), glossary)
+                if global_text:
+                    glossary_text = f"{glossary_text}\n\n{global_text}" if glossary_text else global_text
 
         html = self.browser.fetch(url)
         logger.debug(f"Fetched {len(html)} bytes of HTML for {url}")
@@ -2035,6 +2081,38 @@ class ReaderApp:
             ttk.Entry(form, textvariable=form_vars["note"], width=22).grid(row=3, column=1, **pad)
 
             next_row = 4
+            # Global vocabulary reference/promotion (RETRANSLATION_DESIGN.md
+            # phase 5) -- term-typed rows only, per that doc's scope
+            # decision that a character name is only correct for one
+            # specific story and is never globally eligible.
+            if term_type == TERM_TYPE_GENERAL:
+                existing_global = get_global_entry(term.get("source", ""))
+                if existing_global:
+                    # Same click-to-use idiom as open_word_glossary_popup()'s
+                    # Google/LLM reference buttons -- a pre-fill offer, not
+                    # a silent auto-fill.
+                    global_target = existing_global.get("target", "")
+                    ttk.Button(form, text=f"Global: {global_target}", command=lambda t=global_target: form_vars["target"].set(t)).grid(
+                        row=next_row, column=0, columnspan=2, sticky="w", padx=4, pady=(4, 0)
+                    )
+                else:
+                    ttk.Label(form, text="Global: (none)", foreground="#888").grid(row=next_row, column=0, columnspan=2, sticky="w", padx=4, pady=(4, 0))
+                next_row += 1
+
+                if term.get("status") == STATUS_CONFIRMED:
+
+                    def apply_globally():
+                        source = form_vars["source"].get().strip()
+                        target = form_vars["target"].get().strip()
+                        if not source or not target:
+                            messagebox.showinfo("Apply Globally", "Source and Target are both required.", parent=win)
+                            return
+                        upsert_global_entry(source, target, form_vars["note"].get().strip() or None)
+                        messagebox.showinfo("Apply Globally", f"Saved {source!r} -> {target!r} to the global vocabulary store.", parent=win)
+
+                    ttk.Button(form, text="Apply Globally", command=apply_globally).grid(row=next_row, column=0, columnspan=2, sticky="w", padx=4, pady=(4, 0))
+                    next_row += 1
+
             if term_type == TERM_TYPE_CHARACTER:
                 ttk.Label(form, text="Gender").grid(row=next_row, column=0, sticky="w", **pad)
                 form_vars["gender"] = tk.StringVar(value=term.get("gender") or "")
@@ -2948,6 +3026,77 @@ class ReaderApp:
 
         threading.Thread(target=fetch_guesses, daemon=True).start()
 
+    def _open_remember_globally_popup(self, parent_win, hint_word, current_translation, candidate):
+        """Small follow-up popup: confirm the source->target term pair to write to the global vocabulary store.
+
+        RETRANSLATION_DESIGN.md phase 5. Triggered by "Also remember this
+        for next time" on the retranslation popup's Accept -- a whole-line
+        correction (candidate) is not itself a clean term mapping, so this
+        asks the user to confirm/edit the actual term pair rather than
+        silently deriving or misusing the whole sentence as a "target".
+        Source pre-fills from hint_word (the word/phrase the user already
+        flagged); Target pre-fills via _diff_single_substring() when
+        unambiguous, else is left blank for the user to fill in -- a
+        pre-fill, not an auto-decision, same idiom as every other
+        click-to-use reference field in this file.
+
+        Fire-and-forget from the caller's perspective: this popup's
+        Save/Skip outcome never blocks or gates the outer Accept's
+        existing session-only line-apply behavior, which proceeds
+        immediately regardless.
+
+        Args:
+            parent_win: The retranslation popup's Toplevel. NOT used as
+                this popup's actual Tk parent -- accept_and_close() calls
+                this method and then immediately destroys parent_win as
+                part of its own existing session-apply flow, which would
+                also destroy any child Toplevel of parent_win before the
+                user gets to interact with it. self.root is used as the
+                real parent instead, so this popup survives its caller's
+                teardown; parent_win is accepted as a parameter only for
+                signature clarity/future use, not actually parented to.
+            hint_word: The word/phrase the user selected as the
+                retranslation hint -- pre-fills Source.
+            current_translation: The pre-correction translation of the
+                line -- used only for the Target diff heuristic.
+            candidate: The accepted, corrected whole-line translation --
+                used only for the Target diff heuristic.
+        """
+        win = tk.Toplevel(self.root)
+        win.title("Remember Globally")
+        win.resizable(False, False)
+
+        target_guess = _diff_single_substring(current_translation, candidate)
+
+        pad = {"padx": 10, "pady": (6, 0)}
+        ttk.Label(win, text="Source (original word/phrase):").pack(anchor="w", **pad)
+        source_var = tk.StringVar(value=hint_word)
+        ttk.Entry(win, textvariable=source_var).pack(fill="x", padx=10)
+
+        ttk.Label(win, text="Target (corrected rendering):").pack(anchor="w", **pad)
+        target_var = tk.StringVar(value=target_guess or "")
+        ttk.Entry(win, textvariable=target_var).pack(fill="x", padx=10)
+        if not target_guess:
+            ttk.Label(win, text="(could not auto-detect -- please fill in)", foreground="#888").pack(anchor="w", padx=10)
+
+        ttk.Label(win, text="Note (optional):").pack(anchor="w", **pad)
+        note_var = tk.StringVar(value="")
+        ttk.Entry(win, textvariable=note_var).pack(fill="x", padx=10)
+
+        def save_and_close():
+            source = source_var.get().strip()
+            target = target_var.get().strip()
+            if not source or not target:
+                messagebox.showinfo("Remember Globally", "Source and Target are both required.", parent=win)
+                return
+            upsert_global_entry(source, target, note_var.get().strip() or None)
+            win.destroy()
+
+        bottom = ttk.Frame(win)
+        bottom.pack(pady=(10, 10))
+        ttk.Button(bottom, text="Save Globally", command=save_and_close).pack(side="left", padx=4)
+        ttk.Button(bottom, text="Skip", command=win.destroy).pack(side="left", padx=4)
+
     def open_retranslate_popup(self, source_line, translated_span, hint_word):
         """Open a popup offering a hint-guided retranslation candidate for one line (RETRANSLATION_DESIGN.md phase 3).
 
@@ -3005,7 +3154,11 @@ class ReaderApp:
         def fetch_candidate():
             glossary_text = None
             if novel_id:
-                glossary_text = format_glossary_for_prompt(load_glossary(novel_id))
+                novel_glossary = load_glossary(novel_id)
+                glossary_text = format_glossary_for_prompt(novel_glossary)
+                global_text = format_global_vocabulary_for_prompt(load_global_vocabulary(), novel_glossary)
+                if global_text:
+                    glossary_text = f"{glossary_text}\n\n{global_text}" if glossary_text else global_text
             try:
                 candidate = retranslate_line_with_hint(
                     source_line,
@@ -3077,12 +3230,7 @@ class ReaderApp:
 
             def accept_and_close():
                 if remember_var.get():
-                    # TODO: phase 5 -- write hint_word/candidate to the
-                    # global vocabulary-notes store once it exists. Inert
-                    # for now: the checkbox is offered (per the design
-                    # doc's explicit instruction not to omit it and need
-                    # to re-add it later), but nothing is written yet.
-                    logger.debug(f"'Remember this' checked for hint {hint_word!r} -- no-op, vocabulary-notes store is phase 5")
+                    self._open_remember_globally_popup(win, hint_word, current_translation, candidate)
 
                 start, end, _, _ = translated_span
                 self.text.config(state="normal")

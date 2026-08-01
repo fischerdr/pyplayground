@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, Union
 from dotenv import load_dotenv
 
 from .logging_utils import get_project_root
+from .safe_persistence import atomic_write
 
 logger = logging.getLogger(__name__)
 
@@ -134,9 +135,8 @@ def save_json_config(
 
         config_path = os.path.join(str(config_dir), config_name)
 
-        with open(config_path, "w") as f:
-            json.dump(config, f, indent=4)
-            logger.debug(f"Saved configuration to {config_path}")
+        atomic_write(config_path, json.dumps(config, indent=4))
+        logger.debug(f"Saved configuration to {config_path}")
 
     except IOError as e:
         logger.error(f"Failed to save config file {config_path}: {e}")

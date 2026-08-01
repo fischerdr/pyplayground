@@ -362,6 +362,295 @@ class TestAcceptSurvivesModeSwitch:
         assert "He is popular with a dark complexion." not in interleaved_mode_text
 
 
+class TestAcceptPersistsToCache:
+    """RETRANSLATION_DESIGN.md phase 4: Accept must persist the correction to the on-disk episode cache, not just self.episode in memory.
+
+    Real regression test, not just a mock-call assertion: drives the
+    real Accept button, then reloads the episode via a fresh
+    load_cached_episode() call (a separate read from a separate dict,
+    simulating a full app restart) rather than re-inspecting the same
+    in-memory `episode` object TestAcceptSurvivesModeSwitch already
+    covers -- confirmed load-bearing below by reverting the
+    save_cached_episode() call and re-running.
+    """
+
+    def _make_episode(self):
+        return {
+            "title": "Title",
+            "author": "Author",
+            "episode_title": "Ep 1",
+            "translated_title": "Title",
+            "translated_episode_title": "Ep 1",
+            "lines": ["彼は醤油顔でモテる。"],
+            "content": [{"type": "text", "text": "彼は醤油顔でモテる。"}],
+            "translated_lines": ["He is popular with a dark complexion."],
+        }
+
+    def _accept_via_real_dialog(self, reader_app_shell, monkeypatch, candidate="He is popular because of his dark complexion."):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(reader_module, "retranslate_line_with_hint", lambda *a, **k: candidate)
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: {"terms": []})
+        monkeypatch.setattr(reader_module, "format_glossary_for_prompt", lambda glossary: "")
+        monkeypatch.setattr(reader_module, "load_global_vocabulary", lambda: {"entries": []})
+        monkeypatch.setattr(reader_module, "format_global_vocabulary_for_prompt", lambda store, glossary=None: "")
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "12345")
+
+        class _SyncThread:
+            def __init__(self, target, daemon=True):
+                self._target = target
+
+            def start(self):
+                self._target()
+
+        monkeypatch.setattr(reader_module.threading, "Thread", _SyncThread)
+
+        episode = self._make_episode()
+        url = "https://www.alphapolis.co.jp/novel/12345/1/episode/1"
+        reader_app_shell.current_url = url
+        reader_app_shell.episode = episode
+        reader_app_shell.renderer.view_mode.set("interleaved")
+
+        reader_app_shell.renderer.render_text()
+        original_span = reader_app_shell.renderer._rendered_spans[0]
+        translated_span = reader_app_shell.renderer._translated_span_after(original_span)
+        assert translated_span is not None
+
+        reader_app_shell.open_retranslate_popup("彼は醤油顔でモテる。", translated_span, "醤油顔で")
+        popup = reader_app_shell._retranslate_popup
+        reader_app_shell.root.update()
+
+        accept_btn = _find_button(popup, "Accept")
+        assert accept_btn is not None, "Accept button never appeared -- build_form() did not run"
+        accept_btn.invoke()
+        reader_app_shell.root.update()
+
+        return url, episode
+
+    def test_correction_survives_a_full_reload_from_cache(self, reader_app_shell, monkeypatch, tmp_path):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(reader_module, "CACHE_DIR", tmp_path)
+        url, episode = self._accept_via_real_dialog(reader_app_shell, monkeypatch)
+
+        assert episode["translated_lines"][0] == "He is popular because of his dark complexion."
+
+        # A genuinely separate load, not a re-inspection of `episode` --
+        # this is the actual "does it survive a restart" check, since a
+        # real app restart would also start from a fresh load_cached_episode()
+        # call against a brand-new process with no reference to the old
+        # in-memory dict at all.
+        reloaded = reader_module.load_cached_episode(url)
+        assert reloaded is not None, "episode was not written to the on-disk cache at all"
+        assert reloaded["translated_lines"][0] == "He is popular because of his dark complexion."
+
+    def test_correction_does_not_survive_reload_if_save_cached_episode_is_not_called(self, reader_app_shell, monkeypatch, tmp_path):
+        """Load-bearing check for the test above: confirms it actually fails without the phase 4 fix, not just that it passes."""
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(reader_module, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(reader_module, "save_cached_episode", lambda url, episode: None)
+        url, episode = self._accept_via_real_dialog(reader_app_shell, monkeypatch)
+
+        assert episode["translated_lines"][0] == "He is popular because of his dark complexion."
+        assert reader_module.load_cached_episode(url) is None, "nothing should be on disk when save_cached_episode() is stubbed out -- confirms the reload check above is real"
+
+    def test_status_message_reflects_real_persistence(self, reader_app_shell, monkeypatch, tmp_path):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(reader_module, "CACHE_DIR", tmp_path)
+        statuses = []
+        reader_app_shell.set_status = lambda msg: statuses.append(msg)
+        self._accept_via_real_dialog(reader_app_shell, monkeypatch)
+
+        assert statuses == ["Retranslation saved"]
+
+
+class TestAcceptStalePopupGuard:
+    """RETRANSLATION_DESIGN.md's stale-popup write-race finding (found during phase 4): Accept must refuse to write, in memory or to disk, if the displayed episode changed since the popup was opened.
+
+    open_retranslate_popup() is non-modal and navigation
+    (load_episode()/go_prev()/go_next()) does not close it, so a user can
+    open it, navigate elsewhere, and still click Accept on the
+    now-stale popup. Simulated here by swapping reader_app_shell.episode/
+    current_url after the popup is open but before Accept is clicked --
+    the same shape a real navigation would produce.
+    """
+
+    def _make_episode(self, translated_line="He is popular with a dark complexion."):
+        return {
+            "title": "Title",
+            "author": "Author",
+            "episode_title": "Ep 1",
+            "translated_title": "Title",
+            "translated_episode_title": "Ep 1",
+            "lines": ["彼は醤油顔でモテる。"],
+            "content": [{"type": "text", "text": "彼は醤油顔でモテる。"}],
+            "translated_lines": [translated_line],
+        }
+
+    def _open_popup(self, reader_app_shell, monkeypatch, url, episode, candidate="He is popular because of his dark complexion."):
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(reader_module, "retranslate_line_with_hint", lambda *a, **k: candidate)
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: {"terms": []})
+        monkeypatch.setattr(reader_module, "format_glossary_for_prompt", lambda glossary: "")
+        monkeypatch.setattr(reader_module, "load_global_vocabulary", lambda: {"entries": []})
+        monkeypatch.setattr(reader_module, "format_global_vocabulary_for_prompt", lambda store, glossary=None: "")
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "12345")
+
+        class _SyncThread:
+            def __init__(self, target, daemon=True):
+                self._target = target
+
+            def start(self):
+                self._target()
+
+        monkeypatch.setattr(reader_module.threading, "Thread", _SyncThread)
+
+        reader_app_shell.current_url = url
+        reader_app_shell.episode = episode
+        reader_app_shell.renderer.view_mode.set("interleaved")
+
+        reader_app_shell.renderer.render_text()
+        original_span = reader_app_shell.renderer._rendered_spans[0]
+        translated_span = reader_app_shell.renderer._translated_span_after(original_span)
+        assert translated_span is not None
+
+        reader_app_shell.open_retranslate_popup("彼は醤油顔でモテる。", translated_span, "醤油顔で")
+        popup = reader_app_shell._retranslate_popup
+        reader_app_shell.root.update()
+        return popup
+
+    def test_accept_disabled_at_render_time_when_already_stale_before_popup_opens(self, reader_app_shell, monkeypatch, tmp_path):
+        """Confirm build_form()'s courtesy UI check reflects staleness that already exists at render time.
+
+        E.g. the popup is opened (which itself reads self.current_url/
+        self.episode fresh), but something else has already changed
+        self.episode out from under it by the time the candidate finishes
+        loading and build_form() runs. Note this scenario is somewhat
+        artificial to construct precisely because open_retranslate_popup()
+        reads current_url/episode at open time, not before -- see the next
+        test for the realistic case (staleness arriving *after* the popup
+        has already rendered), which is what the authoritative
+        accept_and_close() check exists for.
+        """
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(reader_module, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(reader_module, "retranslate_line_with_hint", lambda *a, **k: "He is popular because of his dark complexion.")
+        monkeypatch.setattr(reader_module, "load_glossary", lambda novel_id: {"terms": []})
+        monkeypatch.setattr(reader_module, "format_glossary_for_prompt", lambda glossary: "")
+        monkeypatch.setattr(reader_module, "load_global_vocabulary", lambda: {"entries": []})
+        monkeypatch.setattr(reader_module, "format_global_vocabulary_for_prompt", lambda store, glossary=None: "")
+        monkeypatch.setattr(reader_module, "_extract_novel_id", lambda url: "12345")
+
+        opened_for_url = "https://www.alphapolis.co.jp/novel/12345/1/episode/1"
+        opened_for_episode = self._make_episode()
+        reader_app_shell.current_url = opened_for_url
+        reader_app_shell.episode = opened_for_episode
+        reader_app_shell.renderer.view_mode.set("interleaved")
+        reader_app_shell.renderer.render_text()
+        original_span = reader_app_shell.renderer._rendered_spans[0]
+        translated_span = reader_app_shell.renderer._translated_span_after(original_span)
+
+        # fetch_candidate() mutates self.episode/current_url (simulating a
+        # navigation that races the in-flight LLM call) BEFORE calling back
+        # into build_form() -- a synchronous stand-in for "the background
+        # thread hasn't returned yet, and the user has already navigated
+        # away by the time it does."
+        new_episode = self._make_episode(translated_line="A completely different chapter's line.")
+
+        class _NavigatesBeforeCallbackThread:
+            def __init__(self, target, daemon=True):
+                self._target = target
+
+            def start(self):
+                self._target()
+                reader_app_shell.current_url = "https://www.alphapolis.co.jp/novel/12345/1/episode/2"
+                reader_app_shell.episode = new_episode
+
+        monkeypatch.setattr(reader_module.threading, "Thread", _NavigatesBeforeCallbackThread)
+
+        reader_app_shell.open_retranslate_popup("彼は醤油顔でモテる。", translated_span, "醤油顔で")
+        popup = reader_app_shell._retranslate_popup
+        reader_app_shell.root.update()
+
+        accept_btn = _find_button(popup, "Accept")
+        assert accept_btn is not None
+        assert "disabled" in accept_btn.state(), "Accept must show as disabled when the episode already changed before build_form() ran"
+
+        accept_btn.invoke()
+        reader_app_shell.root.update()
+
+        assert opened_for_episode["translated_lines"][0] == "He is popular with a dark complexion."
+        assert new_episode["translated_lines"][0] == "A completely different chapter's line."
+        assert reader_module.load_cached_episode(opened_for_url) is None
+
+    def test_authoritative_check_blocks_write_when_staleness_arrives_after_render(self, reader_app_shell, monkeypatch, tmp_path):
+        """Cover the realistic case: the popup renders while still fresh, then the user navigates away while it's open.
+
+        Per RETRANSLATION_DESIGN.md's phase 4 entry, this is an accepted,
+        explicitly-stated gap in the courtesy UI check -- build_form()
+        does not re-poll, so Accept can keep showing as enabled
+        indefinitely. The safety property does not depend on the UI at
+        all: accept_and_close()'s own fresh check at click time is what
+        actually blocks the write here, proven by confirming Accept is
+        NOT disabled and the write is still blocked.
+        """
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(reader_module, "CACHE_DIR", tmp_path)
+        opened_for_url = "https://www.alphapolis.co.jp/novel/12345/1/episode/1"
+        opened_for_episode = self._make_episode()
+        popup = self._open_popup(reader_app_shell, monkeypatch, opened_for_url, opened_for_episode)
+
+        accept_btn = _find_button(popup, "Accept")
+        assert accept_btn is not None
+        assert "disabled" not in accept_btn.state(), "Accept is correctly enabled at render time, while the popup is still fresh"
+
+        # Navigation happens now, after the popup already rendered as
+        # fresh -- the courtesy UI check has no way to know about this.
+        new_episode = self._make_episode(translated_line="A completely different chapter's line.")
+        reader_app_shell.episode = new_episode
+
+        assert "disabled" not in accept_btn.state(), "confirms the UI genuinely does not re-poll -- this is the documented tradeoff, not a bug in this test"
+
+        accept_btn.invoke()
+        reader_app_shell.root.update()
+
+        assert (
+            opened_for_episode["translated_lines"][0] == "He is popular with a dark complexion."
+        ), "accept_and_close()'s own check must block the write even though the button looked clickable"
+        assert new_episode["translated_lines"][0] == "A completely different chapter's line."
+        assert reader_module.load_cached_episode(opened_for_url) is None, "nothing should have been written to disk for the stale popup's URL"
+
+    def test_accept_disabled_and_no_write_when_url_changed_but_episode_object_same(self, reader_app_shell, monkeypatch, tmp_path):
+        """Covers the (self.episode is not popup_opened_for_episode) branch's sibling condition -- a URL change alone, even if somehow the same dict object were still referenced, must also block the write."""
+        import pyplayground.webnovels.alphapolis_reader as reader_module
+
+        monkeypatch.setattr(reader_module, "CACHE_DIR", tmp_path)
+        opened_for_url = "https://www.alphapolis.co.jp/novel/12345/1/episode/1"
+        episode = self._make_episode()
+        popup = self._open_popup(reader_app_shell, monkeypatch, opened_for_url, episode)
+
+        reader_app_shell.current_url = "https://www.alphapolis.co.jp/novel/12345/1/episode/2"
+
+        accept_btn = _find_button(popup, "Accept")
+        assert accept_btn is not None
+        # This mutation also happens after render (same as the test above),
+        # so the courtesy check stays showing enabled -- it's
+        # accept_and_close()'s own fresh check that must catch it.
+        assert "disabled" not in accept_btn.state()
+
+        accept_btn.invoke()
+        reader_app_shell.root.update()
+
+        assert episode["translated_lines"][0] == "He is popular with a dark complexion."
+        assert reader_module.load_cached_episode(opened_for_url) is None
+        assert reader_module.load_cached_episode("https://www.alphapolis.co.jp/novel/12345/1/episode/2") is None
+
+
 class TestPopupSingleInstanceGuard:
     """A second call to open the same popup kind while one is already open must not stack a duplicate -- found live: repeated clicks during xdotool verification opened multiple independent dialogs.
 

@@ -46,6 +46,7 @@ from bs4 import BeautifulSoup
 
 from pyplayground.utils.config_utils import load_json_config, save_json_config
 from pyplayground.utils.logging_utils import get_logger, setup_logging
+from pyplayground.utils.safe_persistence import verify_before_write
 from pyplayground.webnovels.global_vocabulary import format_global_vocabulary_for_prompt, get_global_entry, load_global_vocabulary, upsert_global_entry
 from pyplayground.webnovels.glossary import (
     HONORIFIC_POLICIES,
@@ -121,6 +122,11 @@ invalidates old-shape cache files (load_cached_episode() returns None for
 a version mismatch, so the episode gets refetched/retranslated) rather
 than migrating them in place -- no real cached data worth preserving,
 same no-backward-compat precedent as Sections 9/10."""
+
+_STALE_POPUP_SENTINEL = object()
+"""Sentinel returned by open_retranslate_popup()'s accept_and_close() divergence
+callback so the caller can distinguish "the popup went stale, skip the write"
+from any real local_data value verify_before_write() might otherwise return."""
 
 NOVEL_ID_RE = re.compile(r"/novel/(\d+)/")
 
@@ -3042,8 +3048,8 @@ class ReaderApp:
 
         Fire-and-forget from the caller's perspective: this popup's
         Save/Skip outcome never blocks or gates the outer Accept's
-        existing session-only line-apply behavior, which proceeds
-        immediately regardless.
+        existing line-apply-and-persist behavior (RETRANSLATION_DESIGN.md
+        phase 4), which proceeds immediately regardless.
 
         Args:
             parent_win: The retranslation popup's Toplevel. NOT used as
@@ -3108,16 +3114,27 @@ class ReaderApp:
         retranslate_line_with_hint(), which is used as-is: this task wires
         it, it doesn't change it.
 
-        Accept is **session-only, not persisted**: it overwrites the
-        translated_span's rendered text in the live tk.Text widget (and
-        updates self.renderer._rendered_spans so a later click on that line
-        resolves consistently) for the remainder of this reading session.
-        Reloading the chapter or restarting the app reverts it, since
-        there is no line_overrides cache field yet -- that's phase 4. This
-        is deliberately more than a no-op (a pure no-op would make Accept
-        indistinguishable from Discard when clicked, which seemed like a
-        worse interim experience than "it visibly sticks until you leave
-        the chapter"), but it is explicitly not persistence.
+        Accept **persists to the on-disk cache** (RETRANSLATION_DESIGN.md
+        phase 4): it overwrites the translated_span's rendered text in the
+        live tk.Text widget, updates self.renderer._rendered_spans and
+        self.episode["translated_lines"][line_idx] (phase 3's fix, so the
+        correction survives a same-session view-mode switch), and then
+        calls save_cached_episode() so it also survives a reload/restart.
+        Reuses translated_lines directly rather than a separate
+        line_overrides field -- see that doc's phase 4 dated entry for why
+        a second field was judged unnecessary once phase 3's actual
+        mechanism was reconsidered.
+
+        Stale-popup guard: this popup is non-modal and load_episode()/
+        go_prev()/go_next() do not close it, so a user can open it, then
+        navigate to a different episode, then click Accept -- at which
+        point self.current_url/self.episode refer to the new episode, not
+        the one this popup's correction belongs to. popup_opened_for_url/
+        popup_opened_for_episode below are captured once, at open time, so
+        accept_and_close() can detect this and refuse to write (neither in
+        memory nor to disk) rather than writing a correction under the
+        wrong cache key. See RETRANSLATION_DESIGN.md's dated finding on
+        this race for the full account.
 
         Args:
             source_line: The Japanese source line being retranslated.
@@ -3138,6 +3155,13 @@ class ReaderApp:
 
         _, _, translated_tag, _ = translated_span
         current_translation = self.text.get(translated_span[0], translated_span[1]).rstrip("\n")
+
+        # Captured once, at open time -- see the stale-popup guard note
+        # above. Compared against self.current_url/self.episode fresh at
+        # Accept time, not re-derived, since navigation may have already
+        # replaced both by then.
+        popup_opened_for_url = getattr(self, "current_url", None)
+        popup_opened_for_episode = getattr(self, "episode", None)
 
         win = tk.Toplevel(self.root)
         self._retranslate_popup = win
@@ -3221,14 +3245,73 @@ class ReaderApp:
             remember_var = tk.BooleanVar(value=True)
             ttk.Checkbutton(win, text="Also remember this for next time", variable=remember_var).pack(anchor="w", padx=10, pady=(10, 0))
 
-            ttk.Label(
-                win,
-                text="Note: Accept applies only to this reading session\nand is lost on reload -- persistence isn't built yet.",
-                foreground="#888",
-                justify="left",
-            ).pack(anchor="w", padx=10, pady=(8, 0))
+            # Best-effort UI hint, not a guarantee -- reflects staleness as
+            # of this render only, does not re-poll while the popup sits
+            # open and idle (e.g. the user navigates away and back without
+            # this form ever re-rendering). accept_and_close()'s own check,
+            # run fresh at click time, is the actual authoritative gate;
+            # this is only a courtesy so Accept doesn't look clickable when
+            # it's already known (as of render time) to be inert.
+            is_stale = self.current_url != popup_opened_for_url or self.episode is not popup_opened_for_episode
+            if is_stale:
+                ttk.Label(
+                    win,
+                    text="This correction is for a different chapter and can't be saved.",
+                    foreground="#a00000",
+                    wraplength=420,
+                    justify="left",
+                ).pack(anchor="w", padx=10, pady=(8, 0))
+            else:
+                ttk.Label(
+                    win,
+                    text="Note: Accept saves this correction to the episode cache.",
+                    foreground="#888",
+                    justify="left",
+                ).pack(anchor="w", padx=10, pady=(8, 0))
 
             def accept_and_close():
+                # Authoritative check, re-evaluated fresh at click time --
+                # not reused from is_stale above, since that was only
+                # correct as of this form's render and the popup may have
+                # sat open for a while since then. See this method's
+                # docstring for the full account of why this race matters
+                # now that Accept writes to disk. Routed through
+                # verify_before_write() (safe_persistence.py): the
+                # captured marker is the (url, episode) pair below,
+                # reload_current() re-reads both fresh, markers_match()
+                # reproduces the exact != / is not comparison this guard
+                # always used, and on_divergence() is this skip-and-warn
+                # logic, verbatim, returning the _STALE sentinel so the
+                # caller below can tell "diverged" apart from "proceed".
+                def reload_current() -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+                    return (self.current_url, self.episode)
+
+                def markers_match(captured: Tuple[Optional[str], Optional[Dict[str, Any]]], current: Tuple[Optional[str], Optional[Dict[str, Any]]]) -> bool:
+                    captured_url, captured_episode = captured
+                    current_url, current_episode = current
+                    return current_url == captured_url and current_episode is captured_episode
+
+                def on_divergence(current_marker: Tuple[Optional[str], Optional[Dict[str, Any]]], local_data: None) -> object:
+                    current_url, _ = current_marker
+                    logger.warning(
+                        f"Retranslation accepted but the displayed episode changed since this popup was opened "
+                        f"(opened for {popup_opened_for_url!r}, now on {current_url!r}) -- "
+                        f"skipping both the in-memory and on-disk write to avoid saving under the wrong cache key"
+                    )
+                    return _STALE_POPUP_SENTINEL
+
+                outcome = verify_before_write(
+                    captured_marker=(popup_opened_for_url, popup_opened_for_episode),
+                    reload_current=reload_current,
+                    on_divergence=on_divergence,
+                    local_data=None,
+                    markers_match=markers_match,
+                )
+                if outcome is _STALE_POPUP_SENTINEL:
+                    win.destroy()
+                    self.set_status("Retranslation not saved -- you navigated to a different chapter")
+                    return
+
                 if remember_var.get():
                     self._open_remember_globally_popup(win, hint_word, current_translation, candidate)
 
@@ -3250,33 +3333,46 @@ class ReaderApp:
                 # survives a view-mode switch within the same session --
                 # render_text() always rebuilds from self.episode fresh on
                 # every mode change, so anything not written here is
-                # silently lost the moment the user switches modes. Still
-                # session-only: self.episode is in-memory only, never
-                # written to the on-disk cache, so a reload/restart still
-                # reverts it -- that boundary (phase 4's territory) is
-                # unchanged by this fix.
+                # silently lost the moment the user switches modes.
                 line_idx = self.renderer._translated_line_index_by_span.pop((start, end), None)
+                persisted = False
                 if line_idx is not None and self.episode is not None:
                     translated_lines = self.episode.get("translated_lines")
                     if translated_lines is not None and 0 <= line_idx < len(translated_lines):
                         translated_lines[line_idx] = candidate
                         self.renderer._translated_line_index_by_span[(start, new_end)] = line_idx
+                        # Phase 4: persist to the on-disk cache immediately
+                        # (same "instant reload-then-save" trigger already
+                        # established for GlossaryCoordinator/
+                        # global_vocabulary.py) -- reuses translated_lines
+                        # directly, the same field a normal translation
+                        # populates, rather than a new line_overrides field.
+                        # self.current_url is re-read here (not
+                        # popup_opened_for_url) since the guard above
+                        # already confirmed they're equal at this point.
+                        save_cached_episode(self.current_url, self.episode)
+                        persisted = True
                     else:
                         logger.warning(
-                            f"Retranslation accepted but translated_lines index {line_idx} out of range ({len(translated_lines) if translated_lines is not None else 'n/a'}) -- in-memory episode not updated, correction will not survive a view-mode switch"
+                            f"Retranslation accepted but translated_lines index {line_idx} out of range ({len(translated_lines) if translated_lines is not None else 'n/a'}) -- in-memory episode not updated, correction not saved"
                         )
                 else:
-                    logger.warning(
-                        "Retranslation accepted but no translated_lines index found for this span -- in-memory episode not updated, correction will not survive a view-mode switch"
-                    )
+                    logger.warning("Retranslation accepted but no translated_lines index found for this span -- in-memory episode not updated, correction not saved")
 
-                logger.info(f"Retranslation accepted (session-only, not persisted) for line: {source_line!r} -> {candidate!r}")
+                if persisted:
+                    logger.info(f"Retranslation accepted and saved for line: {source_line!r} -> {candidate!r}")
+                    self.set_status("Retranslation saved")
+                else:
+                    logger.info(f"Retranslation accepted (not saved -- see prior warning) for line: {source_line!r} -> {candidate!r}")
+                    self.set_status("Retranslation applied for this session (not saved)")
                 win.destroy()
-                self.set_status("Retranslation applied for this session (not saved)")
 
             bottom = ttk.Frame(win)
             bottom.pack(pady=(10, 10))
-            ttk.Button(bottom, text="Accept", command=accept_and_close).pack(side="left", padx=4)
+            accept_btn = ttk.Button(bottom, text="Accept", command=accept_and_close)
+            accept_btn.pack(side="left", padx=4)
+            if is_stale:
+                accept_btn.state(["disabled"])
             ttk.Button(bottom, text="Discard", command=win.destroy).pack(side="left", padx=4)
 
         threading.Thread(target=fetch_candidate, daemon=True).start()

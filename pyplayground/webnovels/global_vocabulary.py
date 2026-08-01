@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from pyplayground.utils.logging_utils import get_logger
+from pyplayground.utils.safe_persistence import atomic_write
 from pyplayground.webnovels.glossary import MAX_TERMS_IN_PROMPT, STATUS_CONFIRMED, mixed_case_note
 
 logger = get_logger(__name__)
@@ -70,7 +71,7 @@ def save_global_vocabulary(store: Dict[str, Any]) -> None:
         store: Store dict to save (updated_at, entries).
     """
     GLOBAL_VOCAB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    GLOBAL_VOCAB_PATH.write_text(json.dumps(store, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write(GLOBAL_VOCAB_PATH, json.dumps(store, indent=2, ensure_ascii=False))
     logger.debug(f"Saved global vocabulary store to {GLOBAL_VOCAB_PATH}")
 
 

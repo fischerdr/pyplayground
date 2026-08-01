@@ -57,6 +57,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from pyplayground.utils.logging_utils import get_logger
+from pyplayground.utils.safe_persistence import verify_before_write
 from pyplayground.webnovels.build_glossary import build_glossary_for_novel
 from pyplayground.webnovels.glossary import DEFAULT_HONORIFIC_POLICY, load_glossary, save_glossary, upsert_confirmed_term
 
@@ -139,29 +140,49 @@ class GlossaryCoordinator:
         Returns:
             The final glossary dict as written to disk.
         """
-        current_glossary = self.load()
-        if current_glossary.get("updated_at") != opened_at:
+        # The reload happens once, inside reload_current(), and its result
+        # is reused both for the marker comparison (via
+        # verify_before_write()) and, on divergence, as current_glossary
+        # below -- a mutable holder cell since verify_before_write()'s
+        # reload_current() signature returns only the marker, not the
+        # full reloaded state, but this callback needs both.
+        reloaded: Dict[str, Any] = {}
+
+        def reload_current() -> Optional[str]:
+            reloaded["glossary"] = self.load()
+            marker: Optional[str] = reloaded["glossary"].get("updated_at")
+            return marker
+
+        def on_divergence(current_marker: Optional[str], local_terms_arg: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             logger.info(
-                f"Glossary for novel {self.novel_id} changed on disk while a snapshot was held (updated_at {opened_at!r} -> {current_glossary.get('updated_at')!r}) -- merging by source instead of overwriting"
+                f"Glossary for novel {self.novel_id} changed on disk while a snapshot was held (updated_at {opened_at!r} -> {current_marker!r}) -- merging by source instead of overwriting"
             )
+            current_glossary = reloaded["glossary"]
             current_by_source = {t.get("source"): t for t in current_glossary.get("terms", []) if t.get("source")}
-            local_by_source = {t.get("source"): t for t in local_terms}
+            local_by_source = {t.get("source"): t for t in local_terms_arg}
             merged_by_source = dict(current_by_source)
             for source in edited_sources:
                 if source in local_by_source:
                     merged_by_source[source] = local_by_source[source]
             for source in deleted_sources:
                 merged_by_source.pop(source, None)
-            final_terms = list(merged_by_source.values())
-        else:
-            final_terms = local_terms
+            return list(merged_by_source.values())
 
+        final_terms = verify_before_write(
+            captured_marker=opened_at,
+            reload_current=reload_current,
+            on_divergence=on_divergence,
+            local_data=local_terms,
+        )
+
+        current_glossary = reloaded["glossary"]
         current_glossary["terms"] = final_terms
         current_glossary["honorific_policy"] = honorific_policy
         current_glossary["honorific_policy_user_set"] = True
         current_glossary["updated_at"] = datetime.now(timezone.utc).isoformat()
         save_glossary(self.novel_id, current_glossary)
-        return current_glossary
+        result: Dict[str, Any] = current_glossary
+        return result
 
     def clear(self) -> Dict[str, Any]:
         """Reload the glossary fresh and reset it to empty -- all terms removed, honorific policy back to default.

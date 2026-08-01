@@ -37,6 +37,9 @@ from .migration_utils import (
     validate_pvc_entry,
 )
 
+# Safe persistence utilities
+from .safe_persistence import atomic_write, verify_before_write
+
 # Vault utilities
 from .vault_utils import (
     collect_secrets,
@@ -69,6 +72,9 @@ __all__ = [
     "normalize_secret_name",
     "parse_export_data",
     "validate_pvc_entry",
+    # Safe persistence utils
+    "atomic_write",
+    "verify_before_write",
     # Vault utils
     "collect_secrets",
     "create_vault_client",

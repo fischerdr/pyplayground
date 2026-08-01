@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from pyplayground.utils.logging_utils import get_logger
+from pyplayground.utils.safe_persistence import atomic_write
 
 logger = get_logger(__name__)
 
@@ -225,7 +226,7 @@ def save_glossary(novel_id: str, glossary: Dict[str, Any]) -> None:
     """
     path = _glossary_path(novel_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(glossary, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write(path, json.dumps(glossary, indent=2, ensure_ascii=False))
     logger.debug(f"Saved glossary for novel {novel_id} to {path}")
 
 

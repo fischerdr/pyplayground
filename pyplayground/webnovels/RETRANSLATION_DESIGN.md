@@ -9,7 +9,7 @@ words the model got wrong), not about per-novel proper-noun/term
 consistency. Conflating the two would repeat the same flag-means-two-
 things mistake `DESIGN.md` §11 already caught once for `needs_review`.
 
-Last updated: 2026-07-31 (Phase 5 -- global vocabulary-notes store -- implemented)
+Last updated: 2026-08-01 (Phase 4 -- accepted-correction persistence -- implemented)
 
 ---
 
@@ -70,15 +70,16 @@ open questions, not forgotten — just not being decided pre-emptively:
 
 - Whether retranslation should see just the one line, or surrounding
   lines for context (currently: just the one line, simplest version).
-- Whether `line_overrides` needs a `CACHE_SCHEMA_VERSION` bump (forcing
+- ~~Whether `line_overrides` needs a `CACHE_SCHEMA_VERSION` bump (forcing
   regeneration of all cached episodes, same cost as `DESIGN.md` §11's
   bump) or can be safely read via `.get("line_overrides", {})` with no
-  correctness risk on old cache files. Instinct: the latter, since unlike
-  `needs_review_flags` (which needed strict length-parity with
-  `translated_lines` to render correctly), an override is purely
-  additive — a missing one just means "no override, render normally."
-  Instinct only — must be verified against actual rendering logic before
-  building on it, not assumed.
+  correctness risk on old cache files.~~ **Resolved 2026-08-01, see phase
+  4's dated entry: no `line_overrides` field was built at all.** Phase 3
+  (2026-07-27) already writes an accepted correction directly into
+  `translated_lines` -- the same field, same shape, a normal translation
+  already populates -- so phase 4 turned out to be "persist the field
+  that's already correct in memory," not "design and version a new
+  field." No schema bump; `CACHE_SCHEMA_VERSION` is unchanged.
 - Where exactly the global vocabulary-notes injection happens in
   prompt-building, and whether it should apply to
   `translate_chunk_with_masking()` too, or only the retranslation-with-
@@ -138,9 +139,12 @@ depends on.
 - **Phase 1**: complete (2026-07-26, see dated entry below).
 - **Phase 2**: complete (2026-07-26, see dated entry below).
 - **Phase 3**: complete (2026-07-26, see dated entry below).
-- **Phase 4**: not started (`line_overrides` cache-persistence field --
-  still explicitly out of scope; Phase 5 below was built without it, per
-  Phase 5's own scope note).
+- **Phase 4**: complete (2026-08-01, see dated entry below) -- accepted
+  corrections now persist to the on-disk episode cache. No new
+  `line_overrides` field; reuses `translated_lines` directly. Also fixed
+  a real, previously-undocumented write race found during this phase's
+  own research (a stale, non-modal retranslate popup accepted after
+  navigating to a different episode) -- see its own separate dated entry.
 - **Phase 5**: complete (2026-07-31, see dated entry below) -- the global
   vocabulary-notes store, built directly on Phase 2's confirmed-glossary
   injection mechanism and the 2026-07-31 reliability finding's proposed
@@ -1138,3 +1142,281 @@ spurious insert+delete pair, since the two words share a letter) was
 also not anticipated and was caught by the diff helper's own unit tests
 failing against real phase-2 before/after examples, not assumed correct
 from the implementation alone.
+
+### 2026-08-01: stale-popup write race — found during phase 4 research, fixed
+
+Found while re-deriving phase 4's design, not something phase 4's brief
+asked for directly, and documented separately per the discipline this
+doc already follows for out-of-scope-but-real findings (e.g. phase 3's
+mode-switch bug, phase 5's sub-popup parenting bug).
+
+**The bug**: `open_retranslate_popup()` is a plain, non-modal
+`tk.Toplevel` (no `grab_set()`), and neither `load_episode()` nor
+`go_prev()`/`go_next()` close it on navigation. So: open the popup for
+episode A, navigate to a different episode B (Previous/Next remain
+clickable the whole time), click Accept on the still-open popup for A --
+at that point `self.current_url`/`self.episode` refer to B, not A, but
+the popup's `source_line`/`candidate`/`translated_span` still describe
+A's content.
+
+**Why this was harmless before phase 4 and is not harmless now**:
+phase 3's in-memory write (`self.episode["translated_lines"][line_idx] =
+candidate`) already had this exact race, but writing A's correction into
+whatever `self.episode` happens to be at click time was a session-scoped
+inconvenience at worst -- it could corrupt B's in-memory display for the
+rest of the session, but nothing on disk was ever at risk, since nothing
+was written to disk at all. Phase 4 makes Accept call
+`save_cached_episode(self.current_url, self.episode)` -- so the same
+race, unaddressed, would silently write A's correction into B's cache
+file under B's own cache key (or, if `line_idx` happened to be
+out-of-range for B, would be caught by the existing bounds check and
+merely logged, but a same-length coincidence would not be caught at
+all). This is a real persistence-corruption risk a purely in-memory
+write never had.
+
+**Fix**: `open_retranslate_popup()` now captures `popup_opened_for_url =
+self.current_url` and `popup_opened_for_episode = self.episode` once, at
+open time. `accept_and_close()` re-checks both, fresh, at the moment
+Accept is actually clicked (`self.current_url != popup_opened_for_url or
+self.episode is not popup_opened_for_episode`) -- if either has changed,
+**both the in-memory and on-disk write are skipped entirely**, a warning
+is logged, and the status bar tells the user why ("Retranslation not
+saved -- you navigated to a different chapter"). No attempt is made at a
+partial/soft write into whatever might still be reachable; per explicit
+direction, an unclear, half-defined fallback is worse than a clean skip.
+
+**Two checkpoints, deliberately not equally live, stated as an accepted
+tradeoff rather than left as an implicit gap**: `build_form()` (candidate
+render time) shows a courtesy UI hint -- if already stale when the
+candidate finishes loading, the "different chapter" message is shown and
+Accept is rendered disabled. This check does **not** re-poll while the
+popup sits open and idle; if the user opens the popup, leaves it looking
+fresh, navigates away, and never causes `build_form()` to re-render, the
+button can keep showing enabled indefinitely. This is intentional, not
+an oversight: `accept_and_close()`'s own check, run fresh at the instant
+Accept is clicked, is the actual authoritative gate, and every write
+(in-memory and disk) is conditioned on it, never on the button's
+disabled/enabled UI state. Verified directly, not just asserted: a unit
+test forces the button back to enabled after the popup has already gone
+stale (`accept_btn.state(["!disabled"])`, bypassing the courtesy check
+entirely) and confirms the write is still correctly blocked --
+`accept_and_close()`'s check does not depend on Tk's own disabled-widget
+click-guard either.
+
+**Rejected alternative, stated with reasoning, not silently dropped**:
+making `load_episode()`/`go_prev()`/`go_next()` close any open
+retranslate popup on navigation, removing the race at its source instead
+of guarding the one place it matters. Rejected because those three
+methods are the most heavily-exercised code paths in the entire app --
+every single load in every session goes through them -- and adding
+popup-teardown logic there for a narrow edge case (a user deliberately
+navigating away while a correction dialog sits open) is disproportionate
+risk to currently-solid, high-traffic code, compared to a guard placed
+exactly where the actual consequence (a bad write) would occur.
+
+**Test coverage**: `TestAcceptStalePopupGuard` in
+`tests/webnovels/test_retranslation_dialog.py` (4 tests): Accept
+correctly disabled when the episode was already stale before the popup's
+candidate finished rendering; the realistic case -- Accept correctly
+*not* disabled at render time, then the episode changes while the popup
+sits open, and `accept_and_close()`'s own check still blocks the write
+(this is the test that actually proves the authoritative-gate claim, not
+just the UI courtesy); a URL-only change (same episode object,
+hypothetically, but a different `current_url`) also blocks the write;
+and the disabled-state-bypass test described above. All four confirmed
+load-bearing by reverting the phase 4 fix and re-running (see phase 4's
+own dated entry for the combined revert-and-rerun result covering both
+this fix and the base persistence fix together).
+
+**Not done in this pass**: no live/xdotool reproduction of this specific
+race -- covered by the unit tests above, which drive the real
+`open_retranslate_popup()`/`accept_and_close()` methods end-to-end
+against a real (headless) Tk widget tree, not a reimplementation of the
+guard logic. Live verification for this phase focused on the base
+persistence-across-restart scenario (see phase 4's dated entry); a
+live reproduction of navigate-while-popup-open was judged lower value
+given the unit tests already exercise the exact same code path a live
+click would.
+
+### 2026-08-01: `safe_persistence.py` foundational design -- implemented and migrated
+
+`pyplayground/utils/safe_persistence.py`'s two helpers (`atomic_write()`,
+`verify_before_write()`) are implemented and every call site from the
+original design's migration plan has been moved onto them, in order,
+each step's acceptance bar confirmed before the next. Relevant to this
+doc specifically: `open_retranslate_popup()`'s stale-popup guard above
+(capture `current_url`/`episode` at popup-open, re-verify fresh at
+Accept) is now routed through `verify_before_write()` --
+`accept_and_close()` supplies `reload_current` (re-reads
+`self.current_url`/`self.episode`), a `markers_match` callback
+reproducing the exact `!=`/`is not` comparison this guard always used,
+and an `on_divergence` callback that is the original skip-and-warn logic,
+verbatim (logs the same warning, returns a sentinel the caller uses to
+skip both the in-memory and on-disk write and show the same status-bar
+message). `TestAcceptStalePopupGuard`'s tests in
+`tests/webnovels/test_retranslation_dialog.py` pass unmodified against
+the migrated code -- confirming this was a relocation of mechanism, not
+a behavior change.
+
+`save_cached_episode()` (used by this guard's Accept path, via
+`config_utils.save_json_config()`) is also now atomic end-to-end: no
+direct `open(path, "w")`/`path.write_text()` remains anywhere in this
+write path.
+
+Live-verified under Xvfb + fluxbox against the real running app: a real
+right-click -> "Retranslate this line..." -> Accept flow, with the
+resulting on-disk episode-cache write confirmed atomic via `strace`
+attached to the live app process (`openat()` of the uniquely-named temp
+file, immediately followed by `rename()` onto the real cache file) --
+not simulated, the actual syscalls made by a real user action. The
+correction landed under the correct episode's cache key with clean app
+logs (no ERROR lines), confirmed by re-reading the resulting JSON file
+directly. See `DESIGN.md`'s matching dated entry for the full account,
+including the parallel live verification of a real Glossary Save through
+`GlossaryCoordinator.save_snapshot()`.
+
+### 2026-08-01: Phase 4 (accepted-correction persistence) — implemented
+
+**Design decision, re-derived rather than assuming the original sketch
+was still right (per this task's own explicit instruction): no
+`line_overrides` field.** The doc's original phase 4 sketch (see the
+"Explicitly deferred" section, now updated) proposed a new, separate
+cache field to hold accepted overrides. Re-reading phase 3's actual,
+already-shipped mechanism first (rather than building the sketch as
+originally written) showed that's no longer the right design:
+`accept_and_close()` already writes
+`self.episode["translated_lines"][line_idx] = candidate` directly --
+the exact field a normal translation populates, in the exact dict object
+`_do_fetch_and_translate()` builds, caches, and had already been handing
+to `save_cached_episode()` (just not calling it again after Accept). A
+separate field would only be justified if the original MT output needed
+to stay distinct from the correction for a revert/audit need -- no such
+requirement exists or was requested. So phase 4 turned out to be almost
+entirely "call `save_cached_episode()` after Accept, reusing what's
+already correct in memory," not "design and persist a new field."
+
+**No `CACHE_SCHEMA_VERSION` bump.** `DESIGN.md` §11's v3→4 bump
+(`needs_review_flags`) was required because that field is a *second,
+separately-indexed* `List[bool]` that must stay length/order-synchronized
+with `translated_lines` -- a stale or absent value there is a silent
+misalignment risk, not "no flag." This change adds no field and changes
+no shape: `translated_lines` is still exactly the `List[str]`, same
+length as `lines`, it always was; only some of its string contents now
+differ from what a fresh translation alone would have produced. Old
+cache files need no migration and are read exactly as before.
+`CACHE_SCHEMA_VERSION` stays at `4`.
+
+**The stale-popup write race found during this task's own research is
+documented as its own dated entry immediately above** (2026-08-01,
+"stale-popup write race") -- a real, previously-undocumented risk that
+phase 3's in-memory-only write never had to guard against, closed as
+part of this phase's implementation, not left for later.
+
+**Write trigger and cost, verified rather than assumed cheap**:
+`save_json_config()` (`pyplayground/utils/config_utils.py:113-143`,
+what `save_cached_episode()` calls) is a direct `open(path, "w")` +
+`json.dump()` -- **not atomic**, no temp-file-plus-rename. This was
+already true of every cache write in this codebase before this change;
+what changes is the *consequence* of hitting it, not the mechanism.
+Before phase 4, a crash mid-write could only happen during the
+once-per-fresh-episode `_do_fetch_and_translate()` path, losing at most
+one episode's translation -- annoying but cheap to regenerate. After
+phase 4, the same crash can happen on every Accept click, and the file
+being written at that point can also hold *other, unrelated,
+already-accepted corrections and hard-won `needs_review`/glossary-derived
+state* for that same episode -- a mid-write crash now risks losing more
+than just the write that triggered it. This is a genuine, heightened (not
+new, but heightened) risk carried forward, stated here explicitly rather
+than buried as "same risk profile, just more often." Fixing it (atomic
+temp-file-plus-rename writes) is out of scope for this task and remains
+open.
+
+The write itself is synchronous, on the Tk main thread, inside the
+Accept button's callback -- a full-episode `json.dump()` briefly blocks
+the UI. Judged acceptable for a deliberate, infrequent user action, same
+cost class as every other synchronous dialog action already in this
+file. **Trigger: immediate write on Accept**, after the stale-popup
+guard passes and the existing in-memory write completes -- matches the
+"instant reload-then-save" pattern already established for
+`GlossaryCoordinator`/`global_vocabulary.py`. No debouncing; this is not
+a hot path.
+
+**Status message and docstrings updated to match reality**: the popup's
+note now reads "Accept saves this correction to the episode cache"
+(previously "session-only... persistence isn't built yet"); the
+post-Accept status bar now reads "Retranslation saved" on success (was
+"...applied for this session (not saved)"), or, for the stale-popup
+case, "Retranslation not saved -- you navigated to a different chapter".
+`open_retranslate_popup()`'s and `_open_remember_globally_popup()`'s
+docstrings, both of which described Accept as session-only per phase 3's
+then-accurate state, are updated to describe the real, current behavior.
+
+**Test coverage**: `TestAcceptPersistsToCache` in
+`tests/webnovels/test_retranslation_dialog.py` (3 tests) -- the load-
+bearing one (`test_correction_survives_a_full_reload_from_cache`) drives
+the real Accept button, then calls `load_cached_episode()` fresh (a
+genuinely separate read, not a re-inspection of the same in-memory
+`episode` object `TestAcceptSurvivesModeSwitch`'s phase-3 test already
+covers) and confirms the correction is present -- this is the actual
+"survives a restart" check, since a real restart also starts from a
+fresh `load_cached_episode()` call in a brand-new process with no
+reference to any prior in-memory state. A sibling test stubs out
+`save_cached_episode()` and confirms the reload then correctly finds
+nothing, proving the first test is a real check and not a tautology. A
+third confirms the status message. Plus the 4-test
+`TestAcceptStalePopupGuard` class documented in the finding above. All 7
+new tests (plus the pre-existing 11 in this file) confirmed
+**load-bearing together**: reverted the phase 4 production changes to
+`alphapolis_reader.py` via `git diff`/`git checkout`/`git apply` and
+re-ran -- 5 of the 6 tests whose pass/fail depends on the fix (all
+except the stub-based negative-control test, which is correct either
+way) failed with exactly the expected assertion mismatches, then passed
+again once the fix was restored.
+
+**Live verification**, via `run_ui_tests.sh xvfb-keep` against the real
+app and novel 375266002's real cached episode 7800089 (the same
+`バッターボックスに立` line used in prior phase 2/5 live sessions):
+
+- Launched the app (cache hit, "Displayed episode: contact" confirmed in
+  the log), screenshot before: baseline text "In the batting box **was**
+  Katsuo-kun...".
+- Switched to Interleaved, drag-selected `バッターボックスに立つの` in
+  the source line, right-clicked, "Retranslate this line..." -- a real
+  live translategemma call returned a genuine candidate ("...**stood**
+  Katsuo-kun..."), and the popup's note correctly read "Accept saves
+  this correction to the episode cache" (confirming the updated wording
+  is live, not just present in source). Unchecked "remember this" (out
+  of scope for this verification) and clicked Accept.
+- App log recorded `Retranslation accepted and saved for line: ...`;
+  status bar showed "Retranslation saved"; on-screen text updated to
+  "...**stood** Katsuo-kun...". Read `load_cached_episode()` directly
+  (fresh Python process, not the running app) and confirmed the on-disk
+  file already contained the corrected text -- proof the write actually
+  landed, not just that the UI claimed success.
+- Killed the app via `proc` `SIGTERM` (escalated to `SIGKILL` after a
+  timeout) -- never `xdotool windowclose`/`windowkill`, per this
+  project's own documented Playwright/EPIPE crash finding.
+- Relaunched a **brand-new process** against the identical episode URL
+  (same cache key, no retranslation triggered in this second process at
+  all). Screenshot confirmed the corrected text ("...stood Katsuo-kun...")
+  was present on screen immediately on load, sourced entirely from the
+  on-disk cache written by the first process -- the actual, real
+  restart-survival proof this phase exists to deliver. Zero
+  ERROR/CRITICAL log lines across both process runs.
+- Did not separately live-reproduce the stale-popup race (see that
+  finding's own "Not done in this pass" note for why the unit tests were
+  judged sufficient).
+
+`black`/`isort`/`flake8` clean on both touched files. `mypy`:
+`alphapolis_reader.py` went from 444 to 447 errors (+3), consistent with
+this file's existing, previously-documented untyped-method convention --
+not fixed here, same treatment as every prior phase entry touching this
+file. Full `tests/webnovels/` suite (excluding the always-manual
+`ui_automation/` directory): 326 passed, up from 320, no regressions.
+
+**Not done in this pass**: no atomic (temp-file-plus-rename) cache
+writes -- the heightened-but-pre-existing non-atomicity risk documented
+above is carried forward, not fixed, and remains open for a future pass.
+No changes to `save_cached_episode()`/`load_cached_episode()`/
+`CACHE_SCHEMA_VERSION` themselves -- reused exactly as they already
+existed. No changes to phase 5's global-vocabulary-store scope.

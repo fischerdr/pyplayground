@@ -567,6 +567,333 @@ to the live app process, showing the exact `openat()` (temp file,
 Both writes landed correctly (valid JSON, correct content, correct
 cache/glossary key) with clean app logs (no ERROR lines) both times.
 
+### 2026-08-01: short-line JSON-malformation pattern -- quantified, confirmed real, not fixed (investigation only)
+
+Follow-up to the two JSON-malformation failure classes `DESIGN_ARCHIVE.md`
+already documents (2026-07-25: the unescaped-literal-quote corruption from
+`「」` dialogue markers translated as literal `"` instead of `\"`; the
+"Invalid control character" `json.JSONDecodeError` class recovered by
+`translate_chunk()`'s per-line retry). Suspected but previously unquantified:
+that very short lines -- onomatopoeia, single-word shouts, and especially
+`「「「...」」」`-style collective-shout constructions -- are disproportionately
+likely targets, versus ordinary dialogue/narration hitting the same failure
+classes for unrelated reasons.
+
+**Method**: scanned all 26 files in `~/.cache/alphapolis_reader/` (18 real
+episode-scale caches with 3-77 lines each, 8 tiny 1-2 line test fixtures).
+For each, compared `lines` (source) against `translated_lines` (output),
+counting `[translation failed...]` placeholders and a stray-quote-artifact
+regex (`""` or a bare `"` glued between word characters -- the literal shape
+the archived 2026-07-25 finding shows, e.g. `'""Look, ...""'`) against every
+source line, recording the source text for every flagged line. Script kept
+at `/tmp/claude-.../scratchpad/scan_short_line_json.py` (scratchpad, not
+committed -- one-off investigation tool, not reusable production code).
+
+**Result, real numbers**: 1,042 lines scanned across the 18 real episodes.
+**Zero** `[translation failed]` placeholders anywhere in current cache --
+the per-line retry path (§ archived 2026-07-26 finding) is evidently
+succeeding on every case in this corpus, so that failure class leaves no
+visible trace in cached output today. **6 stray-quote-artifact lines**,
+all 6 sharing one exact shape: **100% were `「「「...」」」` collective-shout
+constructions** (`「「「キャアアアー！！」」」` -> `'""Kyaaa!""'`,
+`「「「わぁぁああ～～！」」」` -> `'""Waaaaah!""'`, and four more of the same
+form). Zero ordinary dialogue/narration lines were flagged by either check.
+
+**Quantified against the full denominator, not just the flagged set**: of
+361 lines in the corpus containing `「`/`」` at all, 138 are short enough to
+classify as bracket-only/shout-shaped (stripped of brackets/punctuation,
+<=12 chars) and 223 are ordinary-length bracket-bearing dialogue. The 6
+corruptions come entirely from the 138-line short/shout bucket (**6/138 =
+4.3%** corruption rate) against **0/223 (0%)** for ordinary-length bracket
+lines. The pattern is not "any use of `「」`" -- it is specific to the
+short/doubled-bracket collective-shout shape.
+
+**Step 3 (chunk-level vs. single-line path)**: no request-level logs exist
+for these cached episodes (only final cache output), so this couldn't be
+checked directly against live traffic. Indirect evidence points away from
+it being chunk-position-specific: every one of the 6 corrupted lines sits
+embedded in an ordinary multi-line chunk between long narration/dialogue
+lines that translated cleanly (confirmed by reading the surrounding source
+lines directly, e.g. `01ce04390f13...` line 45's neighbors are 40+
+character narration sentences with no corruption). Since zero
+`[translation failed]` placeholders exist in this corpus, the per-line
+retry path (which re-sends a failing line alone, isolated from its chunk)
+must be running clean on some fraction of retries -- but a retry re-sending
+the exact same short-shout text is exposed to the same model behavior that
+produced the corruption the first time, so isolation to a single-line
+request is not expected to be a reliable fix by itself. This is inference
+from indirect evidence, not a confirmed trace -- flagged as the one part
+of this investigation that would need live request logging to settle
+properly, not asserted as fact.
+
+**Proposed fix (not implemented, per this task's scope)**: the corruption
+is the model rendering `「」` as literal `"` without escaping when the
+entire line content is just repeated brackets around a short exclamation --
+i.e., a masking/prompt problem, not a JSON-parsing problem (matches the
+archived finding: `parse_json_response()`'s trailing-content tolerance
+can't rescue this because the malformation is internal to the JSON string
+value). Two candidate directions, in order of how directly they target
+what Steps 1-2 actually found:
+
+1. **Pre-normalize collective-shout lines before sending to the model** --
+   detect the `「「「...」」」`-doubled shape (the same short/bracket
+   classifier used for this investigation) and either strip the outer
+   bracket layer before the prompt (translate the bare exclamation only,
+   the brackets are decorative/emphasis in source and carry no dialogue
+   content the model needs to preserve) or route it through a cheaper
+   deterministic path entirely (many of the 6 examples --
+   `ざわざわ…` -> "Rustling...", `キャアアアー！！` -> "Kyaaa!" -- are
+   simple enough that a small onomatopoeia/exclamation lookup table might
+   avoid the LLM call altogether for this specific shape).
+2. **Post-process repair**: since the corruption shape is narrow and
+   consistent (`""text""` wrapping), a targeted regex fixup on
+   `translate_chunk_with_masking()`'s output for lines matching the
+   shout-classifier could strip the doubled/stray quotes after the fact,
+   without changing the prompt at all. Lower confidence this generalizes
+   past the 6 examples seen -- narrower fix for a narrow, already-observed
+   symptom rather than the underlying model behavior.
+
+Both need validation against a live model run (not just this cache
+snapshot) before either is built -- 6 instances across 18 episodes is a
+real, confirmed signal, not yet a large enough sample to be confident a
+fix generalizes.
+
+**Not done in this pass, deliberately**: no fix implemented (task scope
+was investigation and quantification only). No live model calls made --
+this analysis is entirely against already-cached, already-translated
+output. No check of `[translation failed]` corpus history (there is none
+currently on disk) or of whether the 2026-07-25 empty-string-collapse
+class shows the same short-line skew, since no instances of that class
+exist in current cache to classify.
+
+### 2026-08-01: bracket-stripping fix validated live against translategemma -- eliminates the corruption, meaning preserved (implemented and verified -- see follow-up entry below)
+
+Follow-up to the entry immediately above, closing its "needs validation
+against a live model run" gap for fix direction 1 (pre-normalize/strip the
+outer `「」` layer before prompting). No sub-agent delegation -- this was
+one sequential script making live HTTP calls against a single shared model
+server; there was no independent, parallelizable step to hand off.
+
+**Corpus for this test**: re-derived the candidate set directly from cache
+rather than reusing the original 6 examples alone, to get a larger sample.
+Tightened the classifier from the investigation's `<=12 char` heuristic to
+the mechanically precise shape -- **doubled or tripled bracket layers**
+(`「「...」」` / `「「「...」」」`, regex `「{2,}|」{2,}`), i.e. the actual
+collective-shout construction (multiple speakers voiced via repeated
+bracket pairs), not just "any short bracketed line." This found **21** such
+lines across the cache (vs. 138 under the looser heuristic, which included
+ordinary single-speaker short exclamations like `「なにっ！？」` that never
+corrupted). Of the 21, the same 6 originally flagged as corrupt in cached
+output are a subset.
+
+**Method**: reused the real production code path directly, not a
+reimplementation -- imported `TRANSLATION_PROMPT`, `LLM_ENDPOINT`,
+`LLM_MODEL`, `parse_json_response()`, `strip_code_fence()`, and
+`_clean_output()` from `llm_translate.py` unmodified, and built single-line
+`/completion` requests with the exact same payload shape
+`_translate_chunk_once()` sends (`temperature: 0.1`, matching `stop`
+sequence, `n_predict` scaled the same way), just without going through the
+full chunk-batching/masking machinery -- deliberately, since this validates
+the prompt-shape fix itself, not the pipeline plumbing (task scope: no
+production wiring). For each of the 21 lines, called the model twice: once
+with the source line unmodified (matching current behavior), once with all
+`「`/`」` characters stripped (`re.sub(r"「+", "", s)` then same for `」`,
+i.e. "translate the bare exclamation only"). Script:
+`/tmp/claude-.../scratchpad/validate_bracket_strip.py`, raw output saved to
+`validate_results.json` in the same scratchpad directory (not committed --
+one-off validation tool).
+
+**Result, real numbers, live against `mradermacher/translategemma-12b-it-GGUF:Q4_K_M`
+at `http://flyyn:10001`**: **13/21 (61.9%) corrupt with brackets sent to
+the model unmodified** -- higher than the 6/21 (28.6%) the cached snapshot
+showed, because sampling isn't perfectly deterministic run-to-run even at
+`temperature=0.1`; several previously-clean cached lines (e.g.
+`c574a6d5316d` idx 52/54, `` 「「「……」」」 `` -> clean `"..."` in cache) hit
+a JSON parse error this run instead. **0/21 (0%) corrupt with brackets
+stripped before prompting.** Every single corrupted case, including ones
+the original cache scan had recorded as clean, was clean when brackets
+were stripped. Confirmed not a single lucky sample: re-ran 5 of the
+stripped-input cases 3x each (`temperature=0.1` still, same as
+production) -- byte-identical, uncorrupted output on all 15 repeat calls.
+
+**Real before/after examples** (source / cached-or-live-original output /
+live-stripped output):
+
+- `「「「キャアアアー！！」」」` -> live-original `'""Kyaaa!""'` (corrupt)
+  -> stripped `'Kyaaa!'` (clean, same meaning)
+- `「「「なんだとぉ！」」」` -> live-original `'""What the heck!""'`
+  (corrupt) -> stripped `'What did you say!'` (clean, same meaning,
+  arguably closer to the source than the corrupt variant's paraphrase)
+- `「「ッ！？」」` -> live-original `<<PARSE_ERROR: Expecting ',' delimiter
+  ...: '["""]'>>` (total parse failure, not just a stray-quote artifact --
+  this line produced literal `[""" ]`, a shape `parse_json_response()`
+  cannot recover) -> stripped `'Huh?!'` (clean)
+- `「「「ざわざわ…」」」` -> live-original `'""Zawah, zawah...""'` (corrupt)
+  -> stripped `'Zazazawa...'` (clean, but see caveat below)
+- `「「「（わぁ～！）」」」` -> live-original `'"" (Waa!)""'` (corrupt) ->
+  stripped `'(Wow!)'` (clean, parenthetical preserved)
+
+**Meaning/quality comparison**: stripping the brackets did not change
+translation meaning in any of the 21 cases -- the model translates the
+same exclamation content whether or not the (redundant, purely
+typographic) bracket layer is present, consistent with the original
+proposal's reasoning that the brackets carry no dialogue content beyond
+what the enclosed text already conveys. **One pre-existing quality
+caveat, not caused by bracket-stripping**: `ざわざわ` (crowd-murmur
+onomatopoeia) was rendered as a romanized transliteration (`Zazazawa...`)
+rather than an English equivalent (`Rustling...`, which is what the
+original *corrupted* cached output for this same line happened to
+contain) in both the original and stripped live calls -- this is an
+existing onomatopoeia-translation quality issue independent of the
+corruption bug, not something this fix introduces or fixes. Flagged for
+awareness, out of scope for this task.
+
+**Fix direction 2 (regex post-process) not tested** -- direction 1
+validated cleanly enough (0/21 live corruption, stable across repeats,
+no meaning loss) that there was no need to fall back and test the
+post-process alternative. Not ruled out for other reasons, just
+unnecessary given direction 1's result.
+
+**Proposed hook-in point (proposal only, not implemented)**:
+
+- **Where**: `translate_chunk_with_masking()` and the plain
+  `translate_chunk()`/`translate_lines()` path in `llm_translate.py`,
+  immediately before each line is placed into its chunk's `lines_json`
+  payload (i.e. before `_translate_chunk_once()` builds the prompt) --
+  strip, translate, then re-wrap the *output* in a single `「」` pair (or
+  leave unwrapped, a product decision, not a technical one) so the
+  reader-facing translated line still reads as dialogue if that matters
+  for rendering; this needs a product answer, not an engineering one, and
+  wasn't tested here since it's downstream of the parsing fix.
+- **Detection rule**: the tightened doubled-bracket regex confirmed above
+  (`「{2,}|」{2,}`), not the looser `<=12 char` heuristic from the
+  original investigation -- the looser rule would have applied
+  bracket-stripping to 138 lines including 132 that never corrupted,
+  needlessly touching content the fix doesn't need to touch. The precise
+  trigger is "the line's *entire* bracket content is a doubled/tripled
+  layer around a short exclamation," not "the line is short."
+- **Scope note**: this was tested only via direct single-line
+  `/completion` calls, not through `translate_chunk_with_masking()`'s
+  full masking/sentinel/splice machinery. Before implementing, the actual
+  hook-in should be checked against a chunk that mixes a doubled-bracket
+  line with sentinel-masked terms on adjacent lines, since that
+  interaction was never exercised here.
+
+**Not done in this pass, deliberately**: no code changed in
+`llm_translate.py` or any production call site -- validation only, per
+task scope. No test suite changes. No check of whether stripping
+interacts with `mask_terms()`/`splice_terms()` sentinel placement (see
+scope note above). No investigation of the `ざわざわ` transliteration
+quality gap beyond noting it exists.
+
+### 2026-08-01: bracket-stripping fix implemented and verified -- sentinel interaction confirmed clean, live UI verification passed
+
+Implements exactly the two entries above -- no redesign. No sub-agent
+delegation: this was a single sequential implement/test/verify pass in one
+file plus its tests, with no independent step worth parallelizing.
+
+**Code change (`llm_translate.py`)**: added `_is_collective_shout()`
+(the validated `「{2,}|」{2,}` detection, tightened from the
+investigation's looser `<=12 char` heuristic per the validation entry's
+proposal) and `_strip_collective_shout_brackets()`. Hooked into
+`_translate_chunk_once()` at the exact point specified -- `lines` is
+transformed into `prompt_lines` (brackets stripped per-line where
+`_is_collective_shout()` matches) immediately before `lines_json =
+json.dumps(...)` builds the payload, and every returned entry at a
+matching index is re-wrapped in a single `「」` pair before being handed
+back, in both of this function's return paths (the single-line
+duplicate-collapse branch and the normal per-line return). Because
+`translate_chunk()` and `translate_chunk_with_masking()` both funnel
+through `_translate_chunk_once()` (masking calls `translate_chunk()`
+internally), one hook point covers both paths named in scope without
+duplicating logic -- no changes were needed in `translate_chunk()`,
+`translate_chunk_with_masking()`, `translate_lines()`, or
+`translate_lines_with_masking()` themselves.
+
+**Sentinel-interaction check -- the mandatory, explicitly-flagged risk,
+not skipped.** `mask_terms()` runs in `translate_chunk_with_masking()`
+before `translate_chunk()`/`_translate_chunk_once()` is ever called, so by
+the time the bracket-stripping hook sees a line it only needs to leave
+`⟦`/`⟧` sentinel glyphs untouched -- confirmed true both by direct code
+reading (the strip only touches `「`/`」` characters) and by live testing
+against the real model, not just unit tests:
+
+- Live call 1 (three-line chunk: an ordinary line with a masked glossary
+  term, a doubled-bracket collective-shout line adjacent with no masking,
+  another ordinary line) -- `ケイトが振り返った。` / `「「「なんだとぉ！」」」` /
+  `ルリが微笑んだ。` with `mask_targets=[(0, "ケイト")]`. Result:
+  `ケイト turned around.` (needs_review=True, sentinel spliced correctly),
+  `「What did you say!」` (needs_review=False, clean re-wrapped output, no
+  corruption), `Ruri smiled.` (needs_review=False, unaffected). Sentinel
+  position/splice on line 0 was not disturbed by the bracket-stripping
+  hook running on line 1 in the same chunk request.
+- Live call 2 (masked term whose word sits inside the collective-shout
+  line itself): `「「「鉄パイプだ！」」」` with `mask_targets=[(0, "鉄パイプ")]`.
+  Result: `「鉄パイプ it is!」` (needs_review=True) -- the sentinel survived
+  stripping+re-wrapping around it and spliced back correctly at the right
+  position.
+- Live re-check of all 6 originally-corrupted cases through the real,
+  unmodified `translate_chunk()` call path (not the validation entry's
+  standalone script): all 6 now return clean, re-wrapped output (e.g.
+  `「「「キャアアアー！！」」」` -> `「Kyaaa!」`, `「「「なんだとぉ！」」」` ->
+  `「What did you say!」`), 0/6 corrupt.
+
+**Test coverage** (`tests/webnovels/test_llm_translate.py`, 9 new tests,
+27 total in the file, all passing): `TestCollectiveShoutDetection` --
+`_is_collective_shout()` correctly detects all 21 real cases from the
+investigation/validation entries and correctly does NOT fire on a set of
+ordinary dialogue/narration lines (single-bracket short exclamations and
+long narration), confirming the narrow trigger doesn't over-fire; strip
+correctness on two representative cases. `TestCollectiveShoutStripInTranslateChunk`
+-- an end-to-end (mocked model) regression test running all 21 real cases
+through `translate_chunk()`, asserting both that the *sent* prompt had
+brackets stripped (via a mock that decodes the actual outgoing payload
+rather than a fixed canned response) and that the final output is
+re-wrapped with no stray-quote artifact; a matching test confirming
+ordinary lines pass through completely unmodified; a mixed-chunk test
+confirming only the matching line gets re-wrapped. `TestCollectiveShoutStripWithSentinelMasking`
+-- the sentinel-interaction case as its own explicit test (mirroring the
+live check above, mocked), plus a second test for a masked term sitting
+inside the shout line itself. `black`/`isort`/`flake8` clean on both
+`llm_translate.py` and the test file; `mypy` clean on `llm_translate.py`
+(strict mode, no new untyped code).
+
+**Live UI verification** (`tests/webnovels/ui_automation/test_bracket_strip_live.py`,
+run via `run_ui_tests.sh xvfb`/`xvfb-keep`, never `windowclose`): re-ran
+the real `translate_lines_with_masking()`/`save_cached_episode()` path
+locally (no network re-fetch -- the episode's source HTML was already
+scraped and cached from a prior real load) against episode
+`.../375266002/37695490/episode/7801892`, whose cached lines 45/49
+(`「「「キャアアアー！！」」」`) were the two originally-confirmed-corrupt
+cases from the quantification entry (`""Kyaaa!""` in the old cache).
+After re-translating through the fixed code, both became `「Kyaaaar!」`
+in the on-disk cache. Launched the real app against this episode under
+Xvfb: automated test (`test_translated_mode_shows_clean_rewrapped_output`)
+screenshotted the app and confirmed `log_correlator.assert_clean()`
+against the app's real log, and a direct on-disk cache check
+(`test_cache_file_confirms_no_stray_quote_artifact_reached_disk`)
+confirmed no `""` artifact at indices 45/49 and correct `「...」`
+re-wrapping. Both passed. Followed up with an additional manual visual
+check (same Xvfb session, Translated-mode view, scrolled to the relevant
+lines) showing both instances rendering as clean `「Kyaaaar!」` in plain
+blue (not amber/needs-review) text on screen, with no `""`-artifact
+anywhere in the visible chapter. App log for this session had zero
+ERROR/CRITICAL lines. Xvfb/fluxbox torn down cleanly afterward via
+`run_ui_tests.sh xvfb`'s own teardown.
+
+**Not done in this pass**: no `CACHE_SCHEMA_VERSION` bump -- same
+reasoning as the 2026-07-26 `needs_review` scope-gap entry's precedent,
+this is a translation-quality/prompt-shape change, not a cache shape
+change; existing cached episodes with the old corrupted output will not
+retroactively clean up until re-translated (Refresh). No change to
+`mask_terms()`/`splice_terms()`/the sentinel format itself. No fix for
+the separately-noted, pre-existing `ざわざわ`-style onomatopoeia
+transliteration-vs-translation quality gap (unrelated to this bug, out of
+scope).
+
+**Status: implemented, unit-tested, sentinel-interaction verified both in
+tests and live, and live-UI-verified end-to-end. Closed.**
+
 ---
 
 

@@ -281,6 +281,56 @@ def _clean_output(text: str) -> str:
     return text.strip()
 
 
+# ---------------------------------------------------------------------------
+# Collective-shout bracket stripping (DESIGN.md 2026-08-01 entries)
+# ---------------------------------------------------------------------------
+#
+# Quantified investigation found translategemma renders doubled/tripled 「」
+# dialogue-bracket layers (e.g. 「「「キャアアアー！！」」」, multiple speakers
+# shouting in unison) as literal, unescaped "" in its JSON string output --
+# 6/21 such lines corrupted in cached production output, 13/21 (61.9%) in a
+# live re-test. Live validation confirmed stripping the bracket layer before
+# sending the line to the model eliminates the corruption entirely (0/21
+# live, stable across repeats) with no change in translated meaning -- the
+# brackets are purely typographic in this doubled-layer shape, not content.
+# Detection is deliberately narrow (doubled/tripled layers only, not any
+# short bracketed line) -- a looser "<=12 chars" heuristic tried during
+# investigation would have applied this to 138 lines, only 6 of which ever
+# corrupted.
+_DOUBLED_BRACKET_RE = re.compile(r"「{2,}|」{2,}")
+
+
+def _is_collective_shout(line: str) -> bool:
+    """True if `line`'s only 「」 content is a doubled/tripled bracket layer.
+
+    Args:
+        line: Source line to classify.
+
+    Returns:
+        True if the line matches the collective-shout shape validated in
+        DESIGN.md's 2026-08-01 entries (e.g. 「「「なんだとぉ！」」」).
+    """
+    return bool(_DOUBLED_BRACKET_RE.search(line))
+
+
+def _strip_collective_shout_brackets(line: str) -> str:
+    """Remove every 「/」 character from `line`.
+
+    Only meant to be called on lines already confirmed by
+    _is_collective_shout() -- unconditionally strips every corner bracket,
+    not just doubled ones, since a matched line's brackets are entirely
+    decorative once the doubled-layer shape is confirmed.
+
+    Args:
+        line: Source line to strip.
+
+    Returns:
+        `line` with all 「/」 characters removed and surrounding whitespace
+        trimmed.
+    """
+    return line.replace("「", "").replace("」", "").strip()
+
+
 def _log_timing(data: Dict[str, Any]) -> None:
     """Log translation timing statistics from a llama-server /completion response.
 
@@ -357,6 +407,12 @@ def _translate_chunk_once(
 ) -> Optional[List[str]]:
     """Make a single /completion request for `lines`, no retry.
 
+    Any line matching the collective-shout bracket shape (_is_collective_shout())
+    has its 「/」 layer stripped before being placed in the prompt, and the
+    corresponding output entry re-wrapped in a single 「」 pair -- see
+    DESIGN.md's 2026-08-01 entries. Applies regardless of whether a line was
+    already masked by mask_terms() (sentinels use ⟦/⟧, untouched by this).
+
     Args:
         lines: The source lines/paragraphs to translate, in order.
         target_lang: Target language code.
@@ -383,7 +439,16 @@ def _translate_chunk_once(
     log_prefix = f"[{log_context}] " if log_context else ""
     source_name = _language_name(source_lang)
     target_name = _language_name(target_lang)
-    lines_json = json.dumps(lines, ensure_ascii=False)
+
+    # Strip collective-shout bracket layers before prompting (DESIGN.md
+    # 2026-08-01 entries) -- tracked per-line so the matching output entry
+    # can be re-wrapped in a single 「」 pair after translation, restoring
+    # the dialogue-marker convention in the rendered line without the
+    # unescaped-quote corruption the doubled layer causes in the model's
+    # raw JSON output.
+    shout_flags = [_is_collective_shout(line) for line in lines]
+    prompt_lines = [_strip_collective_shout_brackets(line) if flag else line for line, flag in zip(lines, shout_flags)]
+    lines_json = json.dumps(prompt_lines, ensure_ascii=False)
 
     prompt = TRANSLATION_PROMPT.format(source_lang=source_name, target_lang=target_name, lines_json=lines_json)
     if context:
@@ -431,14 +496,18 @@ def _translate_chunk_once(
             logger.warning(
                 f"{log_prefix}Chunk {chunk_idx + 1}/{total_chunks}: model duplicated its answer into {len(parsed)} identical entries for a single-line request; collapsing to one"
             )
-            return [deduped[0]]
+            result = deduped[0]
+            if shout_flags[0]:
+                result = f"「{result}」"
+            return [result]
 
     if not isinstance(parsed, list) or len(parsed) != len(lines):
         got = f"{type(parsed).__name__} of length {len(parsed)}" if isinstance(parsed, list) else type(parsed).__name__
         logger.warning(f"{log_prefix}Chunk {chunk_idx + 1}/{total_chunks}: expected a JSON array of {len(lines)} string(s), got {got}")
         return None
 
-    return [_clean_output(str(item)) for item in parsed]
+    cleaned = [_clean_output(str(item)) for item in parsed]
+    return [f"「{item}」" if flag else item for item, flag in zip(cleaned, shout_flags)]
 
 
 def translate_chunk(

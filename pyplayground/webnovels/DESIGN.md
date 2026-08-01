@@ -441,20 +441,13 @@ own code. This is a plausible mechanism, not a confirmed one.
 
 **Explicitly NOT yet answered, and this matters for prioritization**:
 
-- **Does this reproduce outside Xvfb** (a real XWayland desktop session)?
-  Not tested -- doing so requires a human-supervised real-desktop session
-  (see `agents-ui-testing.md`'s Guardrail section), which this investigation
-  did not have available. If it reproduces there too, this is a severe,
-  user-facing crash bug in ordinary use (closing a dialog the normal way,
-  if the OS/WM ever sends WM_DELETE_WINDOW instead of routing through a
-  button handler) and should be re-prioritized above anything else queued.
-  If it is genuinely Xvfb-only, it is most likely a cheap environment-level
-  fix (give `BrowserWorker`'s Chromium/Node driver its own isolated
-  `DISPLAY`, separate from whichever Xvfb instance is used for UI testing)
-  rather than an app bug to chase further.
+- **Does this reproduce outside Xvfb** (a real desktop session)? Tested
+  2026-08-01 -- see the dated entry immediately below. Answer: no, it does
+  not reproduce with a real WM_DELETE_WINDOW on the real desktop.
 - **Exact mechanism inside Playwright's Node driver** -- not traced further
   than the isolation above. Would need instrumenting or straceing the Node
-  process specifically, not the Python process, to pin down.
+  process specifically, not the Python process, to pin down. Lower priority
+  now that real-desktop risk is confirmed low (see below).
 
 **Not done in this pass, deliberately**: no fix attempted. No workaround
 beyond documenting it and having `pyplayground/webnovels/ui_testing/`'s own
@@ -463,6 +456,116 @@ test suite avoid `windowclose`/WM_DELETE_WINDOW against this app entirely
 `xdo_helper.close_window()`'s docstring and `test_menu_smoke.py`). Left open
 here specifically so it doesn't get lost the way an earlier finding this
 session briefly did.
+
+**Status: confirmed Xvfb/Playwright-specific, real-world risk is low, staying
+as documented workaround.** See 2026-08-01 entry below for the real-desktop
+test that settled this.
+
+### 2026-08-01: Real-desktop WM_DELETE_WINDOW reproduction test -- does not reproduce
+
+Follow-up to the entry above, specifically closing its one unanswered,
+prioritization-critical question. Run on the user's actual live desktop
+session, not a fresh Xvfb instance: `DISPLAY=:0`, the active `seat0`/`tty2`
+login session (confirmed via `who`/`loginctl list-sessions`; no `Xvfb` or
+`fluxbox` process was running anywhere on the machine at the time). The
+app was launched via `xdo_helper.launch_and_track()` with stdout captured,
+plus the app's own `logs/app_log_*.log`. Every close action in every
+scenario was a real click from the user's own mouse on the real title-bar
+close button -- never simulated via `xdotool windowclose` -- since the
+entire point was to test the authentic WM_DELETE_WINDOW path a human's
+ordinary use actually takes, not a re-run of the simulated path already
+confirmed to crash under Xvfb.
+
+The original Xvfb reproduction's exact episode URL/state was not recorded
+in this doc or `agents-ui-testing.md` and was treated as an accepted,
+unrecoverable gap rather than searched for further -- justified by the
+existing isolation already showing the crash reproduces on a cache-hit
+load with no live fetch involved (content-independent). The saved
+resume-last-read state (`~/.config/alphapolis_reader/state.json`) was used
+instead.
+
+**Four scenarios run in order, none crashed:**
+
+1. **Baseline (idle, main window close).** App launched, left idle, user
+   clicked the main window's real title-bar close X. Process exited
+   cleanly; stdout/app log showed only normal startup lines, no traceback.
+2. **Dialog close, idle.** Glossary dialog opened with no fetch running,
+   user clicked the dialog's real title-bar close X. Main process
+   remained alive and unaffected; dialog closed normally.
+3. **Dialog close, active fetch.** A real (non-cached) chapter
+   fetch/translation was triggered and confirmed still in progress
+   (log showed translation actively chunking, no completion line yet) when
+   the user closed the Glossary dialog via its real title-bar close X.
+   Main process remained alive; the in-flight translation was unaffected.
+4. **Main window close, active fetch.** A second real fetch was triggered
+   (log confirms it was genuinely in flight -- translation of a new
+   episode had started chunking with no completion line logged) and the
+   user closed the *main window* itself via its real title-bar close X
+   while it was running. The process did exit this time, but the shutdown
+   was clean, not a crash: no coredump was generated (`coredumpctl list`
+   showed nothing for this process/time window), no ABRT registration, no
+   segfault/crash entry in the journal for that window, no leftover
+   orphaned Chromium/Node child process (consistent with `browser.close()`
+   in `on_close()` running to completion), and neither the captured stdout
+   nor the app log contained the `BadWindow`/`X_UnmapWindow` or Node
+   `write EPIPE` signature seen in the Xvfb case. This matches a normal
+   `on_close()` -> `browser.close()` -> `root.destroy()` shutdown path, not
+   the documented crash.
+
+**Conclusion**: zero reproductions of the Xvfb crash signature across all
+four scenarios on the real desktop, including the scenario closest to the
+original Xvfb repro (active fetch + WM_DELETE_WINDOW). This confirms the
+crash is specific to the Xvfb/Playwright/simulated-WM_DELETE_WINDOW
+interaction and does not manifest in ordinary real-world use of the app.
+Real-world risk from this bug is low. No fix needed beyond the existing
+workaround (the UI test suite continuing to avoid `xdotool windowclose`
+against this app, per the entry above). Not re-prioritized.
+
+### 2026-08-01: `safe_persistence.py` foundational design -- implemented and migrated
+
+`pyplayground/utils/safe_persistence.py` now holds two general-purpose
+helpers, exactly as originally designed: `atomic_write()` (temp file in
+the same directory as the target, `fsync()`, then `os.replace()`; unique
+per-write temp filename via PID + random suffix; temp file cleaned up on
+any exception before the replace) and `verify_before_write()` (capture/
+reload/compare/dispatch only -- no domain vocabulary, divergence handling
+always supplied by the caller as a callback).
+
+Every direct file-write call site identified in the original design pass
+was migrated onto `atomic_write()`, in the documented order, each step's
+acceptance bar confirmed before moving to the next: `save_json_config()`
+(`config_utils.py`, and transitively `save_cached_episode()`), then
+`save_glossary()` (`glossary.py`) and `save_global_vocabulary()`
+(`global_vocabulary.py`) independently, then
+`GlossaryCoordinator.save_snapshot()` and `open_retranslate_popup()`'s
+stale-popup guard migrated onto `verify_before_write()`, both passing
+their existing divergence logic (merge-by-source; skip-and-warn) through
+verbatim as callbacks. `TestGlossaryDialogMergeOnDivergence` and
+`TestAcceptStalePopupGuard` both pass unmodified against the migrated
+code -- confirming this was a relocation of mechanism, not a behavior
+change.
+
+New unit tests for the two helpers themselves, independent of any call
+site: `tests/utils/test_safe_persistence.py` (14 tests), including a
+simulated mid-write failure (`os.replace()` forced to raise) confirming
+the original target file is left byte-for-byte untouched, and coverage
+of `verify_before_write()`'s unchanged-marker and diverged-marker
+dispatch paths with a neutral placeholder domain (no glossary/episode
+vocabulary).
+
+Live-verified under Xvfb + fluxbox against the real running app (not
+simulated): a real Glossary Save (`GlossaryCoordinator.save_snapshot()`
+-> `save_glossary()` -> `atomic_write()`) with the resulting temp file
+directly observed on disk mid-write via a polling watcher, matching the
+documented `.{name}.{pid}.{random}.tmp` pattern, with no orphan left
+after a clean replace; and a real Retranslate-line Accept
+(`open_retranslate_popup()`'s stale-popup guard, now routed through
+`verify_before_write()`, followed by `save_cached_episode()` ->
+`atomic_write()`), confirmed via `strace -e trace=rename,openat` attached
+to the live app process, showing the exact `openat()` (temp file,
+`O_CREAT|O_TRUNC`) followed by `rename()` sequence the design calls for.
+Both writes landed correctly (valid JSON, correct content, correct
+cache/glossary key) with clean app logs (no ERROR lines) both times.
 
 ---
 

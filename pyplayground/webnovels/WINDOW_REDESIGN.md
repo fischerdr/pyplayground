@@ -882,3 +882,234 @@ into how the type-quick-edit action's submenu itself will be built (that
 mechanism was already proposed in Phase 1 §6 and re-confirmed correct
 there; this investigation only covers the two questions the prompt
 specifically asked for).
+
+### 2026-08-02: Phase 4 investigation addendum -- source-language assumptions (no code changes)
+
+Continuation of the entry directly above, same investigation session.
+Three further questions, asked specifically to determine whether any
+per-term honorific auto-detection work Phase 4 might attempt is actually
+safe to build language-agnostically today, or whether it would be
+building on (or masking) a hidden Japanese-only assumption elsewhere in
+the pipeline. No design proposal made here, per the prompt's own
+instruction -- findings only. No sub-agent delegation used, same
+reasoning as the entry above (single self-contained grep-and-read task).
+
+**Question 1: is there a per-novel/per-episode source-language field
+anywhere?**
+
+```bash
+grep -n "language\|\blang\b\|source_lang\|target_lang" pyplayground/webnovels/glossary.py
+```
+
+No structured field -- every match is prose in a docstring/comment
+referring to "source language" generically (`glossary.py:96, 124, 145,
+274, 505, 609`), never a persisted dict key.
+
+Confirmed directly against the actual persisted shapes, not inferred
+from the grep above alone:
+
+- **Glossary file** (`_empty_glossary()`, `glossary.py:161-187`): full
+  field list is `novel_id`, `title`, `honorific_policy`,
+  `honorific_policy_user_set`, `terms`, `context_notes`, `updated_at`,
+  `extracted_episode_urls`. No `language`/`source_lang` field.
+- **Episode cache** (`parse_episode()`'s return shape,
+  `alphapolis_reader.py:429-436`, plus what `save_cached_episode()`
+  adds, `alphapolis_reader.py:178-187`): `title`, `author`,
+  `episode_title`, `lines`, `content`, `prev_url`, `next_url`, plus
+  `_cache_schema_version`/`url`/`novel_id` added at save time. No
+  `language`/`source_lang` field here either.
+- **Reader state** (`save_reader_state()`, `alphapolis_reader.py:202-219`)
+  persists `target_lang` (the *translation output* language, a real,
+  user-facing setting) but has no corresponding source-language field at
+  all -- confirmed by reading the function's full body, not just its
+  name.
+
+**"Japanese" is both purely implicit in most of the pipeline and
+explicit in exactly one place.** Implicit: every real translation call
+site relies on `source_lang`'s hardcoded default. Confirmed via:
+
+```bash
+grep -rn "source_lang" pyplayground/webnovels/*.py
+```
+
+`source_lang` **is** a real, threaded-through parameter across
+`llm_translate.py` (`translate_chunk()`, `translate_chunk_with_masking()`,
+`explain_term()`, `retranslate_line_with_hint()`, `translate_lines()`,
+`translate_lines_with_masking()`) -- not absent, just never varied.
+Every one of those functions defaults it to `source_lang: str = "ja"`,
+and the actual production call path never overrides it: read
+`_do_fetch_and_translate()`'s body directly
+(`alphapolis_reader.py:1712-1791`) and confirmed neither of its two real
+translation calls (`translate_lines_with_masking()` at line 1762,
+`translate_lines()` at line 1768) passes `source_lang` at all -- both
+rely entirely on the function default. `alphapolis_reader.py`'s other
+three call sites (`google_guess` at line 2938, `explain_term()` at line
+2952, `retranslate_line_with_hint()` at line 3256) all pass the literal
+`source_lang="ja"` explicitly, hardcoded, not read from any
+configuration. No UI control for source language exists anywhere --
+confirmed by grep, the only "Language" controls in `alphapolis_reader.py`
+are `target_lang`-related (the Settings dialog's backend/font/etc.
+controls have no language selector besides the implicit target).
+
+"Japanese" **is** explicit, though, in `LANGUAGE_NAMES`
+(`llm_translate.py:118-124`): `{"ja": "Japanese", "en": "English", "ko":
+"Korean", "zh": "Chinese"}`, used by `_language_name()`
+(`llm_translate.py:256-265`) to resolve a language code to a display
+name for prompt interpolation. This mapping already includes Chinese and
+Korean entries, unused by any current call site -- the *mechanism* for
+naming a different source language in a prompt already exists and isn't
+Japanese-only, even though nothing currently drives it with a
+non-`"ja"` value.
+
+**Question 2: is `honorific_policy` consumed anywhere beyond the
+already-known prompt-text injection?**
+
+```bash
+grep -rn "honorific_policy\b" pyplayground/webnovels/*.py
+```
+
+**No -- `format_glossary_for_prompt()` (`glossary.py:315-317`, confirmed
+in the prior investigation) is the only place `honorific_policy` (or a
+per-term `honorific_override`) affects anything.** Every other match is
+either write-plumbing with no interpretation of the value
+(`glossary_coordinator.py:99, 136, 180, 206` -- `save_snapshot()`/
+`clear()` just pass the string through to the saved dict) or read
+default/storage (`glossary.py:173, 194-195, 211`;
+`build_glossary.py:75, 451, 494` -- the LLM *suggests* a policy value
+during extraction, which just gets stored) or plain dialog `StringVar`
+plumbing in `alphapolis_reader.py:2032, 2428` (Combobox display/read,
+no text manipulation).
+
+Checked specifically for any code that does literal string manipulation
+on source or translated text keyed off this policy (searching/stripping/
+adding honorific suffixes directly, as opposed to instructing the
+model):
+
+```bash
+grep -n "honorific" pyplayground/webnovels/llm_translate.py
+```
+
+All four matches (`llm_translate.py:689, 695-696, 711, 714`) are comment
+or prompt text for `explain_term()`'s unrelated classification feature
+(telling the model to *use* honorific evidence when judging whether an
+alternative name translation is gender-consistent) -- not literal
+text manipulation, and not the `honorific_policy` mechanism at all.
+Checked `mask_terms()`/`splice_terms()` (`llm_translate.py:176-224`) and
+`build_mask_targets()`/`find_glossary_term_spans()`
+(`glossary.py:332-420, 501-540`) directly by reading their full bodies:
+none reference `honorific` in any form, and none do anything more
+sophisticated than plain `str.replace()`/substring search on exact term
+text -- no honorific-suffix stripping or detection logic exists in the
+masking/splicing path.
+
+**This confirms the mechanism is already language-agnostic at the code
+level, with the caveat that its semantic framing is not.**
+`honorific_policy`'s effect is entirely "append a short English
+instruction fragment to the LLM prompt" (`glossary.py:315-317`: `"keep
+honorific"`/`"drop"`/`"romanize"`, gated on the value not being
+`"drop"`) -- a prompt instruction works regardless of what script or
+convention the source language actually uses, since the model (not this
+codebase) is what interprets it against the real source text. There is
+no code path anywhere that searches source or translated strings for a
+literal honorific character/suffix. The only Japanese-specific framing
+is in comments/docstrings and the `HONORIFIC_POLICIES` concept's own
+naming (`glossary.py:143-146`, explicitly documented as "e.g. Japanese
+-san/-chan/-kun/-sama, Chinese kinship address terms" -- the docstring
+itself already treats this as a general, not Japanese-only, concept).
+
+**Question 3: does the scraping/parsing path assume a single
+site/language?**
+
+```bash
+grep -n "alphapolis.co.jp\|novelBody\|p-novel-episode\|#app-cover-data" pyplayground/webnovels/alphapolis_reader.py
+```
+
+**Yes, structurally single-site -- but this is a site-selector
+dependency, not itself a language assumption.** `BASE_URL`
+(`alphapolis_reader.py:82`), the CSS selectors
+`parse_episode()`/`BrowserWorker.fetch()` use
+(`#novelBody`/`.p-novel-episode__text`/`.p-novel-episode__title`/
+`.p-novel-episode__author`/`.p-novel-episode__episode-title`/
+`#app-cover-data`, `alphapolis_reader.py:339, 443, 453-455, 462`), and
+`_extract_novel_id()`'s URL pattern (`alphapolis_reader.py:134-144`,
+matched via a single `NOVEL_ID_RE`) are all hardcoded to Alphapolis's
+specific markup. No site-abstraction layer, dispatch table, or
+per-site-selector-config exists -- confirmed by grep, there is exactly
+one `BASE_URL` and one set of selectors in the file, and no second
+scraper is wired into this pipeline. (`novelfire_library_pw.py`/
+`novelfire_library.py`/`novelfire_publishgist_library.py` exist in the
+same directory but are confirmed, by checking their imports directly,
+to be completely standalone scripts with zero connection to
+`glossary.py`/`llm_translate.py`/the reader's translation pipeline --
+not a second source already wired in, and not relevant to this
+question.) This confirms a second site would need real scraper work
+regardless of language, which is out of this investigation's scope to
+assess further -- the prompt only asked about language-specific
+assumptions *past* HTML parsing.
+
+Beyond site selectors, one real language-specific assumption exists,
+already partially surfaced by the prior investigation's Question 2:
+**word-boundary/tokenization logic in the click-to-add-term feature is
+Japanese-specific by construction, and says so.** `ja_tokenize.py`'s own
+module docstring (`ja_tokenize.py:12-16`) states this explicitly, not
+discovered by inference: "Chinese is out of scope here -- MeCab/fugashi
+dictionaries don't parse Chinese, and the reader has no Chinese source
+pipeline today. A future Chinese equivalent (e.g. using jieba) should
+live in its own function (find_zh_word_at) and be dispatched on
+source_lang by the caller, not folded into this module." `find_ja_word_at()`
+(`ja_tokenize.py:43-70`) is called unconditionally from
+`_on_text_right_click()` (`alphapolis_reader.py:2805`), with no
+`source_lang`-based dispatch -- confirmed by grep, this is the only
+caller. `_is_cjk()` (`ja_tokenize.py:73-83`) checks three Unicode
+ranges (Hiragana, Katakana, CJK Unified Ideographs) -- the third range
+is shared between Chinese and Japanese, so it would not itself reject
+Chinese characters, but the *tokenization* (fugashi/MeCab, a
+Japanese-morphology dictionary) that determines word boundaries around
+those characters would produce wrong boundaries for Chinese text, which
+has different morpheme/word segmentation entirely. This is the one
+genuine, load-bearing, already-self-documented Japanese-specific gap
+found in this investigation -- everything else checked (masking,
+honorific handling, prompt construction, the glossary data model) is
+already mechanically source-language-agnostic.
+
+No other character-set/language-specific handling was found -- confirmed
+via a targeted grep across the whole module for any other CJK-range or
+language-conditional logic:
+
+```bash
+grep -rn "_is_cjk\|is_cjk\|0x3040\|0x30A0\|0x4E00\|CJK" pyplayground/webnovels/*.py
+```
+
+All five matches are the single `_is_cjk()` definition and its one call
+site inside `ja_tokenize.py` itself -- no other file references a CJK
+range or does character-set-conditional logic anywhere.
+
+**Net summary for Phase 4's design question**: the glossary/masking/
+honorific mechanism itself (data model, `build_mask_targets()`,
+`mask_terms()`/`splice_terms()`, `format_glossary_for_prompt()`'s prompt
+construction) is already language-agnostic in code -- it would work
+unmodified against a hypothetical Chinese source, since none of it does
+source-language-specific string manipulation. The one real, currently-existing
+Japanese-only dependency in the whole reader pipeline is
+`ja_tokenize.py`'s morpheme-boundary lookup for the click-to-add-term
+UI feature, and that dependency is unrelated to honorific detection --
+it's about *finding what word the user clicked*, not about detecting an
+honorific suffix once a word/term is already known. Building a per-term
+honorific-suffix detector for Phase 4 today would not be reinforcing or
+depending on any hidden Japanese-only assumption elsewhere -- the
+pipeline's honorific handling is prompt-instruction-based and would
+transfer to a different source language's own honorific/address-term
+conventions (if any) exactly as easily as it works for Japanese today,
+*if* such a detector were built generically (e.g. against a
+per-source-language configurable suffix list, not a hardcoded Japanese
+one) rather than assuming Japanese implicitly the way `ja_tokenize.py`
+does today. Since no second source language exists in the pipeline yet
+(confirmed above -- no scraper, no `source_lang` variation anywhere in
+practice), there is no current evidence either for or against building
+that generically today; this is a scoping input for Phase 4's design,
+not a recommendation.
+
+**Not done in this pass**: no design proposal, no decision on whether
+Phase 4 should build per-term honorific detection now or scope it out
+as premature -- both remain open, per the prompt's explicit instruction
+not to propose a design yet. No code changes.

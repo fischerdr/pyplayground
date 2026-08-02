@@ -19,7 +19,9 @@ Coverage tiers:
   - TestDefaultViewMode: confirms the new default (translated, not both).
 """
 
-from pyplayground.webnovels.alphapolis_reader import build_interleaved_pairs
+import pytest
+
+from pyplayground.webnovels.alphapolis_reader import ReaderRenderer, build_interleaved_pairs
 from pyplayground.webnovels.llm_translate import TranslatedLine  # noqa: F401  (kept for parity/future needs_review-aware tests)
 
 
@@ -216,6 +218,12 @@ class TestDefaultViewMode:
         ReaderRenderer.__init__, not ReaderApp.__init__ -- inspects the
         renderer's constructor instead, source-of-truth updated to match
         where the setting actually moved.
+
+        WINDOW_REDESIGN.md Phase 2: the bare .get() call itself was
+        replaced by an explicit saved_view_mode variable plus a remap
+        step (TestStaleViewModeRemap below), so this now asserts against
+        that variable's own default rather than a StringVar(value=...)
+        call site directly wrapping .get().
         """
         import inspect
 
@@ -224,3 +232,37 @@ class TestDefaultViewMode:
         source = inspect.getsource(ReaderRenderer.__init__)
         assert 'settings.get("view_mode", "translated")' in source
         assert 'settings.get("view_mode", "both")' not in source
+
+
+class TestStaleViewModeRemap:
+    """WINDOW_REDESIGN.md Phase 2: Original/Both were removed as selectable view modes.
+
+    A state file saved before this change can still hold a literal
+    "original" or "both" string -- confirmed (WINDOW_REDESIGN.md Phase 1
+    finding) that the pre-existing "just change the .get() default"
+    precedent does NOT cover this case, since a default only ever fires
+    for a missing key, not an already-persisted stale value. These tests
+    exercise the explicit remap added in ReaderRenderer.__init__.
+    """
+
+    @pytest.mark.parametrize("stale_value", ["original", "both"])
+    def test_stale_value_remaps_to_translated(self, mocker, fake_reader_app, stale_value):
+        mocker.patch("pyplayground.webnovels.alphapolis_reader.load_reader_state", return_value={"view_mode": stale_value})
+        renderer = ReaderRenderer(fake_reader_app)
+        assert renderer.view_mode.get() == "translated"
+
+    def test_current_value_translated_is_unaffected(self, mocker, fake_reader_app):
+        mocker.patch("pyplayground.webnovels.alphapolis_reader.load_reader_state", return_value={"view_mode": "translated"})
+        renderer = ReaderRenderer(fake_reader_app)
+        assert renderer.view_mode.get() == "translated"
+
+    def test_current_value_interleaved_is_unaffected(self, mocker, fake_reader_app):
+        mocker.patch("pyplayground.webnovels.alphapolis_reader.load_reader_state", return_value={"view_mode": "interleaved"})
+        renderer = ReaderRenderer(fake_reader_app)
+        assert renderer.view_mode.get() == "interleaved"
+
+    def test_missing_key_still_defaults_to_translated(self, mocker, fake_reader_app):
+        """Ordinary fresh-install case: no persisted view_mode key at all."""
+        mocker.patch("pyplayground.webnovels.alphapolis_reader.load_reader_state", return_value={})
+        renderer = ReaderRenderer(fake_reader_app)
+        assert renderer.view_mode.get() == "translated"

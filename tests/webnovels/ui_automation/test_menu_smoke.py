@@ -13,12 +13,18 @@ expected visual state AND confirm the log has no ERROR/CRITICAL line for
 that same action, never either alone -- a caught-and-logged exception can
 leave a dialog looking completely normal.
 
-Unlike a conventional menubar app, alphapolis_reader.py has no top-level
-Tk menu bar -- its "menu" surface is the toolbar's ttk.Buttons (each opens
-a Toplevel dialog) plus one right-click tk.Menu context menu over
-translated text. TOOLBAR_DIALOGS below sweeps the former; the latter is
-its own test using find_popup_by_name(), the confirmed Tk-first popup
-technique from agents-ui-testing.md.
+WINDOW_REDESIGN.md Phase 2 added a top-level Tk menu bar
+(File/View/Glossary) and moved two dialog launchers (Load Novel...,
+Settings...) to menu-only, while Refresh/Glossary.../Review Terms...
+keep a redundant toolbar button in addition to their menu entry. This
+module now sweeps both surfaces: TOOLBAR_DIALOGS for the three buttons
+still on the toolbar, MENU_DIALOGS for the two menu-only launchers (each
+entry gives the top-level menu's click point, then the submenu item's
+click point, since a menu-bar action needs two clicks where a toolbar
+button needs one). The right-click tk.Menu context menu over translated
+text is unaffected by Phase 2 and is swept separately below via
+find_popup_by_name(), the confirmed Tk-first popup technique from
+agents-ui-testing.md.
 
 Every dialog opened here is closed by clicking its own real Cancel/Close
 button, never xdo_helper.close_window()/`xdotool windowclose`. Confirmed
@@ -63,23 +69,50 @@ ARTIFACT_DIR = Path(__file__).resolve().parent / "artifacts"
 
 # Toolbar button label -> (the dialog window title it opens, window-relative
 # (x, y) click point to close it via its own real Cancel/Close button).
-# Measured directly against a live run at the app's default 1220x700 root
-# geometry (see alphapolis_reader.py's root.geometry call in
-# ReaderApp.__init__) -- "Settings..." is clipped off-window at that width,
-# so this fixture widens the window before the sweep begins (see
-# running_app). Re-measure with a screenshot if the toolbar or dialog
-# layouts change.
+# Measured directly against a live run at WIDENED_WINDOW_SIZE, after
+# WINDOW_REDESIGN.md Phase 2's toolbar reorganization (Load Novel... and
+# Settings... moved to the File menu -- see MENU_DIALOGS below -- leaving
+# only Refresh/Glossary.../Review Terms... on the toolbar, each still with
+# its own redundant button per WINDOW_REDESIGN.md's decision). Re-measure
+# with a screenshot if the toolbar or dialog layouts change. Refresh has
+# no dialog of its own (it re-fetches the current episode in place), so
+# it isn't included here -- there's no Toplevel window to find/close.
 TOOLBAR_DIALOGS = {
-    "Load Novel...": {"button": (878, 21), "title": "Load Novel", "close": (280, 43)},
-    "Glossary...": {"button": (1064, 21), "title": "Glossary", "close": (395, 494)},
-    "Review Terms...": {"button": (1170, 21), "title": "Review Terms", "close": (380, 421)},
-    "Settings...": {"button": (1275, 21), "title": "Settings", "close": (215, 421)},
+    "Glossary...": {"button": (543, 55), "title": "Glossary", "close": (395, 494)},
+    "Review Terms...": {"button": (648, 55), "title": "Review Terms", "close": (380, 453)},
 }
 
-# Widened from the app's default 1220px so "Settings..." (rightmost
-# toolbar button) is not clipped off the visible window -- confirmed
-# live that alphapolis_reader.py has no <Configure>/resize handler of its
-# own, so widening does not itself trigger unwanted side effects.
+# Menu label -> (top-level menu click point, submenu item click point, the
+# dialog window title it opens, window-relative (x, y) click point to
+# close it via its own real Cancel/Close button). WINDOW_REDESIGN.md
+# Phase 2: these two launchers are menu-only (no toolbar button), reached
+# via File > Load Novel.../Settings.... "menu"/"close" are window-relative
+# (passed to xdo_helper.click(), which targets a specific window id) --
+# "item_root" is root-relative absolute screen coordinates instead, since
+# the submenu click must NOT go through xdo_helper.click() (see
+# test_menu_dialog_opens_cleanly's comment for why). Measured directly
+# against a live run at WIDENED_WINDOW_SIZE, screenshotting the open
+# dropdown and reading pixel coordinates straight off that screenshot
+# (this app's toplevel is placed at approximately (1, 25) by fluxbox on
+# the :99 display used by run_ui_tests.sh, close enough to (0, 0) that
+# window-relative and root-relative values are easy to conflate --
+# confirmed live that adding the (1, 25) offset on top of an
+# already-root-relative reading overshoots and misses the item entirely,
+# closing the menu instead of clicking it). Re-measure with a fresh
+# screenshot (not by recomputing an offset) if this ever misses.
+MENU_DIALOGS = {
+    "Load Novel...": {"menu": (18, 17), "item_root": (35, 72), "title": "Load Novel", "close": (295, 84)},
+    "Settings...": {"menu": (18, 17), "item_root": (35, 141), "title": "Settings", "close": (215, 421)},
+}
+
+# Widened from the app's default 1220px -- WINDOW_REDESIGN.md Phase 2
+# removed enough toolbar width (five buttons moved into the menu bar or
+# the View menu) that clipping is no longer the reason to widen, but this
+# module's own click-coordinate measurements were taken at this size, so
+# it's kept for coordinate stability rather than re-measuring at 1220px.
+# Confirmed live that alphapolis_reader.py has no <Configure>/resize
+# handler of its own, so widening does not itself trigger unwanted side
+# effects.
 WIDENED_WINDOW_SIZE = (1400, 700)
 
 
@@ -220,6 +253,57 @@ def test_toolbar_dialog_opens_cleanly(running_app, button_label, spec):
     dialog_id = xdo_helper.find_window(dialog_title, timeout=10.0)
 
     after_path = ARTIFACT_DIR / f"toolbar_{dialog_title.lower().replace(' ', '_')}_after.png"
+    xdo_helper.screenshot(dialog_id, str(after_path))
+    if not after_path.exists():
+        state = xdo_helper.diagnose_state(window_id)
+        raise AssertionError(
+            f"Screenshot for '{dialog_title}' dialog was not created. "
+            f"Focus/pointer state at time of failure: {state}. "
+            "A focus_matches=False or mouse_in_expected_window=False here means "
+            "display focus/pointer contention, not the dialog action itself failing."
+        )
+
+    xdo_helper.click(dialog_id, spec["close"][0], spec["close"][1], settle=0.3)
+    log_correlator.assert_clean(_current_log_path(), since=action_time)
+
+
+@pytest.mark.parametrize("menu_label,spec", MENU_DIALOGS.items())
+def test_menu_dialog_opens_cleanly(running_app, menu_label, spec):
+    """Click a File-menu-only launcher (WINDOW_REDESIGN.md Phase 2) and dual-check the resulting dialog.
+
+    Same dual-check discipline as test_toolbar_dialog_opens_cleanly, but
+    needs two clicks (open the top-level menu, then the submenu item)
+    instead of one, since these two launchers have no toolbar button.
+
+    The submenu item click deliberately does NOT go through
+    xdo_helper.click() -- confirmed live (WINDOW_REDESIGN.md Phase 2
+    investigation) that a tk.Menu installs a pointer/keyboard grab the
+    moment it opens, same as documented on send_global_keys() for the
+    right-click context menu popup; xdo_helper.click()'s own
+    `windowactivate` (run before every click, including this one) steals
+    focus back from that grab and silently closes the still-open dropdown
+    before the click lands, rather than activating the item. A plain
+    xdotool mousemove+click at root-relative coordinates, with no
+    windowactivate step, is the fix -- same principle send_global_keys()
+    already applies to keyboard input into a grabbed popup, applied here
+    to a pointer click instead.
+    """
+    window_id = running_app
+    dialog_title = spec["title"]
+    _ensure_focus(window_id)
+    action_time = datetime.now().replace(microsecond=0)
+
+    before_path = ARTIFACT_DIR / f"menu_{dialog_title.lower().replace(' ', '_')}_before.png"
+    xdo_helper.screenshot(window_id, str(before_path))
+
+    xdo_helper.click(window_id, spec["menu"][0], spec["menu"][1], settle=0.4)
+    item_x, item_y = spec["item_root"]
+    subprocess.run(["xdotool", "mousemove", str(item_x), str(item_y), "click", "1"], check=True)
+    time.sleep(0.4)
+
+    dialog_id = xdo_helper.find_window(dialog_title, timeout=10.0)
+
+    after_path = ARTIFACT_DIR / f"menu_{dialog_title.lower().replace(' ', '_')}_after.png"
     xdo_helper.screenshot(dialog_id, str(after_path))
     if not after_path.exists():
         state = xdo_helper.diagnose_state(window_id)

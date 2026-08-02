@@ -737,7 +737,22 @@ class ReaderRenderer:
         # Default changed to "translated" (was "both") per
         # RETRANSLATION_DESIGN.md's phase 1 design decision -- confirmed
         # the prior default before changing it, not assumed.
-        self.view_mode = tk.StringVar(value=settings.get("view_mode", "translated"))
+        #
+        # WINDOW_REDESIGN.md Phase 2: Original/Both were removed as
+        # selectable modes (only Translated/Interleaved remain). A plain
+        # .get(..., "translated") default only covers a *missing* key --
+        # a state file saved before this change can still hold a literal
+        # "original" or "both" string, which render_text() would keep
+        # rendering even though no menu/toolbar control can select it
+        # anymore (WINDOW_REDESIGN.md Phase 1 finding). Remap those two
+        # stale values to the current default explicitly, once, at load
+        # time; the next _on_view_mode_change() naturally overwrites the
+        # stale on-disk value with a current one, so no persisted
+        # migration or schema-version bump is needed.
+        saved_view_mode = settings.get("view_mode", "translated")
+        if saved_view_mode in ("original", "both"):
+            saved_view_mode = "translated"
+        self.view_mode = tk.StringVar(value=saved_view_mode)
         self._photo_images = {}
         available_fonts = self._available_fonts()
         self.font_family = saved_font_family if saved_font_family in available_fonts else self._pick_default_font()
@@ -1372,8 +1387,49 @@ class ReaderApp:
         root.title("Alphapolis Reader")
         # Widened from 900 -> 990 (Refresh button) -> 1090 (Glossary... button)
         # -> 1220 (Review Terms... button) to keep the toolbar from clipping
-        # Settings... off the right edge.
+        # Settings... off the right edge. WINDOW_REDESIGN.md Phase 2 removed
+        # five toolbar widgets (Load Novel..., Settings..., A-/A+/Dark/
+        # Img-/Img+, two of the four view-mode radios) but this geometry is
+        # left as-is -- narrowing it is a cosmetic follow-up, not required
+        # for every remaining control to stay reachable.
         root.geometry("1220x700")
+
+        # ReaderRenderer (REFACTOR_DESIGN.md Phase 2) owns view_mode and
+        # every appearance/font/image-size control below -- constructed
+        # before the menu bar and toolbar, since both wire directly into
+        # the renderer's StringVar/commands.
+        self.renderer = ReaderRenderer(self)
+
+        # Menu bar (WINDOW_REDESIGN.md Phase 2): holds all five dialog
+        # launchers plus the display controls that used to live only on
+        # the toolbar. File/Refresh/Settings share one menu since all
+        # three act on "the app/loaded novel" rather than editing glossary
+        # state, per WINDOW_REDESIGN.md Phase 1's proposal.
+        menubar = tk.Menu(root)
+        root.config(menu=menubar)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Load Novel...", command=self.open_load_url_dialog)
+        file_menu.add_command(label="Refresh", command=self.refresh_current_episode)
+        file_menu.add_separator()
+        file_menu.add_command(label="Settings...", command=self.open_settings_dialog)
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        view_menu = tk.Menu(menubar, tearoff=0)
+        for value, label in (("translated", "Translated"), ("interleaved", "Interleaved")):
+            view_menu.add_radiobutton(label=label, value=value, variable=self.renderer.view_mode, command=self.renderer._on_view_mode_change)
+        view_menu.add_separator()
+        view_menu.add_command(label="Increase Font Size", command=self.renderer.increase_font)
+        view_menu.add_command(label="Decrease Font Size", command=self.renderer.decrease_font)
+        view_menu.add_command(label="Toggle Dark Mode", command=self.renderer.toggle_dark_mode)
+        view_menu.add_command(label="Increase Image Width", command=self.renderer.increase_image_width)
+        view_menu.add_command(label="Decrease Image Width", command=self.renderer.decrease_image_width)
+        menubar.add_cascade(label="View", menu=view_menu)
+
+        glossary_menu = tk.Menu(menubar, tearoff=0)
+        glossary_menu.add_command(label="Glossary...", command=self.open_glossary_dialog)
+        glossary_menu.add_command(label="Review Terms...", command=self.open_term_review_dialog)
+        menubar.add_cascade(label="Glossary", menu=glossary_menu)
 
         toolbar = ttk.Frame(root)
         toolbar.pack(fill="x", padx=8, pady=6)
@@ -1383,31 +1439,14 @@ class ReaderApp:
         self.next_btn = ttk.Button(toolbar, text="Next >", command=self.go_next)
         self.next_btn.pack(side="left", padx=(6, 0))
 
-        # ReaderRenderer (REFACTOR_DESIGN.md Phase 2) owns view_mode and
-        # every appearance/font/image-size control below -- constructed
-        # here, before the widgets that reference it, since the toolbar
-        # itself wires directly into the renderer's StringVar/commands.
-        self.renderer = ReaderRenderer(self)
-
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
-        for value, label in (("original", "Original"), ("translated", "Translated"), ("both", "Both"), ("interleaved", "Interleaved")):
+        for value, label in (("translated", "Translated"), ("interleaved", "Interleaved")):
             ttk.Radiobutton(toolbar, text=label, value=value, variable=self.renderer.view_mode, command=self.renderer._on_view_mode_change).pack(side="left")
 
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(toolbar, text="A-", width=3, command=self.renderer.decrease_font).pack(side="left")
-        ttk.Button(toolbar, text="A+", width=3, command=self.renderer.increase_font).pack(side="left", padx=(2, 0))
-        ttk.Button(toolbar, text="Dark", command=self.renderer.toggle_dark_mode).pack(side="left", padx=(6, 0))
-
-        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(toolbar, text="Img-", width=4, command=self.renderer.decrease_image_width).pack(side="left")
-        ttk.Button(toolbar, text="Img+", width=4, command=self.renderer.increase_image_width).pack(side="left", padx=(2, 0))
-
-        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(toolbar, text="Load Novel...", command=self.open_load_url_dialog).pack(side="left")
-        ttk.Button(toolbar, text="Refresh", command=self.refresh_current_episode).pack(side="left", padx=(6, 0))
+        ttk.Button(toolbar, text="Refresh", command=self.refresh_current_episode).pack(side="left")
         ttk.Button(toolbar, text="Glossary...", command=self.open_glossary_dialog).pack(side="left", padx=(6, 0))
         ttk.Button(toolbar, text="Review Terms...", command=self.open_term_review_dialog).pack(side="left", padx=(6, 0))
-        ttk.Button(toolbar, text="Settings...", command=self.open_settings_dialog).pack(side="left", padx=(6, 0))
 
         url_bar = ttk.Frame(root)
         url_bar.pack(fill="x", padx=8, pady=(0, 6))

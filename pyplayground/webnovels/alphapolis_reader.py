@@ -1448,6 +1448,12 @@ class ReaderApp:
         ttk.Button(toolbar, text="Glossary...", command=self.open_glossary_dialog).pack(side="left", padx=(6, 0))
         ttk.Button(toolbar, text="Review Terms...", command=self.open_term_review_dialog).pack(side="left", padx=(6, 0))
 
+        # Toolbar right-click context menu (WINDOW_REDESIGN.md Phase 3):
+        # quick access to the now menu-only dialog launchers (Load
+        # Novel..., Settings...) without a full menu-bar navigation, plus
+        # the three actions that already have visible toolbar buttons.
+        toolbar.bind("<Button-3>", self._on_toolbar_right_click)
+
         url_bar = ttk.Frame(root)
         url_bar.pack(fill="x", padx=8, pady=(0, 6))
         ttk.Label(url_bar, text="URL:").pack(side="left")
@@ -2738,6 +2744,26 @@ class ReaderApp:
 
         save_reader_state(url, self.target_lang)
         self.prefetch(ep.get("next_url"))
+
+    def _on_toolbar_right_click(self, event):
+        """Right-click on the toolbar: offer the same five dialog launchers as the File/Glossary menus.
+
+        WINDOW_REDESIGN.md Phase 3. A static menu -- no span/selection
+        resolution needed, unlike _on_text_right_click(), since the
+        toolbar's context doesn't vary by click position. Reuses the
+        exact same bound commands the menu bar and toolbar buttons
+        already use, not new wrapper functions.
+
+        Args:
+            event: The Tk button-press event.
+        """
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Load Novel...", command=self.open_load_url_dialog)
+        menu.add_command(label="Refresh", command=self.refresh_current_episode)
+        menu.add_command(label="Glossary...", command=self.open_glossary_dialog)
+        menu.add_command(label="Review Terms...", command=self.open_term_review_dialog)
+        menu.add_command(label="Settings...", command=self.open_settings_dialog)
+        menu.tk_popup(event.x_root, event.y_root)
 
     def _on_text_right_click(self, event):
         """Right-click on chapter text: offer to add the word/selection to the glossary.

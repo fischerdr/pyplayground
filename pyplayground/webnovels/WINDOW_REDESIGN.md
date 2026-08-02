@@ -127,7 +127,9 @@ text, confirm type selection at creation still works as expected.
   dated entry below). No code changes.
 - **Phase 2**: complete (2026-08-02, menu bar + button/mode reorganization,
   see dated entry below).
-- **Phases 3-4**: not started.
+- **Phase 3**: complete (2026-08-02, toolbar right-click context menu, see
+  dated entry below).
+- **Phase 4**: not started.
 
 ### 2026-08-01: Phase 1 -- investigation and proposal (no code changes)
 
@@ -620,3 +622,100 @@ undecided/optional; none felt necessary once the menu bar was live).
 No narrowing of `root.geometry("1220x700")` -- confirmed via live
 screenshots that nothing clips at the current size post-reduction, so
 narrowing remains a cosmetic-only follow-up, not a correctness need.
+
+### 2026-08-02: Phase 3 -- toolbar right-click context menu
+
+Implemented exactly Phase 1's proposal (§5); no deviation found once
+actually editing the code. No sub-agent delegation used -- the whole
+phase was one small, tightly-scoped addition with no independent
+sub-tasks that would have benefited from parallel work.
+
+**Binding** (`alphapolis_reader.py:1450-1455`): `toolbar.bind("<Button-3>",
+self._on_toolbar_right_click)`, placed immediately after the toolbar's
+last button (`Review Terms...`) and before `url_bar` construction
+begins, exactly as proposed -- confirmed the surrounding line numbers
+directly before editing rather than trusting Phase 1's references,
+since those had already drifted once (Phase 2 renumbered everything
+from Phase 1's original citations).
+
+**Handler** (`alphapolis_reader.py:2748-2765`, `_on_toolbar_right_click()`):
+placed on `ReaderApp`, immediately before `_on_text_right_click()` for
+proximity. Same `tk.Menu(self.root, tearoff=0)` / `menu.tk_popup(event.x_root,
+event.y_root)` shape as `_on_text_right_click()`. Static menu, five
+`add_command` entries in the same order as the `File`/`Glossary` menus
+list them (`Load Novel...`, `Refresh`, `Glossary...`, `Review Terms...`,
+`Settings...`), each bound to the exact same method reference the menu
+bar and toolbar buttons already use (`self.open_load_url_dialog`,
+`self.refresh_current_episode`, `self.open_glossary_dialog`,
+`self.open_term_review_dialog`, `self.open_settings_dialog`) -- no new
+wrapper functions, confirmed by grep that no new callable was
+introduced anywhere in this diff.
+
+**Tests**: none added. This phase is pure Tk event-wiring (a `<Button-3>`
+bind plus a static menu of existing, already-tested command references)
+with no new branching logic to unit-test -- the prompt's own checkpoint
+requirements call for live verification instead, which is what actually
+exercises this code path. Full `tests/webnovels/` suite (excluding
+`ui_automation/`): **340 passed**, unchanged from the pre-Phase-3
+baseline (confirmed by running the identical command against the prior
+commit via `git stash`) -- zero regressions, and no reason to expect a
+change since nothing touched by this phase has unit coverage either
+before or after. (Note: Phase 2's entry cited "341" as this baseline;
+re-measured directly at the tip of the Phase 2 commit and confirmed the
+correct baseline is 340 -- the "341" figure came from a run that
+happened to have a live `DISPLAY` set, which lets a couple of
+otherwise-erroring `ui_automation`-adjacent tests execute instead, not
+a real count difference. Corrected here rather than left standing.)
+`black`/`isort`/`flake8` clean on the one touched file.
+
+**Live verification**, via `pyplayground/webnovels/ui_testing/
+run_ui_tests.sh xvfb-keep` (real Xvfb+fluxbox on `:99`, `windowclose`
+never used, every dialog closed via its own real button, app terminated
+via `kill -TERM`). Initial manual `xdotool`+screenshot attempts
+appeared to show no menu opening at all -- investigated rather than
+assumed broken: this was a screenshot/detection-timing artifact, not a
+real failure. Confirmed by testing the detection method itself against
+the known-working, unmodified text right-click menu, which showed the
+identical false-negative under the same raw `xdotool search --name` +
+`import -window root` approach. Switched to this project's own
+established, confirmed-correct technique
+(`xdo_helper.find_popup_by_name("!menu")`, polling immediately after
+the click, per `agents-ui-testing.md`) and every interaction below
+resolved cleanly on the first real attempt:
+
+- Right-clicking the toolbar's empty background area (right of `Review
+  Terms...`) opens the menu, screenshot-confirmed showing exactly the
+  five expected items in the proposed order (`Load Novel...`,
+  `Refresh`, `Glossary...`, `Review Terms...`, `Settings...`).
+- All five actions exercised in one continuous sweep against a real
+  cached episode: `Load Novel...` opens the same dialog as the File
+  menu's entry; `Glossary...` and `Review Terms...` open their real
+  dialogs (screenshots match the File/Glossary-menu-triggered versions
+  from the Phase 2 entry exactly); `Settings...` opens with no leftover
+  Original/Both anywhere; `Refresh` genuinely deleted the cached
+  episode and re-fetched/re-translated it for real against the live
+  `alphapolis.co.jp` URL (log shows the full real fetch -> parse ->
+  translate -> re-display cycle completing, `08:19:35` to `08:21:05`,
+  one `WARNING` for an expected/documented sentinel-splice case, zero
+  `ERROR`/`CRITICAL`) -- confirmed as a genuinely different, heavier
+  verification than Phase 2's synthetic-fixture-only sweep, since this
+  ran against this session's live novel. Each of the five actions
+  individually confirmed via `log_correlator.assert_clean()` against
+  its own action-time window, plus one final whole-session sweep across
+  the entire log file: zero `ERROR`/`CRITICAL` lines from start to
+  finish.
+- **Text right-click menu reconfirmed unaffected**: same
+  `find_popup_by_name()` technique, right-clicking translated text
+  (Interleaved mode) opened the expected two-item menu (`Add to
+  Glossary...`, `Retranslate this line...`), log clean -- this phase's
+  toolbar binding is a separate widget (`toolbar`, not `self.text`)
+  with its own independent `<Button-3>` binding, so no interference was
+  expected, and none was found.
+
+**Not done in this phase, deliberately**: the text right-click
+type-quick-edit action (Phase 4) was not touched, per the prompt's
+explicit scope boundary. No new wrapper functions or menu-construction
+helpers introduced -- the five `add_command` calls are inline in
+`_on_toolbar_right_click()`, matching `_on_text_right_click()`'s own
+inline-construction style rather than introducing a shared "build my
+five dialog-launcher menu items" helper Phase 1 never proposed.

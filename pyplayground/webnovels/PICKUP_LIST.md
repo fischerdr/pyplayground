@@ -21,9 +21,13 @@ Read `INDEX.md` first for what each design doc is for.
 ## Now (active)
 
 1. `WINDOW_REDESIGN.md` Phase 4 — text right-click "edit type" quick
-   action for existing glossary terms. Phases 2 (menu bar + button/mode
-   reorg) and 3 (toolbar right-click context menu) complete as of
-   2026-08-02.
+   action for existing glossary terms. Investigation complete (2026-08-02,
+   see the doc's dated entry) -- confirmed `gender`/`pronoun_style`/
+   `honorific_override` are genuinely read by `format_glossary_for_prompt()`
+   (not display-only, as an earlier draft assumed) and that no existing
+   honorific-suffix detector exists to reuse. Implementation not started.
+   Phases 2 (menu bar + button/mode reorg) and 3 (toolbar right-click
+   context menu) complete as of 2026-08-02.
 2. Deferred/low-priority batch (see below) — not urgent, but visible.
 3. §7 web migration (`DESIGN.md`) — still just a plan, zero code.
 
@@ -67,3 +71,10 @@ Read `INDEX.md` first for what each design doc is for.
 - `WINDOW_REDESIGN.md` Phase 2 (menu bar + button/mode reorg) — complete.
 - `WINDOW_REDESIGN.md` Phase 3 (toolbar right-click context menu) —
   complete.
+- `WINDOW_REDESIGN.md` Phase 4 investigation (honorific-field
+  consumption, existing suffix-detection check) — complete, findings
+  only, no code.
+- `GLOSSARY_ARCHITECTURE.md` refreshed (2026-08-02) — was stale since
+  2026-07-30; folded in `WINDOW_REDESIGN.md` Phases 2-3, `RETRANSLATION_DESIGN.md`
+  Phases 4-5 (both previously mis-documented as not started), the
+  collective-shout bracket fix, and the `safe_persistence.py` migration.

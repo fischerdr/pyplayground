@@ -129,7 +129,9 @@ text, confirm type selection at creation still works as expected.
   see dated entry below).
 - **Phase 3**: complete (2026-08-02, toolbar right-click context menu, see
   dated entry below).
-- **Phase 4**: not started.
+- **Phase 4**: investigation complete (2026-08-02, see dated entry below),
+  implementation not started. No code changes from the investigation
+  itself.
 
 ### 2026-08-01: Phase 1 -- investigation and proposal (no code changes)
 
@@ -719,3 +721,164 @@ helpers introduced -- the five `add_command` calls are inline in
 `_on_toolbar_right_click()`, matching `_on_text_right_click()`'s own
 inline-construction style rather than introducing a shared "build my
 five dialog-launcher menu items" helper Phase 1 never proposed.
+
+### 2026-08-02: Phase 4 -- investigation for the type-quick-edit action (no code changes)
+
+Investigates the two open questions Phase 4's implementation needs
+answered before design work starts: whether the character-only fields
+(`gender`/`pronoun_style`/`honorific_override`) are actually consumed
+anywhere today (relevant because the "edit type" action changes a term's
+`type` from `TERM_TYPE_GENERAL` to `TERM_TYPE_CHARACTER` or back, and
+Phase 1's proposal left open whether that transition should also prompt
+for these fields -- see Phase 1's §6, "one real design question Phase 4
+needs to resolve"), and whether an existing honorific-suffix detector
+could be reused rather than built fresh for that same transition. Grep
+was used throughout, not absence-from-docs -- confirmed the hard way
+after `GLOSSARY_ARCHITECTURE.md`'s own refresh (done immediately before
+this investigation) initially assumed these fields were display-only and
+had to be corrected once `format_glossary_for_prompt()` was actually
+read, not just grepped for a keyword match. No sub-agent delegation used
+-- this is a single, self-contained grep-and-read investigation with no
+independent sub-tasks.
+
+**Question 1: are `gender`/`pronoun_style`/`honorific_override` read
+anywhere?**
+
+```bash
+grep -n "\bgender\b" pyplayground/webnovels/*.py
+grep -n "pronoun_style" pyplayground/webnovels/*.py
+grep -n "honorific_override" pyplayground/webnovels/*.py
+```
+
+**Yes -- all three are read, and load-bearing for live translation
+output, not display-only.** `format_glossary_for_prompt()`
+(`glossary.py:262`, specifically lines `311-315`) reads all three for
+`TERM_TYPE_CHARACTER` entries and appends whichever are non-empty as
+short parenthetical detail after the term's name mapping in the prompt
+text sent to the model on every LLM-backend translation call (e.g.
+`- ケイト -> Kate (female, keep honorific)`). `honorific_override` falls
+back to the glossary's novel-wide `honorific_policy` when unset per term,
+and is only appended if the resolved value isn't `"drop"`. This is the
+*only* real consumer found -- confirmed by checking every other match
+`grep` returned:
+
+- `build_glossary.py`: all matches are either extraction-prompt text
+  (asking the LLM to *produce* `gender`/`pronoun_style` values for
+  character entries it extracts, `build_glossary.py:70-118`) or
+  `_to_suggested_term_dicts()` (`build_glossary.py:305-337`) carrying the
+  three fields over from raw extraction output into the suggested-term
+  shape -- a write path into the term dict, not a read/consumer of an
+  already-confirmed term's fields.
+- `glossary.py`: the module docstring (lines 16-19, 53) describing the
+  shape, the term dict shape itself (lines 65-77), and
+  `format_glossary_for_prompt()` (the one real consumer, above).
+- `llm_translate.py`: every match is unrelated -- comments/prompt text
+  for `explain_term()`'s *own*, separate feature (telling the model not
+  to assert a character's gender as fact when explaining a term's
+  meaning, `llm_translate.py:692-714`), not a read of a glossary term
+  dict's `gender` field at all. Checked directly: `explain_term()`
+  never touches `glossary.py` or reads a term dict.
+- `alphapolis_reader.py`: every match is inside the term-editing dialogs
+  themselves (`open_glossary_dialog()`'s form-building/writing code,
+  roughly lines 2100-2300, and `open_word_glossary_popup()`'s character
+  fields, roughly lines 2980-3080) -- these are the UI that *writes*
+  these fields when a human edits a character term, not a second
+  consumer.
+
+Confirmed via a second, narrower grep specifically excluding the
+dialog-code line ranges, to be certain nothing else was missed:
+
+```bash
+grep -n "gender\|pronoun_style\|honorific_override" pyplayground/webnovels/alphapolis_reader.py | grep -v "^23[0-9][0-9]\|^26[0-9][0-9]\|^29[0-9][0-9]\|^30[0-9][0-9]\|^21[0-9][0-9]"
+```
+
+Returned only the dialog form-writing lines already accounted for above
+-- nothing in rendering (`ReaderRenderer`'s methods) or anywhere else in
+`alphapolis_reader.py` reads these fields.
+
+**Implication for Phase 4's open design question**: since these three
+fields are genuinely translation-load-bearing (not cosmetic), prompting
+for them when a term transitions from `TERM_TYPE_GENERAL` to
+`TERM_TYPE_CHARACTER` via the type-quick-edit action is a more
+substantive product decision than Phase 1's proposal framed it as --
+leaving them `None`/absent after a type change means the term's
+translation-prompt entry silently loses the character-specific detail a
+full "Add Character" flow would have captured, not just an empty display
+field in a dialog nobody's currently looking at. This raises the
+practical weight of "leave them None, matching upsert's natural
+replace-the-whole-entry behavior" as the minimal-scope default (still
+Phase 1's recommendation) versus "prompt for them inline" -- both remain
+live options, this investigation only corrects the premise the tradeoff
+was being judged against.
+
+**Question 2: does anything already detect an honorific suffix adjacent
+to a name/term in source text?**
+
+```bash
+grep -n "さん\|くん\|ちゃん\|様\|-san\|-kun\|-chan\|-sama\|honorific.*suffix\|suffix.*honorific" pyplayground/webnovels/*.py
+```
+
+**No structured per-name honorific-suffix detector exists anywhere.**
+Every real match falls into one of three unrelated categories, checked
+individually:
+
+- **`explain_term()`'s prompt** (`EXPLAIN_TERM_PROMPT`,
+  `llm_translate.py:702-722`, specifically lines 711-714) instructs the
+  model to *use* honorific evidence (e.g. "-kun/-chan/-san, how other
+  characters address them") when judging whether an *alternative name
+  translation's connotation* is gender-consistent -- a soft, prose-level
+  instruction inside a free-text prompt, not a structured output. The
+  function's actual return shape (`category`/`meaning`/`characters`/
+  `alternatives`) has no honorific-related key at all -- confirmed by
+  reading the function's full body and return statement
+  (`llm_translate.py:777-782`), not just the prompt text.
+- **`build_glossary.py`'s extraction prompt** asks for one **novel-wide**
+  `honorific_policy_suggestion` (`build_glossary.py:75-80, 101, 116-117`,
+  one of the fixed `HONORIFIC_POLICIES` values `["keep", "drop",
+  "romanize"]`, `glossary.py:143`) -- an aggregate judgment about which
+  convention the *whole novel* generally uses, not a per-term/per-name
+  detection tied to a specific occurrence in source text. This is a
+  different question shape entirely from "does this specific name have
+  an honorific suffix attached right here."
+- **`test_sentinel_survival*.py`** matches (e.g. `るりちゃん`,
+  `音夢くん`) are masking-sentinel-survival test fixtures confirming that
+  an honorific-attached name masks/splices correctly as a single literal
+  string -- not detection logic, just test data that happens to contain
+  an honorific suffix as part of the literal text being masked.
+- **`honorific_override` itself is never actually populated by
+  extraction**, confirmed by reading `_to_suggested_term_dicts()`
+  (`build_glossary.py:332-335`) directly: it does `term["honorific_override"]
+  = raw.get("honorific_override")`, but the extraction prompt's own
+  worked example and field-description text
+  (`build_glossary.py:88-105, 113-117`) never asks the model to produce
+  an `honorific_override` key per term at all -- only `type`/`source`/
+  `target`/`note`/`gender`/`pronoun_style` for a character entry, plus
+  the one separate novel-wide `honorific_policy_suggestion`. In practice
+  `raw.get("honorific_override")` always evaluates to `None` for
+  LLM-extracted suggested terms; only a human manually editing the field
+  in a dialog ever sets it to a real value. Confirmed this is a genuine,
+  pre-existing gap (not something this investigation needs to fix) --
+  worth knowing for Phase 4 since it means "detect an honorific suffix
+  to pre-fill `honorific_override`" would be new work, not a matter of
+  wiring up dead code that already computes the answer.
+
+**Implication for Phase 4**: if the type-quick-edit action (or any
+future work) wants to pre-fill `honorific_override` or offer an
+honorific-aware suggestion at the moment of turning a term into a
+character, that detection logic does not exist yet in any form --
+neither a regex/string-based suffix matcher nor a structured LLM-output
+field. It would be new work, either a narrow regex check against a
+small, known suffix list (cheap, deterministic, no network/model call)
+or a new structured field added to one of the two existing LLM prompts
+(`EXPLAIN_TERM_PROMPT` already has the closest-adjacent context --
+`context` is passed in for exactly this kind of judgment -- but would
+need its return shape extended). Neither approach is started; this is a
+finding to inform Phase 4's design, not a recommendation between them.
+
+**Not done in this pass**: no code changes, no design decision made on
+either open question above -- both are left for Phase 4's actual
+implementation to decide, informed by these findings. No investigation
+into how the type-quick-edit action's submenu itself will be built (that
+mechanism was already proposed in Phase 1 §6 and re-confirmed correct
+there; this investigation only covers the two questions the prompt
+specifically asked for).

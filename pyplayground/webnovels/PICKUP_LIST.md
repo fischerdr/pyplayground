@@ -20,20 +20,10 @@ Read `INDEX.md` first for what each design doc is for.
 
 ## Now (active)
 
-1. `WINDOW_REDESIGN.md` Phase 4 — text right-click "edit type" quick
-   action for existing glossary terms. Investigation complete (2026-08-02,
-   two dated entries) -- confirmed `gender`/`pronoun_style`/
-   `honorific_override` are genuinely read by `format_glossary_for_prompt()`
-   (not display-only, as an earlier draft assumed) and that no existing
-   honorific-suffix detector exists to reuse; a follow-up addendum
-   confirmed the honorific/masking mechanism is already source-language-
-   agnostic in code (prompt-instruction-based, no literal string
-   manipulation), with the one real Japanese-only dependency in the whole
-   pipeline being `ja_tokenize.py`'s click-to-add-term word-boundary
-   lookup (unrelated to honorific detection, and already self-documented
-   as Japanese-only). Implementation not started. Phases 2 (menu bar +
-   button/mode reorg) and 3 (toolbar right-click context menu) complete
-   as of 2026-08-02.
+1. `WINDOW_REDESIGN.md` — all four phases complete as of 2026-08-02
+   (menu bar/button reorg, toolbar right-click menu, text right-click
+   type-quick-edit). No active work remains on this doc; see Recently
+   closed below.
 2. Deferred/low-priority batch (see below) — not urgent, but visible.
 3. §7 web migration (`DESIGN.md`) — still just a plan, zero code.
 
@@ -56,6 +46,14 @@ Read `INDEX.md` first for what each design doc is for.
   scope, needs its own design pass if prioritized.
 - Migrate to its own git repo — revisit only if something concrete
   actually breaks from being in the monorepo, not "it's gotten big."
+- Per-term honorific auto-detection (pre-filling `honorific_override`
+  from a suffix/adjacency check at term-creation or type-change time) —
+  explicitly scoped out of `WINDOW_REDESIGN.md` Phase 4, not forgotten.
+  Trigger: revisit only once a second source-language scraper actually
+  exists in the pipeline and there's real non-Japanese text to validate
+  a detector against -- confirmed (Phase 4's investigation) that no
+  detector exists today in any form, and that building one now would be
+  guessing at a shape with nothing but Japanese to test it on.
 
 ## Opportunistic only (fix only as a side effect of touching that file for something else — never scheduled standalone)
 
@@ -80,6 +78,10 @@ Read `INDEX.md` first for what each design doc is for.
 - `WINDOW_REDESIGN.md` Phase 4 investigation (honorific-field
   consumption, existing suffix-detection check, source-language
   assumptions across the pipeline) — complete, findings only, no code.
+- `WINDOW_REDESIGN.md` Phase 4 implementation (text right-click
+  "Change Type" quick action, with an inline Gender pick for General ->
+  Character) — complete, live-verified against the real glossary file.
+  All four `WINDOW_REDESIGN.md` phases now closed.
 - `GLOSSARY_ARCHITECTURE.md` refreshed (2026-08-02) — was stale since
   2026-07-30; folded in `WINDOW_REDESIGN.md` Phases 2-3, `RETRANSLATION_DESIGN.md`
   Phases 4-5 (both previously mis-documented as not started), the

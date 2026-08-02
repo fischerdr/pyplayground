@@ -2811,6 +2811,35 @@ class ReaderApp:
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Add to Glossary...", command=lambda: self.open_word_glossary_popup(*prefill, context=source_line))
 
+        # Change Type: only offered when the resolved word is itself an
+        # existing glossary term's exact source string (WINDOW_REDESIGN.md
+        # Phase 4). Reuses prefill (already resolved above by the same
+        # selection/word-boundary logic every other branch of this method
+        # uses) rather than re-deriving the word a second time -- prefill
+        # is (source_prefill, target_prefill), exactly one of which is the
+        # resolved word depending on which side (original/translated) was
+        # clicked, per _prefill_for_word().
+        resolved_word = prefill[0] or prefill[1]
+        existing_term = self._find_glossary_term_by_source(resolved_word) if resolved_word else None
+        if existing_term is not None:
+            type_submenu = tk.Menu(menu, tearoff=0)
+            type_submenu.add_command(label="Term", command=lambda: self._change_term_type(resolved_word, TERM_TYPE_GENERAL))
+            # Character (General -> Character specifically) opens a further
+            # Gender submenu rather than calling _change_term_type()
+            # directly -- tk.Menu.tk_popup() is non-blocking (confirmed
+            # live: it posts the menu and returns immediately, the actual
+            # selection is delivered later via the command= callback on
+            # the app's normal event loop), so there is no synchronous
+            # "ask and get an answer back" shape available here. Each
+            # gender leaf command carries its own answer baked in, same
+            # pattern as every other tk.Menu item in this file.
+            gender_submenu = tk.Menu(type_submenu, tearoff=0)
+            gender_submenu.add_command(label="Unspecified", command=lambda: self._change_term_type(resolved_word, TERM_TYPE_CHARACTER, gender=None))
+            gender_submenu.add_command(label="Male", command=lambda: self._change_term_type(resolved_word, TERM_TYPE_CHARACTER, gender="male"))
+            gender_submenu.add_command(label="Female", command=lambda: self._change_term_type(resolved_word, TERM_TYPE_CHARACTER, gender="female"))
+            type_submenu.add_cascade(label="Character", menu=gender_submenu)
+            menu.add_cascade(label="Change Type", menu=type_submenu)
+
         # Retranslate: only offered on original-language text, and only in
         # Interleaved mode (RETRANSLATION_DESIGN.md phase 3) -- Interleaved
         # is the only mode where _rendered_spans holds an original span
@@ -2839,6 +2868,103 @@ class ReaderApp:
                 )
 
         menu.tk_popup(event.x_root, event.y_root)
+
+    def _find_glossary_term_by_source(self, word):
+        """Look up whether `word` is the exact source string of an existing glossary term for the current novel.
+
+        WINDOW_REDESIGN.md Phase 4: shared by _on_text_right_click() (to
+        decide whether to offer "Change Type...") and _change_term_type()
+        (to read the term's current shape immediately before writing).
+        Reuses find_glossary_term_spans() (WINDOW_REDESIGN.md Phase 1 §6
+        confirmed this is the right tool -- searches every term regardless
+        of status, unlike build_mask_targets()) against `word` treated as
+        a one-word line, then only returns a match if some found span
+        covers the word's *entire* length -- a word that merely contains a
+        shorter existing term as a substring (e.g. "音夢くん" containing
+        "音夢") should not be treated as itself being that shorter term.
+
+        Args:
+            word: The exact clicked/selected text to look up.
+
+        Returns:
+            The matching term dict (fresh from disk), or None if no novel
+            is loaded or no term's source matches `word` exactly.
+        """
+        if not hasattr(self, "current_url") or not self.current_url:
+            return None
+        novel_id = _extract_novel_id(self.current_url)
+        if not novel_id:
+            return None
+        glossary = load_glossary(novel_id)
+        for start, end, matched_word in find_glossary_term_spans(word, glossary):
+            if start == 0 and end == len(word) and matched_word == word:
+                for term in glossary.get("terms", []):
+                    if term.get("source") == word:
+                        return term
+        return None
+
+    def _change_term_type(self, source, new_type, gender=None):
+        """Change an existing glossary term's type, preserving every other field.
+
+        WINDOW_REDESIGN.md Phase 4. Reloads the term fresh (via
+        _find_glossary_term_by_source()) rather than trusting a snapshot
+        captured when the right-click menu was built, matching this
+        codebase's established reload-fresh-immediately-before-write
+        discipline -- the glossary could have changed in the time between
+        opening the context menu and clicking a submenu item.
+
+        General -> Character: `gender` is supplied by the caller, already
+        chosen via the Change Type > Character > <gender> submenu chain in
+        _on_text_right_click() (a tk.Menu posts asynchronously -- see that
+        method's comment on why the gender pick has to be baked into each
+        leaf command rather than asked for synchronously here). Asking for
+        gender at all, rather than silently leaving it unset, matters
+        because gender/pronoun_style/honorific_override are confirmed
+        genuinely read by format_glossary_for_prompt() and injected into
+        the live translation prompt, not cosmetic. pronoun_style and
+        honorific_override are still left unset regardless of `gender`:
+        pronoun_style has no natural quick-pick shape (free text), and
+        honorific_override already falls back to the novel-wide
+        honorific_policy until someone sets it explicitly via the full
+        Glossary dialog -- per WINDOW_REDESIGN.md's Phase 4 investigation,
+        no honorific-suffix auto-detection exists or is attempted here.
+
+        Character -> Term: the three character-only fields simply drop
+        off by omission (upsert_confirmed_term()'s replace-the-whole-entry
+        semantics) -- no prompt needed, this direction has no data-loss
+        concern equivalent to the other direction. `gender` is ignored in
+        this direction (always None from this method's own General-only
+        call site, but this method doesn't rely on that -- it's dropped
+        unconditionally whenever new_type isn't TERM_TYPE_CHARACTER).
+
+        Args:
+            source: The term's source string (dedup key for
+                upsert_confirmed_term()).
+            new_type: TERM_TYPE_GENERAL or TERM_TYPE_CHARACTER.
+            gender: "male", "female", or None -- only applied when
+                new_type is TERM_TYPE_CHARACTER.
+        """
+        term = self._find_glossary_term_by_source(source)
+        if term is None:
+            messagebox.showinfo("Change Type", "This term no longer exists in the glossary (it may have been edited or removed).")
+            return
+        novel_id = _extract_novel_id(self.current_url)
+
+        new_term = dict(term)
+        new_term["type"] = new_type
+
+        if new_type == TERM_TYPE_CHARACTER:
+            new_term["gender"] = gender
+            new_term["pronoun_style"] = None
+            new_term["honorific_override"] = None
+        else:
+            new_term.pop("gender", None)
+            new_term.pop("pronoun_style", None)
+            new_term.pop("honorific_override", None)
+
+        GlossaryCoordinator(novel_id).upsert_confirmed(new_term)
+        logger.info(f"Changed glossary term type via right-click for novel {novel_id}: {source!r} -> {new_type!r}")
+        self.set_status(f"{source!r} changed to {new_type}")
 
     def _prefill_for_word(self, word, tag):
         """Build (source_prefill, target_prefill) for the glossary popup.

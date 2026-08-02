@@ -15,7 +15,7 @@ specific section a task needs.
 | `DESIGN_ARCHIVE.md` | Fully closed, historical entries moved out of `DESIGN.md` to keep it lean. Nothing here is actionable. | Archive only. Read only if a task specifically needs the "why" behind something already resolved. |
 | `RETRANSLATION_DESIGN.md` | Line-level retranslation feature (select a word, get a corrected translation, accept/persist). | **All 5 phases complete.** No open work. |
 | `REFACTOR_DESIGN.md` | Module split (`alphapolis_reader.py` → `ReaderRenderer` + `GlossaryCoordinator`) and the write-race/incremental-extraction fixes that came with it. | **Phase 3 (a-g) complete.** Phase 4 (revisit core app shell) undecided/not started — no active work. |
-| `WINDOW_REDESIGN.md` | Toolbar/menu reorganization + the three glossary dialogs' own layouts. | **Phases 2-3 complete (2026-08-02).** Phase 4 investigation complete (2026-08-02); implementation next on the pickup list. |
+| `WINDOW_REDESIGN.md` | Toolbar/menu reorganization + the three glossary dialogs' own layouts. | **All 4 phases complete (2026-08-02).** No open work. |
 | `agents-ui-testing.md` | *How-to*, not decisions: Xvfb setup, `run_ui_tests.sh`, `xdo_helper.py`/`log_correlator.py` usage, known environment quirks (leaked window/thread issues, screenshot gotchas). | Living reference, update when a new testing gotcha is found. |
 | `safe_persistence.py` (module docstring) | Design + implementation record for the atomic-write and verify-before-write helpers in `pyplayground/utils/`. | **Implemented and migrated.** No open work. |
 

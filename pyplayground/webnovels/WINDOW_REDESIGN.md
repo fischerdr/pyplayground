@@ -129,9 +129,9 @@ text, confirm type selection at creation still works as expected.
   see dated entry below).
 - **Phase 3**: complete (2026-08-02, toolbar right-click context menu, see
   dated entry below).
-- **Phase 4**: investigation complete (2026-08-02, see dated entry below),
-  implementation not started. No code changes from the investigation
-  itself.
+- **Phase 4**: complete (2026-08-02, text right-click type-quick-edit
+  action, see dated entry below). All four phases of this doc now
+  complete.
 
 ### 2026-08-01: Phase 1 -- investigation and proposal (no code changes)
 
@@ -1113,3 +1113,170 @@ not a recommendation.
 Phase 4 should build per-term honorific detection now or scope it out
 as premature -- both remain open, per the prompt's explicit instruction
 not to propose a design yet. No code changes.
+
+### 2026-08-02: Phase 4 -- text right-click type-quick-edit action (implementation)
+
+Implemented per Phase 1's §6 proposal and the two follow-up
+investigations above, with one real deviation found and fixed during
+implementation (see below). No sub-agent delegation used -- this was one
+self-contained feature with no independent sub-tasks.
+
+**Trigger and menu** (`alphapolis_reader.py:2811-2841`, inside
+`_on_text_right_click()`): after the existing selection/word-boundary
+resolution logic (unchanged, reused as-is), `resolved_word` is derived
+from `prefill` (`prefill[0] or prefill[1]` -- exactly one of the pair is
+the resolved word, depending on which side of the text was clicked, per
+`_prefill_for_word()`). A new helper,
+`_find_glossary_term_by_source()` (`alphapolis_reader.py:2872-2903`),
+looks up whether `resolved_word` is the *exact* source string of an
+existing glossary term for the current novel, reusing
+`find_glossary_term_spans()` as proposed -- called against the resolved
+word treated as a one-word string, keeping only a match whose span
+covers the word's entire length (so a word merely *containing* a
+shorter existing term, e.g. clicking "音夢くん" when only "音夢" is a
+term, does not trigger the action for the longer word). When a match is
+found, `menu.add_cascade(label="Change Type", menu=type_submenu)` is
+added as a third menu item, with `type_submenu` holding `Term` (direct
+`add_command`) and `Character` (a further `add_cascade` into a Gender
+submenu -- see below). When no match is found, the menu is unchanged
+from before this phase (`Add to Glossary...` plus, conditionally,
+`Retranslate this line...`).
+
+**A real deviation from Phase 1's proposal, found and fixed during
+implementation, not before:** Phase 1 §6 proposed
+`self._change_term_type(source, new_type)` called directly from each
+submenu leaf, with the General -> Character gender question resolved
+via "ask the user for gender inline." The first implementation attempt
+did exactly that, via a helper that opened a second `tk.Menu` with
+`tk_popup()` and returned the user's pick as a function return value.
+**This does not work** -- confirmed live, not assumed: `tk.Menu.tk_popup()`
+is non-blocking in Tkinter (posts the menu and returns immediately; the
+actual selection is delivered later via the `command=` callback on the
+normal event loop), verified with a standalone reproduction script
+before touching the real implementation. A synchronous "ask and get an
+answer back" helper is not a shape Tk's menu system supports. Fixed by
+restructuring: `Character` is a cascade to a nested Gender submenu
+(`Unspecified`/`Male`/`Female`, `alphapolis_reader.py:2837-2840`), and
+each of the three gender leaf commands calls `_change_term_type()`
+directly with the gender value already baked in
+(`gender=None`/`"male"`/`"female"`) -- same pattern every other
+`tk.Menu` item in this file already uses (the answer is chosen *by*
+picking the menu item, not asked for *after*). This makes the actual UI
+a three-level cascade (`Change Type > Character > <gender>`) rather than
+Phase 1's two-level sketch plus a separate ask -- still the same
+weight-class Phase 1's proposal called for (menu picks throughout, no
+popup window), just one more level deep for this one path specifically.
+
+**`_change_term_type()`** (`alphapolis_reader.py:2906-2961`): reloads
+the term fresh via `_find_glossary_term_by_source()` immediately before
+writing (not trusting a snapshot from when the right-click menu was
+built), matching this codebase's established reload-fresh discipline.
+Builds `new_term = dict(term)` (a full copy of the existing term dict --
+preserves `candidates`, `confirmed_target`, `status`, and `note`
+unconditionally, confirmed live against a real `STATUS_SUGGESTED` term,
+see Verification below), sets `new_term["type"] = new_type`, then:
+General -> Character sets `gender` to the caller-supplied value and
+explicitly sets `pronoun_style`/`honorific_override` to `None` (per the
+prior investigation's finding that these are genuinely prompt-load-bearing,
+not cosmetic -- gender is asked for since it has a natural quick-pick
+shape, the other two are deliberately left for the full Glossary dialog,
+same reasoning as Phase 1's own §6 "one real design question" note, now
+resolved this way). Character -> Term (or any non-Character `new_type`)
+pops all three character-only keys unconditionally, so they're absent
+from the written dict entirely -- matches
+`upsert_confirmed_term()`'s documented replace-the-whole-entry semantics
+exactly, no merge, no partial update. Writes via
+`GlossaryCoordinator(novel_id).upsert_confirmed(new_term)`
+(`alphapolis_reader.py:2958`) -- the exact same call
+`open_word_glossary_popup()`'s Save already uses, no new coordinator
+method, confirmed by grep that no new write-path function was
+introduced anywhere in this diff. Per this phase's explicit scope: no
+honorific-suffix auto-detection anywhere in this code -- `honorific_override`
+is never set by this action under any path, matching the investigation's
+finding that no such detector exists and none was built here.
+
+**Test harness fix, found immediately by the test suite, not live
+testing:** adding the two new `ReaderApp` methods broke three existing
+tests (`test_retranslation_dialog.py::TestRetranslateMenuGating`) with
+`AttributeError: '_ReaderAppShell' object has no attribute
+'_find_glossary_term_by_source'` -- `tests/webnovels/conftest.py`'s
+`_ReaderAppShell` binds a fixed, explicit list of real `ReaderApp`
+methods (by design, per `REFACTOR_DESIGN.md`'s harness-fragility fix:
+a new dependency should surface as a loud `AttributeError`, not a
+silent gap). Fixed by adding both new methods to that binding list
+(`tests/webnovels/conftest.py`, `_find_glossary_term_by_source =
+ReaderApp._find_glossary_term_by_source`, `_change_term_type =
+ReaderApp._change_term_type`) -- exactly the intended, designed-for
+response to this failure mode, not a workaround.
+
+**Tests**: no new unit tests added. This phase's logic is thin
+(menu construction plus a small dict-copy-and-mutate write) and its
+correctness is dominated by real Tk event/menu behavior (the
+`tk_popup()` non-blocking discovery above is exactly the kind of thing a
+mocked-Tk unit test would not have caught) -- live verification (below)
+is what actually exercises this code path, consistent with Phase 2/3's
+own precedent of relying on live verification over new unit coverage
+for pure UI-wiring changes. Full `tests/webnovels/` suite (excluding
+`ui_automation/`): **340 passed** (unchanged from baseline, after the
+conftest.py fix above -- before that fix, 3 failed). `black`/`isort`/
+`flake8` clean on both touched files.
+
+**Live verification**, via `pyplayground/webnovels/ui_testing/
+run_ui_tests.sh xvfb-keep` (real Xvfb+fluxbox on `:99`, `windowclose`
+never used, app terminated via `kill -TERM`). Real on-disk glossary file
+(`~/.config/alphapolis_reader/glossaries/375266002.json`) backed up
+before this session and fully restored afterward (confirmed via `diff`,
+identical) -- all live writes below were against the real file, not a
+synthetic fixture, per the checkpoint's own requirement to check the
+on-disk file directly:
+
+- Right-clicking existing chapter text with no matching glossary term
+  (the English word "school") showed only the pre-existing menu items
+  (`Add to Glossary...`, `Retranslate this line...`) -- confirmed no
+  `Change Type` cascade appears, log clean. This is the "unrecognized
+  text unaffected" checkpoint.
+- Created a real, known test term (`source="Ruga"`, `type="term"`, via
+  the ordinary `Add to Glossary...` popup -- itself reconfirmed working
+  identically to before this phase, Type radio buttons and gender field
+  behaving as always) to get a term guaranteed to be both on-disk and
+  clickable in the rendered chapter text (the episode's own real cached
+  terms, e.g. `鉄パイプ`/`ケイト`, don't appear in this specific
+  episode's text).
+- Right-clicking "Ruga" (now a known term) showed the `Change Type`
+  cascade with `Term`/`Character` options; hovering `Character` revealed
+  the `Unspecified`/`Male`/`Female` Gender cascade, confirmed via
+  screenshot at each level.
+- **General -> Character with Female**: on-disk read directly afterward
+  confirmed `type: "character"`, `gender: "female"`, `pronoun_style:
+  null`, `honorific_override: null`, with `candidates`/`confirmed_target`/
+  `status`/`note` all unchanged from the original entry. Log line
+  `"Changed glossary term type via right-click for novel 375266002:
+  'Ruga' -> 'character'"` present.
+- **Character -> Term**: on-disk read confirmed `type: "term"` and all
+  three character-only keys (`gender`/`pronoun_style`/`honorific_override`)
+  completely absent from the entry (not `null` -- actually absent, since
+  the dict never had them added back), other fields unchanged.
+- **General -> Character with Unspecified**: on-disk read confirmed
+  `type: "character"`, `gender: null` (not a string) -- confirmed the
+  Unspecified option correctly writes `None`, distinct from `"male"`/`"female"`.
+- **Status preservation on a real `STATUS_SUGGESTED` term**: since the
+  loaded episode's text didn't contain any of the novel's real suggested
+  terms to right-click directly, this was verified via a direct call
+  against the same write path (`GlossaryCoordinator(novel_id).upsert_confirmed()`
+  with a `dict(term)`-copied, type-mutated `鉄パイプ` entry, the actual
+  real suggested term already in this novel's glossary) rather than
+  skipped -- confirmed `status: "suggested"` and `confirmed_target: null`
+  survive a type change unchanged, alongside the correctly-added
+  character fields. This mutation was included in the pre/post-session
+  `diff`-confirmed restore, same as the UI-driven writes above.
+- Whole-session log swept for `ERROR`/`CRITICAL` across the full
+  verification session: none found.
+
+**Not done in this phase, deliberately, per the prompt's explicit scope
+boundary**: no honorific-suffix detection logic anywhere (confirmed via
+the finished diff -- no new regex, no new LLM prompt field, no new
+lookup function touching honorifics at all); no source-language field
+added anywhere (the prior investigation's finding stands unchanged, this
+phase didn't touch it); no scraper work. `pronoun_style` remains
+settable only via the full Glossary dialog, per the proposal's own
+"no natural quick-pick shape" reasoning -- not attempted here.

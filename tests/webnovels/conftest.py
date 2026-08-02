@@ -106,7 +106,8 @@ class _ReaderAppShell:
     """A ReaderApp-shaped object for tests exercising Group A/C/D methods together with a real ReaderRenderer.
 
     Covers open_word_glossary_popup, open_retranslate_popup,
-    _on_text_right_click, and _prefill_for_word.
+    _on_text_right_click, _prefill_for_word, _find_glossary_term_by_source,
+    and _change_term_type (WINDOW_REDESIGN.md Phase 4).
 
     Not a hand-rolled reimplementation -- every method is bound straight
     off the real ReaderApp class (same idiom this file's fixtures use
@@ -144,6 +145,8 @@ class _ReaderAppShell:
     open_word_glossary_popup = ReaderApp.open_word_glossary_popup
     open_retranslate_popup = ReaderApp.open_retranslate_popup
     _open_remember_globally_popup = ReaderApp._open_remember_globally_popup
+    _find_glossary_term_by_source = ReaderApp._find_glossary_term_by_source
+    _change_term_type = ReaderApp._change_term_type
 
 
 @pytest.fixture

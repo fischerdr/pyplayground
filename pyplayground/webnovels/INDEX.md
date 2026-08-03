@@ -16,6 +16,7 @@ specific section a task needs.
 | `RETRANSLATION_DESIGN.md` | Line-level retranslation feature (select a word, get a corrected translation, accept/persist). | **All 5 phases complete.** No open work. |
 | `REFACTOR_DESIGN.md` | Module split (`alphapolis_reader.py` → `ReaderRenderer` + `GlossaryCoordinator`) and the write-race/incremental-extraction fixes that came with it. | **Phase 3 (a-g) complete.** Phase 4 (revisit core app shell) undecided/not started — no active work. |
 | `WINDOW_REDESIGN.md` | Toolbar/menu reorganization + the three glossary dialogs' own layouts. | **All 4 phases complete (2026-08-02).** No open work. |
+| `STATUS_BAR_DESIGN.md` | Page-count/chapter-position indicator + word/paragraph counts (original + translated) — split out of `WINDOW_REDESIGN.md`, never got a phase there. | **Phase 1 complete (2026-08-03).** Two open product questions flagged for discussion before Phase 2 (page-chrome tab/badge inclusion, character-vs-word count for the original side). |
 | `agents-ui-testing.md` | *How-to*, not decisions: Xvfb setup, `run_ui_tests.sh`, `xdo_helper.py`/`log_correlator.py` usage, known environment quirks (leaked window/thread issues, screenshot gotchas). | Living reference, update when a new testing gotcha is found. |
 | `safe_persistence.py` (module docstring) | Design + implementation record for the atomic-write and verify-before-write helpers in `pyplayground/utils/`. | **Implemented and migrated.** No open work. |
 

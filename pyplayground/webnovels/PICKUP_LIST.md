@@ -20,12 +20,23 @@ Read `INDEX.md` first for what each design doc is for.
 
 ## Now (active)
 
-1. `WINDOW_REDESIGN.md` — all four phases complete as of 2026-08-02
+1. `STATUS_BAR_DESIGN.md` Phase 2 — page-count/chapter-position and
+   word/paragraph-count status-bar additions, split out of
+   `WINDOW_REDESIGN.md` (which never actually wrote a phase for this
+   item despite naming it in scope). Phase 1 investigation/proposal
+   complete (2026-08-03) -- two open product questions need discussion
+   before Phase 2 can start: whether to include a `Web/Web+/AI`-style
+   source-switching tab or model-attribution badge in this app's own
+   status bar (confirmed Alphapolis' real page has neither -- would be
+   new, this-app-owned UI, not a passthrough), and character-vs-word
+   count for the original-language (Japanese) side, which has no
+   whitespace word boundaries.
+2. `WINDOW_REDESIGN.md` — all four phases complete as of 2026-08-02
    (menu bar/button reorg, toolbar right-click menu, text right-click
    type-quick-edit). No active work remains on this doc; see Recently
    closed below.
-2. Deferred/low-priority batch (see below) — not urgent, but visible.
-3. §7 web migration (`DESIGN.md`) — still just a plan, zero code.
+3. Deferred/low-priority batch (see below) — not urgent, but visible.
+4. §7 web migration (`DESIGN.md`) — still just a plan, zero code.
 
 ## Someday-Maybe (parked — revisit only on a concrete trigger, not a schedule)
 
@@ -86,3 +97,12 @@ Read `INDEX.md` first for what each design doc is for.
   2026-07-30; folded in `WINDOW_REDESIGN.md` Phases 2-3, `RETRANSLATION_DESIGN.md`
   Phases 4-5 (both previously mis-documented as not started), the
   collective-shout bracket fix, and the `safe_persistence.py` migration.
+- `STATUS_BAR_DESIGN.md` created and Phase 1 (investigation + proposal)
+  complete (2026-08-03) — split out of `WINDOW_REDESIGN.md`. Confirmed
+  live against two real Alphapolis episode pages that the page-count div
+  is genuine novel-wide chapter position (not per-episode pagination),
+  and that the `Web/Web+/AI` tabs/model-attribution badge a reference
+  screenshot named are not part of the real page. Confirmed `content`'s
+  text/image item shape and that no character/word-counting utility
+  exists yet to reuse. See `STATUS_BAR_DESIGN.md`'s own Now entry above
+  for the two open questions blocking Phase 2.

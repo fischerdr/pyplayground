@@ -67,6 +67,24 @@ Read `INDEX.md` first for what each design doc is for.
   means here -- side-by-side view, a scoring/voting mechanism, which
   models, whether it touches the glossary/masking pipeline at all -- is
   entirely open).
+- Chapter staleness detection ("did this chapter change since I last
+  fetched it") — surfaced while discussing the new page-count field's
+  blank-for-pre-existing-cache behavior (`STATUS_BAR_DESIGN.md` Phase 2),
+  but a distinct, separate feature from that -- the blank-label behavior
+  itself is intentional and staying as-is (a manual cache wipe is the
+  planned path there, not a backfill). Not yet scoped or designed at
+  all -- no trigger condition set yet either, same reasoning as the
+  multi-model-comparison entry above. Open questions, none resolved:
+  what counts as "changed" (content hash? a timestamp/version field on
+  the source page, if one even exists? nothing confirmed yet); how to
+  detect it cheaply without a full refetch+retranslate cycle (Phase 2's
+  own live verification measured real Refresh cycles at ~2-4.5 minutes
+  -- an auto-triggered or silent staleness check that ends up doing a
+  full refetch would reintroduce exactly the cost this project
+  deliberately sidestepped by choosing the no-`CACHE_SCHEMA_VERSION`-bump
+  path for the page-count field itself); and whether the UI should
+  auto-refresh, just badge "possibly updated," or something else. No
+  code exists for this today.
 
 ## Opportunistic only (fix only as a side effect of touching that file for something else — never scheduled standalone)
 

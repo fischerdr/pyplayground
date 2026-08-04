@@ -426,6 +426,26 @@ def _extract_content(body) -> list:
     return content
 
 
+def _parse_page_count(text: str) -> Optional[Tuple[int, int]]:
+    """Parse a ".p-novel-episode__page-count" text value into (current, total).
+
+    Args:
+        text: The element's stripped text, expected shape "445 / 689".
+
+    Returns:
+        (current, total) as ints, or None if the text doesn't match the
+        expected "N / M" shape (STATUS_BAR_DESIGN.md Phase 1: confirmed
+        live against real pages, but markup/format changes on Alphapolis'
+        end are always possible -- fail soft, not with a raised exception,
+        same discipline as every other single-value scrape in this
+        function).
+    """
+    match = re.match(r"^(\d+)\s*/\s*(\d+)$", text.strip())
+    if not match:
+        return None
+    return (int(match.group(1)), int(match.group(2)))
+
+
 def parse_episode(html: str) -> dict:
     """Parse an episode page HTML and extract title, author, content, and navigation.
 
@@ -433,7 +453,8 @@ def parse_episode(html: str) -> dict:
         html: The raw page HTML string.
 
     Returns:
-        Dict with title, author, episode_title, lines, content, prev_url, next_url.
+        Dict with title, author, episode_title, lines, content, prev_url,
+        next_url, page_count.
 
     Raises:
         RuntimeError: If #novelBody is not found in the page markup.
@@ -453,10 +474,17 @@ def parse_episode(html: str) -> dict:
     title_tag = soup.select_one(".p-novel-episode__title")
     author_tag = soup.select_one(".p-novel-episode__author")
     episode_title_tag = soup.select_one(".p-novel-episode__episode-title")
+    # STATUS_BAR_DESIGN.md Phase 1/2: chapter position within the novel's
+    # total serialization (confirmed live against two real, directly-
+    # adjacent episode pages -- not per-episode pagination). Same
+    # single-value-scrape idiom as title_tag/author_tag/episode_title_tag
+    # above.
+    page_count_tag = soup.select_one(".p-novel-episode__page-count")
 
     title = title_tag.get_text(strip=True) if title_tag else ""
     author = author_tag.get_text(strip=True) if author_tag else ""
     episode_title = episode_title_tag.get_text(strip=True) if episode_title_tag else ""
+    page_count = _parse_page_count(page_count_tag.get_text()) if page_count_tag else None
 
     prev_url, next_url = None, None
     cover_tag = soup.select_one("#app-cover-data")
@@ -484,6 +512,7 @@ def parse_episode(html: str) -> dict:
         "content": content,
         "prev_url": prev_url,
         "next_url": next_url,
+        "page_count": page_count,
     }
 
 
@@ -1468,6 +1497,25 @@ class ReaderApp:
         self.status_label = ttk.Label(status_bar, text="")
         self.status_label.pack(side="left")
 
+        # STATUS_BAR_DESIGN.md Phase 2: two new permanent labels alongside
+        # (not replacing) status_label's existing transient-message use.
+        # Packed from the right so they stay visually distinct from
+        # set_status()'s left-packed messages rather than competing for
+        # the same run of text -- "where am I" (page_count_label) and
+        # "how much is here" (content_count_label) are deliberately two
+        # separate labels, not one combined string, per this doc's own
+        # navigation-fact-vs-content-fact framing. Both start empty and
+        # are populated by _update_status_bar_counts(), called from
+        # display_episode() -- the one call site that fires on every
+        # navigation (Prev/Next/Load) and after Refresh (refresh_current_episode()
+        # -> load_episode() -> ... -> display_episode() once the re-fetch
+        # completes), so a single hook covers both triggers this doc's
+        # own "Update triggers" section calls for.
+        self.content_count_label = ttk.Label(status_bar, text="")
+        self.content_count_label.pack(side="right", padx=(12, 0))
+        self.page_count_label = ttk.Label(status_bar, text="")
+        self.page_count_label.pack(side="right")
+
         text_frame = ttk.Frame(root)
         text_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
@@ -1654,6 +1702,54 @@ class ReaderApp:
         """
         self.status_label.config(text=msg)
         self.root.update_idletasks()
+
+    def _update_status_bar_counts(self, ep):
+        """Update the page-count and word/paragraph-count status bar labels from a parsed episode dict.
+
+        STATUS_BAR_DESIGN.md Phase 2. Two independent labels, per that
+        doc's own decision to keep "where am I" (page_count) and "how
+        much is here" (content counts) visually distinct rather than
+        bundled into one string.
+
+        page_count_label: from ep["page_count"] (a (current, total) tuple
+        from parse_episode(), or None for an episode cached before this
+        field existed -- CACHE_SCHEMA_VERSION was deliberately not
+        bumped for this addition, since forcing a full refetch/
+        re-translate of every already-cached episode just to backfill a
+        display-only field would be a real, disproportionate cost; the
+        label is simply blank until that episode is next fetched fresh
+        or Refreshed, same no-migration-needed precedent this project
+        already established for honorific_policy-shaped fields).
+
+        content_count_label: paragraph count from len(ep["lines"])
+        (confirmed 1:1 with len(ep["translated_lines"]) per
+        STATUS_BAR_DESIGN.md Phase 1, so one number covers both sides,
+        no separate original/translated paragraph counts needed),
+        original-language character count from
+        sum(len(t) for t in ep["lines"]), translated-language word count
+        from a plain str.split() over ep["translated_lines"] -- per this
+        doc's now-locked-in decision, these two counts are not meant to
+        be compared against each other, each is just meaningful for its
+        own side. translated_lines may be absent (an episode dict that
+        hasn't been translated yet, if this is ever called before that
+        stage) -- guarded the same way page_count is.
+
+        Args:
+            ep: The current episode dict (self.episode).
+        """
+        page_count = ep.get("page_count")
+        if page_count:
+            current, total = page_count
+            self.page_count_label.config(text=f"Chapter {current} / {total}")
+        else:
+            self.page_count_label.config(text="")
+
+        lines = ep.get("lines") or []
+        translated_lines = ep.get("translated_lines") or []
+        paragraph_count = len(lines)
+        original_char_count = sum(len(t) for t in lines)
+        translated_word_count = sum(len(t.split()) for t in translated_lines)
+        self.content_count_label.config(text=f"{paragraph_count} paragraphs | {original_char_count} chars (orig) | {translated_word_count} words (translated)")
 
     def show_error(self, full_trace: str):
         """Display an error dialog with the full traceback.
@@ -2740,6 +2836,7 @@ class ReaderApp:
         self.prev_btn.state(["!disabled"] if ep["prev_url"] else ["disabled"])
         self.next_btn.state(["!disabled"] if ep["next_url"] else ["disabled"])
         self.set_status(f"Chapter: {ep['episode_title']}")
+        self._update_status_bar_counts(ep)
         logger.info(f"Displayed episode: {ep['episode_title']}")
 
         save_reader_state(url, self.target_lang)

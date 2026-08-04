@@ -40,14 +40,22 @@ would be an arbitrary UI grouping, not a natural one.
 
 ## Decisions locked in (via discussion, before any code)
 
-None yet. This doc starts at the same point `WINDOW_REDESIGN.md` did
-before its own Phase 1 — real-estate overlap and a rough feature
-description, no locked decisions about exact mechanism, data source, or
-placement. Phase 1's investigation below surfaces two concrete, unresolved
-product questions rather than deciding them; a "Decisions locked in"
-section will be filled in once those are actually discussed and resolved,
-matching `WINDOW_REDESIGN.md`'s own precedent of only listing what's
-genuinely settled.
+- **No `Web/Web+/AI` tabs or model-attribution badge.** Phase 1 confirmed
+  these are not part of Alphapolis' own page chrome; discussion has now
+  confirmed they were never part of the actual request either — incidental
+  to a wtr-lab reference screenshot (a different site), not something this
+  app needs. Out of scope entirely, not merely deferred. (The
+  multi-model-translation-comparison idea that screenshot separately
+  prompted is tracked as its own, not-yet-scoped Someday-Maybe item — see
+  `PICKUP_LIST.md`, not this doc; it's a distinct feature, not a status-bar
+  addition.)
+- **Character-vs-word non-comparability across languages is acceptable,
+  not a blocker.** Original-language side: character count (a raw
+  `sum(len(t) for t in ep["lines"])`, per Phase 1's finding that no
+  existing counting utility needed to be reused or extended). Translated
+  side: word count (`str.split()`-based). The two numbers measure
+  different things and are not meant to be compared against each other
+  directly — each is meaningful on its own side, which is sufficient.
 
 ## Phases
 
@@ -101,8 +109,9 @@ scope them against.
 
 - **Phase 1**: complete (2026-08-03, investigation and proposal only, see
   dated entry below). No code changes.
-- **Phase 2**: not started, contingent on Phase 1's open questions being
-  resolved via discussion.
+- **Phase 2**: complete (2026-08-03, page-count/chapter-position +
+  word/paragraph-count status-bar additions, see dated entry below). Both
+  phases of this doc now complete.
 
 ### 2026-08-03: Phase 1 -- investigation and proposal (no code changes)
 
@@ -349,3 +358,145 @@ explicitly left for discussion, not silently resolved one way. No
 `CACHE_SCHEMA_VERSION` version-bump-vs-default decision made for the
 proposed page-count field -- flagged for Phase 2 to confirm against real
 on-disk cache files, not assumed here.
+
+### 2026-08-03: Phase 2 -- page-count/chapter-position + word/paragraph counts (implementation)
+
+Implemented per Phase 1's proposal. Both product questions Phase 1 left
+open are now resolved via discussion and recorded in "Decisions locked
+in" above before this phase started: no `Web/Web+/AI` tabs or
+model-attribution badge (confirmed never actually part of the request,
+out of scope entirely); character-vs-word non-comparability across
+languages accepted as fine, not a blocker. No sub-agent delegation used
+-- one self-contained feature, no independent sub-tasks.
+
+**`CACHE_SCHEMA_VERSION` decision, confirmed against real on-disk cache
+files before assuming, per Phase 1's own flagged uncertainty**: checked
+all 30 real files under `~/.cache/alphapolis_reader/` --
+`{-1: 2, 4: 28}` (28 of 30 already at the current version, 4). Since
+`load_cached_episode()` (`alphapolis_reader.py:173`) does an *exact*
+equality check (`episode.get("_cache_schema_version") != CACHE_SCHEMA_VERSION`)
+rather than a missing-key-tolerant default, bumping the version would
+force all 28 already-fetched-and-translated real episodes to be treated
+as a cache miss and refetched/re-translated from scratch -- a real,
+disproportionate cost for adding one display-only field. **Chose plain
+default, no version bump** (`CACHE_SCHEMA_VERSION` stays `4`) -- same
+no-migration-needed precedent this project already established for
+`honorific_policy`-shaped fields (per `REFACTOR_DESIGN.md` Phase 1
+section 5, confirmed applicable here the same way). Every read site
+uses `ep.get("page_count")` (`alphapolis_reader.py:1741`), which
+evaluates falsy/`None` for any episode cached before this field existed
+-- confirmed this degrades gracefully (blank label, no error) via live
+verification below, not just reasoned about.
+
+**Page-count/chapter-position**: `_parse_page_count()`
+(`alphapolis_reader.py:429-445`), a new small helper parsing a
+`.p-novel-episode__page-count` element's text (`"445 / 689"`) into
+`(445, 689)` via a plain regex (`^(\d+)\s*/\s*(\d+)$`), returning `None`
+on any non-matching shape rather than raising -- same fail-soft
+discipline every other single-value scrape in `parse_episode()` already
+uses. Wired into `parse_episode()` itself
+(`alphapolis_reader.py:449-517`): `page_count_tag = soup.select_one(".p-novel-episode__page-count")`
+(`alphapolis_reader.py:482`), same idiom as `title_tag`/`author_tag`/
+`episode_title_tag` immediately above it, and `"page_count": page_count`
+added to the returned dict.
+
+**Word/paragraph counts**: `_update_status_bar_counts()`
+(`alphapolis_reader.py:1706-1752`), a new `ReaderApp` method. Paragraph
+count is `len(ep.get("lines") or [])` -- one number, not separate
+original/translated counts, per Phase 1's confirmed 1:1 invariant
+(no language-specific logic needed, as proposed). Original-language
+character count is `sum(len(t) for t in lines)`; translated word count
+is `sum(len(t.split()) for t in translated_lines)` -- both exactly the
+plain-Python primitives Phase 1's proposal specified, no new scraping,
+no reused/extended utility (none existed to reuse, per Phase 1's own
+finding).
+
+**Placement**: two new permanent `ttk.Label`s in the existing status bar
+(`alphapolis_reader.py:1493-1517`), `page_count_label` and
+`content_count_label`, both packed `side="right"` -- deliberately on the
+opposite side from the existing `status_label` (left-packed, unchanged,
+still used only for `set_status()`'s transient action messages) so the
+two new permanent labels never compete for the same run of text or get
+silently overwritten by a transient message. Kept as two separate
+labels rather than one combined string, matching this doc's own
+"kept separate" framing (`page_count_label`: `"Chapter 445 / 690"`;
+`content_count_label`: `"63 paragraphs | 3069 chars (orig) | 1280 words
+(translated)"`) -- visually distinct, not bundled.
+
+**Update triggers**: both labels are updated from one single call site,
+`_update_status_bar_counts(ep)` called from `display_episode()`
+(`alphapolis_reader.py:2839`) -- confirmed by reading `display_episode()`'s
+own callers that this one hook covers both required triggers without
+needing two separate wiring points: `display_episode()` fires on every
+navigation (`load_episode()` -> `_do_fetch_and_translate()` or a cache
+hit -> `display_episode()`, for Prev/Next/Load) and after Refresh
+(`refresh_current_episode()` clears the cache then calls
+`load_episode()`, which re-fetches and calls `display_episode()` again
+once translation completes) -- exactly matching this doc's own
+"page-count updates only on navigation; word/paragraph counts update
+whenever the chapter's translated content changes (navigation, and
+after Refresh)" requirement, since both labels are simply recomputed
+from the freshly-displayed `ep` dict every time regardless of why
+`display_episode()` fired.
+
+**Tests**: no new unit tests added -- this phase's logic is a small
+regex-based scrape plus arithmetic over already-parsed data, and its
+correctness is dominated by real page structure/real cache-file shape
+(exactly the kind of thing confirmed via live fetches and real on-disk
+files below, not a mocked-HTML unit test), consistent with
+`WINDOW_REDESIGN.md` Phases 2/3's own precedent of relying on live
+verification for UI-wiring/scraping changes over new unit coverage. Full
+`tests/webnovels/` suite (excluding `ui_automation/`): **340 passed**,
+unchanged from baseline. `black`/`isort`/`flake8` clean on the one
+touched file.
+
+**Live verification**, via `pyplayground/webnovels/ui_testing/
+run_ui_tests.sh xvfb-keep` (real Xvfb+fluxbox on `:99`, `windowclose`
+never used, app terminated via `kill -TERM`). Unlike prior phases'
+glossary-file writes, this session's real cache-file mutations
+(`page_count` backfilled, translations regenerated) were left in place
+rather than restored afterward -- Refresh always mutates the on-disk
+cache by design, this is the intended, permanent effect of the action
+under test, not a synthetic test artifact to clean up:
+
+- Launched against novel 375266002's real, pre-existing cache for
+  episode "contact" (`page_count` absent, predating this phase's code).
+  Screenshot confirmed the page-count label correctly blank and the
+  content-count label correctly showing `63 paragraphs | 3069 chars
+  (orig) | 1280 words (translated)` -- an exact match to Phase 1's own
+  "contact" baseline (63 paragraphs, 3,069 original characters),
+  confirming both the pre-existing-cache degradation path and the count
+  arithmetic itself in one screenshot.
+- Clicked Refresh (a real fetch + real LLM translation, ~2 minutes):
+  page-count label updated to `Chapter 445 / 690` after completion.
+  Cross-checked directly against an independent, separate live fetch of
+  the same URL run through the real `parse_episode()` function outside
+  the running app: `parse_episode()`'s `page_count` returned `(445,
+  690)` -- exact match, confirming the in-app value isn't just
+  internally consistent but matches the real page.
+- Clicked Next (real navigation to `episode/7800123`, "night sky" --
+  the exact second episode Phase 1's own investigation fetched,
+  `dispOrder: 446`): page-count label correctly blank again (this
+  episode's cache also predated the field), content counts correctly
+  showed `68 paragraphs | 3289 chars (orig) | 1530 words (translated)`
+  for the new chapter.
+- Clicked Refresh again on "night sky" (~4.5 minutes, a longer chapter):
+  page-count label updated to `Chapter 446 / 690` -- matching Phase 1's
+  own `dispOrder: 446` finding for this exact episode, and the same
+  `690` denominator as "contact" (same novel, consistent total).
+- Clicked Previous (real navigation back to "contact," now itself
+  already refreshed earlier in this session): page-count label correctly
+  showed `Chapter 445 / 690` again, confirming the field survives both
+  the in-memory `self.cache` path and a disk-cache round-trip, not just
+  a fresh fetch.
+- Whole-session log swept for `ERROR`/`CRITICAL` after every action
+  individually and once at the end covering the full session: none
+  found (one `WARNING` per chapter for an already-documented,
+  expected sentinel-splice case, unrelated to this phase).
+
+**Not done in this phase, deliberately, per the prompt's explicit scope
+boundary**: no `Web/Web+/AI` tabs or model-attribution badge UI (now
+recorded as fully out of scope in "Decisions locked in," not merely
+deferred); no multi-model-translation-comparison feature work (tracked
+separately, unscoped, in `PICKUP_LIST.md`'s Someday-Maybe tier -- a
+distinct future feature, not part of this status-bar work).

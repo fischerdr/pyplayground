@@ -20,17 +20,9 @@ Read `INDEX.md` first for what each design doc is for.
 
 ## Now (active)
 
-1. `STATUS_BAR_DESIGN.md` Phase 2 — page-count/chapter-position and
-   word/paragraph-count status-bar additions, split out of
-   `WINDOW_REDESIGN.md` (which never actually wrote a phase for this
-   item despite naming it in scope). Phase 1 investigation/proposal
-   complete (2026-08-03) -- two open product questions need discussion
-   before Phase 2 can start: whether to include a `Web/Web+/AI`-style
-   source-switching tab or model-attribution badge in this app's own
-   status bar (confirmed Alphapolis' real page has neither -- would be
-   new, this-app-owned UI, not a passthrough), and character-vs-word
-   count for the original-language (Japanese) side, which has no
-   whitespace word boundaries.
+1. `STATUS_BAR_DESIGN.md` — both phases complete as of 2026-08-03
+   (page-count/chapter-position indicator, word/paragraph counts). No
+   active work remains on this doc; see Recently closed below.
 2. `WINDOW_REDESIGN.md` — all four phases complete as of 2026-08-02
    (menu bar/button reorg, toolbar right-click menu, text right-click
    type-quick-edit). No active work remains on this doc; see Recently
@@ -65,6 +57,16 @@ Read `INDEX.md` first for what each design doc is for.
   a detector against -- confirmed (Phase 4's investigation) that no
   detector exists today in any form, and that building one now would be
   guessing at a shape with nothing but Japanese to test it on.
+- Multi-model translation comparison (compare how different models
+  translate the same lines/page side-by-side) — sourced from discussion
+  of the wtr-lab reference screenshot that also (incorrectly, per
+  `STATUS_BAR_DESIGN.md` Phase 1/2) suggested `Web/Web+/AI` tabs were
+  relevant to the status-bar work. Not yet scoped or designed at all --
+  no trigger condition set yet either, since one can't be picked
+  meaningfully before this gets its own design pass (what "compare"
+  means here -- side-by-side view, a scoring/voting mechanism, which
+  models, whether it touches the glossary/masking pipeline at all -- is
+  entirely open).
 
 ## Opportunistic only (fix only as a side effect of touching that file for something else — never scheduled standalone)
 
@@ -104,5 +106,11 @@ Read `INDEX.md` first for what each design doc is for.
   and that the `Web/Web+/AI` tabs/model-attribution badge a reference
   screenshot named are not part of the real page. Confirmed `content`'s
   text/image item shape and that no character/word-counting utility
-  exists yet to reuse. See `STATUS_BAR_DESIGN.md`'s own Now entry above
-  for the two open questions blocking Phase 2.
+  exists yet to reuse.
+- `STATUS_BAR_DESIGN.md` Phase 2 (page-count/chapter-position indicator
+  and word/paragraph counts) — complete (2026-08-03), live-verified
+  against real Alphapolis pages and real on-disk episode caches (page-
+  count cross-checked against an independent direct page fetch, exact
+  match; graceful blank-label degradation confirmed for pre-existing
+  cache entries lacking the new field, no `CACHE_SCHEMA_VERSION` bump).
+  Both `STATUS_BAR_DESIGN.md` phases now closed.

@@ -83,6 +83,23 @@ LLM_TIMEOUT = get_env_var("LLM_TIMEOUT", default="120", as_type=int)
 # translate_lines() alignment-retry logic that existed to recover from
 # label-format merges is no longer the primary defense (though still kept
 # as a fallback in case the model returns a wrong-length array).
+#
+# Single-quote dialogue instruction (DESIGN.md 2026-08-04 entries): with no
+# instruction at all for how to render 「」 dialogue brackets, the model
+# rendered them inconsistently -- 43.9% of single-bracket dialogue lines
+# surveyed from real cached output lost all quote marking entirely. Root
+# cause: _clean_output() strips a leading+trailing double-quote pair to
+# undo a known model artifact (wrapping its whole JSON array element in a
+# redundant extra quote layer), but that check is structurally unable to
+# tell that artifact apart from a correctly double-quoted whole-line
+# dialogue translation -- both are, after parsing, just a string starting
+# and ending with ". Rather than trying to make that strip smarter (not
+# possible after the fact -- the two cases are the same string), the fix
+# is to stop the ambiguity at the source: instruct single-quote rendering
+# for dialogue, so translated dialogue output never collides with
+# _clean_output()'s double-quote check. _clean_output() itself is
+# unchanged and still valid for its original purpose once dialogue stops
+# using the glyph it keys off of.
 TRANSLATION_PROMPT = (
     "You are a translation API. You output ONLY a JSON array of strings, "
     "nothing else -- no notes, no explanations, no markdown code fences.\n\n"
@@ -91,7 +108,11 @@ TRANSLATION_PROMPT = (
     "string, even if a string is short or ambiguous. Do not merge, split, "
     "or add strings, and do not continue the story beyond what is given. "
     "If you are unsure about a proper noun (character name, place name), "
-    "transliterate it using standard romanization conventions.\n\n"
+    "transliterate it using standard romanization conventions. "
+    "When a line contains dialogue marked with 「」 (whether the whole line "
+    "is dialogue or the dialogue is embedded within narration), render that "
+    "dialogue wrapped in single quotation marks ('...'), never double "
+    "quotation marks.\n\n"
     "{source_lang} array: {lines_json}\n\n"
     "JSON array:"
 )

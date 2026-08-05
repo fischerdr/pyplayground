@@ -32,6 +32,25 @@ Read `INDEX.md` first for what each design doc is for.
 
 ## Someday-Maybe (parked — revisit only on a concrete trigger, not a schedule)
 
+- `（）` inner-monologue parenthesis loss (missing closing `）`/stray
+  quote on some whole-line `（...）` cases, and spurious quote-wrapping
+  of bracket-free narration in some episodes) — investigated twice
+  (`DESIGN.md` §13, 2026-08-04 and 2026-08-05). Confirmed real in the
+  original cache, confirmed NOT the `「」` issue's `_clean_output()`
+  mechanism, chunk-boundary-position hypothesis directly ruled out via
+  instrumented live re-translation. But the failure did **not**
+  reproduce on demand -- 7 live re-translation attempts (both current
+  and pre-`「」`-fix prompt versions) against the two known-affected
+  lines from the original report all came back correctly balanced.
+  Conclusion: likely a rare, non-deterministic model sampling artifact,
+  not a discoverable code-level bug -- no confirmed mechanism exists to
+  target with a fix, so none was attempted (guessing at a fix for a
+  non-reproducing artifact would risk papering over a symptom with no
+  evidence it addresses the real cause). Trigger to revisit: a new,
+  concretely reproducible instance (i.e. a case that fails consistently
+  across multiple re-runs, not just once in an old cache entry) --
+  until then, parked, not actionable. Distinct from the closed `「」`
+  half of this investigation, see Recently closed.
 - `DESIGN.md` §8 promotion/threshold logic — revisit only if a real
   review backlog becomes an actual observed friction point.
 - LLM layer refactor (multi-endpoint, health/slots, metrics) — revisit
@@ -132,3 +151,31 @@ Read `INDEX.md` first for what each design doc is for.
   match; graceful blank-label degradation confirmed for pre-existing
   cache entries lacking the new field, no `CACHE_SCHEMA_VERSION` bump).
   Both `STATUS_BAR_DESIGN.md` phases now closed.
+- `<ruby>`-wrapped status-window term fragmentation (`_extract_content()`
+  emitting single-character "lines" for filler-dot `<ruby>` emphasis
+  markup, e.g. `<ruby>塩<rt>・</rt></ruby>`) — surfaced via the new
+  `STATUS_BAR_DESIGN.md` paragraph-count field flagging an outlier
+  count, but a pre-existing extraction bug, not caused by that field.
+  Investigated, general-fix (b) scoped and deliberately not adopted
+  (proven furigana-content-loss risk), targeted fix (a) implemented
+  instead (2026-08-04) — four-episode live-HTML verification (2 fixed,
+  2 confirmed byte-identical no-op on real furigana), 344/344 tests
+  passing, new regression fixture added. Full history in `DESIGN.md`
+  §13's `2026-08-03`/`2026-08-04` entries.
+- Single-speaker `「」` dialogue-quote loss (43.9% of surveyed dialogue
+  lines lost all quote marking in translation, root cause:
+  `_clean_output()`'s double-quote strip is structurally unable to tell
+  a correctly-quoted whole-line dialogue translation apart from the
+  JSON-double-wrap artifact it was built to undo) — fixed (2026-08-04)
+  by instructing single quotes (`'...'`) for `「」`-sourced dialogue in
+  `TRANSLATION_PROMPT`, sidestepping the ambiguity rather than trying to
+  resolve it in `_clean_output()` (left untouched). Live re-translation
+  against the real production path confirmed recovery on every
+  previously-dropped case tested, no regression on the
+  already-working embedded-dialogue case; one honest compliance gap
+  found (model used curly double quotes instead of single quotes on one
+  longer line) that does not reproduce the original content-loss bug.
+  345/345 tests passing, new regression test added. Distinct bug from
+  the `（）` inner-monologue parenthesis issue, which remains open (not
+  reproducible on demand, no fix attempted -- see Someday-Maybe above).
+  Full history in `DESIGN.md` §13's `2026-08-04` entries.

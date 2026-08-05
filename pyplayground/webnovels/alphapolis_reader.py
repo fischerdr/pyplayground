@@ -397,12 +397,46 @@ def _resolve_image_url(src: str) -> str:
     return src
 
 
+_RUBY_FILLER_RT = "・"
+
+
+def _is_ruby_filler_dot(ruby_tag) -> bool:
+    """Check whether a <ruby> tag matches the confirmed emphasis-dot filler signature.
+
+    The signature (confirmed against two real status-window/skill-name
+    cases) is a <ruby> whose <rt> child's stripped text is exactly a
+    single "・" character -- a typographic emphasis marker, not a real
+    furigana reading. Any other <rt> shape (multi-character katakana
+    readings, etc.) is left untouched, since that pattern has only been
+    confirmed to carry real content (e.g. technique-name pronunciations).
+
+    Args:
+        ruby_tag: The BeautifulSoup <ruby> tag element.
+
+    Returns:
+        True if this <ruby> tag's <rt> is the single-dot filler pattern.
+    """
+    rt = ruby_tag.find("rt")
+    if rt is None:
+        return False
+    return rt.get_text().strip() == _RUBY_FILLER_RT
+
+
 def _extract_content(body) -> list:
     """Walk the novel body in document order, yielding text lines and images.
 
     Images are captured as they actually appear, so illustrations stay
     next to the paragraphs they belong to instead of being flattened
     away by get_text().
+
+    A narrow special case handles <ruby> tags used purely for
+    typographic emphasis (single "・" dot as the <rt> reading, e.g.
+    <ruby>塩<rt>・</rt></ruby>) -- confirmed on real chapters to fragment
+    a single skill/status term into one isolated character per <ruby>.
+    That base text is folded into the surrounding line and its filler
+    <rt> is dropped; any other <ruby> shape (real furigana readings) is
+    left completely untouched, since that case is confirmed to carry
+    real content and must not be silently dropped.
 
     Args:
         body: The BeautifulSoup body element to parse.
@@ -411,18 +445,50 @@ def _extract_content(body) -> list:
         List of dicts with type (text/image) and content fields.
     """
     content = []
+    skip_ids = set()
+    # True when the most recently appended text item is eligible to have
+    # more filler-dot <ruby> base text glued onto it -- i.e. it was itself
+    # filler-dot <ruby> base text, or it's plain text immediately followed
+    # by a filler-dot <ruby> in the same parent (checked via lookahead so
+    # the merge also catches the text run *before* the first <ruby> in a
+    # cluster, not just runs *between* consecutive <ruby> tags).
+    merge_eligible = False
     for node in body.descendants:
         if getattr(node, "name", None) == "img":
+            merge_eligible = False
             src = node.get("src") or node.get("data-src")
             if src:
                 content.append({"type": "image", "src": _resolve_image_url(src)})
         elif isinstance(node, str):
-            parent_name = getattr(node.parent, "name", None)
+            if id(node) in skip_ids:
+                continue
+            parent = node.parent
+            parent_name = getattr(parent, "name", None)
             if parent_name in ("script", "style", "noscript", "iframe", "template"):
                 continue
+            is_filler_ruby_base = parent_name == "ruby" and _is_ruby_filler_dot(parent)
+            if is_filler_ruby_base:
+                rt = parent.find("rt")
+                if rt is not None and rt.string is not None:
+                    skip_ids.add(id(rt.string))
+                text = str(node).strip()
+                if text:
+                    if merge_eligible and content and content[-1]["type"] == "text":
+                        content[-1]["text"] += text
+                    else:
+                        content.append({"type": "text", "text": text})
+                    merge_eligible = True
+                continue
             text = node.strip()
-            if text:
+            if not text:
+                continue
+            next_sib = node.next_sibling
+            next_is_filler_ruby = getattr(next_sib, "name", None) == "ruby" and _is_ruby_filler_dot(next_sib)
+            if merge_eligible and content and content[-1]["type"] == "text":
+                content[-1]["text"] += text
+            else:
                 content.append({"type": "text", "text": text})
+            merge_eligible = next_is_filler_ruby
     return content
 
 

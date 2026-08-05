@@ -896,6 +896,857 @@ tests and live, and live-UI-verified end-to-end. Closed.**
 
 ---
 
+### 2026-08-03: `<ruby>`-wrapped status-window term fragments `_extract_content()` into single characters -- confirmed real, distinct from the `「」` collective-shout bug, not fixed (investigation only)
+
+Investigation of a translation-quality report against a live URL, not a
+fix. Distinct root cause from the `「」` doubled-bracket collective-shout
+corruption fixed above (that bug is in the *translation* prompt path,
+`llm_translate.py`; this one is in the *HTML-extraction* path,
+`_extract_content()` in `alphapolis_reader.py:400-426`) -- unrelated
+mechanisms that happen to both involve bracket characters.
+
+**Report**: episode
+`https://www.alphapolis.co.jp/novel/375266002/37695490/episode/7802171`
+-- a character status/stat window (bracket-enclosed skill list, e.g.
+`【強酸】２・【俊敏】２・...`) renders badly in Interleaved mode.
+Original-side "lines" include isolated single characters/punctuation
+(`【` alone, `・` alone, `】` alone, a bare kanji alone) that aren't real
+source paragraphs, alongside one correctly-translated short line (`塩`
+-> "Salt"). The new status-bar paragraph count (STATUS_BAR_DESIGN.md
+Phase 2, `len(ep["lines"])`) reports 94 paragraphs for this chapter.
+
+**Method**: fetched the exact URL live via a standalone Playwright script
+(same launch args as `BrowserWorker.run()` -- headless Chromium, same
+UA/locale, `wait_for_selector("#novelBody, .p-novel-episode__text")`),
+saved to `/tmp/claude-.../scratchpad/episode_7802171.html` (not
+committed -- one-off fetch). Then ran the real, unmodified
+`_extract_content()` from `alphapolis_reader.py` against the fetched
+`#novelBody` via BeautifulSoup to reproduce `ep["lines"]` exactly as
+production would build it.
+
+**Raw HTML found** (`#novelBody`, skill-list line): the status window is
+otherwise one flat run of Japanese text with `<br>` tags separating
+display lines (level, race/job, ability values, blessings, skills,
+titles -- about 6-8 real display lines represented as a text run per
+`<br>`-delimited segment). Within the skill list specifically, one term
+is singled out and wrapped character-by-character in `<ruby>` tags, each
+with an `<rt>` reading of a single `・` (dot) character -- a Japanese
+typographic emphasis-dot (`傍点`) convention, not real furigana:
+
+```html
+【強酸】２・...【瞑想】・<ruby>【<rt>・</rt></ruby><ruby>塩<rt>・</rt></ruby><ruby>】<rt>・</rt></ruby><ruby>7<rt>・</rt></ruby>・【図工】・...
+```
+
+That one term is `【塩】7` ("Salt", skill level 7) -- plot-relevant: the
+following narrative paragraphs are about this exact skill leveling up
+from 5 to 7, which is presumably why the site's author/typesetter
+emphasized it with dots.
+
+**Fragmentation confirmed**: reproduced with a minimal standalone
+BeautifulSoup repro (`body.descendants` walk matching
+`_extract_content()`'s logic exactly) against just this one line. The
+single logical skill-list segment produces 11 `NavigableString`
+fragments where a human would read one; the `<ruby>`-wrapped term alone
+turns into 8 of those fragments: `'【'`, `'・'`, `'塩'`, `'・'`, `'】'`,
+`'・'`, `'7'`, `'・'` -- each `<ruby>`'s base text and its `<rt>` sibling
+each yield their own `.strip()`-truncated NavigableString, since
+`_extract_content()` treats every string descendant as an independent
+"line" regardless of shared parent structure or adjacency. This exactly
+matches the report: isolated `【`, isolated `・` (the "." in the report),
+isolated `】`, isolated single kanji (`塩`), and that one kanji
+fragment happens to translate correctly in isolation ("Salt") because
+it's a real word standing alone, not because the extraction is correct.
+
+**94-count check**: running the actual `_extract_content()` against the
+fetched HTML reproduces exactly **94** text items, confirming the
+status-bar count (STATUS_BAR_DESIGN.md Phase 2) is accurately reporting
+what `ep["lines"]` already contains -- it is not itself introducing or
+amplifying the fragmentation, only surfacing a pre-existing count. Of
+those 94, items 19-26 (8 items) are pure noise from the one `<ruby>`
+cluster; items 4-30 (27 items) cover the whole status window, which a
+human skimming the rendered page would count as roughly 6-8 real lines.
+So this single status window inflates the chapter's real paragraph count
+by roughly 20-25 items out of 94 (~25%), entirely from one `<ruby>`
+cluster plus ordinary `<br>`-per-field splitting that is arguably
+correct behavior for a stat block (each stat *is* visually its own
+line) -- the actual bug is narrowly the `<ruby>` fragmentation, not the
+`<br>`-per-field splitting.
+
+**Blast radius**: checked the immediately adjacent episodes in the same
+novel (prev: `.../episode/7802124`, next: `.../episode/7802331`) --
+zero `<ruby>` tags in either, and neither contains a status window
+(`技能：`/`能力値` markers absent). The target episode itself contains
+exactly one `<ruby>` cluster (4 tags, all wrapping the single emphasized
+term), not one per bracketed skill entry -- most of the ~20 other
+bracketed skills/titles/blessings in the same window are plain text,
+undamaged. This is consistent with `<ruby>`-for-emphasis being applied
+selectively by the site (or the original author's markup) to call out a
+specific plot-relevant term, not a blanket per-bracket rendering
+convention for status windows in general. Sample size is small (one
+novel, three episodes) -- not enough to rule out other episodes/novels
+using `<ruby>` more heavily, but enough to say this specific episode's
+fragmentation is not caused by "status windows always use `<ruby>`
+per-term" (they don't, here) -- it's caused by "any inline tag nesting
+inside a paragraph, status window or not, fragments under the current
+descendants-walk," and status windows just happen to be where this
+draft's author chose to add emphasis markup.
+
+**Pre-existing, not caused by the status bar**: the fragmentation lives
+in `ep["lines"]` / `_extract_content()`, which predates
+STATUS_BAR_DESIGN.md Phase 2 entirely. Phase 2 only added
+`len(ep["lines"])` as a display count (`alphapolis_reader.py:1724`
+area) -- it reads a count that was already wrong, it does not create the
+wrongness. Translation quality for this chapter (isolated single
+characters sent to the translator as if they were standalone lines) was
+already degraded before the status bar existed; the status bar only made
+the degradation visible as a suspiciously high paragraph count.
+
+**Not done in this pass, deliberately**: no fix proposed or implemented.
+No change to `_extract_content()`. No broader corpus scan across other
+novels for `<ruby>` frequency -- only this novel's immediate neighbors
+were checked, per the "gauge whether recurring" ask, not an exhaustive
+survey. No investigation of whether `<ruby>` appears in true furigana
+form (real pronunciation glosses) elsewhere in this site's narrative
+prose, which would be a legitimate, unrelated use of the same tag that
+any general nested-tag fix would need to not break.
+
+**Open question for a future scoped fix**: whether to (a) special-case
+`<ruby>` by concatenating its base-text children while dropping `<rt>`
+content (fixes this exact case, matches the "emphasis dots are not
+real content" reading), or (b) fix the general case -- coalesce adjacent
+string descendants that share a common non-block ancestor before
+treating a `.strip()` boundary as a real paragraph break, which would
+also protect against any other inline tag (`<span>`, `<b>`, `<em>`,
+etc.) doing the same thing, not just `<ruby>`. Given the narrow blast
+radius found here (one cluster, one episode, of three checked), this
+looks scoped enough for a small targeted fix rather than its own design
+doc phase -- but that's a recommendation for the next pass, not a
+decision made here.
+
+**Status: confirmed real, root cause identified, narrow-to-moderate
+blast radius characterized. Not fixed (open, investigation only).**
+
+---
+
+### 2026-08-03 (continued): scoping the general fix (b) -- algorithm sketched, no-op verified on truly clean episodes, but NOT a no-op on legitimate furigana; regression risk found, decision deferred
+
+Follow-up to the entry immediately above. Scoping-only per task: sketch
+fix (b) (general coalescing) concretely and test it against real cached
+episodes, without yet choosing between (a) targeted `<ruby>` special-case
+and (b) general coalescing.
+
+**1. Algorithm sketch (prototype, not wired into production)**: rejected
+"group strings by shared immediate parent" as the coalescing key --
+inspected the actual DOM around the `<ruby>`-emphasis case and found the
+fragments needing merged (`'【'`, `'塩'`, `'】'`, `'7'`, each in its own
+`<ruby>`) are children of *different* `<ruby>` tags, not siblings under
+one shared parent; the true correct key is "same nearest block-level
+ancestor," not "same immediate parent." Working sketch instead replaces
+the per-string-append loop with a buffer that accumulates raw string
+content across inline tags and only flushes to a line on a block
+boundary (`<br>`, or entering/leaving a `p`/`div`/`li`/etc., or an
+`<img>`), with `<rt>` content skipped entirely (added to
+`SKIP_TEXT_PARENTS` alongside `script`/`style`/etc.). Full prototype:
+`/tmp/claude-.../scratchpad/extract_content_v2.py` (~50 lines, not
+committed). Confirmed via a byte-level descendants trace
+(`inspect_br_structure.py`) that this is genuinely necessary --
+`技能：`, the bulk skill-list text, and the `<ruby>`-wrapped fragments
+around it are literally sibling text nodes plus nested-tag text nodes
+under the same `<div id="novelBody">`, with `<br>` as the only real
+paragraph-boundary signal currently working "by accident" (today's code
+never inspects `<br>` by name -- line splitting only happens to work
+because `<br>` naturally separates BeautifulSoup's sibling
+`NavigableString`s).
+
+**2. Touch-point assessment**: contained to `_extract_content()` itself
+-- no ripple into other functions. Within the function, though, it's not
+a small tweak to "where strings are appended" -- it's a structural
+rewrite of the loop from "append every string immediately" to "buffer
+until a block boundary, then flush," because the current code has no
+concept of a paragraph boundary at all (it relies on `<br>` accidentally
+producing separate sibling strings). The `<br>`-per-field splitting
+behavior investigation confirmed as correct-and-must-not-change is
+preserved in the sketch (`br` is in `BLOCK_TAGS`, triggers a flush,
+verified below) -- but it's preserved by deliberately re-implementing
+the boundary explicitly, not by leaving existing logic untouched. This
+is a meaningfully bigger diff than "add an `if node.name == 'ruby':`
+branch," even though it stays inside one function.
+
+**3. No-op verification -- mixed result, this is the key finding**:
+tested against 5 live-refetched episodes sampled from the 27 real
+cached episodes of this novel (cache holds only parsed `lines`, no raw
+HTML, so all 5 were re-fetched fresh via the same Playwright approach as
+the original investigation; see
+`/tmp/claude-.../scratchpad/fetch_sample_episodes.py`). Before testing,
+checked each sample's `#novelBody` for nested inline tags at all
+(`ruby`/`span`/`b`/`em`/etc.) -- found only 2 of the 5 (`7800089`,
+`7802066`) are genuinely tag-free; the other 3 were not the "no known
+issues" control group they were picked to be, because 3 of 5 randomly
+sampled episodes from this novel turned out to contain `<ruby>` inside
+the body (see point 3a below -- itself a finding: `<ruby>` in this
+novel's markup is more common than the original 3-episode neighbor
+check suggested).
+
+- **True no-op cases** (`7800089`, `7802066`, no `<ruby>`/nesting at
+  all): old and new extraction produce **byte-identical** line lists
+  (63/63 and 56/56 lines, zero diff). Confirms the rewrite does not
+  perturb ordinary narrative chapters that never hit the bug.
+- **Fragmenting cases, fix confirmed working** (`7802171` from the
+  original entry, plus newly discovered `7799718` -- the emphasis-dot
+  `<ruby>` pattern applied to `半妖人間`, 4 characters each individually
+  wrapped, same mechanism as `塩`/lvl-7): old extraction produces 8
+  single-character fragments in each; new extraction merges them back
+  into the correct single line (`種族：半妖人間` / `【塩】7` inline in
+  the skill list), zero single-character lines remaining in either.
+  Confirms `7799718` is a second real, previously-undetected instance of
+  this same bug -- it just didn't stand out because its total line count
+  (81) wasn't an outlier the way 94 was.
+- **Real furigana cases -- NOT a no-op, and this is a regression risk**
+  (`7800177`: `<ruby>貝殻鎌<rt>シェルシックル</rt></ruby>`, a technique
+  name with its katakana reading; `7801892`: same pattern for
+  `岩塩打撃`/`ソルトインパクト`): here `<ruby>` is being used for its
+  literal, legitimate purpose -- a kanji technique name annotated with
+  its actual pronunciation/rendering. Old (buggy) extraction accidentally
+  produces the kanji inline in the sentence *and* a separate orphaned
+  line with just the katakana reading (`シェルシックル` as its own
+  `ep["lines"]` entry) -- not correct today either, but the reading text
+  at least survives somewhere. The v2 prototype's blanket "skip all
+  `<rt>` text" rule **silently deletes the katakana reading entirely**;
+  output collapses to just the kanji inline, reading gone. For a genre
+  where techniques are frequently named with a kanji/katakana dual
+  rendering (kanji meaning + foreign-loanword "cool name," a very common
+  isekai convention), this is real content loss, not a wash -- naive
+  fix (b) trades one quality bug (fragmentation) for a different, less
+  obvious one (silent furigana deletion) on inputs the original
+  investigation didn't anticipate.
+
+**4. Effort comparison**: (a) targeted `<ruby>`-only special-case is a
+small, additive change -- detect `<ruby>`, concatenate its base-text
+child(ren), decide (product question) whether to keep or drop `<rt>`,
+done; it does not require touching the block/line-boundary logic at
+all, since it only intercepts one specific tag shape. (b) general
+coalescing is not "close enough to free" -- it requires the loop
+rewrite described in point 1 (a real structural change, not a small
+diff) *and*, per point 3, requires solving the `<rt>` problem correctly
+(distinguishing "emphasis-dot filler" from "real furigana reading," which
+the raw markup does not obviously distinguish -- both use `<rt>`; the
+only observed difference so far is content length/shape: single `・`
+filler dots vs. multi-character katakana) before it's safe to ship,
+which (a) sidesteps entirely by scoping to the one confirmed-broken
+pattern. (b) also carries the general benefit the investigation
+originally cited (protects against `<span>`/`<b>`/`<em>` nesting
+elsewhere) but no evidence of that risk materializing was found in this
+sample -- the only inline tag actually seen fragmenting real content in
+this novel is `<ruby>`.
+
+**Not done in this pass, deliberately**: no fix implemented or wired
+into production, per task scope -- prototype stayed in scratchpad. No
+attempt to write an `<rt>`-classification heuristic (filler-dots vs.
+real furigana) -- flagged as the open blocker for (b), not solved. No
+corpus-wide scan for `<span>`/`<b>`/`<em>` fragmentation risk beyond
+what the 5-episode sample happened to contain -- the "general fix
+protects against other tags too" benefit remains theoretical here, not
+evidenced.
+
+**Status: scoping complete, no decision made.** (a) is smaller,
+lower-risk, and sufficient for every case confirmed broken so far. (b)
+is more code, touches the core extraction loop more structurally than
+"contained," and its main advantage (broader protection) is unproven
+against this corpus while its cost (furigana content loss) is proven.
+Recommendation for the next pass: lean toward (a) unless/until a real
+`<span>`/`<b>`/`<em>` fragmentation case is found in the wild -- but per
+task instructions, this is a recommendation, not the decision.
+
+---
+
+### 2026-08-04: fix (a) implemented -- targeted `<ruby>` filler-dot special case, four-episode verification passed, general fix (b) remains un-adopted
+
+Follow-up closing the two entries immediately above. Implements fix (a)
+as scoped there -- the targeted `<ruby>` special case, not the general
+coalescing rewrite (b). (b) was deliberately not adopted; see its
+reasoning preserved in the entry above (unproven benefit against this
+corpus, proven cost of silently deleting real furigana readings) -- not
+repeated or deleted here, kept for future reference if a real
+`<span>`/`<b>`/`<em>` fragmentation case ever surfaces.
+
+**Detection rule implemented**: a `<ruby>` tag matches the fix's scope
+only if its `<rt>` child's stripped text is exactly a single `・`
+character -- the exact signature confirmed on both real cases (nothing
+looser, e.g. no length threshold or character-class heuristic). Any
+other `<ruby>` shape, including real multi-character furigana readings,
+falls through untouched. New helper `_is_ruby_filler_dot()` in
+`alphapolis_reader.py` checks this; `_extract_content()` gained a
+`skip_ids` set (to drop the matched `<rt>` string) and a `merge_eligible`
+flag with one-node lookahead (`node.next_sibling`) so a filler-dot
+`<ruby>`'s base text glues onto both the text run immediately before it
+and any adjacent filler-dot `<ruby>` runs after it -- needed because a
+naive "merge only forward from the ruby" version left the *preceding*
+plain-text segment unmerged (caught and fixed during this pass; see
+scratchpad debug trace). The `<br>`/block-boundary line-splitting logic
+was not touched at all, confirmed by inspection (the change is entirely
+within the string-handling branch of the existing loop, no new block-tag
+handling added).
+
+**Four-episode verification, live-refetched HTML (same 4 episodes named
+in the scoping entry, re-used from `/tmp/claude-.../scratchpad/`)**:
+
+- `7802171` (status-window skill list, `【塩】7`): before, 94 lines with 8
+  single-character fragments (`'【'`, `'・'`, `'塩'`, `'・'`, `'】'`,
+  `'・'`, `'7'`, `'・'`); after, 85 lines, zero single-character
+  fragments, the skill list is one unbroken line
+  (`...【瞑想】・【塩】7・【図工】...`). Full unified diff against the
+  pre-fix baseline confirmed the change touches *only* that one line --
+  every other line in the 94/85-line list is untouched.
+- `7799718` (race-name term, `半妖人間`, newly discovered during the
+  scoping pass as a second real instance of the same bug): before, 81
+  lines with 8 single-character fragments (`'半'`, `'・'`, `'妖'`,
+  `'・'`, `'人'`, `'・'`, `'間'`, `'・'`); after, 72 lines, zero
+  single-character fragments, merges to `種族：半妖人間人間？？` (the
+  trailing `人間？？` is a separate, pre-existing plain-text segment in
+  the source itself -- confirmed present in the original HTML, not
+  something this fix introduced).
+- `7800177` (real furigana, `貝殻鎌`/`シェルシックル`) and `7801892`
+  (real furigana, `岩塩打撃`/`ソルトインパクト`): confirmed byte-for-byte
+  identical `_extract_content()` output before vs. after (compared full
+  `content` dict lists, not just text -- includes image entries too),
+  via a side-by-side import of the pre-fix function from a saved copy
+  and the current one. No merge, no drop, no change of any kind.
+- `7800089` and `7802066` (no `<ruby>`/nested inline tags at all):
+  likewise confirmed byte-for-byte identical, as expected for episodes
+  the fix's detection rule never matches.
+
+**Test suite**: `pytest tests/webnovels/ --ignore=tests/webnovels/ui_automation`
+-- **344 passed** (340 baseline + 4 new), zero failures, zero
+regressions. The pre-existing Tkinter background-thread teardown
+warnings seen in this run (`RuntimeError: main thread is not in main
+loop` from `fetch_guesses`/`fetch_candidate` threads in
+`test_retranslation_display.py`) are unrelated to this change -- same
+warning count (5) as the pre-fix baseline run.
+
+**New regression fixture**: `TestExtractContentRubyFillerDot` added to
+`tests/webnovels/test_alphapolis_reader.py`, four tests against minimal
+hand-constructed HTML (not live fetches, to keep the suite offline-safe)
+covering: the multi-`<ruby>`-cluster merge case (7802171-shaped), the
+whole-word filler-dot run case (7799718-shaped), the real-furigana
+no-op case (7800177-shaped), and a plain no-`<ruby>` control. All four
+pass.
+
+**Code quality**: `black`/`isort`/`flake8` all clean on both modified
+files after running `black` once to normalize quote style in the new
+test file (no logic change from formatting).
+
+**Not done in this pass, per scope**: no `<span>`/`<b>`/`<em>` handling
+added. No `<rt>`-classification heuristic for ambiguous/unseen `<ruby>`
+shapes -- only the exact confirmed single-`・` signature is handled;
+anything else (including a hypothetical `<rt>` with two dots, or a
+different filler character) falls through untouched by design, matching
+the "if a real non-filler case surfaces later, that's new scoped work"
+instruction. `CACHE_SCHEMA_VERSION` not bumped -- this changes how
+future fetches are parsed, not the cached episode dict's shape;
+existing cached episodes with old fragmented `lines` will not
+retroactively clean up until re-fetched (Refresh/re-scrape), same
+precedent as prior entries in this document for parsing/prompt-shape
+changes.
+
+**Status: implemented, four-episode live-HTML verification passed
+(2 fixed, 2 confirmed no-op), 344/344 tests passing, new regression
+fixture added. Closed.**
+
+---
+
+### 2026-08-04: single-speaker dialogue-bracket loss -- confirmed real, root cause identified with strong quantified evidence, distinct from the collective-shout fix (investigation only, not fixed)
+
+Investigation of a translation-quality report against real cached
+production data, not a fix. **Distinct bug from the collective-shout
+bracket-stripping fix** (2026-08-01 entries above) despite superficial
+similarity (both involve `「」`) -- that fix targets doubled/tripled
+bracket layers (`「「...」」`, multiple speakers shouting in unison);
+this report is about ordinary **single** `「...」` dialogue, which the
+collective-shout detection (`_is_collective_shout()`,
+`llm_translate.py:303-313`) explicitly does not match, confirmed by
+reading the regex directly (`_DOUBLED_BRACKET_RE =
+re.compile(r"「{2,}|」{2,}")`) rather than assuming from the doc
+description -- a single line with exactly one `「` and one `」` has
+zero consecutive doubled characters, so `_is_collective_shout()` returns
+`False` and the line is never stripped or re-wrapped by that logic; it
+passes into the prompt completely untouched. Note for anyone cross-
+referencing: the collective-shout fix is live in production code today
+(`_translate_chunk_once()`, `llm_translate.py:443-450`), not merely
+proposed as the earlier 2026-08-01 entry's "proposal only, not
+implemented" framing suggested -- it was evidently wired in at some
+point after that entry was written; not re-verified when that happened,
+just confirmed it's live now.
+
+**Report**: ordinary single-speaker dialogue brackets (e.g.
+`「そうだね。」`) are inconsistently rendered in translated output --
+sometimes converted to English quotation marks, sometimes missing
+entirely, no pattern reported yet. Makes dialogue hard to distinguish
+from narration/thought in translated text.
+
+**1. Prompt inspection**: `TRANSLATION_PROMPT` (`llm_translate.py:86-97`)
+gives the model **zero explicit instruction** for how to render `「」`
+-- no mention of converting to quotes, preserving as-is, or anything
+else regarding dialogue-bracket punctuation at all. This alone predicts
+per-line inconsistency, since the model has nothing to anchor a
+consistent choice to and is left to pattern-match from its own training
+distribution line by line.
+
+**2. Real corpus survey**: surveyed every cached translated episode on
+disk (`~/.cache/alphapolis_reader/*.json`, `lines`/`translated_lines`
+pairs, same source used in the ruby-fragmentation investigation),
+filtering to lines containing a single (non-doubled) `「`/`」` and
+categorizing each `translated_lines` entry as quote-containing or not.
+Script: `/tmp/claude-.../scratchpad/bracket_survey*.py` (three passes,
+not committed -- one-off analysis).
+
+- **567 single-bracket dialogue lines** surveyed across the full cache.
+  **249 (43.9%) have no quote character at all** in the translation --
+  the dialogue marking is completely gone, narration and dialogue read
+  identically in translated output.
+- Splitting by shape found a strong, clean signal:
+  - **Whole-line dialogue** (source line is *only* `「...」`, nothing
+    else -- 525 of 567, the dominant shape): **45.3% dropped**.
+  - **Embedded dialogue** (dialogue quote sits inside a narration
+    sentence, e.g. `だが...「診て見ないことには...」と返答。` -- 42 of
+    567): only **21.4% dropped**.
+- Within whole-line dialogue specifically, drop rate is a **monotonic
+  gradient by inner-dialogue length**, not noise:
+  - 0-5 chars: 88.7% dropped (n=53)
+  - 6-10 chars: 73.1% dropped (n=67)
+  - 11-20 chars: 52.3% dropped (n=151)
+  - 21-40 chars: 28.8% dropped (n=170)
+  - 41-200 chars: 19.0% dropped (n=84)
+- **Concrete before/after examples, dropped** (real cache, not
+  paraphrased):
+  - `「うりうり！」` -> `'Uririri!'`
+  - `「もぉ、ちゃんと聞いてる？それに熟れてるのは崩れやすいんだから、丁寧に扱うのよ」`
+    -> `'Hey, are you really listening? Also, the ripe ones are
+    fragile, so handle them carefully.'`
+  - `「そうか」` -> `'I see'`
+- **Concrete before/after examples, correctly quoted** (real cache):
+  - `それに医師が「時間を置いてまた来るように」とだけ告げ、ようやくオレが診察を受ける番となった。`
+    -> `"Then the doctor just told him to 'come back again after a
+    while,' and finally it was my turn for the examination."`
+  - `「見て、るりちゃん！こんなに赤くて大きいのッ！」` -> `"Look,
+    Ruri-chan! It's so red and big!"`
+- **A third, distinct failure shape found in passing** (not the main
+  pattern, but real): 2 of 567 lines show the model's raw **Japanese**
+  `「`/`」` characters surviving literally into the English output --
+  `「あ…、あぁ…！？」` -> `「A-ah…!？」` and `「バカァッ！！」` ->
+  `「Bakaaa!!」`. Distinct mechanism from the drop pattern (the bracket
+  isn't lost, it's untranslated) -- flagged for awareness, not
+  characterized further here (too small a sample, 2 cases, to say
+  anything about when this happens).
+
+**3. Root cause -- mechanistically confirmed, not just correlated**:
+found `_clean_output()` (`llm_translate.py:268-281`), the only
+post-processing step applied to every model output string before
+caching (called from `_translate_chunk_once()`, the live production
+translation path -- confirmed its only other call site,
+`explain_term()` at line 760, is a wholly separate feature, glossary
+term-meaning lookup, not chunk translation). Its docstring says
+"stripping quotes... that some models add" and its actual logic strips
+a leading+trailing `"` pair **whenever they're the first and last
+characters of the whole string**:
+
+```python
+if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
+    text = text[1:-1]
+```
+
+This was written to undo a different, known failure mode (the model
+occasionally wraps its entire JSON *array element* in an extra
+redundant quote layer as a formatting artifact, e.g. returning
+`'"actual translation"'` as the array item instead of `'actual
+translation'`). But it has **no way to distinguish that artifact from a
+model correctly translating `「セリフ」` into English `"Dialogue"` for
+a line that's entirely dialogue** -- both shapes are, structurally,
+"the whole string starts and ends with `"`." Verified this directly by
+feeding `_clean_output()` plausible correctly-quoted translations of
+several of the real dropped source lines above (e.g. `'"Uririri!"'`,
+`'"I see"'`) -- confirmed it strips them down to the exact bare/unquoted
+shape seen in the real cached `translated_lines` output
+(`/tmp/claude-.../scratchpad/check_clean_output_culprit.py`). This is
+strong mechanistic evidence, not proof from a captured pre-strip log --
+no debug logging captures the raw per-element JSON string before
+`_clean_output()` runs on a successful parse (only on parse *failure*,
+`llm_translate.py:483`), so the model's actual raw pre-strip output for
+these specific historical lines can't be recovered after the fact; the
+claim rests on `_clean_output()`'s behavior being exactly right to
+produce this pattern, confirmed by direct simulation, combined with the
+survey's own shape-based evidence (embedded dialogue's quotes sit
+mid-string, never at position 0/-1, and are never vulnerable to this
+strip -- consistent with its dramatically lower 21.4% vs 45.3% drop
+rate) and length gradient (shorter whole-line translations are more
+likely to be a single bare quoted clause with nothing else in the
+string, i.e. exactly the shape `_clean_output()` can't tell apart from
+its intended target).
+
+**4. Translation-time vs rendering-time -- confirmed translation-time**:
+traced the full path from cache to screen.
+`_render_translated_content()` (`alphapolis_reader.py:1149-1184`, the
+actual production renderer -- confirmed live by checking
+`_render_translated_view()`'s dispatch logic, which falls through to
+this function whenever `needs_review_flags` isn't present, the common
+case for this novel's cache) inserts `ep["translated_lines"][line_idx]`
+directly into the Tk text widget via `self.text.insert("end", line +
+"\n", tag)` with **no string transformation of any kind** between the
+cache read and the display insert -- confirmed by reading the function
+body line by line, no regex, no `.replace()`, no stripping. Whatever is
+in the on-disk `translated_lines` cache is exactly what renders,
+character for character. The loss happens before caching, inside
+`_translate_chunk_once()`/`_clean_output()`, not in the reader UI.
+
+**Not done in this pass, deliberately**: no fix proposed or
+implemented, per task scope. No change to `_clean_output()`,
+`TRANSLATION_PROMPT`, or any call site. No investigation of the
+2-case literal-Japanese-bracket-passthrough shape beyond noting it
+exists -- sample too small to characterize a trigger condition. No
+re-translation or live model call made to capture a genuine pre-
+`_clean_output()` raw string (the mechanistic case rests on simulation
+plus the survey's shape/length evidence, not a captured live example;
+a future pass wanting stronger proof could temporarily log raw
+`parsed` array elements before the `_clean_output()` call and
+re-translate a small batch of known-dropped lines to observe directly).
+
+**Status: confirmed real, root cause identified with strong
+quantified/mechanistic evidence (not just correlation), distinct from
+the collective-shout fix. Not fixed (open, investigation only).**
+
+---
+
+### 2026-08-04: 「」 dialogue-quote loss FIXED -- single-quote instruction added to TRANSLATION_PROMPT, live re-translation confirms recovery, `_clean_output()` untouched
+
+Closes the `「」` half of the entry above (`（）` remains open, see the
+continuation entry below -- unrelated mechanism, not touched by this
+fix, per scope).
+
+**Design decision, as scoped**: the investigation above confirmed
+`_clean_output()`'s double-quote strip is structurally unable to
+distinguish its intended target (the model wrapping a JSON array
+element in a redundant extra quote layer) from a correctly
+double-quoted whole-line dialogue translation -- both are, after
+parsing, just "a string starting and ending with `"`." No smarter check
+can resolve that after the fact; the two cases are the same string.
+Rather than touch `_clean_output()`, `TRANSLATION_PROMPT`
+(`llm_translate.py:86-101`) gained one new sentence: dialogue marked
+with `「」` (whole-line or embedded in narration) should render wrapped
+in single quotes (`'...'`), never double quotes -- moving dialogue off
+the glyph `_clean_output()` keys on, rather than trying to make that
+key smarter. `_clean_output()` itself was not modified at all -- still
+valid for its original purpose (undoing the JSON-double-wrap artifact)
+now that dialogue no longer collides with it.
+
+**Live re-translation test, real production path**: called
+`_translate_chunk_once()` directly (not a reimplementation) against
+real lines pulled from the 2026-08-04 survey above.
+
+- **Confirmed-dropped short lines, individually** (a 4-line batch first
+  hit an unrelated pre-existing transient -- model returned a
+  wrong-length array once, `_translate_chunk_once()`'s own existing
+  length check correctly rejected it and returned `None`; re-run
+  one-at-a-time to isolate, no connection to this fix):
+  - `「うりうり！」` -> `'Uriuri!'` (single-quoted; before this fix,
+    real cached output was `'Uririri!'`, no quote marking at all)
+  - `「そうか」` -> `'I see'` (before: `'I see'`, bare, no quote)
+  - `「え…」` -> `'Eh...'` (before: bare)
+  - `「ヤバイ！」` -> `'Yabai!'` (before: bare)
+  - All four confirmed single-quoted, and confirmed
+    `_clean_output(tgt) == tgt` (no-op, quotes intact) for every one --
+    the double-quote strip condition (`text[0] == '"'`) never fires on
+    a string starting with `'`.
+- **Embedded dialogue (previously already correctly quoted) --
+  re-tested for regression, 3 repeats**: `それに医師が「時間を置いてまた
+  来るように」とだけ告げ、ようやくオレが診察を受ける番となった。` ->
+  consistently `"In addition, the doctor only told me, 'Please come
+  back again later,' and finally it was my turn to be examined."` --
+  still correctly quoted (now single-quoted for the embedded dialogue
+  span specifically, double-quoting the outer sentence is fine since
+  that's the model's own narrative-wrapping choice, not the `「」`
+  content itself), no regression from the previously-working case.
+- **One real, honestly-reported gap found**: a longer whole-line
+  dialogue case, `「もぉ、ちゃんと聞いてる？それに熟れてるのは崩れやすい
+  んだから、丁寧に扱うのよ」`, came back consistently (4/4 repeats,
+  `temperature=0.1`) as `'"Are you really listening? Also, ripe fruit is
+  fragile, so handle it with care."'` using **curly `“ ”` double
+  quotes**, not the instructed single quotes -- the model does not
+  follow the new instruction 100% of the time. Checked whether this
+  reproduces the original bug: it does not -- `_clean_output()` only
+  checks ASCII `"` (`text[0] == '"'`), so curly `“”` is untouched by it
+  either way, confirmed directly (`_clean_output()` is a no-op on this
+  string). So this line keeps its dialogue-quote marking (readers can
+  still see it's dialogue), just not in the exact instructed glyph --
+  a smaller, cosmetic gap, not a recurrence of content loss. Reported
+  as found, not smoothed over: the instruction measurably fixes the
+  `_clean_output()` collision (its actual purpose) but is not a 100%
+  compliance guarantee from the model.
+
+**Test suite**: `pytest tests/webnovels/ --ignore=tests/webnovels/ui_automation`
+-- **345 passed** (344 baseline + 1 new), zero failures. `black`/
+`isort`/`flake8` clean on both modified files.
+
+**New regression test**: `TestCleanOutput.test_single_quoted_dialogue_not_stripped`
+added to `tests/webnovels/test_llm_translate_core.py` -- pins
+`_clean_output("'Uriuri!'") == "'Uriuri!'"`, with the "why" (the
+ambiguity this sidesteps) documented directly in the test docstring so
+a future reader doesn't need to cross-reference this DESIGN.md entry to
+understand why the convention exists.
+
+**Scope note**: only `TRANSLATION_PROMPT`'s text changed -- a prompt
+instruction, not a cache-shape change, so no `CACHE_SCHEMA_VERSION`
+bump, same precedent as the `<ruby>` fix earlier in this document.
+Only affects future translations (new fetches/`Refresh`); already-cached
+`translated_lines` with dropped quotes are not retroactively fixed.
+`（）` handling was not touched in this pass -- remains open, see the
+continuation entry below.
+
+**Not done in this pass, deliberately**: no attempt to raise the
+model's compliance rate on the single-quote instruction beyond what one
+prompt sentence achieves (e.g. few-shot examples, stronger wording) --
+the found gap is cosmetic (quote glyph choice) not functional (content
+loss), so not pursued further per scope. No fix for `（）` (separate,
+still-open investigation). No corpus-wide re-translation of the full
+567-line survey set -- spot-checked representative cases (short
+whole-line, longer whole-line, embedded) rather than exhaustively
+re-running everything found in the original survey.
+
+**Status: implemented. Live re-translation confirms the `_clean_output()`
+collision is fixed for every case tested; one honest compliance gap
+found (curly-quote instead of single-quote on one longer line) that
+does not reproduce the original content-loss bug. 345/345 tests
+passing. Closed.**
+
+---
+
+### 2026-08-04 (continued): （） inner-monologue parentheses -- a different, NOT-yet-explained failure shape; confirmed real and reproducible, confirmed NOT the same `_clean_output()` mechanism as the 「」 finding
+
+Follow-up to the entry immediately above, expanding the dialogue-
+punctuation investigation to `（）` (inner-monologue/thought parentheses,
+distinct from `「」` spoken dialogue) per a second report. Still
+findings-only, no fix.
+
+**1. `（）` survey, same methodology as the `「」` survey**: 111
+single-（）lines surveyed across the full cache
+(`/tmp/claude-.../scratchpad/paren_survey*.py`, not committed). Overall
+outcome mix: 63.1% both ASCII parens present and correctly rendered
+(`(...)`), 14.4% parens fully dropped (silently, both sides gone,
+same shape as the `「」` finding), 2.7% the full-width `（`/`）`
+character itself surviving literally into English output (distinct
+again from the `「」` investigation's 2-case literal-passthrough
+finding -- same failure family, different bracket glyph), and **5.4%
+(6 of 111) matching the reported shape** (open paren present, close
+paren missing, often with a stray `"` also present).
+
+Narrowing to the reported shape specifically (whole-line `（...）`
+cases only, 84 of 111, and checking ASCII-paren balance directly rather
+than the cruder first-pass categorization): **7 of 84 (8.3%) have an
+unbalanced paren count in the translation** -- 6 cases of `open=1,
+close=0`, 1 case of `open=2, close=1`. **Confirmed real and
+reproducible, not a one-off or a transcription artifact of the pasted
+example** -- concrete real cache examples (source / translated,
+verbatim):
+
+- `（うわっ！？）` -> `'(Whoa!?'` (no stray quote, just unclosed paren)
+- `（まぁ昔とそう変わらないだろう。いつもの手だな…）` -> `"(Well, it
+  probably hasn't changed much since then. It's the usual tactic..."`
+  (no stray quote)
+- `（…いったい、いったいどういうことだ！？）` -> `'("What the heck is
+  going on?!"'` (the originally-reported case: open paren, a stray `"`,
+  no closing paren)
+- `（え～と、瑠羽は今、いったいなんて言った…？？）` -> `'("Umm, what
+  exactly did Ruri just say...?"'` (same shape, same episode, 7803051)
+
+**Refinement to the original report**: the "literal `(` + stray `"` +
+missing `)`" description is only the exact shape in 2 of the 7 real
+cases found (both from episode 7803051). The other 5 have the unclosed
+`(` but **no** stray quote at all -- so the underlying failure is "the
+model sometimes doesn't close the parenthetical it opened," and the
+stray-quote detail is a separate, coincidental addition in some
+instances, not a fixed combined signature.
+
+**2. Spurious quoting of bracket-free narration -- confirmed real, not
+a transcription artifact.** Directly investigated by finding episode
+7803051's own line #1 (immediately after the originally-reported line #0)
+in the raw cache: source `あ、なんだ、コレ。なんか視界が揺れて、
+ぐわんぐわんする…。` (plain narration, zero brackets of any kind) ->
+translated `'"Oh, what is this? My vision is swaying and blurring...".'`
+-- fully wrapped in quote marks with no basis in the source at all,
+confirmed present in the actual on-disk cache file, not something that
+could have been introduced by pasting/transcription. A broader corpus
+search (`/tmp/claude-.../scratchpad/spurious_quote_survey.py`) found 5
+more real cases beyond this one (6 total), e.g. `いやそんなの現状じゃ
+まったく機能してなくて...` -> `'"Well, it's completely non-functional
+in its current state..."'`. Notable pattern: all 6 use **curly `“ ”`
+quotes**, not straight `"`, and they cluster within the same
+episode/local region (3 from episode 7800265, 3 from episode 7802066) --
+consistent with the model occasionally losing track of the
+dialogue/narration boundary partway through a chunk and treating
+several consecutive lines as quotable material, rather than a per-line
+independent misfire.
+
+**3. `TRANSLATION_PROMPT` and `（）`**: confirmed no instruction for
+`（）` either, same as `「」` -- `TRANSLATION_PROMPT` names no
+punctuation-rendering convention for any bracket type. Nothing
+`（）`-specific was found anywhere in `llm_translate.py` (no detection
+function, no stripping, no special-casing analogous to
+`_is_collective_shout()`/`_strip_collective_shout_brackets()`) --
+`（）` lines are not treated any differently from ordinary prose by any
+code in this module; whatever handling they get is entirely up to the
+model's own judgment on each call, same root gap as `「」`.
+
+**4. Root-cause check -- confirmed this is NOT the same `_clean_output()`
+mechanism as the `「」` finding.** Tested directly: fed both real cached
+values (`'("What the heck is going on?!"'` and `"(Well, it probably
+hasn't changed much since then. It's the usual tactic..."`) through
+`_clean_output()` (`/tmp/claude-.../scratchpad/check_paren_not_clean_output.py`).
+Both came back **completely unchanged** -- `_clean_output()`'s strip
+condition is `text[0] == '"' and text[-1] == '"'`; these strings start
+with `(`, not `"`, so the condition never triggers, and the function is
+a no-op on them. Also confirmed structurally that `_clean_output()`
+could not produce this shape even in principle: it only ever removes a
+matched leading+trailing `"` *pair*, never a lone trailing character,
+and it never touches `(`/`)` at all -- there's no code path in this
+function capable of turning a balanced `(...)"` into an unbalanced
+`("...`. The `「」` finding's mechanism and this one are confirmed
+distinct.
+
+Also checked and ruled out a truncation hypothesis (chunk's token
+budget cut the response off mid-string, landing exactly on one of
+these lines): `parse_json_response()` uses `json.JSONDecoder().raw_decode()`
+(`llm_translate.py:394`), which requires a syntactically complete,
+well-formed JSON value -- an actually-truncated/unterminated JSON
+string is a hard parse error there, not something that could yield a
+clean array containing one oddly-punctuated-but-otherwise-valid string.
+Since these values sit in the cache as ordinary successfully-parsed
+array elements (not `None`/fallback placeholders, confirmed by their
+presence in `translated_lines` at all), the JSON itself was
+well-formed -- the unbalanced `(`/`"` is content the model wrote
+inside a properly-closed JSON string, not a JSON-level truncation
+artifact. **This means the true root cause of the missing-`）`/stray-`"`
+shape is not yet identified** -- ruled out `_clean_output()` and JSON
+truncation, but did not find what actually produces it. No chunk-
+boundary reconstruction was attempted (the cache stores only final
+`lines`/`translated_lines`, not per-chunk request/response boundaries,
+so which lines shared a chunk with which can't be recovered after the
+fact without re-running the pipeline).
+
+**Not done in this pass, deliberately**: no fix proposed or
+implemented. No re-translation/live model call to observe a raw
+pre-cache response directly (same limitation noted in the entry
+above -- would need temporary logging added and a live re-run,
+out of scope here). No investigation of the 1 outlier `(open=2,
+close=1)` case beyond noting its shape. No attempt to reconstruct
+chunk boundaries for the 7 affected lines to check an end-of-chunk
+position hypothesis -- flagged as a promising next step, not tested.
+
+**Status: confirmed real (both the missing-close-paren shape and the
+spurious-quoting-of-narration shape), reproducible across multiple
+episodes, ruled out as the `「」` finding's `_clean_output()` mechanism
+and as JSON-level truncation -- but the actual root cause remains
+unidentified. Not fixed (open, investigation only, root cause is the
+next open question).**
+
+---
+
+### 2026-08-05: （） missing-close-paren -- instrumented live re-translation, root cause NOT found, failure does not reproduce on demand; left open, no fix attempted (per checkpoint instruction)
+
+Follow-up to the entry above, per the leading untested hypothesis
+(chunk-boundary position) and the explicit instruction to instrument
+raw pre-parse model output rather than guess. Stopped at the checkpoint
+without proceeding to a fix, because the result was genuinely
+ambiguous, not because of a time constraint.
+
+**Method**: temporary, uncommitted instrumentation script
+(`/tmp/claude-.../scratchpad/instrumented_retranslate_7803051.py`, not
+added to the repo) that reproduces `translate_lines()`'s exact chunking
+(`max_chunk_chars=400`) against the real 55-line source text of episode
+7803051 (pulled from the real on-disk cache, not re-fetched -- source
+text doesn't change), calls the real `/completion` endpoint with the
+real production prompt-building logic (`TRANSLATION_PROMPT`, collective-
+shout stripping, context-window building -- copied inline, not
+reimplemented differently), and prints the raw model response string
+**before** `parse_json_response()`/`_clean_output()` touch it, for the
+specific chunk containing both known-affected lines from the original
+report.
+
+**Chunk-boundary hypothesis: ruled out.** Both known-affected lines
+(source index 0: `（…いったい、いったいどういうことだ！？）`, and index
+2: `（え～と、瑠羽は今、いったいなんて言った…？？）`) land in **chunk 0
+of 7**, at positions 0 and 2 of an 11-line chunk -- one is the literal
+first line of the first chunk, the other is in the middle, not at a
+chunk's end. Since `n_predict` is sized per-chunk from the whole
+chunk's character count (`llm_translate.py:482`) and both lines are
+nowhere near the tail of their chunk (9 more lines follow both), a
+token-budget cutoff landing exactly on either of these specific short
+lines is not plausible as the mechanism -- if truncation were
+happening, it would hit whichever line is generated last in the
+response, not the first or an early-middle one.
+
+**Raw pre-parse output: balanced, every time.** Across 4 live
+re-translation runs of this exact chunk (current prompt, with the
+2026-08-04 single-quote-for-「」 instruction active) and 3 more runs
+using the **original, pre-single-quote-fix** `TRANSLATION_PROMPT`
+restored from git history (`git show HEAD:...`, tested standalone to
+isolate whether that fix's wording change was somehow responsible --
+it is not, since the old prompt reproduces the same balanced result),
+**the raw model output for both known-affected lines came back fully
+balanced in all 7 runs**, e.g. `("Well, well, what on earth is going
+on?!")`, `("…What on earth is going on?!")`,
+`'"(…what on earth is going on?!)"'` -- varying in exact wording and
+quote-style each run (expected, `temperature=0.1` is not zero) but
+never reproducing the original cached shape (`'("What the heck is
+going on?!"'`, unbalanced, missing the closing paren). `_clean_output()`
+was confirmed a no-op on every one of these balanced raw values too
+(none start with `"`, since they all start with `(`).
+
+**Spurious-quoting-of-narration also inconsistent on the same line,
+same runs**: the adjacent bracket-free narration line (index 1,
+`あ、なんだ、コレ。なんか視界が揺れて、ぐわんぐわんする…。`, the exact
+line originally reported as spuriously quoted) came back quoted in some
+runs and correctly unquoted in others, for byte-identical input and
+prompt, at the same low temperature -- consistent with plain
+non-determinism, not a discoverable condition tied to chunk position,
+prompt wording, or anything else varied across these runs.
+
+**Conclusion: root cause not found, and the failure does not reproduce
+on demand.** Both known-affected lines translate correctly (balanced,
+readable) on every live re-run attempted, using both the current and
+the original prompt. This means the original cached unbalanced/stray-
+quote output was very likely a rare model-level sampling artifact --
+not something introduced by any code path in this repository, not tied
+to chunk-boundary position (confirmed neither line sits near a chunk
+edge), and not reliably triggerable for direct study. Per the task's
+explicit checkpoint instruction, **stopping here rather than
+proceeding to a fix based on a guess** -- there is no confirmed,
+specific mechanism to target, and implementing something anyway (e.g.
+a defensive paren-balance repair pass) would be guessing at a shape
+without evidence it addresses the actual cause, which for a
+non-reproducing ~5-8% artifact is more likely to paper over a symptom
+than fix anything.
+
+**Not done in this pass, deliberately, per the checkpoint**: no fix
+implemented. No change to `_clean_output()`, `TRANSLATION_PROMPT`, or
+any other code. No broader re-run across the other 5 of 7 originally-
+surveyed missing-close-paren cases (episodes other than 7803051) --
+the two cases tested were the ones specifically named in the task
+(the episode containing 2 of the 7 real confirmed cases, including the
+originally-reported line); given both failed to reproduce after 7
+combined attempts, broadening the sample further seemed unlikely to
+change the conclusion, but was not exhaustively tried. No investigation
+of whether a much larger number of repeated runs (dozens+) would
+eventually reproduce the shape and reveal a low-probability but real
+trigger condition -- 7 runs is enough to show "not reliably
+reproducible," not enough to prove "can never happen under any
+condition."
+
+**Status: root cause NOT identified. Failure confirmed NOT reproducible
+on demand across 7 live re-translation attempts (both current and
+pre-2026-08-04 prompt versions), chunk-boundary-position hypothesis
+ruled out directly. No fix attempted, per the checkpoint instruction to
+stop rather than guess. Left open.**
+
+---
+
 
 ## 14. Archive index
 

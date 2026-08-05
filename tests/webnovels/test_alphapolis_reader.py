@@ -36,9 +36,73 @@ import time
 import tkinter as tk
 from tkinter import ttk
 
-from pyplayground.webnovels.alphapolis_reader import ReaderApp, build_review_term_map
+from bs4 import BeautifulSoup
+
+from pyplayground.webnovels.alphapolis_reader import ReaderApp, _extract_content, build_review_term_map
 from pyplayground.webnovels.glossary import STATUS_CONFIRMED, STATUS_SUGGESTED, TERM_TYPE_CHARACTER, TERM_TYPE_GENERAL, make_confirmed_term, make_suggested_term
 from pyplayground.webnovels.llm_translate import BACKEND_LLM, TranslatedLine
+
+
+def _extract_text_lines(html: str) -> list:
+    """Parse html's #novelBody through _extract_content(), return text-only lines."""
+    soup = BeautifulSoup(html, "html.parser")
+    body = soup.find("div", id="novelBody")
+    return [item["text"] for item in _extract_content(body) if item["type"] == "text"]
+
+
+class TestExtractContentRubyFillerDot:
+    """Tests for _extract_content()'s narrow <ruby> filler-dot special case (DESIGN.md 2026-08-03).
+
+    Regression coverage for the fragmentation bug confirmed live against
+    episodes 7802171 (a status-window skill entry, e.g. <ruby>塩<rt>・</rt>
+    </ruby>) and 7799718 (a race-name term, 半妖人間, each character
+    individually ruby-wrapped) -- both use <ruby> purely for typographic
+    emphasis, with a single "・" as the <rt> reading. Without the fix,
+    _extract_content()'s flat descendants walk emits each <ruby>'s base
+    text and its "・" reading as isolated single-character "lines".
+
+    Also covers the no-op requirement: <ruby> tags carrying a real,
+    multi-character furigana reading (confirmed live on episodes 7800177
+    and 7801892, both real technique names with katakana pronunciation
+    glosses) must be left completely untouched -- the general-fix scoping
+    pass (DESIGN.md 2026-08-03 continued) found that silently dropping
+    those readings is real content loss, not a wash.
+    """
+
+    def test_single_filler_dot_ruby_merges_into_surrounding_line(self):
+        html = (
+            '<div id="novelBody">技能：<br>'
+            "【強酸】２・【瞑想】・"
+            "<ruby>【<rt>・</rt></ruby><ruby>塩<rt>・</rt></ruby><ruby>】<rt>・</rt></ruby><ruby>7<rt>・</rt></ruby>"
+            "・【図工】<br></div>"
+        )
+
+        lines = _extract_text_lines(html)
+
+        assert lines == ["技能：", "【強酸】２・【瞑想】・【塩】7・【図工】"]
+
+    def test_filler_dot_ruby_run_across_multiple_characters(self):
+        """The 7799718-shaped case: a whole word (半妖人間), each character in its own <ruby>."""
+        html = '<div id="novelBody">種族：<ruby>半<rt>・</rt></ruby><ruby>妖<rt>・</rt></ruby><ruby>人<rt>・</rt></ruby><ruby>間<rt>・</rt></ruby><br></div>'
+
+        lines = _extract_text_lines(html)
+
+        assert lines == ["種族：半妖人間"]
+
+    def test_real_furigana_ruby_left_untouched(self):
+        """Multi-character <rt> (a genuine pronunciation gloss) must not be merged or dropped."""
+        html = '<div id="novelBody">鞭のように襲いくる<ruby>貝殻鎌<rt>シェルシックル</rt></ruby>を軽快に躱し。<br></div>'
+
+        lines = _extract_text_lines(html)
+
+        assert lines == ["鞭のように襲いくる", "貝殻鎌", "シェルシックル", "を軽快に躱し。"]
+
+    def test_no_ruby_tags_unaffected(self):
+        html = '<div id="novelBody">なんの変哲もない一文。<br>もう一文。<br></div>'
+
+        lines = _extract_text_lines(html)
+
+        assert lines == ["なんの変哲もない一文。", "もう一文。"]
 
 
 class TestBuildReviewTermMap:

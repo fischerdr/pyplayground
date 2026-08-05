@@ -232,6 +232,22 @@ class TestCleanOutput:
         """Unicode text is preserved."""
         assert _clean_output('"こんにちは"') == "こんにちは"
 
+    def test_single_quoted_dialogue_not_stripped(self):
+        """A whole string wrapped in single quotes is left untouched.
+
+        DESIGN.md 2026-08-04: TRANSLATION_PROMPT now instructs single
+        quotes ('...') for 「」-sourced dialogue, specifically so it never
+        collides with this function's double-quote strip -- a correctly
+        double-quoted whole-line dialogue translation (e.g. '"Uriuri!"')
+        and the JSON double-wrap artifact this function was built to undo
+        are the same string shape (starts and ends with "), impossible to
+        tell apart after the fact. Moving dialogue to single quotes avoids
+        the ambiguity instead of trying to resolve it here. This test
+        pins _clean_output() itself as unchanged -- it must remain a
+        no-op on single-quoted strings, since that's the whole point.
+        """
+        assert _clean_output("'Uriuri!'") == "'Uriuri!'"
+
 
 # ---------------------------------------------------------------------------
 # _translate_chunk_once

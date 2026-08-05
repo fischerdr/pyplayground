@@ -12,7 +12,10 @@ is this already built? Is this expected/working-as-designed behavior
 being mistaken for a new finding? Only genuinely new, unbuilt ideas get
 added. Small side-findings that aren't blocking anything go straight to
 Someday-Maybe or Opportunistic without discussion — don't let them
-derail whatever's actively in progress.
+derail whatever's actively in progress. No sub-agent delegation by
+default — work directly, don't spin up sub-agents to parallelize or
+delegate investigation/implementation steps unless explicitly told to
+for a specific task.
 
 Read `INDEX.md` first for what each design doc is for.
 
@@ -20,17 +23,38 @@ Read `INDEX.md` first for what each design doc is for.
 
 ## Now (active)
 
-1. `STATUS_BAR_DESIGN.md` — both phases complete as of 2026-08-03
-   (page-count/chapter-position indicator, word/paragraph counts). No
-   active work remains on this doc; see Recently closed below.
-2. `WINDOW_REDESIGN.md` — all four phases complete as of 2026-08-02
-   (menu bar/button reorg, toolbar right-click menu, text right-click
-   type-quick-edit). No active work remains on this doc; see Recently
-   closed below.
-3. Deferred/low-priority batch (see below) — not urgent, but visible.
-4. §7 web migration (`DESIGN.md`) — still just a plan, zero code.
+Nothing active. See Recently closed below for what just wrapped up.
 
 ## Someday-Maybe (parked — revisit only on a concrete trigger, not a schedule)
+
+- §7 web migration (`DESIGN.md`) — full Tkinter → web rebuild (FastAPI
+  backend skeleton, shared-secret auth for home-network reachability,
+  5 phases through review-queue UI and a config/styling panel). Sat in
+  this file's "Now" tier the entire 2026-08-02 through 08-05 session
+  span as a plan with zero code, while six real improvements shipped on
+  the current Tkinter UI in that same window (window/menu redesign,
+  toolbar right-click, type-quick-edit, status-bar counts, the `<ruby>`
+  fix, the `「」` fix) — the current UI is solid and actively improving,
+  no active pressure toward a rebuild. Trigger to revisit: a genuine
+  need for reachability beyond the current machine (§7's own stated
+  target — "reachable on home network, not just localhost"), or the
+  Tkinter UI hitting a real limitation nothing short of a web rewrite
+  can address. Not "it would be nice to have."
+
+- Cross-chapter context carryover (MT survey doc, mirrors
+  `bilingual_book_maker`'s `--use_context`; targets DITING's stated
+  discourse-coherence weak point). Not scoped — open: what counts as
+  context, prompt injection point, cost/latency tradeoff. Builds on
+  existing masking/prompt infrastructure.
+- Quality-estimation gating for retranslation (MT survey's Stage 4
+  recommendation) — auto-flag likely-bad lines instead of full-chapter
+  Refresh. Not scoped — open: signal to use (LLM-judge pass? heuristic
+  like suspiciously-short output relative to source?), threshold,
+  trigger (automatic vs. button). Builds on `RETRANSLATION_DESIGN.md`'s
+  already-complete manual pipeline.
+- Hot/new novel browsing (site discovery, distinct from load-by-URL) —
+  larger scope: new scraping targets, likely a new UI area. Not scoped
+  at all.
 
 - `（）` inner-monologue parenthesis loss (missing closing `）`/stray
   quote on some whole-line `（...）` cases, and spurious quote-wrapping
@@ -51,6 +75,31 @@ Read `INDEX.md` first for what each design doc is for.
   across multiple re-runs, not just once in an old cache entry) --
   until then, parked, not actionable. Distinct from the closed `「」`
   half of this investigation, see Recently closed.
+- WAF-constraint re-verification (`STALENESS_DESIGN.md` Phase 1,
+  2026-08-05) — a live test found the documented plain-HTTP 202 WAF
+  challenge (the entire justification for `BrowserWorker`/Playwright,
+  per `GLOSSARY_ARCHITECTURE.md`) did not reproduce: GET, HEAD, and
+  no-UA GET all returned 200 with full content, once. Potentially
+  high-value if it holds (Refresh currently costs ~2-4.5 minutes per
+  `STATUS_BAR_DESIGN.md`'s own measurement) -- but this is a single
+  test session's result, explicitly not treated as durable by the
+  investigation that found it, and it surfaced as a tangent inside an
+  unrelated Phase 1, same shape as the repo-split and multi-model-
+  comparison entries above. Not touching `BrowserWorker` or the
+  production docstring on this alone. Trigger to revisit: repeated
+  testing across varied conditions/time confirms the result holds, OR
+  `STALENESS_DESIGN.md` Phase 2 actually needs this resolved to proceed
+  (its own cost analysis is currently blocked on this exact question).
+  Counterpoint, worth weighing against any future "simplify away from
+  Playwright" impulse: even if Alphapolis' own WAF has genuinely lapsed,
+  `novelfire_library_pw.py` already demonstrates this project needs real
+  browser automation for at least one source (Cloudflare JS challenge +
+  login, hybrid Playwright-then-`requests.Session` cookie handoff,
+  confirmed by reading that module's own docstring and auth code) — so
+  `BrowserWorker` likely stays justified architecturally regardless of
+  what's confirmed about Alphapolis specifically. This finding is about
+  Alphapolis's current behavior, not a case for removing Playwright from
+  the project generally.
 - `DESIGN.md` §8 promotion/threshold logic — revisit only if a real
   review backlog becomes an actual observed friction point.
 - LLM layer refactor (multi-endpoint, health/slots, metrics) — revisit
@@ -86,24 +135,17 @@ Read `INDEX.md` first for what each design doc is for.
   means here -- side-by-side view, a scoring/voting mechanism, which
   models, whether it touches the glossary/masking pipeline at all -- is
   entirely open).
-- Chapter staleness detection ("did this chapter change since I last
-  fetched it") — surfaced while discussing the new page-count field's
-  blank-for-pre-existing-cache behavior (`STATUS_BAR_DESIGN.md` Phase 2),
-  but a distinct, separate feature from that -- the blank-label behavior
-  itself is intentional and staying as-is (a manual cache wipe is the
-  planned path there, not a backfill). Not yet scoped or designed at
-  all -- no trigger condition set yet either, same reasoning as the
-  multi-model-comparison entry above. Open questions, none resolved:
-  what counts as "changed" (content hash? a timestamp/version field on
-  the source page, if one even exists? nothing confirmed yet); how to
-  detect it cheaply without a full refetch+retranslate cycle (Phase 2's
-  own live verification measured real Refresh cycles at ~2-4.5 minutes
-  -- an auto-triggered or silent staleness check that ends up doing a
-  full refetch would reintroduce exactly the cost this project
-  deliberately sidestepped by choosing the no-`CACHE_SCHEMA_VERSION`-bump
-  path for the page-count field itself); and whether the UI should
-  auto-refresh, just badge "possibly updated," or something else. No
-  code exists for this today.
+- `STALENESS_DESIGN.md` — Phase 1 (investigation + proposal) complete
+  (2026-08-05). Found a real signal (`upTime` per episode, inside
+  `#app-cover-data`'s JSON blob) but its semantics (publish-time vs.
+  last-edited) could not be confirmed either way; also found the
+  documented plain-HTTP WAF challenge (`alphapolis_reader.py`'s own module
+  docstring, the reason `BrowserWorker`/Playwright is required at all)
+  does not currently reproduce on a live re-test (GET, HEAD, and no-UA
+  GET all returned 200 with real content) -- surprising, flagged, not
+  resolved. UI question (auto-refresh vs. badge vs. something else) left
+  open. Phase 2 not started, contingent on resolving `upTime`'s semantics
+  first.
 
 ## Opportunistic only (fix only as a side effect of touching that file for something else — never scheduled standalone)
 
@@ -113,6 +155,28 @@ Read `INDEX.md` first for what each design doc is for.
 
 ## Recently closed (for continuity, trim this section periodically)
 
+- `CHAPTER_LIST_DESIGN.md` — both phases complete (2026-08-05). Phase 2:
+  jump-to-chapter modal (search-as-you-type by title/number, current
+  chapter auto-highlighted/scrolled on open, sort-direction toggle, no
+  pagination), background `BrowserWorker` prefetch of the novel's full
+  690-chapter list keyed by novel_id, `up_time` persisted per episode to
+  the on-disk cache (no `CACHE_SCHEMA_VERSION` bump, same graceful-
+  degradation pattern as `page_count`). `dispOrder` confirmed gapless
+  1..690 with no evidence of an Alphapolis-side chapter split (79
+  shared-prefix-numbered titles found, read as a genuine numbered
+  sub-arc naming convention, not a split). A real `BrowserWorker.fetch()`
+  bug found and fixed along the way: it was hardcoded to wait for
+  episode-page-only selectors in `state="visible"`, which a `<script>`-
+  tag selector (needed for the novel main page) can never satisfy — now
+  takes `wait_selector`/`wait_state` parameters. 345/345 tests, lint
+  clean, live-verified end to end (modal open, both search modes,
+  click-navigation) via a fresh Xvfb session.
+- `STALENESS_DESIGN.md` unblock: its any-change-flag workaround needs a
+  prior-fetch `up_time` snapshot to diff a fresh fetch against — that
+  data is now real and persisted (`CHAPTER_LIST_DESIGN.md` Phase 2,
+  above), which is a concrete unblock worth revisiting. Not auto-
+  promoting `STALENESS_DESIGN.md` to Now here — that's a separate
+  decision.
 - Windowclose crash — resolved: confirmed Xvfb/Playwright-specific via a
   real supervised desktop test, not a production risk, no fix needed.
 - Short-line JSON-malformation (collective-shout brackets) — implemented,

@@ -144,6 +144,28 @@ def _extract_novel_id(url: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
+def _novel_main_page_url(episode_url: str) -> Optional[str]:
+    """Derive a novel's main page URL from one of its episode URLs.
+
+    CHAPTER_LIST_DESIGN.md Phase 1: the main page (no /episode/... suffix)
+    carries the same #app-cover-data blob as an episode page, but populated
+    with the novel's *full* episode list (confirmed live: 690/690 entries
+    vs. an episode page's own 3-neighbor slice) -- this is a one-line
+    string operation to reach it, not new URL discovery, per that doc's
+    own finding.
+
+    Args:
+        episode_url: An episode URL, e.g.
+            https://www.alphapolis.co.jp/novel/{novel_id}/{volume_id}/episode/{episode_id}.
+
+    Returns:
+        The main page URL (https://www.alphapolis.co.jp/novel/{novel_id}/{volume_id}),
+        or None if episode_url doesn't match the expected .../novel/{id}/{volume}/episode/{id} shape.
+    """
+    match = re.search(r"(/novel/\d+/\d+)/episode/\d+", episode_url)
+    return BASE_URL + match.group(1) if match else None
+
+
 def _cache_path(url: str) -> Path:
     """Return the cache file path for a given episode URL.
 
@@ -333,10 +355,10 @@ class BrowserWorker(threading.Thread):
                     item = self._requests.get()
                     if item is None:  # shutdown signal
                         break
-                    url = item
+                    url, wait_selector, wait_state = item
                     try:
                         page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                        page.wait_for_selector("#novelBody, .p-novel-episode__text", timeout=15000)
+                        page.wait_for_selector(wait_selector, timeout=15000, state=wait_state)
                         html = page.content()
                         self._responses.put(("ok", html))
                     except Exception:
@@ -353,12 +375,33 @@ class BrowserWorker(threading.Thread):
             else:
                 self._responses.put(("error", traceback.format_exc()))
 
-    def fetch(self, url: str, timeout: float = 60.0) -> str:
+    def fetch(self, url: str, timeout: float = 60.0, wait_selector: str = "#novelBody, .p-novel-episode__text", wait_state: str = "visible") -> str:
         """Fetch a page HTML by sending a request to the browser worker thread.
 
         Args:
             url: The URL to fetch.
             timeout: Max seconds to wait for a response.
+            wait_selector: CSS selector to wait for before returning page
+                content. Defaults to the episode-page content selectors
+                (the original, only use of this method before
+                CHAPTER_LIST_DESIGN.md Phase 2). The novel main page (used
+                by _prefetch_chapter_list()) never renders #novelBody --
+                it has no chapter body at all -- so that fetch passes
+                "#app-cover-data" instead; using the default there would
+                time out every time waiting for a selector that will
+                never appear (confirmed live: exactly this timeout before
+                this parameter was added).
+            wait_state: Playwright wait_for_selector() state to wait for.
+                Defaults to "visible" (correct for #novelBody, a real
+                rendered content element). "#app-cover-data" is a
+                `<script type="application/json">` tag -- it has no
+                rendered box and can never satisfy state="visible" no
+                matter how long it waits (confirmed live: Playwright's own
+                timeout error log showed the locator resolving to the
+                element 33 times while still timing out, since "resolved"
+                and "visible" are different conditions for a <script> tag)
+                -- _prefetch_chapter_list() passes "attached" instead,
+                which only requires the element to exist in the DOM.
 
         Returns:
             The page HTML string.
@@ -366,7 +409,7 @@ class BrowserWorker(threading.Thread):
         Raises:
             RuntimeError: If the browser fetch fails.
         """
-        self._requests.put(url)
+        self._requests.put((url, wait_selector, wait_state))
         status, payload = self._responses.get(timeout=timeout)
         if status == "error":
             raise RuntimeError("Browser fetch failed:\n" + payload)
@@ -520,7 +563,7 @@ def parse_episode(html: str) -> dict:
 
     Returns:
         Dict with title, author, episode_title, lines, content, prev_url,
-        next_url, page_count.
+        next_url, page_count, up_time.
 
     Raises:
         RuntimeError: If #novelBody is not found in the page markup.
@@ -552,7 +595,7 @@ def parse_episode(html: str) -> dict:
     episode_title = episode_title_tag.get_text(strip=True) if episode_title_tag else ""
     page_count = _parse_page_count(page_count_tag.get_text()) if page_count_tag else None
 
-    prev_url, next_url = None, None
+    prev_url, next_url, up_time = None, None, None
     cover_tag = soup.select_one("#app-cover-data")
     if cover_tag and cover_tag.string:
         try:
@@ -567,6 +610,14 @@ def parse_episode(html: str) -> dict:
                     prev_url = BASE_URL + episodes[idx - 1]["url"]
                 if idx < len(episodes) - 1:
                     next_url = BASE_URL + episodes[idx + 1]["url"]
+                # CHAPTER_LIST_DESIGN.md Phase 2: the current episode's own
+                # entry in this same #app-cover-data blob (already located
+                # above to resolve prev/next) also carries upTime -- reused
+                # here rather than adding a second JSON-parsing path.
+                # STALENESS_DESIGN.md's own future any-change-flag work
+                # needs a persisted prior-fetch upTime snapshot to diff a
+                # fresh fetch against; this is that snapshot's source.
+                up_time = episodes[idx].get("upTime")
         except (json.JSONDecodeError, KeyError, TypeError):
             pass
 
@@ -579,7 +630,57 @@ def parse_episode(html: str) -> dict:
         "prev_url": prev_url,
         "next_url": next_url,
         "page_count": page_count,
+        "up_time": up_time,
     }
+
+
+def parse_chapter_list(html: str) -> List[dict]:
+    """Parse a novel's main page HTML into its full chapter list.
+
+    CHAPTER_LIST_DESIGN.md Phase 1/2: the main page's own #app-cover-data
+    blob carries the *full* chapterEpisodes[].episodes[] list (confirmed
+    live: 690/690 entries for novel 375266002, vs. an episode page's own
+    3-neighbor slice) -- reuses the exact same JSON-parsing mechanism
+    parse_episode() already has for this blob, not a second, parallel
+    JSON-parsing path.
+
+    Args:
+        html: The raw main-page HTML string (from _novel_main_page_url()).
+
+    Returns:
+        List of dicts, one per chapter, each with url (resolved to an
+        absolute URL), main_title, disp_order, up_time, counter_text --
+        in the same dispOrder order the source JSON provided (confirmed,
+        CHAPTER_LIST_DESIGN.md Phase 2 sanity check: dispOrder is gapless
+        and already sorted ascending for this novel's real data). Empty
+        list if #app-cover-data is missing or malformed, same fail-soft
+        discipline as parse_episode()'s own prev_url/next_url handling.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    cover_tag = soup.select_one("#app-cover-data")
+    if not cover_tag or not cover_tag.string:
+        return []
+    try:
+        data = json.loads(cover_tag.string)
+    except json.JSONDecodeError:
+        return []
+
+    chapters = []
+    for chapter in data.get("chapterEpisodes", []):
+        for ep in chapter.get("episodes", []):
+            try:
+                chapters.append(
+                    {
+                        "url": BASE_URL + ep["url"],
+                        "main_title": ep.get("mainTitle", ""),
+                        "disp_order": ep.get("dispOrder"),
+                        "up_time": ep.get("upTime"),
+                        "counter_text": ep.get("counterText"),
+                    }
+                )
+            except (KeyError, TypeError):
+                continue
+    return chapters
 
 
 # ---------------------------------------------------------------------------
@@ -1479,6 +1580,20 @@ class ReaderApp:
         # scrambled/misaligned translated output.
         self._loading = False
 
+        # CHAPTER_LIST_DESIGN.md Phase 2: novel_id -> full chapter list
+        # (List[dict] from parse_chapter_list()), populated by a background
+        # BrowserWorker prefetch of the novel's main page, keyed by
+        # novel_id since the same novel's list is reusable across every
+        # episode of that novel, not just the one that triggered the
+        # prefetch. In-memory only (per Phase 1's locked-in decision) --
+        # not persisted to disk itself, unlike the per-episode up_time
+        # field it's the source of.
+        self._chapter_lists: Dict[str, List[dict]] = {}
+        # novel_id currently being prefetched, guards _prefetch_chapter_list()
+        # against re-entering itself the same way self._prefetching guards
+        # the existing per-episode prefetch().
+        self._chapter_list_prefetching: set = set()
+
         root.title("Alphapolis Reader")
         # Widened from 900 -> 990 (Refresh button) -> 1090 (Glossary... button)
         # -> 1220 (Review Terms... button) to keep the toolbar from clipping
@@ -1505,6 +1620,7 @@ class ReaderApp:
 
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Load Novel...", command=self.open_load_url_dialog)
+        file_menu.add_command(label="Jump to Chapter...", command=self.open_chapter_list_dialog)
         file_menu.add_command(label="Refresh", command=self.refresh_current_episode)
         file_menu.add_separator()
         file_menu.add_command(label="Settings...", command=self.open_settings_dialog)
@@ -1677,6 +1793,150 @@ class ReaderApp:
         btns.pack(pady=(0, 10))
         ttk.Button(btns, text="Load", command=submit).pack(side="left", padx=4)
         ttk.Button(btns, text="Cancel", command=win.destroy).pack(side="left", padx=4)
+
+    def open_chapter_list_dialog(self):
+        """Open the jump-to-chapter modal: search, browse, and navigate the novel's full chapter list.
+
+        CHAPTER_LIST_DESIGN.md Phase 2. Data comes from
+        self._chapter_lists[novel_id], populated by a background
+        BrowserWorker prefetch (_prefetch_chapter_list(), fired from
+        display_episode() on every episode load) of the novel's main
+        page -- not fetched synchronously here, per Phase 1's locked-in
+        "background prefetch" decision. If the prefetch hasn't finished
+        yet (or failed) when this is opened, shows an explanatory message
+        rather than blocking the UI thread on a fresh fetch.
+
+        UI shape, per Phase 1's locked-in decisions: a modal
+        (win.grab_set(), same convention as open_glossary_dialog())
+        ttk.Treeview list; search-as-you-type filtering by title or
+        chapter number; current chapter auto-highlighted and scrolled
+        into view on open; a sort-direction toggle that's cheap since
+        it's just reversing the already-in-memory list. Deliberately no
+        pagination, no page-size setting, no bookmark button -- explicitly
+        decided against, see this doc's "Decisions locked in" section.
+        """
+        if not hasattr(self, "current_url") or not self.current_url:
+            messagebox.showinfo("Jump to Chapter", "Load a novel first.")
+            return
+        novel_id = _extract_novel_id(self.current_url)
+        if not novel_id:
+            messagebox.showinfo("Jump to Chapter", "Could not determine the novel for this URL.")
+            return
+
+        chapters = self._chapter_lists.get(novel_id)
+        if not chapters:
+            if novel_id in self._chapter_list_prefetching:
+                messagebox.showinfo("Jump to Chapter", "Still loading the chapter list in the background -- try again in a moment.")
+            else:
+                messagebox.showinfo("Jump to Chapter", "Chapter list isn't available for this novel yet. Try again after the current chapter finishes loading.")
+            return
+
+        current_url = self.current_url
+
+        win = tk.Toplevel(self.root)
+        win.title(f"Jump to Chapter - {self.episode.get('title') if self.episode else novel_id}")
+        win.geometry("640x560")
+        win.transient(self.root)
+        # Modal, same convention/rationale as open_glossary_dialog()'s
+        # win.grab_set() -- this dialog's own state (search filter, sort
+        # direction) is session-local and not written anywhere, so the
+        # concurrent-writer motivation doesn't apply here the same way,
+        # but matching the established dialog convention (rather than one
+        # dialog behaving differently for no functional reason) is the
+        # point.
+        win.grab_set()
+
+        # oldest_first is the natural/default order this data already
+        # arrives in (dispOrder ascending, confirmed gapless 1..690 for
+        # novel 375266002 -- see this phase's dated entry in
+        # CHAPTER_LIST_DESIGN.md for the full sanity-check result); the
+        # toggle just reverses this in-memory list, no re-fetch.
+        sort_state = {"oldest_first": True}
+
+        body = ttk.Frame(win)
+        body.pack(fill="both", expand=True, padx=10, pady=10)
+
+        controls = ttk.Frame(body)
+        controls.pack(fill="x", pady=(0, 8))
+        ttk.Label(controls, text="Search:").pack(side="left")
+        search_var = tk.StringVar(value="")
+        search_entry = ttk.Entry(controls, textvariable=search_var, width=36)
+        search_entry.pack(side="left", padx=(6, 0), fill="x", expand=True)
+        search_entry.focus_set()
+
+        sort_btn_text = tk.StringVar(value="Oldest first")
+
+        def toggle_sort():
+            sort_state["oldest_first"] = not sort_state["oldest_first"]
+            sort_btn_text.set("Oldest first" if sort_state["oldest_first"] else "Newest first")
+            refresh_tree()
+
+        ttk.Button(controls, textvariable=sort_btn_text, command=toggle_sort).pack(side="left", padx=(8, 0))
+
+        columns = ("number", "title", "up_time")
+        tree = ttk.Treeview(body, columns=columns, show="headings")
+        for col, label, width in (("number", "#", 60), ("title", "Title", 380), ("up_time", "Updated", 140)):
+            tree.heading(col, text=label)
+            tree.column(col, width=width, anchor="w")
+        tree.pack(side="left", fill="both", expand=True)
+        tree_scroll = ttk.Scrollbar(body, orient="vertical", command=tree.yview)
+        tree_scroll.pack(side="left", fill="y")
+        tree.config(yscrollcommand=tree_scroll.set)
+
+        # row iid -> chapter url, so a click/double-click can navigate
+        # without re-deriving the URL from the row's displayed text.
+        row_urls: Dict[str, str] = {}
+
+        def matches_filter(chapter, query):
+            if not query:
+                return True
+            query = query.lower()
+            if query in (chapter.get("main_title") or "").lower():
+                return True
+            disp_order = chapter.get("disp_order")
+            return disp_order is not None and query in str(disp_order)
+
+        def refresh_tree():
+            tree.delete(*tree.get_children())
+            row_urls.clear()
+            query = search_var.get().strip()
+            ordered = chapters if sort_state["oldest_first"] else list(reversed(chapters))
+            current_iid = None
+            for chapter in ordered:
+                if not matches_filter(chapter, query):
+                    continue
+                iid = str(len(row_urls))
+                row_urls[iid] = chapter["url"]
+                disp_order = chapter.get("disp_order")
+                tree.insert("", "end", iid=iid, values=(disp_order if disp_order is not None else "", chapter.get("main_title", ""), chapter.get("up_time") or ""))
+                if chapter["url"] == current_url:
+                    current_iid = iid
+            if current_iid is not None:
+                tree.selection_set(current_iid)
+                tree.see(current_iid)
+
+        search_var.trace_add("write", lambda *_: refresh_tree())
+        refresh_tree()
+
+        def navigate_to_selected(_event=None):
+            selection = tree.selection()
+            if not selection:
+                return
+            url = row_urls.get(selection[0])
+            if not url:
+                return
+            win.destroy()
+            self.load_episode(url)
+
+        tree.bind("<Double-1>", navigate_to_selected)
+        tree.bind("<Return>", navigate_to_selected)
+
+        btns = ttk.Frame(win)
+        btns.pack(pady=(0, 10))
+        ttk.Button(btns, text="Go", command=navigate_to_selected).pack(side="left", padx=4)
+        ttk.Button(btns, text="Close", command=win.destroy).pack(side="left", padx=4)
+
+        win.protocol("WM_DELETE_WINDOW", win.destroy)
 
     def open_settings_dialog(self):
         """Open the settings dialog for font, spacing, and alignment controls."""
@@ -2882,6 +3142,48 @@ class ReaderApp:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _prefetch_chapter_list(self, novel_id, episode_url):
+        """Background-prefetch a novel's full chapter list via BrowserWorker.
+
+        CHAPTER_LIST_DESIGN.md Phase 2: same threading pattern as
+        prefetch() above (a daemon worker thread that calls into the
+        already-running BrowserWorker, whose Playwright calls must all
+        happen on its own dedicated thread) -- not a new one. No-ops if
+        this novel's list is already cached in memory or already being
+        fetched, so navigating between chapters of the same novel doesn't
+        re-fetch the main page every time.
+
+        Args:
+            novel_id: The novel ID (from _extract_novel_id()) to prefetch
+                the chapter list for.
+            episode_url: An episode URL belonging to this novel, used to
+                derive the main page URL via _novel_main_page_url().
+        """
+        if not novel_id or novel_id in self._chapter_lists or novel_id in self._chapter_list_prefetching:
+            return
+        main_page_url = _novel_main_page_url(episode_url)
+        if not main_page_url:
+            logger.warning(f"Could not derive main page URL for novel {novel_id} from {episode_url} -- skipping chapter list prefetch")
+            return
+        self._chapter_list_prefetching.add(novel_id)
+
+        def worker():
+            try:
+                html = self.browser.fetch(main_page_url, wait_selector="#app-cover-data", wait_state="attached")
+                chapters = parse_chapter_list(html)
+                if chapters:
+                    self._chapter_lists[novel_id] = chapters
+                    logger.info(f"Prefetched chapter list for novel {novel_id}: {len(chapters)} chapter(s)")
+                else:
+                    logger.warning(f"Chapter list prefetch for novel {novel_id} returned no chapters ({main_page_url})")
+            except Exception as e:
+                logger.error(f"Failed to prefetch chapter list for novel {novel_id}: {e}", exc_info=True)
+                print(traceback.format_exc(), file=sys.stderr)
+            finally:
+                self._chapter_list_prefetching.discard(novel_id)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def display_episode(self, url, ep):
         """Display a parsed episode and update navigation buttons.
 
@@ -2907,21 +3209,28 @@ class ReaderApp:
 
         save_reader_state(url, self.target_lang)
         self.prefetch(ep.get("next_url"))
+        self._prefetch_chapter_list(_extract_novel_id(url), url)
 
     def _on_toolbar_right_click(self, event):
-        """Right-click on the toolbar: offer the same five dialog launchers as the File/Glossary menus.
+        """Right-click on the toolbar: offer the same dialog launchers as the File/Glossary menus.
 
-        WINDOW_REDESIGN.md Phase 3. A static menu -- no span/selection
-        resolution needed, unlike _on_text_right_click(), since the
-        toolbar's context doesn't vary by click position. Reuses the
-        exact same bound commands the menu bar and toolbar buttons
-        already use, not new wrapper functions.
+        WINDOW_REDESIGN.md Phase 3 (Load Novel.../Refresh/Glossary.../
+        Review Terms.../Settings...); CHAPTER_LIST_DESIGN.md Phase 2 added
+        Jump to Chapter... to this same static menu, same menu-only-plus-
+        right-click precedent those other menu-only entries already
+        established (no toolbar button added for it either, per that
+        precedent). A static menu -- no span/selection resolution needed,
+        unlike _on_text_right_click(), since the toolbar's context doesn't
+        vary by click position. Reuses the exact same bound commands the
+        menu bar and toolbar buttons already use, not new wrapper
+        functions.
 
         Args:
             event: The Tk button-press event.
         """
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Load Novel...", command=self.open_load_url_dialog)
+        menu.add_command(label="Jump to Chapter...", command=self.open_chapter_list_dialog)
         menu.add_command(label="Refresh", command=self.refresh_current_episode)
         menu.add_command(label="Glossary...", command=self.open_glossary_dialog)
         menu.add_command(label="Review Terms...", command=self.open_term_review_dialog)

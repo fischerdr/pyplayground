@@ -17,6 +17,8 @@ specific section a task needs.
 | `REFACTOR_DESIGN.md` | Module split (`alphapolis_reader.py` → `ReaderRenderer` + `GlossaryCoordinator`) and the write-race/incremental-extraction fixes that came with it. | **Phase 3 (a-g) complete.** Phase 4 (revisit core app shell) undecided/not started — no active work. |
 | `WINDOW_REDESIGN.md` | Toolbar/menu reorganization + the three glossary dialogs' own layouts. | **All 4 phases complete (2026-08-02).** No open work. |
 | `STATUS_BAR_DESIGN.md` | Page-count/chapter-position indicator + word/paragraph counts (original + translated) — split out of `WINDOW_REDESIGN.md`, never got a phase there. | **Both phases complete (2026-08-03).** No open work. |
+| `STALENESS_DESIGN.md` | Chapter/novel staleness detection ("did this chapter change" / "did new chapters appear since I last checked") — surfaced during `STATUS_BAR_DESIGN.md` Phase 2 discussion but a distinct feature. | **Phase 1 complete (2026-08-05).** Phase 2 not started, contingent on Phase 1's findings. |
+| `CHAPTER_LIST_DESIGN.md` | Jump-to-chapter modal (search/filter over the full chapter list) — current nav is Prev/Next only. | **Both phases complete (2026-08-05).** No open work. |
 | `agents-ui-testing.md` | *How-to*, not decisions: Xvfb setup, `run_ui_tests.sh`, `xdo_helper.py`/`log_correlator.py` usage, known environment quirks (leaked window/thread issues, screenshot gotchas). | Living reference, update when a new testing gotcha is found. |
 | `safe_persistence.py` (module docstring) | Design + implementation record for the atomic-write and verify-before-write helpers in `pyplayground/utils/`. | **Implemented and migrated.** No open work. |
 

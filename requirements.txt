@@ -181,7 +181,7 @@ ptyprocess==0.7.0
     # via pexpect
 pyasn1==0.6.2
     # via pyplayground (pyproject.toml)
-pycparser==2.22
+pycparser==3.0
     # via cffi
 pydub==0.25.1
     # via pyplayground (pyproject.toml)
